@@ -15,6 +15,21 @@ plugin built from a 3.0.0 dev commit with plugin ABI 10 (before 11) still instal
 (stable ABI 2) when it exports stable handlers; one built from the `v3.0.0` tag has an older
 plugin ABI and does not load.
 
+### Changed
+
+- **Stable plugin handshake (changed in place, no bump).** `daedalus::dylib::STABLE_ABI_VERSION`
+  stays 7. A plugin may export `daedalus_plugin_stable_abi` (`STABLE_HANDSHAKE_SYMBOL`): a
+  `lemnos_abi::AbiVersion` whose layout is `STABLE_LAYOUT_HASH`, the hash of the stable `#[repr(C)]`
+  layouts. The loader checks it when present and refuses a mismatch (`PluginLibraryError::StableHandshake`);
+  a plugin without it installs as before. No struct layout changed. `export_plugin!` exports the
+  handshake; hand-written exports may do the same. The surface's `daedalus_surface_stable_abi_max`
+  stays 7; the C surface ABI stays 1.3.
+- `dylib::StrSink` is `lemnos_abi::MessageSink` (the same layout, so no wire change). Its `ctx`
+  field is `context`, and `write` is safe, as `MessageSink::write` is.
+- The stable path's `release` and `unload` use `lemnos_abi::guard_or`. The facade takes
+  `lemnos-abi` as an optional dependency under `dylib-plugins`.
+- The Lemnos lock moved to `fa2e617` (lemnos-abi 1.0, layout hash `0xa02cfb4a8dd4545b`, unchanged).
+
 ### Added
 
 - `Payload::providing_recycled` and `RecyclePool<O>`: `Payload::providing` for a stream of

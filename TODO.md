@@ -37,8 +37,8 @@ order:
 1. **Stable plugin ABI onto `lemnos-abi`** (shared-library step 2), on `lemnos-abi` 1.0 (frozen:
    Lemnos dev 47a600c, layout hash 0xa02cfb4a8dd4545b; versions in the SONAME major plus the
    handshake, since rustc's cdylib version script overrides symbol version nodes): status,
-   handles, descriptors and the handshake from `lemnos-abi` (its `Features`/`write_out`), one STABLE_ABI_VERSION
-   bump, every older layout (2 to 7) still read. Done when the dylib suites pass on both layouts.
+   handles, descriptors and the handshake from `lemnos-abi` (its `Features`/`write_out`), changed in place
+   with no STABLE_ABI_VERSION bump (the handshake is additive and optional), every older layout (2 to 7) still read. Done when the dylib suites pass on both layouts.
 2. **Profile the stable path's per-node cost** (about 3,100 instructions per node per tick on x86,
    the surface about 1,000 over static) with `bench-counters`; move the `stable_bench` handle
    prototype onto `Local`; take `StablePod` to 0 warm allocations (1 host and 1 plugin allocation

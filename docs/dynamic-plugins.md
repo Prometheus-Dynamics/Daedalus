@@ -83,6 +83,16 @@ plugin whose symbol disagrees with its descriptor's `StableHandlers::version`
 are read through the descriptor alone. A plugin that exports its symbols by hand (to adjust its
 descriptor, as `examples/plugins/stable_abi` does) exports this one the same way.
 
+The stable handshake is an additive, optional symbol. `export_plugin!` also exports
+`daedalus_plugin_stable_abi` (`daedalus::dylib::STABLE_HANDSHAKE_SYMBOL`), a `lemnos_abi::AbiVersion`
+static with major 1, minor 0 and `STABLE_LAYOUT_HASH` as its layout. The hash covers the size,
+alignment and field offsets of every `#[repr(C)]` type that crosses the stable boundary
+(`dylib::stable::layout`). The loader checks it when a plugin exports the symbol: the host must
+accept the plugin's handshake (`AbiVersion::accepts`), else the plugin is refused
+(`PluginLibraryError::StableHandshake`). A plugin without the symbol (every layout the loader has
+read since version 2) installs exactly as before. `STABLE_ABI_VERSION` does not move for this:
+frozen interfaces change in place during dev, and the number moves only at a release the user calls.
+
 ## Install Paths
 
 `install_into` installs a plugin one of two ways and returns which (`InstallPath`);

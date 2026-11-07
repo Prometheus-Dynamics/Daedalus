@@ -168,6 +168,32 @@ Not built yet: patching constants and setting input or output policies through t
 only; a `Vec<u8>` port is listed as `other`); the stable plugin ABI on `lemnos-abi` primitives
 (order step 2 below).
 
+### Stable ABI on `lemnos-abi` (order step 2)
+
+This step changes the stable ABI in place, with no bump: `STABLE_ABI_VERSION` stays 7, and nothing
+reports a new number during dev. Frozen interfaces change in place, and numbers move only at a
+release the user calls. Each primitive either maps onto `lemnos-abi` or stays as it is, for the
+reason given:
+
+| Primitive | Decision | Why |
+| --- | --- | --- |
+| Version handshake | Mapped, changed in place, no bump. `daedalus_plugin_stable_abi`, an optional `AbiVersion` whose layout is `STABLE_LAYOUT_HASH` (size, alignment and field offsets of the stable `#[repr(C)]` types). Checked when a plugin exports it; a plugin without it installs as before. The `u32` `daedalus_plugin_stable_version` stays, for Gaia. | The `u32` cannot catch a layout change under the same version. The hash does, at load, for plugins that export it. |
+| Message sinks | Mapped. `StrSink` is `lemnos_abi::MessageSink`. | Same layout (a context and an `extern "C"` write callback), so no wire change; the surface and the plugins share one type. |
+| Panic guard | Split. `release` and `unload` use `lemnos_abi::guard_or`. Entry points keep the message-carrying guard. | `guard` drops the panic's text, and the host shows that text as the node's error. |
+| Status codes | Kept as the stable `u32` codes (`HANDLER_ERROR`..`INPUT_DROPPED`). Not `lemnos_abi::Status`. | In `lemnos-abi`, positive values are a success with a count, and 1..6 here are errors. Mapping them would renumber every wire value of versions 2 to 7. |
+| Handles | Kept as the instance pointer (a `u64`). Not `lemnos_abi::Handle`. | The invoke path has no lookup and no lock by design. A `Slab` gives a generation check per call, at the cost of a lock or a second lookup per invoke. The host owns each handle and releases it once. |
+| Features | Not mapped. | The stable path has no optional features: versions and the extension's version negotiate. A `Features` word would be a field nothing reads. |
+| `write_out` | Not mapped. | Outputs are borrowed `StableValue`s pushed through a callback. No caller buffer is sized, so there is nothing to write all or nothing. |
+| Buffer and fence descriptors | Not mapped. | A stable frame is a `ForeignHandle` with its owner's vtable, not dma-buf file descriptors. Descriptors belong to the surface's frame path, which already uses them. |
+| Slabs | Not mapped (see Handles). | Same reason. |
+
+The change adds no struct layout: the handler tables, the extension and the codec table are as they
+were. Every layout the loader read before (versions 2 to 7) is read as before, and such a plugin
+exports no handshake, so it is not checked against one. They are tested two ways: a real version-7 cdylib, built from the commit
+before the handshake, runs the whole `dylib_stable` suite against this host (through
+`DAEDALUS_CDYLIB_DAEDALUS_PLUGINS_STABLE_ABI`), and an in-process version-7 descriptor installs and
+runs (`loader/tests.rs`).
+
 Measured in a debug build (`cargo test -p daedalus-host --test shared_vs_static -- --nocapture`):
 about 50 µs per scalar frame through the static graph and about 90 µs through the surface, with
 the same outputs and the same allocations (none for scalars). The gap is not profiled yet; the
@@ -175,9 +201,9 @@ release numbers are the ones that count.
 
 ## Order
 
-1. `lemnos-abi` lands (Lemnos). Done: pinned at `cf3a4ac`.
-2. The stable plugin ABI moves onto its primitives (handles, status codes, guard, slabs), keeping
-   `STABLE_ABI_VERSION` compatibility. Not started.
+1. `lemnos-abi` lands (Lemnos). Done: pinned at `fa2e617` (1.0, layout hash `0xa02cfb4a8dd4545b`).
+2. The stable plugin ABI moves onto its primitives. Done in place (`STABLE_ABI_VERSION` stays 7; the
+   handshake is additive and optional), with the decisions below.
 3. `daedalus-surface` and `daedalus-host`, with a test that runs the same graph statically and
    through wrapper + surface and compares outputs and allocations. Built (see Status), and the
    frame entry points are built too (Linux). The CM5 per-frame cost is in `benchmarks-log.md`:
