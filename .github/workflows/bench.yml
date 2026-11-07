@@ -39,7 +39,7 @@ env:
 jobs:
   bench:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -74,11 +74,13 @@ jobs:
           fi
           echo "Baseline commit $base"
           git worktree add --detach ../bench-base "$base"
-          # Share the target directory so dependencies build once.
-          (cd ../bench-base && rm -rf "$GITHUB_WORKSPACE/target/criterion" \
-            && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" ./scripts/ci.sh bench)
-          cp -r target/criterion/. baseline/
-          rm -rf target/criterion
+          # Its own target directory: cargo hashes path crates by their path relative to the
+          # workspace root, so a shared one maps both checkouts to the same artifacts and the
+          # head build then reuses the baseline's crates as fresh (3310894: the head plugin
+          # compiled against the baseline runtime).
+          (cd ../bench-base && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-base" ./scripts/ci.sh bench)
+          cp -r target-base/criterion/. baseline/
+          rm -rf target-base
 
       # Start from an empty criterion directory so only this run's estimates are uploaded.
       - name: Run benches
