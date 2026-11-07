@@ -42,7 +42,10 @@ impl<C: NodeConfig> ConfigCache<C> {
     /// only when one of their payloads differs from the last call's.
     pub fn get(&mut self, io: &NodeIo, node_id: &str) -> Result<&C, NodeError> {
         let names = C::port_names();
-        let from_consts = |io: &NodeIo| !names.iter().any(|name| io.has_edge_input(name));
+        // No edge input this call: every config port comes from the const list (the common case).
+        let from_consts = |io: &NodeIo| {
+            !io.has_edge_inputs() || !names.iter().any(|name| io.has_edge_input(name))
+        };
         let same_consts = match (&self.consts, io.shared_consts()) {
             (Some(cached), Some(now)) => Arc::ptr_eq(cached, now),
             _ => false,
@@ -52,13 +55,30 @@ impl<C: NodeConfig> ConfigCache<C> {
                 from_consts(io)
             } else {
                 self.sources.len() == names.len()
-                    && names.iter().zip(&self.sources).all(|(name, cached)| {
-                        match (io.get_payload(name), cached) {
-                            (Some(now), Some(cached)) => now.shares_storage(cached),
-                            (now, cached) => now.is_none() && cached.is_none(),
-                        }
-                    })
+                    && names
+                        .iter()
+                        .zip(&self.sources)
+                        .all(|(name, cached)| same_source(io.get_payload(name), cached.as_ref()))
             };
+        if unchanged && !same_consts {
+            // A re-emitted but equal value (a fresh `Arc` of the same `Value`): keep the decoded
+            // config and rebind the sources, so the next call's storage check hits again.
+            for (cached, name) in self.sources.iter_mut().zip(names) {
+                if let Some(now) = io.get_payload(name)
+                    && !cached.as_ref().is_some_and(|c| c.shares_storage(now))
+                {
+                    *cached = Some(now.clone());
+                }
+            }
+            // Re-arm the shared-list fast path. Only a decode used to arm it, so a config that
+            // was decoded while an edge fed one of its ports would otherwise stay on the per-port
+            // check (every name against every const, each tick) after the edge went quiet.
+            if let Some(now) = io.shared_consts()
+                && from_consts(io)
+            {
+                self.consts = Some(now.clone());
+            }
+        }
         if !unchanged {
             self.value = None;
             let invalid =
@@ -75,6 +95,21 @@ impl<C: NodeConfig> ConfigCache<C> {
             self.value = Some(sanitized.value);
         }
         Ok(self.value.as_ref().expect("config decoded above"))
+    }
+}
+
+/// Whether a config port's payload is the one its config was decoded from: the same storage, or
+/// (for a `Value`) an equal value in fresh storage, which decodes to the same config.
+fn same_source(now: Option<&Payload>, cached: Option<&Payload>) -> bool {
+    match (now, cached) {
+        (Some(now), Some(cached)) => {
+            now.shares_storage(cached)
+                || matches!(
+                    (now.get_ref::<Value>(), cached.get_ref::<Value>()),
+                    (Some(a), Some(b)) if a == b
+                )
+        }
+        (now, cached) => now.is_none() && cached.is_none(),
     }
 }
 
@@ -170,6 +205,10 @@ impl DecodedInputs {
 }
 
 #[cfg(test)]
+#[path = "const_cache_wide_tests.rs"]
+mod wide_tests;
+
+#[cfg(test)]
 mod tests {
     use alloc::borrow::Cow;
     use core::sync::atomic::{AtomicUsize, Ordering};
@@ -240,6 +279,67 @@ mod tests {
         assert!(label(&mut cache, &NodeIo::empty()).is_err());
     }
 
+    static REUSE_DECODES: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct ReuseCfg {
+        label: String,
+    }
+
+    impl NodeConfig for ReuseCfg {
+        fn ports(
+            _: &daedalus_data::typing::TypeRegistry,
+        ) -> Vec<daedalus_registry::capability::PortDecl> {
+            Vec::new()
+        }
+        fn port_names() -> &'static [&'static str] {
+            &["label"]
+        }
+        fn from_io(io: &NodeIo) -> Result<Self, NodeError> {
+            REUSE_DECODES.fetch_add(1, Ordering::SeqCst);
+            let label = io.get_typed::<String>("label");
+            Ok(Self {
+                label: label.ok_or_else(|| NodeError::InvalidInput("missing label".into()))?,
+            })
+        }
+        fn sanitize(self) -> Result<Sanitized<Self>, ConfigError> {
+            Ok(Sanitized {
+                value: self,
+                changes: Vec::new(),
+            })
+        }
+        fn validate(&self) -> Result<(), ConfigError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn re_emitted_equal_config_value_is_not_decoded_again() {
+        let text = |s: &'static str| Payload::owned("value", Value::String(Cow::Borrowed(s)));
+        let mut cache = ConfigCache::<ReuseCfg>::default();
+        let label = |cache: &mut ConfigCache<ReuseCfg>, payload: &Payload| {
+            cache
+                .get(&io_with("label", payload), "node")
+                .map(|cfg| cfg.label.clone())
+        };
+        let decodes = || REUSE_DECODES.load(Ordering::SeqCst);
+
+        // Fresh storage each tick with the same value: decoded once, then never again.
+        assert_eq!(label(&mut cache, &text("a")).unwrap(), "a");
+        let decoded = decodes();
+        for _ in 0..3 {
+            assert_eq!(label(&mut cache, &text("a")).unwrap(), "a");
+        }
+        assert_eq!(
+            decodes(),
+            decoded,
+            "an equal re-emitted value is not decoded again"
+        );
+        // A changed value is decoded and yields the new config.
+        assert_eq!(label(&mut cache, &text("b")).unwrap(), "b");
+        assert_eq!(decodes(), decoded + 1);
+    }
+
     static CONST_DECODES: AtomicUsize = AtomicUsize::new(0);
 
     #[derive(Clone, Debug, PartialEq)]
@@ -270,6 +370,80 @@ mod tests {
         fn validate(&self) -> Result<(), ConfigError> {
             Ok(())
         }
+    }
+
+    static REARM_DECODES: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct RearmCfg(i64);
+
+    impl NodeConfig for RearmCfg {
+        fn ports(
+            _: &daedalus_data::typing::TypeRegistry,
+        ) -> Vec<daedalus_registry::capability::PortDecl> {
+            Vec::new()
+        }
+        fn port_names() -> &'static [&'static str] {
+            &["level"]
+        }
+        fn from_io(io: &NodeIo) -> Result<Self, NodeError> {
+            REARM_DECODES.fetch_add(1, Ordering::SeqCst);
+            let level = io.get_typed::<i64>("level");
+            Ok(Self(level.ok_or_else(|| {
+                NodeError::InvalidInput("missing level".into())
+            })?))
+        }
+        fn sanitize(self) -> Result<Sanitized<Self>, ConfigError> {
+            Ok(Sanitized {
+                value: self,
+                changes: Vec::new(),
+            })
+        }
+        fn validate(&self) -> Result<(), ConfigError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn shared_const_fast_path_is_rearmed_after_an_edge_call() {
+        let one: Arc<NodeConstInputs> = Arc::new(
+            vec![(
+                PortId::from_static("level"),
+                CorrelatedPayload::from_edge(Payload::owned("value", Value::Int(1))),
+            )]
+            .into(),
+        );
+        let call = |edge: Option<i64>| {
+            let inputs = edge.map(|level| {
+                (
+                    PortId::from_static("level"),
+                    CorrelatedPayload::from_edge(Payload::owned("value", Value::Int(level))),
+                )
+            });
+            let mut buffer = crate::io::port_buffer();
+            buffer.extend(inputs);
+            NodeIo::for_call(buffer, Arc::default(), Some(&one))
+        };
+        let decodes = || REARM_DECODES.load(Ordering::SeqCst);
+        let mut cache = ConfigCache::<RearmCfg>::default();
+
+        // An edge equal to the const decodes once and leaves the shared path unarmed.
+        assert_eq!(cache.get(&call(Some(1)), "node").unwrap().0, 1);
+        assert!(cache.consts.is_none());
+        let after_edge = decodes();
+        // The edge is quiet: the value is unchanged, so no decode, and the fast path is armed.
+        assert_eq!(cache.get(&call(None), "node").unwrap().0, 1);
+        assert_eq!(
+            decodes(),
+            after_edge,
+            "an unchanged value is not decoded again"
+        );
+        assert!(
+            cache.consts.is_some(),
+            "the shared-list fast path is re-armed"
+        );
+        assert_eq!(cache.get(&call(None), "node").unwrap().0, 1);
+        assert_eq!(decodes(), after_edge);
     }
 
     #[test]
