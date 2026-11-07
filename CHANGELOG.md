@@ -17,6 +17,11 @@ plugin ABI and does not load.
 
 ### Changed
 
+- **GPU dispatch passes the device key down.** The per-device cache key (`device_key`: an `as_hal`
+  read, a global lock and a map lookup) was computed up to five times per dispatch. The wgpu
+  backend and the fallback context now compute it once, when the device is made, and the dispatch
+  helpers take it as an argument. A call costs about 0.5-0.8 µs on a loaded host (`device_key_cost`,
+  minimum of five batches), so a dispatch saves its share of 2.5-4 µs. Internal: no public API change.
 - **Stable plugin handshake (changed in place, no bump).** `daedalus::dylib::STABLE_ABI_VERSION`
   stays 7. A plugin may export `daedalus_plugin_stable_abi` (`STABLE_HANDSHAKE_SYMBOL`): a
   `lemnos_abi::AbiVersion` whose layout is `STABLE_LAYOUT_HASH`, the hash of the stable `#[repr(C)]`

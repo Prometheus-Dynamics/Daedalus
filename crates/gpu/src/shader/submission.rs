@@ -93,6 +93,11 @@ impl GpuContextHandle {
         self.backend.wgpu_submit_lock().cloned()
     }
 
+    /// The wgpu device's `device_key`, computed when the backend was made.
+    pub(crate) fn wgpu_device_key(&self) -> Option<usize> {
+        self.backend.wgpu_device_key()
+    }
+
     /// The device and its queue with the context's submit lock.
     pub(crate) fn wgpu_locked(&self) -> Option<(&wgpu::Device, LockedQueue)> {
         let (device, queue) = self.wgpu()?;

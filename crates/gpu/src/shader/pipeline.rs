@@ -92,11 +92,11 @@ pub(crate) struct PipelineEntry {
 
 pub(crate) fn pipeline_entry(
     device: &wgpu::Device,
+    device_key: usize,
     shader_src: &str,
     spec: &super::ShaderSpec,
     layout_bindings: &[BindingSpec],
 ) -> Arc<PipelineEntry> {
-    let device_key = super::device_key(device);
     let cache = PIPE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut hasher = DefaultHasher::new();
     spec.name.hash(&mut hasher);
@@ -228,12 +228,11 @@ pub(crate) fn pipeline_entry(
 
 pub(crate) fn bind_group(
     device: &wgpu::Device,
+    device_key: usize,
     layout: &wgpu::BindGroupLayout,
     prepared: &[super::prepare::Prepared],
     pipeline_key: u64,
 ) -> wgpu::BindGroup {
-    let device_key = super::device_key(device);
-
     let entries: Vec<wgpu::BindGroupEntry> = prepared
         .iter()
         .map(|p| match p {

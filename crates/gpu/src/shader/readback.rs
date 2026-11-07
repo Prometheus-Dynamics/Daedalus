@@ -36,6 +36,7 @@ pub(crate) struct PoolReturn {
 
 pub(crate) fn enqueue_readbacks(
     device: &wgpu::Device,
+    device_key: usize,
     prepared: &[Prepared],
     encoder: &mut wgpu::CommandEncoder,
 ) -> (
@@ -46,7 +47,6 @@ pub(crate) fn enqueue_readbacks(
     let mut readbacks: Vec<ReadbackRequest> = Vec::new();
     let mut pool_textures_to_return: Vec<PoolReturn> = Vec::new();
     let mut texture_handles: HashMap<u32, GpuImageHandle> = HashMap::new();
-    let device_key = super::device_key(device);
 
     for p in prepared {
         match p {
@@ -195,13 +195,13 @@ pub(crate) fn enqueue_readbacks(
 
 pub(crate) fn resolve_readbacks(
     device: &wgpu::Device,
+    device_key: usize,
     queue: &LockedQueue,
     readbacks: Vec<ReadbackRequest>,
 ) -> Result<HashMap<u32, Vec<u8>>, GpuError> {
     // This is the synchronous compatibility readback path. It waits on the current thread; async
     // callers should use `resolve_readbacks_async` through the async dispatch helpers so executor
     // worker threads are not blocked by GPU completion.
-    let device_key = super::device_key(device);
 
     // Issue every map first, then wait once. Waiting per buffer would cost one blocking round trip
     // to the GPU for each binding.
@@ -330,7 +330,8 @@ mod tests {
         }
         queue.submit(Some(encoder.finish()));
 
-        let out = resolve_readbacks(device, queue, requests).expect("batched readback");
+        let out = resolve_readbacks(device, crate::shader::device_key(device), queue, requests)
+            .expect("batched readback");
         assert_eq!(out.len(), sizes.len());
         for (binding, len) in sizes {
             assert_eq!(out[&binding], vec![binding as u8 + 1; len as usize]);

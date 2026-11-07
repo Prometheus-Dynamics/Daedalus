@@ -199,10 +199,10 @@ pub(crate) async fn map_read_async(
 
 pub(crate) async fn resolve_readbacks_async(
     device: &wgpu::Device,
+    device_key: usize,
     queue: &LockedQueue,
     readbacks: Vec<ReadbackRequest>,
 ) -> Result<HashMap<u32, Vec<u8>>, GpuError> {
-    let device_key = super::device_key(device);
     let mut result = HashMap::new();
 
     tracing::debug!(

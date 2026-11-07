@@ -67,3 +67,35 @@ pub(crate) fn unregister_device(device: &wgpu::Device, key: usize) {
         keys.remove(&id);
     }
 }
+
+#[cfg(all(test, feature = "gpu-wgpu"))]
+#[allow(clippy::print_stderr)] // the measurement
+mod timing {
+    use std::time::Instant;
+
+    /// Per-call cost of [`super::device_key`], which every dispatch made several times before the
+    /// keys were passed down. The minimum of five batches, as host load is noisy. Run with
+    /// `cargo test -p daedalus-gpu --features gpu-wgpu -- --ignored --nocapture device_key_cost`.
+    #[test]
+    #[ignore = "timing probe: needs a GPU, run with --ignored --nocapture"]
+    fn device_key_cost() {
+        let Ok(gpu) = crate::selection::select_backend(&crate::GpuOptions::default()) else {
+            return eprintln!("skipping: no adapter");
+        };
+        let Some((device, _queue)) = gpu.wgpu_locked() else {
+            return eprintln!("skipping: not a wgpu device");
+        };
+        const N: u32 = 200_000;
+        let mut acc = 0usize;
+        let mut best = f64::MAX;
+        for _ in 0..5 {
+            let start = Instant::now();
+            for _ in 0..N {
+                acc ^= super::device_key(std::hint::black_box(device));
+            }
+            best = best.min(start.elapsed().as_nanos() as f64 / f64::from(N));
+        }
+        std::hint::black_box(acc);
+        eprintln!("device_key: {best:.1} ns per call (best of 5 x {N})");
+    }
+}

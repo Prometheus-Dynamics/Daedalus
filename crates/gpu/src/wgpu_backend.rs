@@ -395,6 +395,10 @@ impl GpuBackend for WgpuBackend {
         Some(&self.submission_tracker)
     }
 
+    fn wgpu_device_key(&self) -> Option<usize> {
+        Some(self.device_key)
+    }
+
     fn wgpu_get_texture(&self, handle: &GpuImageHandle) -> Option<std::sync::Arc<wgpu::Texture>> {
         self.get_texture(handle)
     }

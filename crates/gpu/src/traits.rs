@@ -85,6 +85,12 @@ pub trait GpuBackend: Send + Sync {
         None
     }
 
+    /// The `device_key` of the wgpu device, computed once when the backend was
+    /// made, for the per-dispatch caches (`None` off wgpu).
+    fn wgpu_device_key(&self) -> Option<usize> {
+        None
+    }
+
     #[cfg(feature = "gpu-wgpu")]
     fn wgpu_get_texture(&self, _handle: &GpuImageHandle) -> Option<Arc<wgpu::Texture>> {
         None

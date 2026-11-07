@@ -35,6 +35,7 @@ pub(crate) enum Prepared {
 
 pub(crate) fn prepare_resources(
     device: &wgpu::Device,
+    device_key: usize,
     queue: &wgpu::Queue,
     backend: Option<&dyn GpuBackend>,
     bindings: &[ShaderBinding],
@@ -45,7 +46,6 @@ pub(crate) fn prepare_resources(
     for b in layout_bindings {
         binding_map.insert(b.binding, *b);
     }
-    let device_key = super::device_key(device);
 
     let mut prepared: Vec<Prepared> = Vec::new();
     for binding in bindings {
@@ -218,6 +218,7 @@ pub(crate) fn prepare_resources(
 #[cfg(feature = "gpu-async")]
 pub(crate) async fn prepare_resources_async<'a>(
     device: &wgpu::Device,
+    device_key: usize,
     queue: &wgpu::Queue,
     backend: Option<&dyn GpuBackend>,
     bindings: &'a [ShaderBinding<'a>],
@@ -253,6 +254,7 @@ pub(crate) async fn prepare_resources_async<'a>(
 
     prepare_resources(
         device,
+        device_key,
         queue,
         backend,
         &materialized,

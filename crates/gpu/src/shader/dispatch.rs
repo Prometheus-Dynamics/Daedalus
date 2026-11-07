@@ -405,24 +405,28 @@ pub fn dispatch_shader_with_options(
     gpu_ctx: Option<&GpuContextHandle>,
     opts: &DispatchOptions,
 ) -> Result<ShaderRunOutput, GpuError> {
-    let (device, queue, backend_handle, submission_tracker) = if let Some(gpu_ctx) = gpu_ctx {
-        let backend = gpu_ctx.backend_ref();
-        let (device, queue) = gpu_ctx.wgpu_locked().ok_or(GpuError::Unsupported)?;
-        (
-            device,
-            queue,
-            Some(backend),
-            backend.wgpu_submission_tracker(),
-        )
-    } else {
-        let ctx = ctx()?;
-        (
-            ctx.device.as_ref(),
-            ctx.queue.clone(),
-            None,
-            Some(ctx.submission_tracker.as_ref()),
-        )
-    };
+    let (device, queue, backend_handle, submission_tracker, device_key) =
+        if let Some(gpu_ctx) = gpu_ctx {
+            let backend = gpu_ctx.backend_ref();
+            let (device, queue) = gpu_ctx.wgpu_locked().ok_or(GpuError::Unsupported)?;
+            let key = gpu_ctx.wgpu_device_key().ok_or(GpuError::Unsupported)?;
+            (
+                device,
+                queue,
+                Some(backend),
+                backend.wgpu_submission_tracker(),
+                key,
+            )
+        } else {
+            let ctx = ctx()?;
+            (
+                ctx.device.as_ref(),
+                ctx.queue.clone(),
+                None,
+                Some(ctx.submission_tracker.as_ref()),
+                ctx.device_key,
+            )
+        };
 
     let cached = cached_spec(spec)?;
     let layout_bindings = cached.bindings.clone();
@@ -438,6 +442,7 @@ pub fn dispatch_shader_with_options(
 
     let prepared = prepare_resources(
         device,
+        device_key,
         queue.raw(),
         backend_handle,
         bindings,
@@ -445,9 +450,15 @@ pub fn dispatch_shader_with_options(
         gpu_ctx,
     )?;
 
-    let entry = pipeline_entry(device, shader_src, spec, layout_bindings.as_ref());
+    let entry = pipeline_entry(
+        device,
+        device_key,
+        shader_src,
+        spec,
+        layout_bindings.as_ref(),
+    );
     let (bind_group_layout, pipeline) = (&entry.bind_group_layout, &entry.pipeline);
-    let bind_group = bind_group(device, bind_group_layout, &prepared, entry.key);
+    let bind_group = bind_group(device, device_key, bind_group_layout, &prepared, entry.key);
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("encoder"),
@@ -483,7 +494,7 @@ pub fn dispatch_shader_with_options(
     }
 
     let (readbacks, pool_textures_to_return, texture_handles) =
-        enqueue_readbacks(device, &prepared, &mut encoder);
+        enqueue_readbacks(device, device_key, &prepared, &mut encoder);
 
     let submission_idx = queue.submit(Some(encoder.finish()));
     if let Some(tracker) = submission_tracker {
@@ -496,7 +507,7 @@ pub fn dispatch_shader_with_options(
         let _ = device.poll(wgpu::PollType::Poll);
     }
 
-    let result = resolve_readbacks(device, &queue, readbacks)?;
+    let result = resolve_readbacks(device, device_key, &queue, readbacks)?;
     return_pooled_textures(pool_textures_to_return);
 
     Ok(ShaderRunOutput {

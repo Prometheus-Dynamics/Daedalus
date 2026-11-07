@@ -143,6 +143,8 @@ mod tests {
 #[derive(Clone)]
 pub(crate) struct GpuCtx {
     pub device: Arc<wgpu::Device>,
+    /// The `device_key` of `device`, computed once when the context was made.
+    pub device_key: usize,
     pub queue: LockedQueue,
     pub submission_tracker: Arc<SubmissionTracker>,
 }
@@ -197,8 +199,11 @@ async fn create_ctx_async() -> Result<GpuCtx, GpuError> {
     .await
     .map_err(|e| GpuError::Internal(e.to_string()))?;
 
+    // Computed once here; the dispatch helpers reuse it instead of asking the device per call.
+    let device_key = super::device_key(&device);
     Ok(GpuCtx {
         device: Arc::new(device),
+        device_key,
         queue: LockedQueue::new(queue, SubmitLock::default()),
         submission_tracker: Arc::new(SubmissionTracker::default()),
     })
