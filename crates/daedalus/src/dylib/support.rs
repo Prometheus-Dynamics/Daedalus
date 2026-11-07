@@ -231,6 +231,13 @@ macro_rules! export_plugin {
         #[unsafe(no_mangle)]
         #[allow(non_upper_case_globals)]
         pub static daedalus_plugin_stable_version: u32 = $crate::dylib::STABLE_ABI_VERSION;
+
+        /// The stable handshake (optional, see `STABLE_HANDSHAKE`): the layout hash the host checks
+        /// when present, as data (`lemnos_abi::AbiVersion`).
+        #[unsafe(no_mangle)]
+        #[allow(non_upper_case_globals)]
+        pub static daedalus_plugin_stable_abi: $crate::dylib::StableHandshake =
+            $crate::dylib::STABLE_HANDSHAKE;
     };
 }
 

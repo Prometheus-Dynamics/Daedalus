@@ -58,6 +58,7 @@ mod codec_host;
 pub mod codecs;
 mod generation;
 mod host;
+mod layout;
 mod plugin;
 mod pod;
 pub mod services;
@@ -83,6 +84,24 @@ pub use value::{Arena, StableEnum, StableField, StablePodView, StableValue, tag,
 /// it from the file without loading the library, and the loader cross-checks it against
 /// [`StableHandlers::version`]. Older plugins do not export it.
 pub const STABLE_VERSION_SYMBOL: &str = "daedalus_plugin_stable_version";
+
+/// The data symbol holding a plugin's [`STABLE_HANDSHAKE`] (a `lemnos_abi::AbiVersion` in
+/// read-only data). Optional: exported by [`export_plugin!`](crate::export_plugin); a plugin
+/// without it installs as before, and one with it must match the host's handshake.
+pub const STABLE_HANDSHAKE_SYMBOL: &str = "daedalus_plugin_stable_abi";
+
+/// The type of the handshake: `lemnos-abi`'s [`AbiVersion`](lemnos_abi::AbiVersion), named here
+/// so the export macro does not need the plugin to depend on `lemnos-abi` itself.
+pub type StableHandshake = lemnos_abi::AbiVersion;
+
+/// The layout hash of the stable ABI's `#[repr(C)]` types (see the private `layout` module).
+pub use layout::STABLE_LAYOUT_HASH;
+
+/// This build's stable handshake: major 1 (the handshake's own format, not the ABI version,
+/// which the `u32` symbol carries), minor 0, and [`STABLE_LAYOUT_HASH`] as its layout. A plugin
+/// that exports one must have it accepted by the host's (`lemnos_abi::AbiVersion::accepts`): a
+/// layout changed under the same version is then refused rather than misread.
+pub const STABLE_HANDSHAKE: StableHandshake = StableHandshake::new(1, 0, STABLE_LAYOUT_HASH);
 
 /// The stable extension symbol a version-3 plugin exports (see [`StableExtension`]).
 pub const STABLE_EXTENSION_SYMBOL: &str = "daedalus_plugin_stable_extension";
@@ -124,6 +143,11 @@ use std::ffi::c_void;
 /// adapters and host bridge serializers, so a plugin type (a `Local<T>` among them) reaches a
 /// host `Value` port and comes back. The handler tables and the extension keep version 6's
 /// layout; a plugin of version 6 or older has no codec table.
+///
+/// The handshake ([`STABLE_HANDSHAKE_SYMBOL`]) is an additive, optional symbol and changed nothing
+/// here: a plugin that exports it is checked against the host's [`STABLE_HANDSHAKE`], and one that
+/// does not is read as before. Frozen interfaces change in place during dev; the number moves only
+/// at a release the user calls.
 pub const STABLE_ABI_VERSION: u32 = 7;
 
 /// The first [`STABLE_ABI_VERSION`] whose [`StableExtension`] has [`LiveObjectsFn`].

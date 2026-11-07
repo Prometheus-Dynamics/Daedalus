@@ -721,3 +721,51 @@ fn the_stable_version_symbol_must_match_the_descriptor() {
         "{err}"
     );
 }
+
+/// The handshake is optional: a plugin without one installs as before (every layout 2 to 7), and a
+/// plugin that exports one must be accepted by the host's (same major and layout).
+#[test]
+fn the_stable_handshake_is_checked_when_a_plugin_exports_one() {
+    use crate::dylib::{STABLE_HANDSHAKE, StableHandshake};
+    let path = std::path::Path::new("libplugin.so");
+    let host = STABLE_HANDSHAKE;
+    for version in [2, 6, 7] {
+        assert!(
+            super::check_stable_handshake(path, None, version).is_ok(),
+            "version {version} exports no handshake and is not checked"
+        );
+    }
+    assert!(super::check_stable_handshake(path, Some(host), 7).is_ok());
+    // A plugin whose handshake differs in layout, major or minor is refused.
+    for refused in [
+        StableHandshake::new(1, 0, host.layout ^ 1),
+        StableHandshake::new(2, 0, host.layout),
+        StableHandshake::new(1, 1, host.layout),
+    ] {
+        let err = super::check_stable_handshake(path, Some(refused), 7).unwrap_err();
+        assert!(
+            matches!(err, PluginLibraryError::StableHandshake { version: 7, .. }),
+            "{err}"
+        );
+    }
+}
+
+/// A version-7 build (no handshake) installs through the stable path and runs, through this build's
+/// handlers: the layouts versions 2 to 7 read are unchanged.
+#[test]
+fn a_version_seven_plugin_installs_and_runs_without_a_handshake() {
+    let library = load_with(|descriptor| {
+        old_toolchain(descriptor);
+        descriptor.stable.version = 7;
+    })
+    .unwrap();
+    assert_eq!(library.stable_abi_version(), 7);
+    assert_eq!(library.install_mode(), Some(InstallPath::Stable));
+    let mut registry = PluginRegistry::new();
+    assert_eq!(
+        library.install_into(&mut registry).unwrap(),
+        InstallPath::Stable
+    );
+    let state = crate::runtime::StateStore::default();
+    assert_eq!(run_add(&registry, &state, 41), Ok((Some(42), Some(1))));
+}

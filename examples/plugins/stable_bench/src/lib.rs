@@ -89,4 +89,10 @@ mod export {
     #[unsafe(no_mangle)]
     #[allow(non_upper_case_globals)]
     pub static daedalus_plugin_stable_version: u32 = daedalus::dylib::STABLE_ABI_VERSION;
+
+    /// The stable handshake (`STABLE_HANDSHAKE`, optional), as data: the layout hash the host checks.
+    #[unsafe(no_mangle)]
+    #[allow(non_upper_case_globals)]
+    pub static daedalus_plugin_stable_abi: daedalus::dylib::StableHandshake =
+        daedalus::dylib::STABLE_HANDSHAKE;
 }

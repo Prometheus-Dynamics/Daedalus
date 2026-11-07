@@ -65,6 +65,14 @@ pub enum PluginLibraryError {
         symbol: u32,
         descriptor: u32,
     },
+    /// A plugin's stable handshake, when it exports one, is not this host's (see
+    /// `check_stable_handshake`).
+    #[error("plugin library `{}` (stable ABI {version}) was refused: {reason}", path.display())]
+    StableHandshake {
+        path: PathBuf,
+        version: u32,
+        reason: String,
+    },
     #[error("plugin info field `{field}` is null or not valid UTF-8")]
     InvalidInfo { field: &'static str },
     #[error("plugin `{plugin}` did not provide a valid schema: {message}")]

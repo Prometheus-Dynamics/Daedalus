@@ -7,7 +7,10 @@
 mod cdylib;
 
 use daedalus::PluginLibrary;
-use daedalus::dylib::{STABLE_ABI_VERSION, STABLE_VERSION_SYMBOL};
+use daedalus::dylib::{
+    STABLE_ABI_VERSION, STABLE_HANDSHAKE, STABLE_HANDSHAKE_SYMBOL, STABLE_VERSION_SYMBOL,
+    StableHandshake,
+};
 
 #[test]
 fn the_plugin_exports_its_stable_version_as_data() {
@@ -18,8 +21,15 @@ fn the_plugin_exports_its_stable_version_as_data() {
     let symbol = unsafe { library.get::<*const u32>(STABLE_VERSION_SYMBOL.as_bytes()) }.unwrap();
     // Safety: the address of a live static of the loaded library.
     assert_eq!(unsafe { **symbol }, STABLE_ABI_VERSION);
-    // 7: the codec table (6 added `live_objects`).
+    // 7: the codec table (6 added `live_objects`). Unchanged: the handshake is additive.
     assert_eq!(STABLE_ABI_VERSION, 7);
+    // The handshake this build exports as data (optional for older builds), equal to this host's.
+    // Safety: the symbol is an `AbiVersion` static (`export_plugin!`).
+    let handshake =
+        unsafe { library.get::<*const StableHandshake>(STABLE_HANDSHAKE_SYMBOL.as_bytes()) }
+            .unwrap();
+    // Safety: the address of a live static of the loaded library.
+    assert_eq!(unsafe { **handshake }, STABLE_HANDSHAKE);
     drop(library);
 
     // The loader cross-checks it against the descriptor and loads the plugin.

@@ -204,8 +204,9 @@ pub use loader::{
 pub use stable::{
     CODECS_VERSION, CodecFn, CodecTableFn, LIVE_OBJECTS_VERSION, LiveObjectsFn, NO_FANIN,
     STABLE_ABI_MIN_VERSION, STABLE_ABI_VERSION, STABLE_CODECS_SYMBOL, STABLE_EXTENSION_SYMBOL,
-    STABLE_VERSION_SYMBOL, SetConstsFn, StableCodecEntry, StableCodecTable, StableExtension,
-    StableExtensionV4, StableHandlers, StableInput, StableOutputSink, StableValue,
+    STABLE_HANDSHAKE, STABLE_HANDSHAKE_SYMBOL, STABLE_LAYOUT_HASH, STABLE_VERSION_SYMBOL,
+    SetConstsFn, StableCodecEntry, StableCodecTable, StableExtension, StableExtensionV4,
+    StableHandlers, StableHandshake, StableInput, StableOutputSink, StableValue,
     stable_abi_supported, stable_extension,
 };
 
@@ -277,7 +278,7 @@ impl From<&'static str> for StrView {
 /// The C-safe callback through which a plugin entry point hands a string (a schema or an error
 /// message) to the host: `lemnos-abi`'s [`MessageSink`](lemnos_abi::MessageSink), a context and a
 /// `write` callback, borrowed for the duration of the write. The same layout as before the
-/// `lemnos-abi` move (a stable ABI 8 plugin and an older one pass it the same way).
+/// `lemnos-abi` move (a stable ABI 7 plugin and an older one pass it the same way).
 pub type StrSink = lemnos_abi::MessageSink;
 
 /// Metadata a dynamic plugin reports about itself and the Daedalus build it was compiled with.
