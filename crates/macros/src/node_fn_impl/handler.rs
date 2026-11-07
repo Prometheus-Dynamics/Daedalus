@@ -528,32 +528,13 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             }
             let (arg_fetch_mut_stmts, arg_decode_stmts, arg_fetch_ref_stmts) =
                 (fetch.mutable, fetch.decode, fetch.borrowed);
-            let (slot_take, ret_handling) = if slot_parts.is_empty() {
-                (None, ret_handling)
-            } else {
-                let (idents, types): (Vec<_>, Vec<_>) = slot_parts.into_iter().unzip();
-                (
-                    Some(quote! {
-                        let (#(mut #idents,)*) = ctx
-                            .take_node_state::<(#(#types,)*)>()
-                            .unwrap_or_default();
-                    }),
-                    quote! {
-                        let __result = { #ret_handling };
-                        ctx.set_node_state((#(#idents,)*));
-                        __result
-                    },
-                )
-            };
-
             let shader_gpu_init = if shader_tokens.is_some() {
                 quote! { let __ctx_gpu: Option<#gpu_crate::GpuContextHandle> = ctx.gpu()?.cloned(); }
             } else {
                 quote! {}
             };
 
-            quote! {
-                #slot_take
+            let body = quote! {
                 #(#config_fetch_stmts)*
                 #(#arg_fetch_mut_stmts)*
                 #(#arg_decode_stmts)*
@@ -562,6 +543,23 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                 #state_binding
                 #shader_tokens
                 #ret_handling
+            };
+            if slot_parts.is_empty() {
+                body
+            } else {
+                let (idents, types): (Vec<_>, Vec<_>) = slot_parts.into_iter().unzip();
+                // The body runs in a closure, so a failing `?` (a missing input, a config that
+                // does not decode) still reaches the put-back below: the node's state, decoded
+                // configs included, survives a failed call instead of being dropped with it.
+                quote! {
+                    let (#(mut #idents,)*) = ctx
+                        .take_node_state::<(#(#types,)*)>()
+                        .unwrap_or_default();
+                    let __outcome: Result<(), #runtime_crate::NodeError> =
+                        (|| -> Result<(), #runtime_crate::NodeError> { #body })();
+                    ctx.set_node_state((#(#idents,)*));
+                    __outcome
+                }
             }
         }
     };

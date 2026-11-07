@@ -2,6 +2,7 @@
 //! crate graph is linked and its generic code instantiated once rather than once per file.
 
 mod adapt_macro;
+mod config_error_path;
 #[cfg(feature = "gpu-cuda")]
 mod device_cuda;
 #[cfg(feature = "gpu-runtime")]
