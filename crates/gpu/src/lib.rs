@@ -36,6 +36,10 @@ mod traits;
 #[cfg(feature = "gpu-wgpu")]
 mod wgpu_backend;
 
+/// A counting allocator for the unit tests (per-thread counts of heap allocations).
+#[cfg(test)]
+mod alloc_count;
+
 #[cfg(feature = "gpu-async")]
 pub use async_api::GpuAsyncBackend;
 pub use backends::GpuBackends;

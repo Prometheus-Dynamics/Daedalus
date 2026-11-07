@@ -711,6 +711,7 @@ dependencies = [
 name = "daedalus-gpu"
 version = "3.0.1-dev"
 dependencies = [
+ "arrayvec",
  "ash",
  "async-trait",
  "bitflags 2.13.2",

@@ -147,6 +147,7 @@ serde_json = { version = "1.0.151", default-features = false, features = ["alloc
 serde_path_to_error = "0.1.20"
 sha2 = "0.11"
 spin = { version = "0.12.3", default-features = false, features = ["once", "rwlock", "spin_mutex"] }
+arrayvec = "0.7.8"
 parking_lot = "0.12.5"
 # `union` is always on: it changes `SmallVec` layouts, and `NodeIo` crosses the dynamic plugin
 # boundary, so it must not depend on whether another crate in the build (e.g. wgpu-hal) enables it.

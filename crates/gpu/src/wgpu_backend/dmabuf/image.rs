@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd};
 
+use arrayvec::ArrayVec;
 use ash::{khr, vk};
 use wgpu::hal::vulkan as hal_vk;
 
@@ -16,27 +17,31 @@ const MEMORY_PLANES: [vk::ImageAspectFlags; crate::MAX_MEMORY_PLANES] = [
     vk::ImageAspectFlags::MEMORY_PLANE_3_EXT,
 ];
 
+/// Formats a multi-planar image is viewed with: the image format and at most three plane
+/// formats. Inline, so an import builds no list on the heap.
+pub(super) type ViewFormats = ArrayVec<vk::Format, 4>;
+
 /// Everything the Vulkan side needs, resolved from the descriptor.
-pub(super) struct ImportRequest {
+pub(super) struct ImportRequest<'a> {
     pub width: u32,
     pub height: u32,
     pub fourcc: DrmFourcc,
     pub modifier: u64,
     /// One layout per memory plane of the modifier (format planes, then aux planes).
-    pub plane_layouts: Vec<vk::SubresourceLayout>,
+    pub plane_layouts: ArrayVec<vk::SubresourceLayout, { crate::MAX_MEMORY_PLANES }>,
     /// Bind each memory plane to its own dmabuf (`VK_IMAGE_CREATE_DISJOINT_BIT`).
     pub disjoint: bool,
     pub wgpu_format: wgpu::TextureFormat,
     pub vk_format: vk::Format,
     /// Formats of the views wgpu creates (multi-planar formats only; see `create_flags`).
-    pub view_formats: Vec<vk::Format>,
+    pub view_formats: ViewFormats,
     pub vk_usage: vk::ImageUsageFlags,
     pub format_features: vk::FormatFeatureFlags,
     pub hal_usage: wgpu::wgt::TextureUses,
-    pub label: Option<String>,
+    pub label: Option<&'a str>,
 }
 
-impl ImportRequest {
+impl ImportRequest<'_> {
     fn format_error(&self, reason: impl Into<String>) -> ExternalImportError {
         ExternalImportError::UnsupportedFormat {
             fourcc: self.fourcc,
@@ -64,7 +69,7 @@ impl ImportRequest {
 struct ImportedImage {
     device: ash::Device,
     image: vk::Image,
-    memories: Vec<vk::DeviceMemory>,
+    memories: ArrayVec<vk::DeviceMemory, { crate::MAX_MEMORY_PLANES }>,
 }
 
 impl Drop for ImportedImage {
@@ -91,8 +96,8 @@ impl Drop for ImportedImage {
 /// texture's drop callback.
 pub(super) unsafe fn create_imported_texture(
     hal_dev: &hal_vk::Device,
-    req: &ImportRequest,
-    fds: Vec<(OwnedFd, u64)>,
+    req: &ImportRequest<'_>,
+    fds: ArrayVec<(OwnedFd, u64), { crate::MAX_MEMORY_PLANES }>,
     keepalive: Option<ExternalKeepalive>,
     queries: &mut QueryCache,
 ) -> Result<hal_vk::Texture, ExternalImportError> {
@@ -139,7 +144,7 @@ pub(super) unsafe fn create_imported_texture(
     let mut owned = ImportedImage {
         device: device.clone(),
         image,
-        memories: Vec::with_capacity(fds.len()),
+        memories: ArrayVec::new(),
     };
 
     let fd_api = khr::external_memory_fd::Device::new(instance, device);
@@ -154,19 +159,19 @@ pub(super) unsafe fn create_imported_texture(
             .image(image)
             .memory(owned.memories[plane])
     };
-    let mut plane_infos: Vec<_> = MEMORY_PLANES[..owned.memories.len()]
-        .iter()
-        .map(|&aspect| vk::BindImagePlaneMemoryInfo::default().plane_aspect(aspect))
-        .collect();
-    let binds: Vec<_> = if req.disjoint {
-        plane_infos
-            .iter_mut()
-            .enumerate()
-            .map(|(plane, info)| bind(plane).push_next(info))
-            .collect()
+    let mut plane_infos =
+        ArrayVec::<vk::BindImagePlaneMemoryInfo, { crate::MAX_MEMORY_PLANES }>::new();
+    for &aspect in &MEMORY_PLANES[..owned.memories.len()] {
+        plane_infos.push(vk::BindImagePlaneMemoryInfo::default().plane_aspect(aspect));
+    }
+    let mut binds = ArrayVec::<vk::BindImageMemoryInfo, { crate::MAX_MEMORY_PLANES }>::new();
+    if req.disjoint {
+        for (plane, info) in plane_infos.iter_mut().enumerate() {
+            binds.push(bind(plane).push_next(info));
+        }
     } else {
-        vec![bind(0)]
-    };
+        binds.push(bind(0));
+    }
     // SAFETY: each memory was allocated for this image (plane); offset 0, the plane offsets are
     // part of the explicit layout.
     unsafe { device.bind_image_memory2(&binds) }.map_err(|err| {
@@ -183,7 +188,7 @@ pub(super) unsafe fn create_imported_texture(
         drop(keepalive);
     });
     let hal_desc = wgpu::hal::TextureDescriptor {
-        label: req.label.as_deref(),
+        label: req.label,
         size: wgpu::Extent3d {
             width: req.width,
             height: req.height,
@@ -489,10 +494,11 @@ struct ImageQueryKey {
     modifier: u64,
     usage: vk::ImageUsageFlags,
     flags: vk::ImageCreateFlags,
-    view_formats: Vec<vk::Format>,
+    view_formats: ViewFormats,
 }
 
 impl ImageQueryKey {
+    /// Built without allocating: the view formats are inline.
     fn new(req: &ImportRequest) -> Self {
         Self {
             format: req.vk_format,

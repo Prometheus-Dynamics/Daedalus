@@ -68,15 +68,15 @@
 //!   acquire (`-> GENERAL`, to the foreign family).
 
 use std::os::fd::{AsFd, OwnedFd};
-use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 
+use arrayvec::ArrayVec;
 use ash::{ext, khr, vk};
 use wgpu::hal::api::Vulkan;
 use wgpu::hal::vulkan as hal_vk;
 
 use super::acquire::{Acquire, OPTIONAL_EXTENSIONS};
-use super::image::{ImportRequest, QueryCache, create_imported_texture};
+use super::image::{ImportRequest, QueryCache, ViewFormats, create_imported_texture};
 use crate::{
     DRM_FORMAT_MOD_LINEAR, ExternalFrameDescriptor, ExternalImportError, ExternalImportSupport,
     ExternalPlane, GpuFormat, GpuImageHandle, GpuUsage, WgpuBackend, external::sync_file_signaled,
@@ -382,16 +382,16 @@ pub(in crate::wgpu_backend) fn import(
         keepalive,
         ..
     } = desc;
-    let plane_layouts = planes
-        .iter()
-        .map(|plane| vk::SubresourceLayout {
+    let mut plane_layouts = ArrayVec::new();
+    for plane in &planes {
+        plane_layouts.push(vk::SubresourceLayout {
             offset: plane.offset,
             size: 0,
             row_pitch: plane.stride,
             array_pitch: 0,
             depth_pitch: 0,
-        })
-        .collect();
+        });
+    }
     let (fds, disjoint) = plane_memory(planes, &layout.min_len)?;
 
     let hal_texture = {
@@ -415,7 +415,7 @@ pub(in crate::wgpu_backend) fn import(
             vk_usage: usage.vk,
             format_features: usage.format_features,
             hal_usage: usage.hal,
-            label: label.clone(),
+            label: label.as_deref(),
         };
         let mut queries = context.queries.lock();
         // SAFETY: `hal_dev` is the device the wgpu device wraps; see `create_imported_texture`.
@@ -474,47 +474,53 @@ pub(in crate::wgpu_backend) fn set_fence_mode(
 
 /// The dmabufs backing the planes with their sizes: one when every plane lives in the same dmabuf
 /// (same or `dup`ed fd), otherwise one per plane (`disjoint`).
+///
+/// Allocation-free: the planes are at most [`MAX_MEMORY_PLANES`](crate::MAX_MEMORY_PLANES), and
+/// each plane is identified by an `fstat` of its borrowed fd (no `dup`).
 fn plane_memory(
     planes: Vec<ExternalPlane>,
     min_len: &[u64],
-) -> Result<(Vec<(OwnedFd, u64)>, bool), ExternalImportError> {
-    let identity = |plane: &ExternalPlane| {
-        std::fs::File::from(plane.fd.try_clone()?)
-            .metadata()
-            .map(|m| (m.dev(), m.ino()))
-    };
-    let ids = planes
-        .iter()
-        .map(identity)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| ExternalImportError::invalid(format!("cannot stat plane fd: {err}")))?;
+) -> Result<(DmabufList, bool), ExternalImportError> {
+    if planes.len() > crate::MAX_MEMORY_PLANES {
+        return Err(ExternalImportError::invalid(format!(
+            "more than {} planes",
+            crate::MAX_MEMORY_PLANES
+        )));
+    }
+    let mut ids = ArrayVec::<(u64, u64), { crate::MAX_MEMORY_PLANES }>::new();
+    for plane in &planes {
+        let id = lemnos_linux::dma::DmaBufRef::from_fd(plane.fd.as_fd())
+            .and_then(|buf| buf.identity())
+            .map_err(|err| ExternalImportError::invalid(format!("cannot stat plane fd: {err}")))?;
+        ids.push(id);
+    }
     let shared = ids.windows(2).all(|w| w[0] == w[1]);
-    let groups: Vec<(OwnedFd, u64)> = if shared {
+    let mut groups = ArrayVec::<(OwnedFd, u64), { crate::MAX_MEMORY_PLANES }>::new();
+    if shared {
         let need = min_len.iter().copied().max().unwrap_or(0);
-        let fd = planes.into_iter().next().map(|p| p.fd);
-        fd.map(|fd| (fd, need)).into_iter().collect()
+        if let Some(plane) = planes.into_iter().next() {
+            groups.push((plane.fd, need));
+        }
     } else {
-        planes
-            .into_iter()
-            .map(|p| p.fd)
-            .zip(min_len.iter().copied())
-            .collect()
-    };
-    let fds = groups
-        .into_iter()
-        .enumerate()
-        .map(|(index, (fd, need))| {
-            let (fd, len) = dmabuf_len(fd)?;
-            if len < need {
-                return Err(ExternalImportError::invalid(format!(
-                    "dmabuf {index} is {len} bytes but the plane layout needs {need}"
-                )));
-            }
-            Ok((fd, len))
-        })
-        .collect::<Result<_, _>>()?;
+        for (plane, need) in planes.into_iter().zip(min_len.iter().copied()) {
+            groups.push((plane.fd, need));
+        }
+    }
+    let mut fds = DmabufList::new();
+    for (index, (fd, need)) in groups.into_iter().enumerate() {
+        let (fd, len) = dmabuf_len(fd)?;
+        if len < need {
+            return Err(ExternalImportError::invalid(format!(
+                "dmabuf {index} is {len} bytes but the plane layout needs {need}"
+            )));
+        }
+        fds.push((fd, len));
+    }
     Ok((fds, !shared))
 }
+
+/// The dmabufs an import takes (one, or one per plane), with their sizes.
+type DmabufList = ArrayVec<(OwnedFd, u64), { crate::MAX_MEMORY_PLANES }>;
 
 /// Size of a dmabuf (`lseek(SEEK_END)`, which dmabufs support), with the descriptor handed back.
 fn dmabuf_len(fd: OwnedFd) -> Result<(OwnedFd, u64), ExternalImportError> {
@@ -595,16 +601,21 @@ impl UsageSet {
 /// Formats the image is viewed with: for a multi-planar format the format itself and its plane
 /// formats (the per-plane views), declared up front because `MUTABLE_FORMAT` images with a DRM
 /// format modifier need a `VkImageFormatListCreateInfo`; empty otherwise.
-fn view_formats(format: wgpu::TextureFormat, vk_format: vk::Format) -> Vec<vk::Format> {
+fn view_formats(format: wgpu::TextureFormat, vk_format: vk::Format) -> ViewFormats {
+    let mut out = ViewFormats::new();
     let Some(planes) = format.planes() else {
-        return Vec::new();
+        return out;
     };
-    let plane_formats = (0..planes)
-        .filter_map(wgpu::TextureAspect::from_plane)
-        .filter_map(|aspect| format.aspect_specific_format(aspect))
-        .filter_map(crate::wgpu_backend::gpu_format_from_wgpu)
-        .filter_map(map_vk_format);
-    std::iter::once(vk_format).chain(plane_formats).collect()
+    out.push(vk_format);
+    // At most three planes (NV12 has two), so `push` cannot overflow.
+    for aspect in (0..planes).filter_map(wgpu::TextureAspect::from_plane) {
+        let plane = format
+            .aspect_specific_format(aspect)
+            .and_then(crate::wgpu_backend::gpu_format_from_wgpu)
+            .and_then(map_vk_format);
+        out.extend(plane);
+    }
+    out
 }
 
 /// Vulkan format of the importable formats (those a `DrmFourcc` maps to).
@@ -617,4 +628,70 @@ fn map_vk_format(format: GpuFormat) -> Option<vk::Format> {
         GpuFormat::Nv12 => vk::Format::G8_B8R8_2PLANE_420_UNORM,
         GpuFormat::Rgba16Float | GpuFormat::Depth24Stencil8 => return None,
     })
+}
+
+#[cfg(test)]
+mod alloc_tests {
+    use super::*;
+    use crate::alloc_count::allocations_in;
+    use std::os::fd::{FromRawFd, OwnedFd};
+
+    /// A memfd of `len` bytes: `plane_memory` needs only an fd it can stat and seek.
+    fn memfd(len: i64) -> OwnedFd {
+        // SAFETY: a valid NUL-terminated name; the fd is owned from here on.
+        let fd = unsafe { libc::memfd_create(c"daedalus-plane".as_ptr(), 0) };
+        assert!(fd >= 0, "memfd_create");
+        // SAFETY: `fd` is a fresh descriptor we own.
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        // SAFETY: a valid fd, resized to `len` bytes.
+        assert_eq!(
+            unsafe { libc::ftruncate(std::os::fd::AsRawFd::as_raw_fd(&fd), len) },
+            0
+        );
+        fd
+    }
+
+    /// The per-import helpers (plane list, plane memory, view formats) make no heap allocation
+    /// in steady state: the lists are inline, and identity is an fstat of the borrowed fd.
+    #[test]
+    fn plane_helpers_do_not_allocate() {
+        let shared = memfd(1 << 20);
+        let dup = shared.try_clone().unwrap();
+        let planes = |a: &OwnedFd, b: &OwnedFd| {
+            vec![
+                ExternalPlane::from_borrowed(a.as_fd(), 0, 640).unwrap(),
+                ExternalPlane::from_borrowed(b.as_fd(), 640 * 480, 640).unwrap(),
+            ]
+        };
+        // One dmabuf (two fds, one inode): one import.
+        let shared_planes = planes(&shared, &dup);
+        let min_len = [640 * 480 + 640 * 240, 640 * 480 + 640 * 240];
+        let (result, allocs) = allocations_in(|| {
+            plane_memory(shared_planes, &min_len).map(|(fds, disjoint)| (fds.len(), disjoint))
+        });
+        assert_eq!(result.unwrap(), (1, false));
+        assert_eq!(allocs, 0, "shared-dmabuf plane memory allocated");
+
+        // Two dmabufs: one import per plane (disjoint).
+        let other = memfd(1 << 20);
+        let split_planes = vec![
+            ExternalPlane::from_borrowed(shared.as_fd(), 0, 640).unwrap(),
+            ExternalPlane::from_borrowed(other.as_fd(), 0, 640).unwrap(),
+        ];
+        let (result, allocs) = allocations_in(|| {
+            plane_memory(split_planes, &[307_200, 153_600])
+                .map(|(fds, disjoint)| (fds.len(), disjoint))
+        });
+        assert_eq!(result.unwrap(), (2, true));
+        assert_eq!(allocs, 0, "disjoint plane memory allocated");
+
+        let (formats, allocs) = allocations_in(|| {
+            view_formats(
+                wgpu::TextureFormat::NV12,
+                vk::Format::G8_B8R8_2PLANE_420_UNORM,
+            )
+        });
+        assert_eq!(formats.len(), 3, "NV12: the image and its two plane views");
+        assert_eq!(allocs, 0, "view formats allocated");
+    }
 }

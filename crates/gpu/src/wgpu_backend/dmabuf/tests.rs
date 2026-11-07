@@ -57,6 +57,11 @@ mod fence_cost;
 #[path = "tests/nv12.rs"]
 mod nv12;
 
+/// Heap allocations of a steady import (counting allocator).
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+#[path = "tests/alloc.rs"]
+mod alloc;
+
 /// Tiled and compressed (multi-memory-plane) modifiers exported by a Vulkan producer.
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
 #[path = "tests/modifiers.rs"]

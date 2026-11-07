@@ -40,6 +40,7 @@ gpu-vulkan-raw = ["gpu-wgpu", "gpu-dmabuf"]
 gpu-cuda = ["dep:libloading"]
 
 [dependencies]
+arrayvec = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 async-trait = { workspace = true, optional = true }

@@ -22,6 +22,13 @@ plugin ABI and does not load.
   backend and the fallback context now compute it once, when the device is made, and the dispatch
   helpers take it as an argument. A call costs about 0.5-0.8 µs on a loaded host (`device_key_cost`,
   minimum of five batches), so a dispatch saves its share of 2.5-4 µs. Internal: no public API change.
+- **Dmabuf texture import builds no lists on the heap.** The plane layouts, the dmabuf list,
+  the view formats, the query-cache keys and the memory list are inline (`arrayvec`, a direct
+  dependency of `daedalus-gpu` already in the lock), and a plane is identified by an `fstat` of its
+  borrowed fd, not a `dup` and a second `fstat`. The label is borrowed, not cloned. A steady import
+  of a LINEAR XRGB8888 dmabuf makes 44 heap allocations on the host GPU, down from 50 (`steady_import`
+  probe in `wgpu_backend/dmabuf/tests/alloc.rs`); the rest is wgpu-core and wgpu-hal bookkeeping, the
+  drop-callback box and the texture `Arc`, which a cached texture per dmabuf would remove.
 - **Stable plugin handshake (changed in place, no bump).** `daedalus::dylib::STABLE_ABI_VERSION`
   stays 7. A plugin may export `daedalus_plugin_stable_abi` (`STABLE_HANDSHAKE_SYMBOL`): a
   `lemnos_abi::AbiVersion` whose layout is `STABLE_LAYOUT_HASH`, the hash of the stable `#[repr(C)]`
