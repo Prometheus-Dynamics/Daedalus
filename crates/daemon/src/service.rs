@@ -549,7 +549,13 @@ fn handle_tcp_client(
 
 #[cfg(feature = "tcp")]
 pub fn run_tcp_service(engine: Engine, addr: &str) -> io::Result<()> {
-    let listener = TcpListener::bind(addr)?;
+    serve_tcp_listener(engine, TcpListener::bind(addr)?)
+}
+
+/// Serve the protocol on a listener the caller has bound, e.g. to port 0 so the OS picks a free
+/// port and the caller reports [`TcpListener::local_addr`] before serving.
+#[cfg(feature = "tcp")]
+pub fn serve_tcp_listener(engine: Engine, listener: TcpListener) -> io::Result<()> {
     let mut state = ServiceState::default();
     for stream in listener.incoming() {
         let mut stream = stream?;

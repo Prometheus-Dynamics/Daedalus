@@ -71,34 +71,31 @@ fn stdio_answers_ping_put_graph_inspect_and_errors_in_lockstep() {
     assert_eq!(responses[5]["code"], "invalid_request");
 }
 
+/// Start `serve` on port 0 and read back the address it bound. Picking a free port first and
+/// passing it in races with other processes taking that port before the daemon binds it.
 #[cfg(feature = "tcp")]
-fn free_addr() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr").to_string();
-    drop(listener);
-    addr
-}
-
-#[cfg(feature = "tcp")]
-fn wait_until_listening(addr: &str) {
-    for _ in 0..200 {
-        if std::net::TcpStream::connect(addr).is_ok() {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
-    }
-    panic!("daemon did not start listening on {addr}");
+fn spawn_server() -> (std::process::Child, String) {
+    let mut server = daemon()
+        .args(["serve", "127.0.0.1:0"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn server");
+    let mut line = String::new();
+    BufReader::new(server.stdout.take().expect("server stdout"))
+        .read_line(&mut line)
+        .expect("read listening line");
+    let Some(addr) = line.trim().strip_prefix("listening ") else {
+        let _ = server.kill();
+        let _ = server.wait();
+        panic!("daemon did not report its address: {line:?}");
+    };
+    (server, addr.to_string())
 }
 
 #[cfg(feature = "tcp")]
 #[test]
 fn tcp_serves_the_protocol_to_the_cli() {
-    let addr = free_addr();
-    let mut server = daemon()
-        .args(["serve", &addr])
-        .spawn()
-        .expect("spawn server");
-    wait_until_listening(&addr);
+    let (mut server, addr) = spawn_server();
     let result = std::panic::catch_unwind(|| {
         let ping = daemon()
             .args(["ping", "--addr", &addr])

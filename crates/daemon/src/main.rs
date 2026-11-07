@@ -30,7 +30,13 @@ fn run() -> Result<(), String> {
                 .unwrap_or_else(|| "127.0.0.1:4100".to_string());
             let engine = daedalus_engine::Engine::new(daedalus_engine::EngineConfig::default())
                 .map_err(|e| e.to_string())?;
-            service::run_tcp_service(engine, &addr).map_err(|e| e.to_string())
+            let listener = std::net::TcpListener::bind(&addr).map_err(|e| e.to_string())?;
+            // The bound address, so `serve 127.0.0.1:0` tells its caller which port it got.
+            let bound = listener.local_addr().map_err(|e| e.to_string())?;
+            let mut stdout = std::io::stdout();
+            writeln!(stdout, "listening {bound}").map_err(|e| e.to_string())?;
+            stdout.flush().map_err(|e| e.to_string())?;
+            service::serve_tcp_listener(engine, listener).map_err(|e| e.to_string())
         }
         "ping" => send_simple(args, service::ServiceRequest::Ping),
         "inspect-state" => send_simple(args, service::ServiceRequest::InspectState),
@@ -184,7 +190,10 @@ fn print_usage() {
     let _ = writeln!(stderr, "daedalus-daemon");
     let _ = writeln!(stderr, "  daedalus-daemon stdio");
     #[cfg(feature = "tcp")]
-    let _ = writeln!(stderr, "  daedalus-daemon serve [addr]");
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon serve [addr]   (prints `listening <addr>`; port 0 picks a free one)"
+    );
     let _ = writeln!(
         stderr,
         "  daedalus-daemon ping [--addr A] [--session S] [--request-id ID]"
