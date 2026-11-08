@@ -395,6 +395,8 @@ cmd_wasm() {
 # manifests. The facade cannot be packaged alone for the same reason, so its file list is also
 # checked on its own: the listing must print nothing on stderr.
 readonly PACKAGE_EXCLUDES=(--exclude daedalus-examples
+  --exclude daedalus-plugins-node-groups --exclude daedalus-plugins-node-groups-dylib
+  --exclude daedalus-plugins-node-groups-stable
   --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project
   --exclude daedalus-wasm-smoke --exclude daedalus-wasm-bindgen-host --exclude daedalus-nostd-smoke
   --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes --exclude daedalus-mcu-shared
