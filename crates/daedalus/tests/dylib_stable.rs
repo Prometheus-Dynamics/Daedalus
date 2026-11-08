@@ -124,10 +124,13 @@ fn compile(
     for (from, to) in wire {
         builder = builder.connect(*from, *to);
     }
-    Engine::new(EngineConfig::default())
-        .unwrap()
-        .compile_registry(registry, builder.build())
-        .unwrap()
+    // No backoff: the frame after the failure runs at once (the backoff is tested on an injected clock).
+    Engine::new(
+        EngineConfig::default().with_backoff(std::time::Duration::ZERO, std::time::Duration::ZERO),
+    )
+    .unwrap()
+    .compile_registry(registry, builder.build())
+    .unwrap()
 }
 
 fn scalar(ty: ValueType) -> TypeExpr {

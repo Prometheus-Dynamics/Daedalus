@@ -15,6 +15,7 @@ mod direct_slot;
 mod errors;
 mod handler;
 mod init;
+mod node_health;
 mod node_policy;
 mod owned;
 mod owned_direct_host;
@@ -41,6 +42,9 @@ pub(crate) use direct_slot::{DirectSlot, DirectSlotAccess};
 pub use errors::{ExecuteError, ExecutorBuildError, ExecutorMaskError, NodeError};
 pub use handler::{DirectPayloadFn, NodeHandler};
 pub(crate) use init::{ExecutorInit, build_executor_init};
+pub use node_health::{
+    DEFAULT_BACKOFF_BASE, DEFAULT_BACKOFF_CAP, MAX_BACKOFF_CAP, NodeHealthReport,
+};
 pub(crate) use node_policy::NodePolicies;
 pub use node_policy::{
     NODE_PRIORITY_META_KEY, NODE_RECOVERY_META_KEY, NodeRecovery, RecoveryTelemetry,

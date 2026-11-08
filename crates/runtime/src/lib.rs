@@ -203,8 +203,8 @@ pub use executor::{
     register_runtime_data_size_inspector,
 };
 pub use executor::{
-    NODE_PRIORITY_META_KEY, NODE_RECOVERY_META_KEY, NodeRecovery, RecoveryTelemetry,
-    UnknownNodeError,
+    DEFAULT_BACKOFF_BASE, DEFAULT_BACKOFF_CAP, MAX_BACKOFF_CAP, NODE_PRIORITY_META_KEY,
+    NODE_RECOVERY_META_KEY, NodeHealthReport, NodeRecovery, RecoveryTelemetry, UnknownNodeError,
 };
 pub use fanin::FanIn;
 pub use handles::{

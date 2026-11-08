@@ -16,6 +16,9 @@ pub(crate) struct ExecutorRunConfig {
     pub(crate) pool_size: Option<usize>,
     /// Frame-path overhead counters to fill, independent of `metrics_level`.
     pub(crate) frame_probe: Option<Arc<super::FrameProbe>>,
+    /// The first backoff delay of a failed node, and the cap on it (`with_backoff`).
+    pub(crate) backoff_base: core::time::Duration,
+    pub(crate) backoff_cap: core::time::Duration,
 }
 
 impl Default for ExecutorRunConfig {
@@ -32,6 +35,8 @@ impl Default for ExecutorRunConfig {
             debug_config,
             pool_size: debug_config.pool_size,
             frame_probe: None,
+            backoff_base: super::node_health::DEFAULT_BACKOFF_BASE,
+            backoff_cap: super::node_health::DEFAULT_BACKOFF_CAP,
         }
     }
 }
@@ -77,6 +82,14 @@ impl ExecutorRunConfig {
 
     pub(crate) fn set_fail_fast(&mut self, enabled: bool) {
         self.fail_fast = enabled;
+    }
+
+    /// Backoff base and cap; the cap is clamped to [`super::node_health::MAX_BACKOFF_CAP`] and
+    /// the base to the cap.
+    pub(crate) fn set_backoff(&mut self, base: core::time::Duration, cap: core::time::Duration) {
+        let cap = cap.min(super::node_health::MAX_BACKOFF_CAP);
+        self.backoff_cap = cap;
+        self.backoff_base = base.min(cap);
     }
 
     pub(crate) fn set_pool_size(&mut self, size: Option<usize>) {

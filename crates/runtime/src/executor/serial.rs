@@ -123,6 +123,7 @@ fn run_order_telemetry_timed<H: NodeHandler>(
 pub(crate) fn finish_telemetry(core: &mut ExecutorCore) -> ExecutionTelemetry {
     core.telemetry.recompute_unattributed_runtime_duration();
     core.telemetry.aggregate_group_ids(&core.node_groups);
+    core.telemetry.node_health = core.node_health.reports(&core.node_ids, &core.clock);
     let level = core.telemetry.metrics_level;
     let telemetry = core::mem::take(&mut core.telemetry);
     core.telemetry.metrics_level = level;
@@ -170,6 +171,7 @@ fn run_order_timed<H: NodeHandler>(
     let blocking = v.core.run_config.policies.blocking();
     // Without recovery policies every node fails as before: skip the per-node lookups.
     let recovering = v.core.run_config.policies.any_recovery();
+    let uniform = v.core.run_config.policies.uniform_recovery();
 
     for (pos, node_ref) in order.iter().copied().enumerate() {
         let node_idx = node_ref.0;
@@ -212,13 +214,20 @@ fn run_order_timed<H: NodeHandler>(
             continue;
         }
         let recovery = if recovering {
-            v.core.run_config.policies.recovery_of(node_idx)
+            uniform.unwrap_or_else(|| v.core.run_config.policies.recovery_of(node_idx))
         } else {
             super::NodeRecovery::Fail
         };
         let collect_start = probe.is_some().then(|| clock.now());
         let inputs = collect_inputs(&mut v, node_idx, wait_all, &mut carry)?;
         debug_assert!(carry.is_empty(), "fused payloads go to the next node");
+        // A backed-off node skips its frame: its inputs are dropped, and its consumers see no
+        // output this tick. Once its delay passes, the next attempt runs.
+        let Some(probing) = v.core.node_health.admit(node_idx, &v.core.clock) else {
+            v.core.telemetry.recovery_mut().backoff_skips += 1;
+            v.core.port_pool.recycle(inputs);
+            continue;
+        };
         if let (Some(probe), Some(start)) = (&probe, collect_start) {
             probe.add_time(ProbeTime::Collect, clock.elapsed(start));
         }
@@ -348,9 +357,13 @@ fn run_order_timed<H: NodeHandler>(
             resilience::handle_failure(&mut v, node_idx, &node.id, error, recovery)?;
         } else {
             let fused = FusedOutputs::of(&v, fusion.as_deref(), node_idx, order, pos, &mut carry);
-            if let Err(error) = publish_outputs(&mut v, node_idx, outputs, fused) {
-                let recovery = resilience::after_delivery(recovery);
-                resilience::handle_failure(&mut v, node_idx, &node.id, error, recovery)?;
+            match publish_outputs(&mut v, node_idx, outputs, fused) {
+                Ok(()) if probing => v.core.node_health.on_success(node_idx),
+                Ok(()) => {}
+                Err(error) => {
+                    let recovery = resilience::after_delivery(recovery);
+                    resilience::handle_failure(&mut v, node_idx, &node.id, error, recovery)?;
+                }
             }
         }
 

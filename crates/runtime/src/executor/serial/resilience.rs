@@ -3,7 +3,6 @@
 //! blocking output queue is full.
 
 use crate::prelude::*;
-use core::time::Duration;
 
 use crate::executor::queue::edge_is_full;
 use crate::executor::{
@@ -78,7 +77,7 @@ pub(super) fn retry<H: NodeHandler>(
     saved: Vec<NodePort>,
     recovery: NodeRecovery,
 ) -> Result<(), NodeError> {
-    let NodeRecovery::Retry { max, backoff } = recovery else {
+    let NodeRecovery::Retry { max, .. } = recovery else {
         v.core.port_pool.recycle(saved);
         return result;
     };
@@ -99,7 +98,6 @@ pub(super) fn retry<H: NodeHandler>(
             "node failed; retrying"
         );
         let _ = error;
-        backoff_wait(backoff);
         let telemetry = &mut v.core.telemetry;
         telemetry.recovery_mut().retries += 1;
         *io = v
@@ -113,14 +111,6 @@ pub(super) fn retry<H: NodeHandler>(
     }
     v.core.port_pool.recycle(saved);
     result
-}
-
-fn backoff_wait(backoff: Duration) {
-    #[cfg(feature = "std")]
-    if !backoff.is_zero() {
-        std::thread::sleep(backoff);
-    }
-    let _ = backoff;
 }
 
 /// What a flush or publish error falls back to: those are not retried, since outputs may be
@@ -149,6 +139,14 @@ pub(super) fn handle_failure(
         return Ok(());
     }
     record_failure(&mut v.core.telemetry, node_idx, node_id, &error);
+    // Back the node off for its next delay: across ticks, never inside this one.
+    v.core.node_health.on_failure(
+        node_idx,
+        error.to_string(),
+        &v.core.clock,
+        v.core.run_config.backoff_base,
+        v.core.run_config.backoff_cap,
+    );
     // Fail-fast ends the run on any failure, whatever the node's policy (CI and tests).
     if v.core.run_config.fail_fast {
         return Err(ExecuteError::HandlerFailed {

@@ -2,6 +2,7 @@
 //! crate graph is linked and its generic code instantiated once rather than once per file.
 //! `adaptive_mode` (wall-clock timing assertions) keeps its own binary.
 
+mod backoff;
 mod backpressure;
 mod executor;
 #[cfg(feature = "gpu-cuda")]

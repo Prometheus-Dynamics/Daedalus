@@ -127,9 +127,11 @@ impl Engine {
         &self,
         mut exec: OwnedExecutor<H>,
     ) -> Result<OwnedExecutor<H>, EngineError> {
+        let rt = &self.config.runtime;
         exec = exec
             .with_fail_fast(self.config.runtime.fail_fast)
             .with_recovery(self.config.runtime.recovery)
+            .with_backoff(rt.backoff_base, rt.backoff_cap)
             .with_blocking_backpressure(self.config.runtime.blocking_backpressure)
             .with_metrics_level(self.config.runtime.metrics_level)
             .with_clock(self.config.runtime.clock.clone())
@@ -170,9 +172,11 @@ impl Engine {
         &self,
         mut exec: Executor<'a, H>,
     ) -> Result<Executor<'a, H>, EngineError> {
+        let rt = &self.config.runtime;
         exec = exec
             .with_fail_fast(self.config.runtime.fail_fast)
             .with_recovery(self.config.runtime.recovery)
+            .with_backoff(rt.backoff_base, rt.backoff_cap)
             .with_blocking_backpressure(self.config.runtime.blocking_backpressure)
             .with_metrics_level(self.config.runtime.metrics_level)
             .with_clock(self.config.runtime.clock.clone())

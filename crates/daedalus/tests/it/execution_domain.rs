@@ -110,7 +110,8 @@ fn engine() -> Engine {
     Engine::new(
         EngineConfig::default()
             .with_metrics_level(MetricsLevel::Off)
-            .with_fail_fast(true),
+            .with_fail_fast(true)
+            .with_backoff(std::time::Duration::ZERO, std::time::Duration::ZERO),
     )
     .expect("engine")
 }

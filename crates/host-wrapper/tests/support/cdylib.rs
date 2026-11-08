@@ -28,6 +28,16 @@ pub fn build_cdylib(package: &str, lib_name: &str, features: &str) -> PathBuf {
         .stderr(Stdio::inherit());
     if !features.is_empty() {
         command.args(["--features", features]);
+        // A feature set changes the cdylib's exports but not its file name, so builds with
+        // different features get their own target directory: test binaries that run in parallel
+        // would otherwise overwrite each other's library (an `alloc-count` build with another's).
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| workspace_root().join("target"));
+        command.env(
+            "CARGO_TARGET_DIR",
+            target.join(format!("cdylib-{}", features.replace(',', "-"))),
+        );
     }
     if !cfg!(debug_assertions) {
         command.arg("--release");

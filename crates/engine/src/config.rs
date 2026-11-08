@@ -140,6 +140,12 @@ pub struct RuntimeSection {
     /// ticking.
     #[cfg_attr(feature = "config-env", serde(default = "default_fail_fast"))]
     pub fail_fast: bool,
+    /// The first backoff delay of a failed node across ticks, and the cap on it (defaults 50 ms
+    /// and 5 s; the cap is at most 10 s). See `EngineConfig::with_backoff`.
+    #[cfg_attr(feature = "config-env", serde(default = "default_backoff_base"))]
+    pub backoff_base: Duration,
+    #[cfg_attr(feature = "config-env", serde(default = "default_backoff_cap"))]
+    pub backoff_cap: Duration,
     /// Graph-wide node failure recovery (default [`NodeRecovery::SkipFrame`]); nodes override it with
     /// `daedalus.node.recovery` metadata.
     #[cfg_attr(feature = "config-env", serde(default))]
@@ -191,6 +197,14 @@ fn default_fail_fast() -> bool {
     false
 }
 
+fn default_backoff_base() -> Duration {
+    daedalus_runtime::DEFAULT_BACKOFF_BASE
+}
+
+fn default_backoff_cap() -> Duration {
+    daedalus_runtime::DEFAULT_BACKOFF_CAP
+}
+
 fn default_node_fusion() -> bool {
     true
 }
@@ -224,6 +238,8 @@ impl Default for RuntimeSection {
             host_event_limit: default_host_event_limit(),
             frame_overhead_window: None,
             fail_fast: default_fail_fast(),
+            backoff_base: default_backoff_base(),
+            backoff_cap: default_backoff_cap(),
             recovery: NodeRecovery::default(),
             blocking_backpressure: false,
             stream_error_policy: StreamErrorPolicy::default(),
@@ -396,6 +412,15 @@ impl EngineConfig {
 
     pub fn with_fail_fast(mut self, fail_fast: bool) -> Self {
         self.runtime.fail_fast = fail_fast;
+        self
+    }
+
+    /// The backoff of a failed node across ticks ([`RuntimeSection::backoff_base`] and
+    /// [`RuntimeSection::backoff_cap`]): skipped until a delay that doubles from `base` per
+    /// failure in a row, at most `cap` (and at most 10 s). A success makes it ready again.
+    pub fn with_backoff(mut self, base: Duration, cap: Duration) -> Self {
+        self.runtime.backoff_base = base;
+        self.runtime.backoff_cap = cap;
         self
     }
 

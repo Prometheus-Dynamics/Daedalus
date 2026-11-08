@@ -47,11 +47,12 @@ pub enum NodeRecovery {
     /// optional input sees no value). Fail-fast still ends the run on the failure.
     #[default]
     SkipFrame,
-    /// Run the handler again on the same inputs, up to `max` more times, waiting `backoff`
-    /// before each attempt (`std` only; without it attempts follow immediately). An attempt
-    /// that succeeds publishes normally; once the attempts are spent the error is handled as
-    /// [`Self::Fail`]. Flush and publish errors are not retried (outputs may be partly
-    /// delivered): they are handled as [`Self::SkipFrame`].
+    /// Run the handler again on the same inputs, up to `max` more times, immediately: the
+    /// retries stay inside the tick, so nothing sleeps. An attempt that succeeds publishes
+    /// normally; once the attempts are spent the error is handled as [`Self::SkipFrame`]. Flush
+    /// and publish errors are not retried (outputs may be partly delivered). A node that
+    /// ultimately fails is backed off across ticks ([`Executor::with_backoff`]), so `backoff` is
+    /// no longer slept: it is kept for compatibility and ignored.
     Retry { max: u32, backoff: Duration },
     /// Reset the node, then skip the frame: its typed state (`#[node(state(..))]`), managed
     /// resources and custom metrics are dropped, so the next tick starts the node fresh.
@@ -133,6 +134,10 @@ pub struct RecoveryTelemetry {
     /// unusable); counted under every policy, and not as failures.
     #[serde(default)]
     pub dropped_inputs: u64,
+    /// Node frames skipped because the node was backed off after a failure (`with_backoff`):
+    /// its inputs are dropped for the tick, and its consumers see no output.
+    #[serde(default)]
+    pub backoff_skips: u64,
 }
 
 impl RecoveryTelemetry {
@@ -148,6 +153,7 @@ impl RecoveryTelemetry {
         self.skipped_frames = self.skipped_frames.saturating_add(other.skipped_frames);
         self.restarts = self.restarts.saturating_add(other.restarts);
         self.caught_panics = self.caught_panics.saturating_add(other.caught_panics);
+        self.backoff_skips = self.backoff_skips.saturating_add(other.backoff_skips);
     }
 }
 
@@ -183,14 +189,29 @@ impl NodePolicies {
         self.tables()
             .and_then(|tables| tables.recovery.as_deref())
             .and_then(|table| table.get(node_idx).copied())
-            .unwrap_or_default()
+            .unwrap_or_else(|| self.default_recovery())
+    }
+
+    /// The policy every node uses, when no node differs from the graph-wide default: resolved
+    /// once per run, so the tick path reads a constant instead of a per-node table.
+    #[inline]
+    pub(crate) fn uniform_recovery(&self) -> Option<NodeRecovery> {
+        match self.tables() {
+            None => Some(NodeRecovery::default()),
+            Some(tables) if tables.recovery.is_none() => Some(tables.recovery_default),
+            Some(_) => None,
+        }
+    }
+
+    fn default_recovery(&self) -> NodeRecovery {
+        self.tables()
+            .map_or(NodeRecovery::default(), |tables| tables.recovery_default)
     }
 
     /// Whether any node recovers from failures (else every node fails the run, as `Fail` did).
     #[inline]
     pub(crate) fn any_recovery(&self) -> bool {
-        self.tables()
-            .is_some_and(|tables| tables.recovery.is_some())
+        self.uniform_recovery().is_none_or(NodeRecovery::recovers)
     }
 
     /// Per node scheduling priorities, if any node has a non-zero one.
@@ -240,10 +261,11 @@ impl PolicyTables {
                     .unwrap_or(self.recovery_default)
             })
             .collect();
-        self.recovery = recovery
+        // A per-node table only where a node differs from the graph-wide default.
+        let uniform = recovery
             .iter()
-            .any(|policy| policy.recovers())
-            .then(|| recovery.into());
+            .all(|policy| *policy == self.recovery_default);
+        self.recovery = (!uniform).then(|| recovery.into());
         let priorities: Vec<i32> = nodes
             .iter()
             .enumerate()

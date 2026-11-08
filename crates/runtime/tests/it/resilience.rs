@@ -3,6 +3,7 @@
 use daedalus_runtime::sync::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use daedalus_data::model::Value;
 use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
@@ -13,7 +14,7 @@ use daedalus_runtime::{
 };
 use daedalus_transport::Payload;
 
-fn chain(ids: &[&str]) -> ExecutionPlan {
+pub(super) fn chain(ids: &[&str]) -> ExecutionPlan {
     let mut graph = Graph::default();
     for id in ids {
         graph.nodes.push(NodeInstance::new(*id));
@@ -26,15 +27,15 @@ fn chain(ids: &[&str]) -> ExecutionPlan {
 
 /// `src` pushes 1; `flaky` forwards its input +1 but fails its first `failures` calls (or
 /// panics with `panic`); `sink` records what arrives.
-struct Flaky {
+pub(super) struct Flaky {
     failures: u32,
     panic: bool,
     calls: AtomicU32,
-    seen: Arc<Mutex<Vec<i32>>>,
+    pub(super) seen: Arc<Mutex<Vec<i32>>>,
 }
 
 impl Flaky {
-    fn new(failures: u32) -> Self {
+    pub(super) fn new(failures: u32) -> Self {
         Self {
             failures,
             panic: false,
@@ -326,8 +327,10 @@ fn restart_resets_node_state() {
         (NodeRecovery::SkipFrame, vec![1, 2, 3]),
     ] {
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let mut exec =
-            OwnedExecutor::new(rt.clone(), Counter { seen: seen.clone() }).with_recovery(policy);
+        // No backoff: this test checks the reset itself, not the delay a failed node waits out.
+        let mut exec = OwnedExecutor::new(rt.clone(), Counter { seen: seen.clone() })
+            .with_recovery(policy)
+            .with_backoff(Duration::ZERO, Duration::ZERO);
         for _ in 0..3 {
             exec.run_in_place().expect("recovered");
         }
@@ -467,6 +470,9 @@ mod stream_worker {
                 executor
                     .with_fail_fast(true)
                     .with_node_recovery("echo", NodeRecovery::Fail)
+                    // Each tick's input goes through: the test checks the stream policy, not
+                    // the delay a failed node waits out.
+                    .with_backoff(Duration::ZERO, Duration::ZERO)
             }),
         ));
         let (input, output) = {

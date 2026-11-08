@@ -81,6 +81,8 @@ pub(crate) struct ExecutorCore {
     /// Each node's preferred group id (`GroupMetadata::preferred_id`), read once from its
     /// metadata: [`ExecutionTelemetry::aggregate_groups`] runs every tick.
     pub(crate) node_groups: Arc<[Option<Arc<str>>]>,
+    /// Each node's failure backoff, shared with the worker snapshots of a parallel run.
+    pub(crate) node_health: Arc<super::node_health::NodeHealthTable>,
     /// Per node, the incoming edges into its required inputs (see `ExecutorInit`).
     pub(crate) required_inputs: Arc<[super::init::RequiredInputs]>,
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
@@ -144,6 +146,7 @@ impl ExecutorCore {
                         .map(Arc::from)
                 })
                 .collect(),
+            node_health: super::node_health::NodeHealthTable::new(init.nodes.len()),
             required_inputs: init.required_inputs.clone(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
             clock: Clock::default(),
@@ -246,6 +249,7 @@ impl ExecutorCore {
             output_ports: self.output_ports.clone(),
             node_ids: self.node_ids.clone(),
             node_groups: self.node_groups.clone(),
+            node_health: self.node_health.clone(),
             required_inputs: self.required_inputs.clone(),
             capabilities: self.capabilities.clone(),
             clock: self.clock.clone(),

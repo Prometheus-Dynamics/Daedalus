@@ -66,6 +66,10 @@ pub(crate) trait ExecutorConfigTarget {
         self.core_mut().run_config.set_fail_fast(enabled);
     }
 
+    fn apply_backoff(&mut self, base: ::core::time::Duration, cap: ::core::time::Duration) {
+        self.core_mut().run_config.set_backoff(base, cap);
+    }
+
     fn apply_const_coercers(&mut self, coercers: crate::io::ConstCoercerMap) {
         let core = self.core_mut();
         core.const_coercers = Some(coercers);
@@ -263,6 +267,18 @@ macro_rules! executor_config_api {
         /// executor records segment errors in telemetry and continues scheduling remaining ready work.
         pub fn with_fail_fast(mut self, enabled: bool) -> Self {
             self.apply_fail_fast(enabled);
+            self
+        }
+
+        /// The backoff of a failed node across ticks: its first delay is `base`, doubling per
+        /// failure in a row up to `cap` (default 50 ms and 5 s; `cap` is at most 10 s). A node
+        /// that succeeds is ready again at once.
+        pub fn with_backoff(
+            mut self,
+            base: ::core::time::Duration,
+            cap: ::core::time::Duration,
+        ) -> Self {
+            self.apply_backoff(base, cap);
             self
         }
 

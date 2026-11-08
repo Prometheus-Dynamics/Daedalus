@@ -71,10 +71,13 @@ fn plan(registry: &PluginRegistry, node: &str, outputs: &[&str]) -> Graph {
 }
 
 fn graph(registry: &PluginRegistry, node: &str, outputs: &[&str]) -> HostGraph<HandlerRegistry> {
-    Engine::new(EngineConfig::default())
-        .unwrap()
-        .compile_registry(registry, plan(registry, node, outputs))
-        .unwrap()
+    // No backoff: a frame after the failure runs at once (the backoff is tested on an injected clock).
+    Engine::new(
+        EngineConfig::default().with_backoff(std::time::Duration::ZERO, std::time::Duration::ZERO),
+    )
+    .unwrap()
+    .compile_registry(registry, plan(registry, node, outputs))
+    .unwrap()
 }
 
 /// [`plan`] compiled onto `current`'s host bridges, for `HostGraph::reload_with`.

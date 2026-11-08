@@ -92,6 +92,10 @@ pub struct ExecutionTelemetry {
     /// [`Self::recovery`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<Box<super::RecoveryTelemetry>>,
+    /// The nodes that have failed in this executor, with their backoff state (`with_backoff`);
+    /// empty while none has. Read by field name, see [`NodeHealthReport`](super::NodeHealthReport).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub node_health: Vec<super::NodeHealthReport>,
     /// The executor's clock, which lifecycle timestamps and edge timings read.
     #[serde(skip)]
     clock: Clock,
