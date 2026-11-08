@@ -166,7 +166,7 @@ fn another_layout_under_the_same_name_is_a_typed_error() {
     }));
     host.push("b", OtherBox::default());
     host.push("k", 1_i32);
-    let err = host.tick().unwrap_err().to_string();
+    let err = host.tick().expect("contained").errors[0].message.clone();
     assert!(
         err.contains("layout mismatch") && err.contains("pod_scale"),
         "{err}"
@@ -179,7 +179,7 @@ fn another_layout_under_the_same_name_is_a_typed_error() {
             .unwrap();
     }));
     host.push("n", 2_i64);
-    let err = host.tick().unwrap_err().to_string();
+    let err = host.tick().expect("contained").errors[0].message.clone();
     assert!(
         err.contains("layout mismatch") && err.contains("pod_make"),
         "{err}"

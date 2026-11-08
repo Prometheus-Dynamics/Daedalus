@@ -105,7 +105,14 @@ fn build_chain(
 }
 
 fn engine() -> Engine {
-    Engine::new(EngineConfig::default().with_metrics_level(MetricsLevel::Off)).expect("engine")
+    // Fail-fast: a graph reports its node failure as a failed tick (the domain's `failed`
+    // count); by default a node failure is contained in its graph and the tick succeeds.
+    Engine::new(
+        EngineConfig::default()
+            .with_metrics_level(MetricsLevel::Off)
+            .with_fail_fast(true),
+    )
+    .expect("engine")
 }
 
 fn compile(registry: &PluginRegistry, graph: Graph) -> HostGraph<HandlerRegistry> {

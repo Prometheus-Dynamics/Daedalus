@@ -25,7 +25,10 @@ pub const NODE_RECOVERY_META_KEY: &str = "daedalus.node.recovery";
 pub const NODE_PRIORITY_META_KEY: &str = "daedalus.node.priority";
 
 /// What the executor does when a node fails: its handler returns an error (or, with `std`,
-/// panics), its outputs fail to flush, or publishing them fails.
+/// panics), its outputs fail to flush, or publishing them fails. The default contains the
+/// failure, so the rest of the graph keeps ticking. Fail-fast (off by default; for tests and CI,
+/// see [`Executor::with_fail_fast`](super::Executor::with_fail_fast)) ends the run on the first
+/// failure whatever the policy.
 ///
 /// Set graph-wide with [`Executor::with_recovery`], per node with
 /// [`Executor::with_node_recovery`] or [`NODE_RECOVERY_META_KEY`] metadata. Every failure is
@@ -35,12 +38,14 @@ pub const NODE_PRIORITY_META_KEY: &str = "daedalus.node.priority";
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum NodeRecovery {
-    /// The error fails the run under fail-fast (the default), or is recorded while the run
-    /// continues without fail-fast. Panics are not caught.
-    #[default]
+    /// Like [`Self::SkipFrame`], without the skipped-frame count: the error is recorded and the
+    /// node's outputs are dropped for the tick. Under fail-fast the error ends the run. Panics
+    /// are caught (under `std`), as for every recovering policy.
     Fail,
-    /// Drop the node's outputs for this tick and keep running: downstream nodes that needed
-    /// them are not ready this tick. The run succeeds whatever the fail-fast setting.
+    /// The default. Drop the node's outputs for this tick and keep running: downstream nodes
+    /// that needed them are not ready this tick (a Latest edge keeps its last value, an
+    /// optional input sees no value). Fail-fast still ends the run on the failure.
+    #[default]
     SkipFrame,
     /// Run the handler again on the same inputs, up to `max` more times, waiting `backoff`
     /// before each attempt (`std` only; without it attempts follow immediately). An attempt
@@ -163,7 +168,7 @@ pub(crate) struct NodePolicies(Option<Arc<PolicyTables>>);
 struct PolicyTables {
     recovery_default: NodeRecovery,
     recovery_overrides: Vec<(String, NodeRecovery)>,
-    /// Per node, its recovery; `None` while every node uses [`NodeRecovery::Fail`].
+    /// Per node, its recovery; `None` while every node uses the default.
     recovery: Option<Box<[NodeRecovery]>>,
     priority_overrides: Vec<(String, i32)>,
     /// Per node, its scheduling priority; `None` while every node has priority 0.
@@ -181,7 +186,7 @@ impl NodePolicies {
             .unwrap_or_default()
     }
 
-    /// Whether any node recovers from failures (else every node uses [`NodeRecovery::Fail`]).
+    /// Whether any node recovers from failures (else every node fails the run, as `Fail` did).
     #[inline]
     pub(crate) fn any_recovery(&self) -> bool {
         self.tables()
@@ -381,7 +386,7 @@ impl<H: NodeHandler> NodePolicyTarget for OwnedExecutor<H> {
 
 macro_rules! node_policy_builders {
     () => {
-        /// Recover from node failures with `policy` (default [`NodeRecovery::Fail`]) on every
+        /// Recover from node failures with `policy` (default [`NodeRecovery::SkipFrame`]) on every
         /// node without its own policy ([`Self::with_node_recovery`] or
         /// [`NODE_RECOVERY_META_KEY`] metadata).
         pub fn with_recovery(mut self, policy: NodeRecovery) -> Self {

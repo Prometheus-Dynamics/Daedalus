@@ -107,6 +107,7 @@ fn bounded_backpressure_error_fails_fast() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let handler = Harness { seen: seen.clone() };
     let err = Executor::new(&rt, handler)
+        .with_fail_fast(true)
         .run()
         .expect_err("overflow fails");
     assert!(matches!(

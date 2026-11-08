@@ -134,11 +134,13 @@ pub struct RuntimeSection {
     /// (`HostGraph::enable_frame_overhead`); `None` (default) records nothing.
     #[cfg_attr(feature = "config-env", serde(default))]
     pub frame_overhead_window: Option<usize>,
-    /// When true, abort the run on the first node error. When false, keep running and
-    /// collect failures in `ExecutionTelemetry.errors`.
+    /// When true, end the run on the first node failure, whatever its recovery policy (for
+    /// tests and CI). The default (false) contains each failure: the node's outputs are dropped
+    /// for the tick, the failure is recorded in `ExecutionTelemetry.errors`, and the graph keeps
+    /// ticking.
     #[cfg_attr(feature = "config-env", serde(default = "default_fail_fast"))]
     pub fail_fast: bool,
-    /// Graph-wide node failure recovery (default [`NodeRecovery::Fail`]); nodes override it with
+    /// Graph-wide node failure recovery (default [`NodeRecovery::SkipFrame`]); nodes override it with
     /// `daedalus.node.recovery` metadata.
     #[cfg_attr(feature = "config-env", serde(default))]
     pub recovery: NodeRecovery,
@@ -186,7 +188,7 @@ pub struct RuntimeSection {
 }
 
 fn default_fail_fast() -> bool {
-    true
+    false
 }
 
 fn default_node_fusion() -> bool {

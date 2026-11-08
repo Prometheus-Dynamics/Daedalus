@@ -251,7 +251,7 @@ where
                     }
                 };
                 if let Some(mut executor) = executor {
-                    let result = run_tick(&mut executor, on_error);
+                    let result = run_tick(&mut executor);
                     let finished_at = worker_clock.now();
                     let mut guard = graph.lock();
                     if let Some(started) = guard.current_execution_started_at.take() {
@@ -336,15 +336,12 @@ where
     }
 }
 
-/// One tick. Under [`StreamErrorPolicy::Continue`] a panic is caught and the executor's edge
-/// storage reset, so the next tick starts clean.
+/// One tick. A handler panic that no recovering policy caught is caught here and returned as an
+/// error (whatever the stream policy, so a `Stop` worker records it rather than dying silently),
+/// and the executor's edge storage is reset so a later tick starts clean.
 fn run_tick<H: NodeHandler>(
     executor: &mut crate::executor::OwnedExecutor<H>,
-    on_error: StreamErrorPolicy,
 ) -> Result<crate::executor::ExecutionTelemetry, crate::executor::ExecuteError> {
-    if on_error == StreamErrorPolicy::Stop {
-        return executor.run_in_place();
-    }
     std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| executor.run_in_place()))
         .unwrap_or_else(|panic| {
             executor.reset();

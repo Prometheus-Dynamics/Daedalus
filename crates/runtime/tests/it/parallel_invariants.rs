@@ -485,6 +485,7 @@ fn parallel_bounded_error_overflow_fails_segment() {
     let handler = BoundedFanoutHandler { seen: seen.clone() };
     let err = Executor::new(&rt, handler)
         .with_pool_size(Some(2))
+        .with_fail_fast(true)
         .run_parallel()
         .expect_err("parallel bounded overflow should fail");
 
@@ -552,6 +553,7 @@ fn parallel_fail_fast_returns_first_segment_error() {
 
     let err = Executor::new(&rt, handler)
         .with_pool_size(Some(2))
+        .with_fail_fast(true)
         .run_parallel()
         .expect_err("fail-fast parallel run should fail");
 
@@ -573,6 +575,7 @@ fn parallel_fail_fast_stops_scheduling_new_segments_after_error() {
 
     let err = Executor::new(&rt, handler)
         .with_pool_size(Some(1))
+        .with_fail_fast(true)
         .run_parallel()
         .expect_err("fail-fast parallel run should fail");
 
@@ -594,13 +597,17 @@ fn parallel_worker_panic_returns_typed_error_without_stranding_scheduler() {
 
     let err = Executor::new(&rt, PanicParallelHandler)
         .with_pool_size(Some(2))
+        .with_fail_fast(true)
         .run_parallel()
         .expect_err("panic should become executor error");
 
+    // A node's panic is caught by its own policy (the node's recovery), so the run reports it as
+    // that node's handler failure. The segment-level catch is the fallback for a panic outside a
+    // node handler.
     match err {
-        ExecuteError::HandlerPanicked { node, message } => {
-            assert!(node.starts_with("segment_"));
-            assert!(message.contains("intentional parallel panic"));
+        ExecuteError::HandlerFailed { node, error } => {
+            assert_eq!(node, "bad");
+            assert!(error.to_string().contains("intentional parallel panic"));
         }
         other => panic!("unexpected parallel error: {other:?}"),
     }

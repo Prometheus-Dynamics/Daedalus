@@ -26,7 +26,7 @@ impl Default for ExecutorRunConfig {
             active_edges: None,
             active_direct_edges: None,
             selected_host_output_ports: None,
-            fail_fast: true,
+            fail_fast: false,
             policies: super::NodePolicies::default(),
             metrics_level: MetricsLevel::default(),
             debug_config,

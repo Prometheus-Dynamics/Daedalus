@@ -362,15 +362,21 @@ fn a_panicking_plugin_node_fails_the_tick_and_the_host_keeps_running() {
         &[("value", scalar(ValueType::Int))],
     );
     host.push("value", 13_i64);
-    let err = host.tick().unwrap_err().to_string();
+    // The default contains the panic: the tick succeeds, the failure is recorded, and the node
+    // produces nothing this tick.
+    let telemetry = host.tick().expect("the default contains the panic");
+    let err = telemetry.errors[0].message.clone();
     assert!(
-        err.contains("plugin `stable_abi` node `stable_abi:explode`")
+        telemetry.errors[0].node_id.ends_with("stable_abi:explode")
+            && err.contains("plugin `stable_abi` node `stable_abi:explode`")
             && err.contains("unlucky input")
             && err.contains("panicked"),
         "{err}"
     );
+    assert_eq!(telemetry.recovery().skipped_frames, 1);
+    assert_eq!(host.take::<i64>("out"), None);
     host.push("value", 5_i64);
-    host.tick().unwrap();
+    host.tick().expect("the host keeps running");
     assert_eq!(host.take::<i64>("out"), Some(5));
 }
 

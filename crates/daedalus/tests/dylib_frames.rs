@@ -264,16 +264,30 @@ fn a_panic_while_holding_a_frame_releases_it() {
         host.push_payload("frame", unlucky.payload());
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| host.tick()));
         drop(unlucky);
-        if install == Install::Static {
-            // A statically installed node's panic is the host's own: it unwinds out of `tick`.
-            assert!(result.is_err());
-            drop(host);
-            assert_eq!(unlucky_drops.load(SeqCst), 1, "unwinding released it");
-            drop(fine);
-            return;
-        }
-        // Through the stable path the plugin catches it: a node error the host survives.
-        assert!(matches!(result, Ok(Err(_))), "{install:?}");
+        // The default contains the failure on either path, and the frame is released. Static
+        // (Rust ABI, in-process): the handler's panic unwinds to the host's own `catch_unwind`,
+        // counted in `caught_panics`. Stable (C ABI dylib): the plugin catches the panic at its
+        // `extern "C"` boundary and returns a failure status, so the host counts no caught panic.
+        let Ok(Ok(telemetry)) = &result else {
+            panic!("{install:?}: the failure must be contained, got {result:?}");
+        };
+        assert_eq!(telemetry.errors.len(), 1, "{install:?}");
+        assert!(
+            telemetry.errors[0].node_id.ends_with("frame_explode"),
+            "{install:?}: {}",
+            telemetry.errors[0].node_id
+        );
+        assert!(
+            telemetry.errors[0].message.contains("unlucky frame"),
+            "{install:?}: {}",
+            telemetry.errors[0].message
+        );
+        let expected_caught = u64::from(install == Install::Static);
+        assert_eq!(
+            telemetry.recovery().caught_panics,
+            expected_caught,
+            "{install:?}"
+        );
         assert_eq!(
             unlucky_drops.load(SeqCst),
             1,

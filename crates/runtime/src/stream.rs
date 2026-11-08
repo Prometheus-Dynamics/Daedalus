@@ -56,17 +56,17 @@ impl Default for StreamWorkerConfig {
 
 /// What a continuous stream worker does with a failed tick. Node-level failures are handled
 /// first by each node's [`NodeRecovery`](crate::executor::NodeRecovery); this applies to the
-/// errors that still fail the tick (under [`NodeRecovery::Fail`](crate::executor::NodeRecovery::Fail)
-/// with fail-fast, exhausted retries, GPU or input errors).
+/// errors that still fail the tick (under fail-fast, GPU or input errors, or a handler panic
+/// that a recovering policy did not catch).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum StreamErrorPolicy {
-    /// Record the error and stop the worker (the default).
-    #[default]
+    /// Record the error and stop the worker.
     Stop,
-    /// Record the error, drop the failed tick's in-flight edge data and keep running. A
-    /// handler panic is caught and handled the same way.
+    /// The default. Record the error, drop the failed tick's in-flight edge data and keep
+    /// running. A handler panic is caught and handled the same way.
+    #[default]
     Continue,
 }
 

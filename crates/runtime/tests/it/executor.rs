@@ -322,10 +322,12 @@ fn borrowed_and_owned_executors_match_handler_errors() {
     ]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
 
-    let mut borrowed = Executor::new(&rt, FailOnHandler { fail_node: "n1" });
+    // Fail-fast: the default contains a node error, and this test compares the run's error.
+    let mut borrowed = Executor::new(&rt, FailOnHandler { fail_node: "n1" }).with_fail_fast(true);
     let borrowed_err = borrowed.run_in_place().expect_err("borrowed should fail");
 
-    let mut owned = OwnedExecutor::new(Arc::new(rt.clone()), FailOnHandler { fail_node: "n1" });
+    let mut owned = OwnedExecutor::new(Arc::new(rt.clone()), FailOnHandler { fail_node: "n1" })
+        .with_fail_fast(true);
     let owned_err = owned.run_in_place().expect_err("owned should fail");
 
     assert_handler_failed_invalid_input(borrowed_err, "n1");

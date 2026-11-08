@@ -141,7 +141,8 @@ fn a_reload_refuses_old_objects_and_closes_the_old_build_when_they_are_gone() {
     // Safety: as above (the same file, opened again as a new build).
     assert_eq!(unsafe { host.reload_plugin(&mut library) }.unwrap(), 2);
     host.push_payload("obj_in", old.clone());
-    let err = host.tick().unwrap_err().to_string();
+    // Contained by the default: the refusal is the node's failure, recorded in `errors`.
+    let err = host.tick().expect("contained").errors[0].message.clone();
     assert!(err.contains("another build"), "{err}");
 
     // The new build makes its own object; every node instance has moved on.

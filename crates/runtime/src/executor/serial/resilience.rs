@@ -133,9 +133,8 @@ pub(super) fn after_delivery(recovery: NodeRecovery) -> NodeRecovery {
     }
 }
 
-/// Record node `node_idx`'s failure and handle it under `recovery`: `Err` ends the run
-/// (fail-fast); otherwise the run continues, with the error kept in `first_error` when the
-/// policy does not recover.
+/// Record node `node_idx`'s failure and handle it under `recovery`: `Err` ends the run under
+/// fail-fast; otherwise the failure is contained (its outputs are dropped, the run continues).
 #[cold]
 pub(super) fn handle_failure(
     v: &mut SerialView<'_>,
@@ -143,7 +142,6 @@ pub(super) fn handle_failure(
     node_id: &str,
     error: NodeError,
     recovery: NodeRecovery,
-    first_error: &mut Option<ExecuteError>,
 ) -> Result<(), ExecuteError> {
     if error.is_input_dropped() {
         crate::trace::debug!(target: "daedalus_runtime::executor", node_id, error = %error, "node dropped its input; skipping its frame");
@@ -151,6 +149,13 @@ pub(super) fn handle_failure(
         return Ok(());
     }
     record_failure(&mut v.core.telemetry, node_idx, node_id, &error);
+    // Fail-fast ends the run on any failure, whatever the node's policy (CI and tests).
+    if v.core.run_config.fail_fast {
+        return Err(ExecuteError::HandlerFailed {
+            node: node_id.to_string(),
+            error,
+        });
+    }
     match recovery {
         NodeRecovery::SkipFrame => {
             crate::trace::warn!(target: "daedalus_runtime::executor", node_id, error = %error, "node failed; skipping its frame");
@@ -167,17 +172,8 @@ pub(super) fn handle_failure(
             telemetry.recovery_mut().restarts += 1;
             Ok(())
         }
-        _ => {
-            let failed = ExecuteError::HandlerFailed {
-                node: node_id.to_string(),
-                error,
-            };
-            if v.core.run_config.fail_fast {
-                return Err(failed);
-            }
-            first_error.get_or_insert(failed);
-            Ok(())
-        }
+        // `Fail` and exhausted retries: recorded, the frame's outputs dropped, no skipped count.
+        NodeRecovery::Fail | NodeRecovery::Retry { .. } => Ok(()),
     }
 }
 

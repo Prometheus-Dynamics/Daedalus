@@ -157,7 +157,6 @@ fn run_order_timed<H: NodeHandler>(
     let collect_trace = cfg!(feature = "metrics") && v.core.run_config.metrics_level.is_trace();
     let clock = v.core.clock.clone();
     let graph_start = (collect_basic_metrics || collect_trace).then(|| clock.now());
-    let mut first_error = None;
     let contexts = v.core.contexts.clone();
     if collect_basic_metrics {
         v.core.telemetry.node_metrics.reserve_nodes(nodes.len());
@@ -343,36 +342,15 @@ fn run_order_timed<H: NodeHandler>(
         let outputs = io.take_outputs();
 
         if let Err(error) = run_result {
-            resilience::handle_failure(
-                &mut v,
-                node_idx,
-                &node.id,
-                error,
-                recovery,
-                &mut first_error,
-            )?;
+            resilience::handle_failure(&mut v, node_idx, &node.id, error, recovery)?;
         } else if let Some(error) = flush_result {
             let recovery = resilience::after_delivery(recovery);
-            resilience::handle_failure(
-                &mut v,
-                node_idx,
-                &node.id,
-                error,
-                recovery,
-                &mut first_error,
-            )?;
+            resilience::handle_failure(&mut v, node_idx, &node.id, error, recovery)?;
         } else {
             let fused = FusedOutputs::of(&v, fusion.as_deref(), node_idx, order, pos, &mut carry);
             if let Err(error) = publish_outputs(&mut v, node_idx, outputs, fused) {
                 let recovery = resilience::after_delivery(recovery);
-                resilience::handle_failure(
-                    &mut v,
-                    node_idx,
-                    &node.id,
-                    error,
-                    recovery,
-                    &mut first_error,
-                )?;
+                resilience::handle_failure(&mut v, node_idx, &node.id, error, recovery)?;
             }
         }
 
@@ -439,11 +417,6 @@ fn run_order_timed<H: NodeHandler>(
     // belong to this tick's telemetry, and a recycled telemetry would drop them otherwise.
     if drain_outputs {
         host_io::drain(&mut v)?;
-    }
-    if v.core.run_config.fail_fast
-        && let Some(error) = first_error
-    {
-        return Err(error);
     }
     Ok(())
 }

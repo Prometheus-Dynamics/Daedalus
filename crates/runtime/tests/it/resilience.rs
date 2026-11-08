@@ -74,14 +74,77 @@ impl NodeHandler for Flaky {
     }
 }
 
+/// The default contains a node failure: the run succeeds, the failing node's outputs are dropped
+/// for the tick (its consumer sees nothing), and the failure is recorded in `errors` and counted
+/// as a skipped frame. Eidos's contract relies on both.
 #[test]
-fn fail_is_the_default_and_fails_the_run() {
+fn default_contains_a_failure_and_keeps_ticking() {
     let rt = build_runtime(
         &chain(&["src", "flaky", "sink"]),
         &SchedulerConfig::default(),
     );
-    let err = Executor::new(&rt, Flaky::new(1)).run().expect_err("fail");
+    let handler = Flaky::new(1);
+    let seen = handler.seen.clone();
+    let telemetry = Executor::new(&rt, handler)
+        .run()
+        .expect("the default contains the failure");
+    assert_eq!(telemetry.errors.len(), 1);
+    assert_eq!(telemetry.errors[0].node_id, "flaky");
+    assert_eq!(telemetry.recovery().skipped_frames, 1);
+    assert!(
+        seen.lock().is_empty(),
+        "the failed frame's output must not reach the sink"
+    );
+}
+
+/// Fail-fast (opt-in, for tests and CI) ends the run on the first failure, whatever the policy.
+#[test]
+fn fail_fast_ends_the_run_on_any_failure() {
+    let rt = build_runtime(
+        &chain(&["src", "flaky", "sink"]),
+        &SchedulerConfig::default(),
+    );
+    let err = Executor::new(&rt, Flaky::new(1))
+        .with_fail_fast(true)
+        .run()
+        .expect_err("fail-fast ends the run");
     assert!(matches!(err, ExecuteError::HandlerFailed { ref node, .. } if node == "flaky"));
+    let err = Executor::new(&rt, Flaky::new(1))
+        .with_fail_fast(true)
+        .with_recovery(NodeRecovery::SkipFrame)
+        .run()
+        .expect_err("fail-fast ends the run under SkipFrame too");
+    assert!(matches!(err, ExecuteError::HandlerFailed { ref node, .. } if node == "flaky"));
+}
+
+/// Without fail-fast a panic is caught under the default policy too.
+#[cfg(feature = "std")]
+#[test]
+fn default_policy_catches_panics() {
+    let rt = build_runtime(
+        &chain(&["src", "flaky", "sink"]),
+        &SchedulerConfig::default(),
+    );
+    let handler = Flaky {
+        panic: true,
+        ..Flaky::new(1)
+    };
+    let telemetry = Executor::new(&rt, handler)
+        .run()
+        .expect("the default catches the panic");
+    assert_eq!(telemetry.recovery().caught_panics, 1);
+    assert_eq!(telemetry.errors.len(), 1);
+}
+
+/// The engine-independent defaults: fail-fast off, and a stream worker continues past a failed
+/// tick.
+#[test]
+fn defaults_are_containment_and_continue() {
+    assert_eq!(NodeRecovery::default(), NodeRecovery::SkipFrame);
+    assert_eq!(
+        daedalus_runtime::StreamWorkerConfig::default().on_error,
+        daedalus_runtime::StreamErrorPolicy::Continue
+    );
 }
 
 #[test]
@@ -126,8 +189,18 @@ fn exhausted_retries_fail_like_fail() {
         &chain(&["src", "flaky", "sink"]),
         &SchedulerConfig::default(),
     );
+    // Spent retries are contained by default: the run succeeds, and the failure is recorded.
+    let telemetry = Executor::new(&rt, Flaky::new(5))
+        .with_node_recovery("flaky", NodeRecovery::retry(2))
+        .run()
+        .expect("the default contains spent retries");
+    assert_eq!(telemetry.errors.len(), 1);
+    assert_eq!(telemetry.errors[0].node_id, "flaky");
+    assert_eq!(telemetry.recovery().retries, 2);
+    // Fail-fast (opt-in) ends the run once the retries are spent.
     let err = Executor::new(&rt, Flaky::new(5))
         .with_node_recovery("flaky", NodeRecovery::retry(2))
+        .with_fail_fast(true)
         .run()
         .expect_err("retries exhausted");
     assert!(matches!(err, ExecuteError::HandlerFailed { .. }));
@@ -144,11 +217,19 @@ fn recovery_metadata_selects_a_node_policy() {
         .expect("metadata policy recovers");
     assert_eq!(telemetry.recovery().skipped_frames, 1);
 
-    // A builder override wins over metadata.
-    let err = Executor::new(&rt, Flaky::new(1))
+    // A builder override wins over metadata: `Fail` is contained by default (recorded, outputs
+    // dropped), and fails the run under fail-fast.
+    let telemetry = Executor::new(&rt, Flaky::new(1))
         .with_node_recovery("flaky", NodeRecovery::Fail)
         .run()
-        .expect_err("override fails");
+        .expect("Fail is contained without fail-fast");
+    assert_eq!(telemetry.errors.len(), 1);
+    assert_eq!(telemetry.errors[0].node_id, "flaky");
+    let err = Executor::new(&rt, Flaky::new(1))
+        .with_node_recovery("flaky", NodeRecovery::Fail)
+        .with_fail_fast(true)
+        .run()
+        .expect_err("override fails under fail-fast");
     assert!(matches!(err, ExecuteError::HandlerFailed { .. }));
 }
 
@@ -379,8 +460,15 @@ mod stream_worker {
 
     fn run(handler: FailOnOne, on_error: StreamErrorPolicy) -> (Vec<u32>, u64, Option<String>) {
         let runtime = Arc::new(build_runtime(&echo_plan(), &SchedulerConfig::default()));
-        let graph: SharedStreamGraph<FailOnOne> =
-            Arc::new(Mutex::new(StreamGraph::new(runtime, handler)));
+        // The echo node fails its tick: fail-fast ends the tick with the failure, and `Fail`
+        // lets a panic reach the stream worker's tick (a recovering policy would catch it first).
+        let graph: SharedStreamGraph<FailOnOne> = Arc::new(Mutex::new(
+            StreamGraph::new(runtime, handler).map_executor(|executor| {
+                executor
+                    .with_fail_fast(true)
+                    .with_node_recovery("echo", NodeRecovery::Fail)
+            }),
+        ));
         let (input, output) = {
             let graph = graph.lock();
             (
@@ -431,6 +519,17 @@ mod stream_worker {
             assert_eq!(tick_errors, 1);
             assert!(last_error.is_some());
         }
+    }
+
+    /// A panic is not caught by a `Stop` worker's tick, so the worker used to die silently.
+    /// It now records the panic and stops with it as its last error.
+    #[test]
+    fn stop_records_a_panic_before_it_ends_the_worker() {
+        let (received, tick_errors, last_error) =
+            run(FailOnOne { panic: true }, StreamErrorPolicy::Stop);
+        assert_eq!(received, vec![0]);
+        assert_eq!(tick_errors, 1);
+        assert!(last_error.expect("error").contains("echo panicked"));
     }
 
     #[test]
