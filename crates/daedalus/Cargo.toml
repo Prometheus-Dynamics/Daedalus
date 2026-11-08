@@ -330,6 +330,11 @@ path = "tests/dylib_stable_pod.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_retry"
+path = "tests/dylib_retry.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
 name = "dylib_stable_telemetry"
 path = "tests/dylib_stable_telemetry.rs"
 required-features = ["engine", "dylib-plugins", "metrics"]

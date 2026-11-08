@@ -8,6 +8,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- Plugin load and reload retry: `daedalus::dylib::PluginRetry` retries a plugin's load, or a
+  requested reload, off the tick path. A failed attempt is retried with a capped backoff (250 ms
+  doubling, at most 5 s by default, at most 10 s with `with_backoff`) and is never given up. A
+  failed reload leaves the loaded library serving. The host calls `poll` between ticks, then
+  `request_reload`, `stop_retrying` and `resume_retrying` are the manual controls, and `status()`
+  (`PluginRetryStatus`: `state`, `reload_pending`, `attempts`, `consecutive_failures`,
+  `retry_in`, `last_error`, `generation`) reports it.
 - Per-node backoff across ticks: a node whose handler, flush or publish fails is skipped until a
   delay that starts at 50 ms, doubles per failure in a row, and is capped at 5 s by default (at
   most 10 s). A success makes it ready again. A backed-off node's frame is dropped, so its

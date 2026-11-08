@@ -188,6 +188,7 @@ mod foreign;
 mod intern;
 mod library;
 mod loader;
+mod retry;
 pub mod stable;
 
 pub use crate::bytes::{BytesInterface, BytesVTable, SHARED_BYTES_KEY, SharedBytes};
@@ -200,6 +201,10 @@ pub use foreign::{ForeignInterfaceMismatch, ForeignInterfaceTable, ForeignInterf
 pub use loader::{
     InstallPath, PluginLibrary, PluginLibraryError, RustAbiMismatch, check_rust_abi,
     discover_plugin_libraries,
+};
+pub use retry::{
+    DEFAULT_RETRY_BASE, DEFAULT_RETRY_CAP, MAX_RETRY_CAP, PluginRetry, PluginRetryState,
+    PluginRetryStatus,
 };
 pub use stable::{
     CODECS_VERSION, CodecFn, CodecTableFn, LIVE_OBJECTS_VERSION, LiveObjectsFn, NO_FANIN,
