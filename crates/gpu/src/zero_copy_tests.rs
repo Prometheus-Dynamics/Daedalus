@@ -283,4 +283,100 @@ mod frames {
         }
         assert_eq!(small.stats().evictions, 2);
     }
+
+    /// Per-frame cost of a `GpuFrameImports::import` that hits the cache (the dmabuf is already
+    /// imported), and the heap allocations of one hit on this thread. Run with
+    /// `cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored --nocapture frame_import_hit`.
+    #[test]
+    #[ignore = "timing probe: needs /dev/dma_heap and a Vulkan GPU with dmabuf import"]
+    fn frame_import_hit_cost() {
+        let Some(ctx) = vulkan_ctx() else { return };
+        let (w, h) = (640u32, 480u32);
+        let Some(grey) = heap_frame(w, h, &bytes((w * h) as usize, 3)) else {
+            return eprintln!("skipping: no /dev/dma_heap/system access");
+        };
+        let grey = SharedFrame::new(std::sync::Arc::new(grey));
+        let Some(buffer) = heap_frame(w, h * 3 / 2, &bytes((w * h * 3 / 2) as usize, 4)) else {
+            return eprintln!("skipping: no /dev/dma_heap/system access");
+        };
+        let nv12 = DupNv12 {
+            y_fd: buffer.fd.try_clone().unwrap(),
+            uv_fd: buffer.fd.try_clone().unwrap(),
+            _buffer: buffer,
+            width: w,
+            height: h,
+        };
+        let nv12 = SharedFrame::new(std::sync::Arc::new(nv12));
+        for (name, frame) in [("grey", &grey), ("nv12-dup", &nv12)] {
+            let imports = GpuFrameImports::new(&ctx, 2);
+            if let Err(err) = imports.import(frame, Duration::from_secs(1)) {
+                eprintln!("skipping {name}: this device cannot import dmabuf storage ({err})");
+                continue;
+            }
+            let mut best = f64::MAX;
+            for _ in 0..5 {
+                let start = std::time::Instant::now();
+                for _ in 0..2000 {
+                    let input = imports.import(frame, Duration::from_secs(1)).unwrap();
+                    std::hint::black_box(&input);
+                }
+                best = best.min(start.elapsed().as_nanos() as f64 / 2000.0);
+            }
+            let (input, allocs) = crate::alloc_count::allocations_in(|| {
+                imports.import(frame, Duration::from_secs(1))
+            });
+            std::hint::black_box(input.ok());
+            let stats = imports.stats();
+            eprintln!(
+                "frame import hit {name}: {best:.0} ns per frame (best of 5 x 2000), \
+                 {allocs} heap allocations per hit, {} hits {} imports",
+                stats.hits, stats.imports
+            );
+        }
+    }
+
+    /// A dmabuf whose fd number is reused by a different buffer is a new import, not a hit: the
+    /// cache is keyed by the dmabuf's identity (device and inode), never by the fd number.
+    #[test]
+    fn reused_fd_number_is_a_new_dmabuf() {
+        let Some(ctx) = vulkan_ctx() else { return };
+        let (w, h) = (640u32, 480u32);
+        let imports = GpuFrameImports::new(&ctx, 4);
+        let kernels = GpuKernels::new(&ctx).unwrap();
+        let out = GpuStorage::new_host_mapped(&ctx, u64::from(w * h), None).unwrap();
+        let mut seen_fds = Vec::new();
+        for (round, fill) in [21u8, 22, 23].into_iter().enumerate() {
+            let pixels = bytes((w * h) as usize, fill);
+            let Some(buffer) = heap_frame(w, h, &pixels) else {
+                return eprintln!("skipping: no /dev/dma_heap/system access");
+            };
+            let fd = buffer.fd.as_raw_fd();
+            seen_fds.push(fd);
+            let frame = SharedFrame::new(std::sync::Arc::new(buffer));
+            let input = match imports.import(&frame, Duration::from_secs(1)) {
+                Ok(input) => input,
+                Err(err) => {
+                    return eprintln!("skipping: this device cannot import dmabuf storage ({err})");
+                }
+            };
+            kernels
+                .run(GpuKernel::Copy, &input.storage, &out, u64::from(w * h))
+                .unwrap()
+                .wait();
+            let mut got = vec![0u8; (w * h) as usize];
+            out.read_mapped(0, &mut got).unwrap();
+            assert_eq!(
+                got, pixels,
+                "round {round}: the new buffer's bytes, not the old import's"
+            );
+            drop(input);
+            drop(frame);
+        }
+        let stats = imports.stats();
+        assert_eq!(
+            (stats.imports, stats.hits),
+            (3, 0),
+            "{stats:?} fds {seen_fds:?}"
+        );
+    }
 }

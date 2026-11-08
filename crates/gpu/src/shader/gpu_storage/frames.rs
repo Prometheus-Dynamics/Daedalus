@@ -98,12 +98,27 @@ impl GpuFrameImports {
         let mut planes = [(0u64, 0u64); MAX_PLANES];
         let mut plane_count = 0;
         let mut end = 0u64;
+        // The identities of the fds seen in this call. An fd number names one open file for the
+        // whole call, so a plane whose fd was seen needs no fstat. Nothing is kept across calls:
+        // fd numbers are reused, and a frame has no identity of its own to key on.
+        let mut seen = [(-1i32, (0u64, 0u64)); MAX_PLANES];
+        let mut seen_count = 0;
         for (i, plane) in view.planes().enumerate() {
             let plane_fd = plane.dmabuf_fd.ok_or_else(|| {
                 ExternalImportError::invalid(format!("plane {i} has no dma-buf fd"))
             })?;
-            // SAFETY: the frame keeps its fds open while `frame` is borrowed.
-            let id = inode(unsafe { BorrowedFd::borrow_raw(plane_fd) })?;
+            let id = match seen[..seen_count].iter().find(|(fd, _)| *fd == plane_fd) {
+                Some(&(_, id)) => id,
+                None => {
+                    // SAFETY: the frame keeps its fds open while `frame` is borrowed.
+                    let id = inode(unsafe { BorrowedFd::borrow_raw(plane_fd) })?;
+                    if seen_count < MAX_PLANES {
+                        seen[seen_count] = (plane_fd, id);
+                        seen_count += 1;
+                    }
+                    id
+                }
+            };
             match first {
                 None => first = Some((plane_fd, id)),
                 Some((_, first_id)) if first_id != id => {

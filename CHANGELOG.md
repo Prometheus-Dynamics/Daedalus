@@ -17,6 +17,7 @@ plugin ABI and does not load.
 
 ### Changed
 
+- **Camera frame import does one fstat per fd.** `GpuFrameImports::import` identifies a multi-plane frame's dmabuf with one fstat per distinct fd number, not one per plane. The identity is never kept across calls: fd numbers are reused, and a frame carries no identity of its own. Measured on the host GPU (best of five batches of 2000 hits): NV12 with duplicated plane fds 12.7 -> 9.2 µs per frame. The GREY single-plane frame, whose path has no change, moved 9.5 -> 6.9 µs, which is host load. The `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` skip is not made: a frame carries no acquire fence, so skipping the implicit-fence wait would race the producer. That waits for the frame identity and the frame interface of the SharedFrame work (Lemnos).
 - **GPU dispatch passes the device key down.** The per-device cache key (`device_key`: an `as_hal`
   read, a global lock and a map lookup) was computed up to five times per dispatch. The wgpu
   backend and the fallback context now compute it once, when the device is made, and the dispatch
