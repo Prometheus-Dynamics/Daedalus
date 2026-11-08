@@ -4,7 +4,7 @@
 
 use daedalus_planner::ComputeAffinity;
 
-use super::{RuntimeEdgeTransport, RuntimeNode, RuntimePlan};
+use super::{NODE_DEVICE_META_KEY, RuntimeEdgeTransport, RuntimeNode, RuntimePlan};
 
 impl RuntimeEdgeTransport {
     /// Whether this edge moves its value to or through a GPU: a GPU or CPU-and-GPU target
@@ -39,11 +39,20 @@ pub(crate) fn gpu_needed(
     nodes: &[RuntimeNode],
     transports: &[Option<RuntimeEdgeTransport>],
 ) -> bool {
-    nodes
-        .iter()
-        .any(|node| !matches!(node.compute, ComputeAffinity::CpuOnly))
+    nodes.iter().any(node_needs_gpu)
         || transports
             .iter()
             .flatten()
             .any(RuntimeEdgeTransport::needs_gpu)
+}
+
+/// A node needs the GPU when it prefers or requires one, or when the engine resolved its device
+/// to the GPU: a `device_from` node whose config selects the GPU backend keeps its `CpuOnly`
+/// compute, and reports `daedalus.device = "gpu"` (the engine's resolution, `devices.rs`).
+fn node_needs_gpu(node: &RuntimeNode) -> bool {
+    !matches!(node.compute, ComputeAffinity::CpuOnly)
+        || matches!(
+            node.metadata.get(NODE_DEVICE_META_KEY),
+            Some(daedalus_data::model::Value::String(device)) if &**device == "gpu"
+        )
 }

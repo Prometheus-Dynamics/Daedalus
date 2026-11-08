@@ -315,3 +315,30 @@ fn needs_gpu_only_for_gpu_nodes_and_device_edges() {
     )]))];
     assert!(device_edge.needs_gpu(), "a device upload needs one");
 }
+
+#[test]
+fn a_device_from_node_resolved_to_the_gpu_needs_one() {
+    // `device_from = "backend"` keeps the node's CpuOnly compute: the engine's device resolution
+    // is what makes the plan need the GPU (backend = gpu), and backend = cpu must not.
+    let plan =
+        RuntimePlan::try_from_execution(&ExecutionPlan::new(graph_with_single_edge(), vec![]))
+            .expect("plan");
+    let resolved = |device: &'static str| {
+        let mut plan = plan.clone();
+        let mut metadata = (*plan.nodes[0].metadata).clone();
+        metadata.insert(
+            super::NODE_DEVICE_META_KEY.to_string(),
+            daedalus_data::model::Value::String(device.into()),
+        );
+        plan.nodes[0].metadata = crate::portable::Arc::new(metadata);
+        plan
+    };
+    assert!(
+        resolved("gpu").needs_gpu(),
+        "a device_from node resolved to the GPU needs one"
+    );
+    assert!(
+        !resolved("cpu").needs_gpu(),
+        "a device_from node resolved to the CPU needs none"
+    );
+}
