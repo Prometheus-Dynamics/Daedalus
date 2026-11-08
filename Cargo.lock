@@ -944,6 +944,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-plugins-node-groups"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-rs",
+]
+
+[[package]]
+name = "daedalus-plugins-node-groups-dylib"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-plugins-node-groups",
+ "daedalus-rs",
+]
+
+[[package]]
+name = "daedalus-plugins-node-groups-stable"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-plugins-node-groups",
+ "daedalus-rs",
+]
+
+[[package]]
 name = "daedalus-plugins-stable-abi"
 version = "3.0.1-dev"
 dependencies = [

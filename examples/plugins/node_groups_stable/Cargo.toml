@@ -1,0 +1,22 @@
+[package]
+name = "daedalus-plugins-node-groups-stable"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[dependencies]
+daedalus = { workspace = true, features = ["plugins", "dylib-plugins"] }
+daedalus-plugins-node-groups = { workspace = true }
+
+[features]
+dylib = []

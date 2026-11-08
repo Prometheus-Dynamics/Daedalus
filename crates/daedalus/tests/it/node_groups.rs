@@ -253,3 +253,46 @@ fn i32_port(name: &str) -> PortDecl {
     port.name = name.into();
     port
 }
+
+#[test]
+fn reload_with_a_group_keeps_expansion_and_telemetry_consistent() {
+    let (mut registry, _plugin) = installed();
+    registry
+        .register_node_group(pipe_group())
+        .expect("register group");
+    let engine = Engine::new(EngineConfig::default()).expect("engine");
+
+    let mut host = compile(&registry, group_graph(&registry, GROUP));
+    host.push("x", 3_i32);
+    host.tick().expect("tick before reload");
+    assert_eq!(host.take::<i32>("out"), Some(8));
+
+    // A reload with the same group swaps in and expands and rolls up again.
+    let next = registry.graph_document(group_graph(&registry, GROUP));
+    host.reload_document(&engine, &registry, next, registry.handlers())
+        .expect("reload with group");
+    host.push("x", 10_i32);
+    let telemetry = host.tick().expect("tick after reload");
+    assert_eq!(host.take::<i32>("out"), Some(22));
+    let labels = host.node_labels();
+    assert!(labels.iter().any(|label| label.ends_with("::add")));
+    assert!(labels.iter().any(|label| label.ends_with("::double")));
+    assert!(telemetry.group_metrics.contains_key(GROUP));
+
+    // A reload naming a missing group fails and leaves the running graph unchanged.
+    let mut missing = group_graph(&registry, GROUP);
+    missing.nodes[0].id = daedalus::registry::ids::NodeId::new("groups_example:missing");
+    let missing = registry.graph_document(missing);
+    assert!(
+        host.reload_document(&engine, &registry, missing, registry.handlers())
+            .is_err(),
+        "a reload to an unknown node must be refused"
+    );
+    host.push("x", 4_i32);
+    host.tick().expect("tick after refused reload");
+    assert_eq!(
+        host.take::<i32>("out"),
+        Some(10),
+        "the old graph keeps running"
+    );
+}

@@ -245,6 +245,11 @@ path = "tests/transport_macro_ui.rs"
 required-features = ["plugins"]
 
 [[test]]
+name = "dylib_node_group"
+path = "tests/dylib_node_group.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
 name = "dylib_plugin"
 path = "tests/dylib_plugin.rs"
 required-features = ["engine", "dylib-plugins"]

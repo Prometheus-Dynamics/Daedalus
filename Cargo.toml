@@ -33,6 +33,9 @@ members = [
     "examples/plugins/math",
     "examples/plugins/example_project",
     "examples/plugins/example_project_dylib",
+    "examples/plugins/node_groups",
+    "examples/plugins/node_groups_dylib",
+    "examples/plugins/node_groups_stable",
     "examples/plugins/foreign_consumer",
     "examples/plugins/dependent",
     "examples/plugins/stable_abi",
@@ -104,6 +107,7 @@ daedalus-mcu-build = { path = "crates/mcu/build", version = "3.0.1-dev" }
 daedalus-mcu-blink = { path = "examples/mcu_blink", version = "3.0.1-dev" }
 daedalus-mcu-blink-nodes = { path = "examples/mcu_blink/nodes", version = "3.0.1-dev" }
 daedalus-plugins-example-project = { path = "examples/plugins/example_project" }
+daedalus-plugins-node-groups = { path = "examples/plugins/node_groups" }
 daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi" }
 daedalus-plugins-stable-bench = { path = "examples/plugins/stable_bench" }
 daedalus-surface = { path = "crates/surface" }
