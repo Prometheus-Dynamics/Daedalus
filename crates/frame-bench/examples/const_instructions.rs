@@ -157,11 +157,11 @@ fn main() {
                 );
                 NodeIo::from_inputs(std::iter::once(edge)).with_shared_consts(Some(list.clone()))
             };
-            black_box(cache.get(&call(), "idle").map(|cfg| *cfg).ok());
+            black_box(cache.get(&call(), "idle").copied().ok());
             let mut hits = 0usize;
             for _ in 0..iters {
                 let io = call();
-                if black_box(cache.get(&io, "idle").map(|cfg| *cfg).ok()).is_some() {
+                if black_box(cache.get(&io, "idle").copied().ok()).is_some() {
                     hits += 1;
                 }
             }
