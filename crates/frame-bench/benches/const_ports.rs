@@ -108,7 +108,7 @@ fn bench_const_ports(c: &mut Criterion) {
     io_build.finish();
 
     let mut lookup = c.benchmark_group("port_lookup");
-    for ports in [1usize, 52, 260] {
+    for ports in [1usize, 52] {
         let list = const_list(ports);
         let last = list.last().expect("non-empty").0.as_str().to_string();
         let io = call_io(&list);
@@ -121,6 +121,21 @@ fn bench_const_ports(c: &mut Criterion) {
         );
     }
     lookup.finish();
+
+    // A list over the shared cap (64) spills into the call's inputs as copies, so a by-name
+    // lookup there scans the inputs: this row measures that spill path, not the bound index.
+    let mut spill = c.benchmark_group("port_lookup_spill");
+    let list = const_list(260);
+    let last = list.last().expect("non-empty").0.as_str().to_string();
+    let io = call_io(&list);
+    spill.bench_with_input(
+        BenchmarkId::from_parameter(260),
+        &(io, last),
+        |b, (io, last)| {
+            b.iter(|| black_box(io.get_payload(black_box(last.as_str()))));
+        },
+    );
+    spill.finish();
 
     let mut config = c.benchmark_group("config_resolve");
     let list = const_list(52);

@@ -116,6 +116,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
     use crate::executor::CorrelatedPayload;
+    use crate::portable::Arc;
     use daedalus_transport::Payload;
 
     fn port(name: &str, value: i64) -> NodePort {
@@ -160,5 +161,47 @@ mod tests {
         assert_eq!(list.find("a"), None);
         assert_eq!(list.find("b"), Some(0));
         assert_eq!(list.len(), 1);
+    }
+
+    fn consts(count: usize) -> Arc<NodeConstInputs> {
+        let names: Vec<String> = (0..count).map(|i| format!("p{i}")).collect();
+        let ports = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| port(n, i as i64))
+            .collect();
+        Arc::new(NodeConstInputs::new(ports))
+    }
+
+    #[test]
+    fn the_last_shared_const_is_found_and_taken_at_the_cap() {
+        let list = consts(64);
+        let mut io = crate::io::NodeIo::from_inputs(std::iter::empty())
+            .with_shared_consts(Some(list.clone()));
+        assert!(
+            io.shared_consts().is_some(),
+            "64 consts are shared, not copied"
+        );
+        assert!(io.get_payload("p63").is_some());
+        assert!(io.take_input_payload("p63").is_some());
+        assert!(io.get_payload("p63").is_none(), "taken once");
+        assert!(io.get_payload("p0").is_some(), "the others stay");
+    }
+
+    #[test]
+    fn a_list_over_the_cap_spills_into_the_inputs() {
+        let list = consts(70);
+        let mut io = crate::io::NodeIo::from_inputs(std::iter::empty())
+            .with_shared_consts(Some(list.clone()));
+        assert!(
+            io.shared_consts().is_none(),
+            "over the cap the consts are copies in the inputs"
+        );
+        assert_eq!(io.inputs().count(), 70);
+        assert!(io.get_payload("p0").is_some());
+        assert!(io.get_payload("p69").is_some(), "the last const is found");
+        assert!(io.take_input_payload("p69").is_some());
+        assert!(io.get_payload("p69").is_none(), "taken once");
+        assert_eq!(io.inputs().count(), 69);
     }
 }

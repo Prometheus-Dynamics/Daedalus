@@ -172,6 +172,22 @@ static PLATFORM_CLOCK: Clock = Clock::platform();
 /// Most const inputs a call shares instead of copying (one bit each in `NodeIo::consts_taken`).
 const SHARED_CONSTS: usize = 64;
 
+/// The const list a call shares: an empty list is none, and a list longer than `SHARED_CONSTS`
+/// spills into `inputs` as copies (`consts_taken` tracks one bit per shared const, so it cannot
+/// index more). Every path that makes a call's io goes through here.
+fn share_consts(
+    inputs: &mut Vec<NodePort>,
+    consts: Option<Arc<NodeConstInputs>>,
+) -> Option<Arc<NodeConstInputs>> {
+    match consts.filter(|consts| !consts.is_empty()) {
+        Some(consts) if consts.len() > SHARED_CONSTS => {
+            inputs.extend(consts.iter().cloned());
+            None
+        }
+        consts => consts,
+    }
+}
+
 /// A node's inputs and outputs for one call. Its port lists reuse pooled buffers, so a
 /// steady-state tick does not allocate them however many ports a node has, and its const inputs
 /// are the node's shared list rather than per-call copies.
@@ -214,14 +230,7 @@ impl NodeIo {
         env: Arc<NodeIoEnv>,
         consts: Option<&Arc<NodeConstInputs>>,
     ) -> Self {
-        let consts = consts.filter(|consts| !consts.is_empty());
-        let consts = match consts {
-            Some(consts) if consts.len() > SHARED_CONSTS => {
-                inputs.extend(consts.iter().cloned());
-                None
-            }
-            consts => consts.cloned(),
-        };
+        let consts = share_consts(&mut inputs, consts.cloned());
         Self {
             inputs,
             outputs: env.pool.take(),
@@ -330,7 +339,7 @@ impl NodeIo {
     /// Use `consts` as this io's shared const inputs (an empty list is none): every call of a
     /// node whose consts a host keeps decoded passes the same `Arc`, without copying them.
     pub fn with_shared_consts(mut self, consts: Option<Arc<NodeConstInputs>>) -> Self {
-        self.consts = consts.filter(|consts| !consts.is_empty());
+        self.consts = share_consts(&mut self.inputs, consts);
         self
     }
 
