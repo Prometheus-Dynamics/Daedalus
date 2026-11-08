@@ -1,4 +1,5 @@
 use super::*;
+use daedalus_data::model::Value;
 use daedalus_planner::{
     Graph, GraphDocument, MissingPlugins, PluginRequirement, PortRefreshReport, RefreshPolicy,
 };
@@ -32,7 +33,29 @@ impl PluginRegistry {
     /// built-in declarations) contribute nothing. When plugins are nested, every plugin whose
     /// manifest lists the node is included.
     pub fn graph_requirements(&self, graph: &Graph) -> Vec<PluginRequirement> {
-        let node_ids: BTreeSet<&NodeId> = graph.nodes.iter().map(|node| &node.id).collect();
+        // A node group's stages run in the graph too, so their providers are required: follow
+        // each group's stage ids (`GROUP_STAGES_KEY`), nested groups included.
+        let mut node_ids: BTreeSet<NodeId> =
+            graph.nodes.iter().map(|node| node.id.clone()).collect();
+        let mut pending: Vec<NodeId> = node_ids.iter().cloned().collect();
+        while let Some(id) = pending.pop() {
+            let Some(decl) = self.transport_capabilities.node_decl(&id) else {
+                continue;
+            };
+            let Some(Value::List(stages)) =
+                daedalus_planner::descriptor_metadata_value(decl, GROUP_STAGES_KEY)
+            else {
+                continue;
+            };
+            for stage in stages {
+                if let Value::String(stage) = stage {
+                    let stage = NodeId::new(stage.as_ref());
+                    if node_ids.insert(stage.clone()) {
+                        pending.push(stage);
+                    }
+                }
+            }
+        }
         self.plugin_manifests
             .values()
             .filter(|manifest| {

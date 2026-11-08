@@ -1,7 +1,7 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use daedalus_core::metadata::{EMBEDDED_GRAPH_KEY, EMBEDDED_HOST_KEY};
+use daedalus_core::metadata::{EMBEDDED_GRAPH_KEY, EMBEDDED_HOST_KEY, GROUP_ID_KEY};
 use daedalus_data::model::Value;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
@@ -24,11 +24,13 @@ macro_rules! traced {
     };
 }
 
+/// Expands one level of embedded graphs. Returns whether it expanded any: a stage that is itself
+/// a group is expanded by the next call, so nested groups expand fully.
 pub(super) fn expand_embedded_graphs(
     input: &mut PlannerInput,
     catalog: &PlannerCatalog,
     diags: &mut Vec<Diagnostic>,
-) {
+) -> bool {
     #[cfg(feature = "tracing")]
     let trace = std::env::var_os("DAEDALUS_TRACE_EMBEDDED_EXPAND").is_some();
     #[derive(Clone)]
@@ -78,7 +80,7 @@ pub(super) fn expand_embedded_graphs(
     }
 
     if embedded_graphs.is_empty() {
-        return;
+        return false;
     }
 
     let mut connected_inputs: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
@@ -157,7 +159,19 @@ pub(super) fn expand_embedded_graphs(
             .or_else(|| latest_node(catalog, &node.id).and_then(|desc| desc.label.clone()))
             .or_else(|| spec.group_label.clone())
             .unwrap_or_else(|| node.id.0.clone());
-        let group_id = spec.group_id.clone().unwrap_or_else(|| group_label.clone());
+        // The group's canonical id (its declaration's `GROUP_ID_KEY`) rolls its stages up; a group
+        // without one falls back to its label.
+        let declared_id = latest_node(catalog, &node.id)
+            .and_then(|desc| node_metadata_value(desc, GROUP_ID_KEY))
+            .and_then(|val| match val {
+                Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+                _ => None,
+            });
+        let group_id = declared_id
+            .or_else(|| spec.group_id.clone())
+            .unwrap_or_else(|| group_label.clone());
+        // The id of an outer group this node is a stage of (nested expansion), if any.
+        let outer_group = GroupMetadata::from_node_metadata(&node.metadata).id;
         let prefix = format!("{group_label}::");
         let mut index_map: Vec<Option<usize>> = vec![None; graph.nodes.len()];
 
@@ -168,8 +182,14 @@ pub(super) fn expand_embedded_graphs(
             let mut cloned = g_node.clone();
             let base_label = cloned.label.clone().unwrap_or_else(|| cloned.id.0.clone());
             cloned.label = Some(format!("{prefix}{base_label}"));
+            // A stage already in an outer group keeps that group's id, so nested stages roll up
+            // into the outermost group.
+            let stage_group = outer_group
+                .clone()
+                .or_else(|| GroupMetadata::from_node_metadata(&cloned.metadata).id)
+                .unwrap_or_else(|| group_id.clone());
             GroupMetadata {
-                id: Some(group_id.clone()),
+                id: Some(stage_group),
                 label: Some(group_label.clone()),
                 embedded_group: Some(group_label.clone()),
             }
@@ -500,4 +520,5 @@ pub(super) fn expand_embedded_graphs(
 
     input.graph.nodes = new_nodes;
     input.graph.edges = new_edges;
+    true
 }

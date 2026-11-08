@@ -92,6 +92,9 @@ pub(super) fn diagnostic_node_id(node: &NodeInstance) -> String {
 /// Currently stubs; contracts are enforced via deterministic diagnostics ordering.
 /// Build an execution plan from a graph and registry.
 ///
+/// Nesting bound for embedded groups (a group whose stage is a group, and so on).
+const MAX_EMBEDDED_DEPTH: usize = 16;
+
 pub fn build_plan(mut input: PlannerInput, config: PlannerConfig) -> PlannerOutput {
     let mut diags = Vec::new();
     let catalog = PlannerCatalog::from_config(&config);
@@ -116,7 +119,12 @@ pub fn build_plan(mut input: PlannerInput, config: PlannerConfig) -> PlannerOutp
     }
 
     let mut applied_lowerings = Vec::new();
-    expand_embedded_graphs(&mut input, &catalog, &mut diags);
+    // Nested groups: each pass expands one level, so repeat until no group is left.
+    for _ in 0..MAX_EMBEDDED_DEPTH {
+        if !expand_embedded_graphs(&mut input, &catalog, &mut diags) {
+            break;
+        }
+    }
     apply_descriptor_defaults(&mut input.graph, &catalog, &mut diags);
     applied_lowerings.extend(apply_planner_lowerings(
         &mut input.graph,

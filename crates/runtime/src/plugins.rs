@@ -36,6 +36,7 @@ mod context;
 mod crate_builds;
 mod foreign;
 mod install;
+mod node_group;
 mod payload_codecs;
 mod registry_admin;
 mod registry_transport;
@@ -49,6 +50,7 @@ pub use context::{PluginGroup, PluginInstallContext, PluginInstallable};
 pub use crate_builds::{CrateBuildDiff, CrateBuildInfo};
 pub use install::install_all;
 use install::{InstalledCapabilityKeys, normalize_plugin_manifest};
+pub use node_group::{GROUP_STAGES_KEY, NodeGroup, StagePort};
 pub use payload_codecs::{
     CodecFromBytesFn, CodecFromValueFn, CodecToBytesFn, CodecToValueFn, FromBytesFn, FromValueFn,
     PayloadCodec, ToBytesFn, ToValueFn, ValueCodec,

@@ -751,6 +751,80 @@ Prefer several small nodes (or an embedded graph/node-group) over a single "mega
 performs several stages. Per-node telemetry (`MetricsLevel::Detailed` and above) is only
 actionable when stages are separate nodes.
 
+## Node Groups
+
+A node group is several nodes exported as one. A group is placed on a graph as one node, and
+the planner expands it into its stage nodes when the graph is planned. A fused node is a single
+node that does all the work itself. A group is not fused: the stages stay separate nodes at
+run time, each with its own telemetry.
+
+### Exporting A Group
+
+Build the group with `NodeGroup` and register it on the plugin registry:
+
+```rust
+use daedalus::runtime::plugins::{NodeGroup, StagePort};
+
+let group = NodeGroup::new("acme:detect_track")   // canonical node id
+    .label("Detect and track")
+    .stage("detect", "acme:detect")               // alias -> a registered node id
+    .stage("track", "acme:track")
+    .connect(StagePort::new("detect", "boxes"), StagePort::new("track", "boxes"))
+    .input("frame", [StagePort::new("detect", "frame")])
+    .input("threshold", [StagePort::new("detect", "threshold")])
+    .const_input(StagePort::new("track", "max_age"), Value::Int(8))
+    .output("tracks", StagePort::new("track", "tracks"));
+registry.register_node_group(group)?;
+```
+
+`register_node_group` checks the stages, ports and types against the registry (a mismatch is a
+registration error) and then registers the group as an ordinary node declaration. Because of
+that, the group lists in the registry catalog and the UI node listing under its canonical id,
+with its label, exposed ports and feature flags. No metadata is written by hand.
+
+Stages must be registered before the group. The group's embedded graph is stored in the
+declaration metadata (`EMBEDDED_GRAPH_KEY`, `EMBEDDED_HOST_KEY`); `NodeGroup` writes it, so the
+same representation works for the Rust ABI and the stable C plugin paths.
+
+### Ports And Config
+
+- Each `.input(name, targets)` is a group input port. It feeds every listed stage input. The
+  group port takes the stage input's type, and the targets must agree on it.
+- Each `.output(name, from)` is a group output port, taken from a stage output.
+- A `.const_input` on an exposed input is the group port's default: a graph that does not set
+  the port uses the stage's value. A const on a stage input the group does not expose is built
+  into the group.
+- A graph patch that sets a const on the group node (`SetNodeConst` with the group's id) reaches
+  the stage input it feeds, the same as a const on a plain node. Patches apply to the group node
+  before planning.
+
+Stages are not separately addressable from a graph. A graph can only select the group node.
+
+### Nested Groups
+
+A stage may itself be a group. The planner expands groups repeatedly until none is left, with a
+bound of 16 levels. Nested stages roll up under the outermost group's id.
+
+### What explain_plan And Telemetry Show
+
+- `explain_plan` lists the expanded stage nodes. The group node is not in the plan.
+- Each stage is a node in the runtime, so per-node telemetry (`MetricsLevel::Detailed` and above)
+  is per stage. A stage's label is the group node's label, then `::`, then the stage alias, for
+  example `g::detect`.
+- Group rollup: `ExecutionTelemetry::group_metrics` is keyed by the canonical group id, and each
+  stage's group id is also written to its node metadata (`GROUP_ID_KEY`). A UI can roll stages up
+  under the group id. A nested stage rolls up under the outermost group.
+
+### `requires`
+
+- Plugin requirements. A graph that places a group requires the plugins that provide its stages,
+  as well as the plugin that provides the group node. The stage ids are stored on the group
+  (`GROUP_STAGES_KEY`), and `graph_requirements` follows them, nested groups included.
+- Features. The group's `feature_flags` are the union of its stages' flags.
+- GPU. A node declaration has no GPU requirement field. GPU use comes from port residency and
+  adapters, and the planner derives it from the expanded stages. A group that uses GPU ports is a
+  GPU graph in the plan without any declaration on the group.
+
 ## Hosts
 
 Host applications exchange payloads through the host bridge (`HostGraph::push*`, `take*`,

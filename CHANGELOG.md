@@ -66,6 +66,13 @@ plugin ABI and does not load.
 
 ### Added
 
+- `NodeGroup` and `PluginRegistry::register_node_group`: a plugin exports several nodes as one
+  node that lists in the catalog under its canonical id and expands into its stages at plan time.
+  The group's `requires` is the union of its stages' feature flags and plugins
+  (`GROUP_STAGES_KEY`). A group's rollup id is its canonical id, and nested groups expand fully.
+  The embedded-graph metadata representation is unchanged, and the planner's group expansion
+  changed in place (nested expansion and the canonical group id); see "Node Groups" in
+  `docs/node-authoring.md`.
 - `Payload::providing_recycled` and `RecyclePool<O>`: `Payload::providing` for a stream of
   owners, with no allocation once warm. The owner lives in a node a pool keeps for reuse (one
   pool per camera or process); the node is a refcounted allocation of the pool, not an `Arc`. The
