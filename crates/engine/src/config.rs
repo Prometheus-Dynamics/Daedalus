@@ -146,6 +146,10 @@ pub struct RuntimeSection {
     pub backoff_base: Duration,
     #[cfg_attr(feature = "config-env", serde(default = "default_backoff_cap"))]
     pub backoff_cap: Duration,
+    /// Switch a node off after this many failures in a row (0, the default: never). A node that is
+    /// switched off runs nothing until it is switched on. See `EngineConfig::with_auto_off`.
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub auto_off_after: u32,
     /// Graph-wide node failure recovery (default [`NodeRecovery::SkipFrame`]); nodes override it with
     /// `daedalus.node.recovery` metadata.
     #[cfg_attr(feature = "config-env", serde(default))]
@@ -239,6 +243,7 @@ impl Default for RuntimeSection {
             frame_overhead_window: None,
             fail_fast: default_fail_fast(),
             backoff_base: default_backoff_base(),
+            auto_off_after: 0,
             backoff_cap: default_backoff_cap(),
             recovery: NodeRecovery::default(),
             blocking_backpressure: false,
@@ -421,6 +426,13 @@ impl EngineConfig {
     pub fn with_backoff(mut self, base: Duration, cap: Duration) -> Self {
         self.runtime.backoff_base = base;
         self.runtime.backoff_cap = cap;
+        self
+    }
+
+    /// Switch a node off after `after` failures in a row (0: never, the default). Off by default:
+    /// a failing node is backed off and retried, and only this policy switches it off.
+    pub fn with_auto_off(mut self, after: u32) -> Self {
+        self.runtime.auto_off_after = after;
         self
     }
 

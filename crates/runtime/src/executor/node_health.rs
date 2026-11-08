@@ -37,6 +37,8 @@ struct Detail {
     /// The node is skipped until this time.
     until: Option<Instant>,
     last_error: Option<String>,
+    /// Switched off by the auto-off policy (rather than by hand).
+    auto_off: bool,
 }
 
 /// Every node's health, shared by a parallel run's worker snapshots. `touched` counts failures,
@@ -73,6 +75,7 @@ impl NodeHealthTable {
         };
         self.touched.fetch_add(1, Relaxed);
         let mut detail = health.detail.lock();
+        detail.auto_off = false;
         if enabled {
             detail.consecutive = 0;
             detail.until = None;
@@ -91,6 +94,7 @@ impl NodeHealthTable {
         clock: &Clock,
         base: Duration,
         cap: Duration,
+        auto_off_after: u32,
     ) {
         let Some(health) = self.nodes.get(idx) else {
             return;
@@ -99,9 +103,16 @@ impl NodeHealthTable {
         let mut detail = health.detail.lock();
         detail.failures = detail.failures.saturating_add(1);
         detail.consecutive = detail.consecutive.saturating_add(1);
+        detail.last_error = Some(error);
+        if auto_off_after > 0 && detail.consecutive >= auto_off_after {
+            // The auto-off policy: switched off until someone switches it on.
+            detail.until = None;
+            detail.auto_off = true;
+            health.state.store(DISABLED, Relaxed);
+            return;
+        }
         let delay = backoff_delay(detail.consecutive, base, cap);
         detail.until = Some(clock.now() + delay);
-        detail.last_error = Some(error);
         health.state.store(BACKED_OFF, Relaxed);
     }
 
@@ -152,6 +163,14 @@ impl NodeHealthTable {
                         .filter(|_| backed_off)
                         .map(|until| until.duration_since(now)),
                     last_error: detail.last_error.clone(),
+                    disabled_by: disabled.then(|| {
+                        if detail.auto_off {
+                            "auto_off"
+                        } else {
+                            "manual"
+                        }
+                        .to_string()
+                    }),
                 })
             })
             .collect()
@@ -207,6 +226,10 @@ pub struct NodeHealthReport {
     pub backoff_remaining: Option<Duration>,
     /// The most recent failure's message.
     pub last_error: Option<String>,
+    /// For a `"disabled"` node: `"manual"` (switched off by hand) or `"auto_off"` (by the policy
+    /// `with_auto_off`); `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_by: Option<String>,
 }
 
 #[cfg(test)]

@@ -66,6 +66,10 @@ pub(crate) trait ExecutorConfigTarget {
         self.core_mut().run_config.set_fail_fast(enabled);
     }
 
+    fn apply_auto_off(&mut self, after: u32) {
+        self.core_mut().run_config.set_auto_off(after);
+    }
+
     fn apply_backoff(&mut self, base: ::core::time::Duration, cap: ::core::time::Duration) {
         self.core_mut().run_config.set_backoff(base, cap);
     }
@@ -267,6 +271,15 @@ macro_rules! executor_config_api {
         /// executor records segment errors in telemetry and continues scheduling remaining ready work.
         pub fn with_fail_fast(mut self, enabled: bool) -> Self {
             self.apply_fail_fast(enabled);
+            self
+        }
+
+        /// Switch a node off after `after` failures in a row (default 0: never). The node then
+        /// runs nothing until it is switched on again (`try_set_node_enabled`); telemetry shows it
+        /// as `"disabled"` with `disabled_by: "auto_off"`. Off by default, so a failing node is
+        /// backed off and retried, never switched off.
+        pub fn with_auto_off(mut self, after: u32) -> Self {
+            self.apply_auto_off(after);
             self
         }
 

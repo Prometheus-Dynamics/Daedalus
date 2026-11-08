@@ -6,7 +6,44 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+
+- Per-node backoff across ticks: a node whose handler, flush or publish fails is skipped until a
+  delay that starts at 50 ms, doubles per failure in a row, and is capped at 5 s by default (at
+  most 10 s). A success makes it ready again. A backed-off node's frame is dropped, so its
+  consumers see no new value (a Latest edge keeps its last value). Nothing sleeps on the tick
+  path. Configure with `with_backoff(base, cap)` on executors and `EngineConfig::with_backoff`.
+- Telemetry: `ExecutionTelemetry::node_health` (`NodeHealthReport`: `node_id`, `state` of
+  `"ready"`, `"backed_off"` or `"disabled"`, `failures`, `consecutive_failures`,
+  `backoff_remaining`, `disabled_by`, `last_error`) and `RecoveryTelemetry::backoff_skips`
+  (frames skipped by a backoff or a manual off). `backoff_remaining` is measured from the moment
+  the report is built.
+- Manual per-node off and on: `try_set_node_enabled(node, enabled)` on `Executor` and
+  `OwnedExecutor`, and `HostGraph::set_node_enabled`, between ticks. A node is named by id or
+  instance key. Off, it runs no frame; switched on, its backoff clears at once and it runs on the
+  next tick. Typed node state is kept (reset it with `NodeRecovery::Restart`).
+- Auto-off policy (off by default): `with_auto_off(n)` on executors and
+  `EngineConfig::with_auto_off(n)` switch a node off after `n` failures in a row, until it is
+  switched on again. `disabled_by` says whether it was `"manual"` or `"auto_off"`.
+
 ### Changed
+
+- Node failures are contained by default: `NodeRecovery`'s default is `SkipFrame` (was `Fail`).
+  The failing node's outputs are dropped for the tick, the failure is recorded in
+  `ExecutionTelemetry::errors`, and `recovery().skipped_frames` counts it. A run that needs to
+  end on a failure opts in with `with_fail_fast(true)`.
+- `fail_fast` defaults to `false` in the runtime and in the engine (`DAEDALUS_RUNTIME_FAIL_FAST`).
+  With fail-fast on, the run ends on any recorded failure, whatever the node's policy.
+- `StreamErrorPolicy` defaults to `Continue` (was `Stop`). A `Stop` worker now records a tick panic
+  as its `last_error` instead of exiting silently.
+- A node panic on the parallel path is reported as that node's `HandlerFailed` with
+  `handler panicked: ...` (was the segment-level `HandlerPanicked`).
+- A panic in a dylib node is contained. `RecoveryTelemetry::caught_panics` counts host-side catches
+  only: a stable (C ABI) plugin catches its own panic at the boundary, so it is 0 on that path.
+- `ExecutionDomain`: a contained node failure does not fail its graph's tick, so `failed` counts
+  graph-level errors only.
+- In-tick `NodeRecovery::Retry { backoff }` no longer sleeps. Its `backoff` field is kept and
+  ignored; a failed node backs off across ticks instead (`with_backoff`).
 
 - The GPU device opens on a request, not at compile or on a GPU segment: `ExecutionContext::gpu()`
   (`Result<Option<&GpuContextHandle>, NodeError>`) opens it on the first call, and the edge

@@ -146,6 +146,7 @@ pub(super) fn handle_failure(
         &v.core.clock,
         v.core.run_config.backoff_base,
         v.core.run_config.backoff_cap,
+        v.core.run_config.auto_off_after,
     );
     // Fail-fast ends the run on any failure, whatever the node's policy (CI and tests).
     if v.core.run_config.fail_fast {
