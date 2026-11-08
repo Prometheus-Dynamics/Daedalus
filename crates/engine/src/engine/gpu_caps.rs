@@ -171,7 +171,7 @@ fn flag(field: &str) -> Option<bool> {
 }
 
 /// Write `entries` to the cache file, creating the directory. A failure is no cache.
-#[cfg(any(feature = "gpu", test))]
+#[cfg(all(feature = "std", any(feature = "gpu", test)))]
 fn write_entries(dir: &Path, entries: &[(String, GpuCaps)]) {
     let text: String = entries
         .iter()
