@@ -180,18 +180,10 @@ pub struct ForeignOwner {
 impl ForeignOwner {
     /// Take over one strong reference of `value`.
     pub fn from_arc<T: Send + Sync + 'static>(value: Arc<T>) -> Self {
-        unsafe extern "C" fn retain<T>(ptr: *const c_void) {
-            // Safety: `ptr` came from `Arc::into_raw` and the caller holds a reference.
-            unsafe { Arc::increment_strong_count(ptr.cast::<T>()) }
-        }
-        unsafe extern "C" fn release<T>(ptr: *const c_void) {
-            // Safety: `ptr` came from `Arc::into_raw` and the caller gives up a reference.
-            unsafe { Arc::decrement_strong_count(ptr.cast::<T>()) }
-        }
         Self {
             ptr: Arc::into_raw(value).cast(),
-            retain: retain::<T>,
-            release: release::<T>,
+            retain: crate::arc_owner::arc_retain::<T>,
+            release: crate::arc_owner::arc_release::<T>,
         }
     }
 }

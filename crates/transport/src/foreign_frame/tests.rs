@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ForeignHandle, ForeignInterface};
+use crate::{ForeignHandle, ForeignInterface, Payload, Residency};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
@@ -227,3 +227,44 @@ fn v1_and_v3_never_mix() {
 
 #[path = "tests_v3.rs"]
 mod v3;
+
+#[test]
+fn frame_identity_of_an_arc_owned_frame_follows_the_arc() {
+    let arc = Arc::new(Nv12::default());
+    let frame = SharedFrame::new(arc.clone());
+    assert!(frame.downcast_ref::<Nv12>().is_some());
+    assert!(frame.downcast_ref::<String>().is_none());
+    let weak = frame.downgrade().expect("this build's Arc frame weakens");
+    assert_eq!(Arc::weak_count(&arc), 1, "the weak keeps the allocation");
+    assert_eq!(weak.id(), frame.id());
+    let other = SharedFrame::new(Arc::new(Nv12::default()));
+    assert_ne!(
+        other.id(),
+        frame.id(),
+        "distinct frames, distinct identities"
+    );
+    let copy = weak.upgrade().expect("held: upgrades");
+    assert!(copy.ptr_eq(&frame));
+    drop((frame, copy));
+    assert!(weak.is_alive(), "the Arc still holds the value");
+    drop(arc);
+    assert!(!weak.is_alive());
+    assert!(weak.upgrade().is_none());
+}
+
+#[test]
+fn frame_from_a_providing_payload_has_its_owners_identity() {
+    let payload = Payload::providing::<Nv12, FrameInterface>(
+        "test:nv12",
+        Arc::new(Nv12::default()),
+        Residency::Cpu,
+    );
+    let frame = SharedFrame::from_payload(&payload).unwrap().unwrap();
+    assert!(frame.downcast_ref::<Nv12>().is_some());
+    let weak = frame.downgrade().expect("a provided owner weakens");
+    assert_eq!(weak.id(), frame.id());
+    drop(payload);
+    assert!(weak.is_alive(), "the frame holds the owner");
+    drop(frame);
+    assert!(!weak.is_alive());
+}

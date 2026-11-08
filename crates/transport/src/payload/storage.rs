@@ -52,6 +52,12 @@ pub trait PayloadStorage: Send + Sync + fmt::Debug {
     fn to_foreign_handle(&self) -> Option<ForeignHandle> {
         self.foreign_handle().cloned()
     }
+    /// The type-erased `Arc` operations of the owner, when the storage's owner is an `Arc` its
+    /// provider lends (see [`Payload::foreign`](crate::Payload::foreign)'s owner handles).
+    #[doc(hidden)]
+    fn arc_owner_ops(&self) -> Option<&'static crate::arc_owner::ArcOps> {
+        None
+    }
     /// [`Self::to_foreign_handle`] for storage held in `storage`, which an owner value's handle
     /// needs: it shares that `Arc`. `storage` must be the `Arc` holding `self`.
     #[doc(hidden)]

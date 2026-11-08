@@ -149,6 +149,9 @@ where
     fn foreign_borrow(&self) -> Option<ForeignBorrow<'_>> {
         Some(ForeignBorrow::of::<O, I>(self.inner.owner()))
     }
+    fn arc_owner_ops(&self) -> Option<&'static crate::arc_owner::ArcOps> {
+        Some(crate::arc_owner::ArcOps::of::<O>())
+    }
 
     fn to_foreign_handle_in(&self, storage: &Arc<dyn PayloadStorage>) -> Option<ForeignHandle> {
         let owner = self.inner.owner_arc(storage)?;
@@ -231,6 +234,17 @@ impl Payload {
         if any.downcast_ref::<ArcValue<O>>().is_some_and(|v| at(v)) {
             return Ok(self.provided::<ArcValue<O>, O, I>());
         }
+        // A recycled node already lends its owner through `I` (its handle is `I`'s): the node stays,
+        // and only the key is retyped, so the frame reads as this build's own node (see
+        // `SharedFrame::downcast_ref`).
+        if let Body::Recycled(storage, _) = &self.storage
+            && storage.0.interface().same_interface(I::info())
+            && super::recycle::recycled_ref::<O>(&storage.0).is_some()
+        {
+            let mut payload = self;
+            payload.type_key = TypeKey::from_static(I::KEY);
+            return Ok(payload);
+        }
         let Some(handle) = ForeignHandle::from_payload::<O, I>(&self) else {
             return Err(Box::new(self));
         };
@@ -289,6 +303,12 @@ impl Payload {
     /// An owning [`ForeignHandle`] of [`Self::foreign_borrow`]'s value (a retain of the carried
     /// handle, or the owner's `Arc`), for consumers the borrow cannot cover, such as the stable
     /// plugin boundary.
+    /// The `Arc` operations of the owner this payload's [`Self::to_foreign_handle`] handle
+    /// carries (`None` when the handle is a carried one, or the owner is not an `Arc`).
+    pub(crate) fn arc_owner_ops(&self) -> Option<&'static crate::arc_owner::ArcOps> {
+        self.storage.get().arc_owner_ops()
+    }
+
     pub fn to_foreign_handle(&self) -> Option<ForeignHandle> {
         match &self.storage {
             Body::Shared(storage, _) => storage.to_foreign_handle_in(storage),

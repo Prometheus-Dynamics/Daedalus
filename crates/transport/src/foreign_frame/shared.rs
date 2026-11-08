@@ -2,10 +2,13 @@
 
 use core::fmt;
 
+use super::weak::{FrameId, WeakFrame};
 use super::{
     FrameColorimetry, FrameFormatKind, FrameInterface, FramePlane, FrameResidency, FrameSource,
     FrameVTable, FrameView,
 };
+use crate::arc_owner::ArcOps;
+use crate::payload::{recycled_incarnation, recycled_ref};
 use crate::portable::Arc;
 use crate::{
     ForeignHandle, ForeignInterface, ForeignInterfaceMismatch, ForeignRef, ForeignView, Payload,
@@ -36,13 +39,28 @@ use crate::{
 /// - A frame made by a plugin runs the plugin's code on every access and release, so a host
 ///   that receives one from a separately built plugin keeps that plugin's library loaded for
 ///   good (as for any foreign handle the plugin created).
+///
+/// # Identity
+///
+/// [`Self::id`] names the frame for as long as it lives: an `Arc`-owned frame by its value's
+/// address, a recycled one by its node's address and the node's incarnation. [`Self::downgrade`]
+/// gives a [`WeakFrame`] that tells whether the frame is still alive, and [`WeakFrame::upgrade`]
+/// makes a new `SharedFrame` of it while it is.
+///
+/// # Same-build access
+///
+/// [`Self::downcast_ref`] reads the owner as its own type when this build made it (an `Arc` or a
+/// recycled node of that type). A frame from another build, or of another type, gives `None`.
 #[derive(Clone)]
 pub struct SharedFrame {
-    handle: ForeignHandle,
+    pub(super) handle: ForeignHandle,
     /// The handle's vtable, checked against v3 once.
-    vtable: *const FrameVTable,
+    pub(super) vtable: *const FrameVTable,
     /// Whether this build created the handle (its owner code is ours).
-    local: bool,
+    pub(super) local: bool,
+    /// The owner's `Arc` operations, when the owner is an `Arc` of a known type (see
+    /// [`Self::arc_ops`]).
+    pub(super) arc: Option<&'static ArcOps>,
 }
 
 // Safety: the handle is `Send + Sync`, and the vtable is an immutable static of the owner.
@@ -53,13 +71,17 @@ unsafe impl Sync for SharedFrame {}
 impl SharedFrame {
     /// Share `frame` (one `Arc` move, no copy).
     pub fn new<T: FrameSource>(frame: Arc<T>) -> Self {
-        Self::checked(ForeignHandle::from_arc::<T, FrameInterface>(frame), true)
-            .expect("a FrameSource provides this build's daedalus:frame")
+        Self::checked(
+            ForeignHandle::from_arc::<T, FrameInterface>(frame),
+            true,
+            Some(ArcOps::of::<T>()),
+        )
+        .expect("a FrameSource provides this build's daedalus:frame")
     }
 
     /// Own a frame received as a handle (the handle's reference moves in).
     pub fn from_handle(handle: ForeignHandle) -> Result<Self, ForeignInterfaceMismatch> {
-        Self::checked(handle, false)
+        Self::checked(handle, false, None)
     }
 
     /// Own a frame this build made as a handle (the handle's reference moves in): a
@@ -72,27 +94,32 @@ impl SharedFrame {
     pub unsafe fn from_local_handle(
         handle: ForeignHandle,
     ) -> Result<Self, ForeignInterfaceMismatch> {
-        Self::checked(handle, true)
+        Self::checked(handle, true, None)
     }
 
-    fn checked(handle: ForeignHandle, local: bool) -> Result<Self, ForeignInterfaceMismatch> {
+    fn checked(
+        handle: ForeignHandle,
+        local: bool,
+        arc: Option<&'static ArcOps>,
+    ) -> Result<Self, ForeignInterfaceMismatch> {
         let vtable: *const FrameVTable = handle.view::<FrameInterface>()?.vtable();
         Ok(Self {
             handle,
             vtable,
             local,
+            arc,
         })
     }
 
     /// The frame `payload` carries (a retain of its handle) or lends through its provider (a
-    /// handle over the owner's `Arc`). `None` when the payload is not foreign-readable, `Err`
-    /// when it is another interface or frame version.
+    /// handle over the owner's `Arc`, or a recycled node's handle). `None` when the payload is not
+    /// foreign-readable, `Err` when it is another interface or frame version.
     pub fn from_payload(payload: &Payload) -> Option<Result<Self, ForeignInterfaceMismatch>> {
-        let (handle, local) = match payload.foreign_handle() {
-            Some(handle) => (handle.clone(), payload.foreign_handle_is_local()),
-            None => (payload.to_foreign_handle()?, true),
+        let (handle, local, arc) = match payload.foreign_handle() {
+            Some(handle) => (handle.clone(), payload.foreign_handle_is_local(), None),
+            None => (payload.to_foreign_handle()?, true, payload.arc_owner_ops()),
         };
-        Some(Self::checked(handle, local))
+        Some(Self::checked(handle, local, arc))
     }
 
     /// The frame as a [`FrameView`] (no reference count change).
@@ -115,6 +142,49 @@ impl SharedFrame {
     /// provider), rather than receiving it from another build.
     pub fn is_local(&self) -> bool {
         self.local
+    }
+
+    /// The frame's `Arc` operations. Only this build's constructors set them ([`Self::new`] and a
+    /// provided payload's [`Self::from_payload`]), each paired with the `Arc<T>` owner it
+    /// describes, so the table is trusted; the owner's pointer must still be the value's.
+    /// (Comparing the owner's release function by address was not reliable across generic
+    /// instances under Miri, so it is not used here; a recycled node is recognised by its
+    /// non-generic release, see `recycle`.)
+    pub(super) fn arc_ops(&self) -> Option<&'static ArcOps> {
+        let ops = self.arc?;
+        core::ptr::eq(self.handle.owner().ptr, self.handle.data()).then_some(ops)
+    }
+
+    /// The owner as a `T`, when this build made the frame's owner of type `T` (an `Arc<T>` or a
+    /// recycled node of `T`, see [`RecyclePool`](crate::RecyclePool)). `None` for a frame from
+    /// another build, or of another type.
+    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        if let Some(value) = recycled_ref::<T>(&self.handle) {
+            return Some(value);
+        }
+        let ops = self.arc_ops()?;
+        if !ops.is::<T>() {
+            return None;
+        }
+        // Safety: the owner is the `Arc` that `ops` describes (checked by `arc_ops`), whose type
+        // is `T` (checked above), so its value is a live `T` for the borrow of `self`.
+        Some(unsafe { &*self.handle.data().cast::<T>() })
+    }
+
+    /// The frame's identity, stable for its life and never reused while a frame or a
+    /// [`WeakFrame`] of it lives (see [`FrameId`]).
+    pub fn id(&self) -> FrameId {
+        match recycled_incarnation(&self.handle) {
+            Some((node, generation)) => FrameId::new(node, generation),
+            None => FrameId::new(self.handle.data() as usize, 0),
+        }
+    }
+
+    /// A weak reference to this frame: `None` when the frame's owner is not one this build can
+    /// weaken (a frame from another build, or an owner that is not an `Arc` or a recycled node
+    /// of a type this build knows).
+    pub fn downgrade(&self) -> Option<WeakFrame> {
+        WeakFrame::of(self)
     }
 
     /// Whether both are the same frame (same owner value), not just equal metadata.

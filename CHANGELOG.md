@@ -85,6 +85,20 @@ plugin ABI and does not load.
   pool and nothing is allocated; a shared or lent node is handed back. `get_arc`, `get_mut` and
   `typed_strong_count` do not apply to a node. `get_ref` recognises a node only through this
   build's own release function and its `TypeId`, never by reading a foreign handle's pointer.
+- `SharedFrame` identity and same-build access: `SharedFrame::downcast_ref::<T>()` returns the
+  owner when this build made the frame's owner as a `T`: an `Arc<T>` (recognised by the `Arc`
+  operations this build attaches to it, which carry `T`'s `TypeId`) or a `providing_recycled` node
+  of `T` (recognised by this build's own release function and `TypeId`); a frame of another build
+  gives `None`. `SharedFrame::from_payload` reads a recycled payload and an `Arc`-owned provided
+  payload alike. `SharedFrame::id()` is a `FrameId` (`Copy`, `Eq`, `Hash`), stable for the frame's
+  life and never reused while a frame or weak reference of it lives; `SharedFrame::downgrade()`
+  gives a `WeakFrame` (`None` for a frame of another build) with `upgrade()`, `is_alive()` and
+  `id()`. A `WeakFrame` of an `Arc`-owned frame is a std `Weak` of the value. A `WeakFrame` of a
+  recycled node holds the pool's state, so the node's memory outlives the pool's last payload;
+  each node counts its incarnations, so a weak frame never upgrades into a later use of its node,
+  and `upgrade` takes a holder only while the value is alive. The owner of a recycled node is
+  still dropped at its last holder (see `providing_recycled`); a node's memory is freed with the
+  pool's state rather than when its pool is dropped.
 - `HostBridgeHandle::push_value(port, Value)` and `HostGraph::push_value`: a host pushes a
   `Value` into a host input and it reaches the port's declared type without the host knowing the
   Rust type. The port's key (planner-resolved, set when a bridge attaches to a graph) picks the

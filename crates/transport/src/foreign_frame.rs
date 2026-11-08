@@ -19,6 +19,7 @@ mod color;
 mod compat;
 mod shared;
 mod thunks;
+mod weak;
 
 pub use color::{ColorRange, FrameColorimetry, frame_meta};
 pub use compat::{
@@ -26,6 +27,7 @@ pub use compat::{
     is_frame_v2,
 };
 pub use shared::SharedFrame;
+pub use weak::{FrameId, WeakFrame};
 
 /// Key of the frame interface.
 pub const FRAME_INTERFACE_KEY: &str = "daedalus:frame";

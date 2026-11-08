@@ -20,6 +20,7 @@ mod storage;
 pub use boundary::BoundaryPayloadError;
 use inline::{Body, InlineValue};
 pub use recycle::RecyclePool;
+pub(crate) use recycle::{NodeWeak, recycled_incarnation, recycled_ref};
 use residency::ResidencyCache;
 pub use residency::ResidencyCacheKey;
 pub use slot::PayloadSlot;

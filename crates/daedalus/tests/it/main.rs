@@ -24,6 +24,7 @@ mod numeric_keys;
 mod optional_inputs;
 mod port_metadata;
 mod recycled_by_value;
+mod recycled_identity;
 mod registry_type_index;
 mod retry_by_value;
 mod same_id_instances;

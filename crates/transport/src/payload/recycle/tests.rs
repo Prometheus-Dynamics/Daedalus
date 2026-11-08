@@ -1,5 +1,6 @@
 use super::*;
-use crate::Payload;
+use crate::{ForeignOwner, Payload, ProvideForeign};
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize as Count, Ordering as Order};
 
 crate::foreign_interface! {
@@ -338,4 +339,245 @@ fn recycled_payloads_keep_their_own_owner_types() {
     let owned_payload = recycled(&owned_pool, 2, &DROPS);
     assert_eq!(owned_payload.get_ref::<Owned>().map(|o| o.value), Some(2));
     assert!(owned_payload.get_ref::<Other>().is_none());
+}
+
+// Frames over recycled nodes: the owner is a `Lease`, a frame of this build.
+
+use crate::{
+    FrameFormatKind, FrameInterface, FramePlane, FrameResidency, FrameSource, SharedFrame, fourcc,
+};
+
+struct Lease {
+    id: u64,
+    drops: &'static Count,
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Order::SeqCst);
+    }
+}
+
+impl FrameSource for Lease {
+    fn width(&self) -> u32 {
+        1
+    }
+    fn height(&self) -> u32 {
+        1
+    }
+    fn format(&self) -> u32 {
+        fourcc(b"R8  ")
+    }
+    fn format_kind(&self) -> FrameFormatKind {
+        FrameFormatKind::Pixel
+    }
+    fn sequence(&self) -> u64 {
+        self.id
+    }
+    fn residency(&self) -> FrameResidency {
+        FrameResidency::Cpu
+    }
+    fn plane_count(&self) -> u32 {
+        0
+    }
+    fn plane(&self, _index: u32) -> Option<FramePlane> {
+        None
+    }
+    fn plane_data(&self, _index: u32) -> Option<&[u8]> {
+        None
+    }
+}
+
+fn lease(id: u64, drops: &'static Count) -> Lease {
+    Lease { id, drops }
+}
+
+/// A frame of this build over a recycled node of `pool`, holding the lease `id`.
+fn lease_frame(pool: &RecyclePool<Lease>, id: u64, drops: &'static Count) -> SharedFrame {
+    let payload = Payload::providing_recycled::<Lease, FrameInterface>(
+        "test:lease",
+        pool,
+        lease(id, drops),
+        Residency::Cpu,
+    );
+    SharedFrame::from_payload(&payload)
+        .expect("foreign-readable")
+        .expect("this build's frame")
+}
+
+#[test]
+fn a_recycled_payload_reads_as_a_frame_of_its_owner() {
+    static DROPS: Count = Count::new(0);
+    let pool = RecyclePool::<Lease>::new();
+    let payload = Payload::providing_recycled::<Lease, FrameInterface>(
+        "test:lease",
+        &pool,
+        lease(5, &DROPS),
+        Residency::Cpu,
+    );
+    let frame = SharedFrame::from_payload(&payload).unwrap().unwrap();
+    assert!(frame.is_local());
+    assert_eq!(frame.as_view().sequence(), 5);
+    assert_eq!(frame.downcast_ref::<Lease>().map(|l| l.id), Some(5));
+    assert!(frame.downcast_ref::<Owned>().is_none());
+    assert!(frame.downcast_ref::<String>().is_none());
+}
+
+#[test]
+fn a_frame_of_another_build_is_not_downcast_or_weakened() {
+    static DROPS: Count = Count::new(0);
+    unsafe extern "C" fn foreign_retain(_: *const c_void) {}
+    unsafe extern "C" fn foreign_release(_: *const c_void) {}
+    let local = lease(1, &DROPS);
+    // Safety: `data` is `local`, which outlives the handle, and the owner's functions do nothing.
+    let handle = unsafe {
+        ForeignHandle::from_raw_parts::<FrameInterface>(
+            (&local as *const Lease).cast(),
+            <Lease as ProvideForeign<FrameInterface>>::vtable(),
+            ForeignOwner {
+                ptr: core::ptr::null(),
+                retain: foreign_retain,
+                release: foreign_release,
+            },
+        )
+    };
+    let frame = SharedFrame::from_handle(handle).unwrap();
+    assert!(!frame.is_local());
+    assert!(frame.downcast_ref::<Lease>().is_none());
+    assert!(frame.downgrade().is_none());
+    drop(frame);
+    drop(local);
+    assert_eq!(DROPS.load(Order::SeqCst), 1);
+}
+
+#[test]
+fn a_weak_frame_of_a_recycled_frame_upgrades_while_a_holder_lives() {
+    static DROPS: Count = Count::new(0);
+    let pool = RecyclePool::<Lease>::new();
+    let frame = lease_frame(&pool, 3, &DROPS);
+    let weak = frame.downgrade().expect("a recycled frame weakens");
+    assert_eq!(weak.id(), frame.id());
+    assert!(weak.is_alive());
+    let again = weak.upgrade().expect("held: upgrades");
+    assert_eq!(again.id(), frame.id());
+    assert_eq!(again.downcast_ref::<Lease>().map(|l| l.id), Some(3));
+    drop(frame);
+    assert_eq!(
+        DROPS.load(Order::SeqCst),
+        0,
+        "the upgraded frame still holds it"
+    );
+    assert!(weak.is_alive());
+    drop(again);
+    assert_eq!(
+        DROPS.load(Order::SeqCst),
+        1,
+        "the last holder drops the owner"
+    );
+    assert!(!weak.is_alive());
+    assert!(weak.upgrade().is_none(), "the value is gone: no revival");
+    assert_eq!(pool.idle(), 1);
+}
+
+#[test]
+fn a_reused_node_is_a_new_incarnation_that_old_weak_frames_do_not_see() {
+    static DROPS: Count = Count::new(0);
+    let pool = RecyclePool::<Lease>::new();
+    let first = lease_frame(&pool, 1, &DROPS);
+    let old = first.downgrade().unwrap();
+    let old_id = first.id();
+    drop(first);
+    assert!(!old.is_alive());
+    // The idle node is taken again: a new incarnation of the same allocation.
+    let second = lease_frame(&pool, 2, &DROPS);
+    assert_eq!(pool.idle(), 0);
+    assert_ne!(second.id(), old_id, "a new incarnation has a new identity");
+    assert_eq!(
+        old.id(),
+        old_id,
+        "a weak keeps the identity it was made with"
+    );
+    assert!(!old.is_alive(), "the node holds a later incarnation");
+    assert!(
+        old.upgrade().is_none(),
+        "no upgrade into the later incarnation"
+    );
+    assert_eq!(second.downcast_ref::<Lease>().map(|l| l.id), Some(2));
+    let new = second.downgrade().unwrap();
+    assert!(new.is_alive());
+    assert_eq!(new.upgrade().map(|f| f.id()), Some(second.id()));
+}
+
+#[test]
+fn a_weak_frame_outlives_its_pool_and_reads_as_dead_once_released() {
+    static DROPS: Count = Count::new(0);
+    let pool = RecyclePool::<Lease>::new();
+    let frame = lease_frame(&pool, 4, &DROPS);
+    let weak = frame.downgrade().unwrap();
+    drop(pool);
+    assert!(weak.is_alive(), "the frame is still held");
+    assert_eq!(weak.upgrade().map(|f| f.id()), Some(frame.id()));
+    drop(frame);
+    assert_eq!(DROPS.load(Order::SeqCst), 1);
+    assert!(!weak.is_alive());
+    assert!(weak.upgrade().is_none());
+    drop(weak);
+}
+
+#[test]
+fn weak_frames_race_the_last_release_and_node_reuse_across_threads() {
+    use std::sync::Arc as StdArc;
+    use std::sync::atomic::AtomicBool;
+    static DROPS: Count = Count::new(0);
+    let rounds: u64 = if cfg!(miri) { 40 } else { 20_000 };
+    let pool = RecyclePool::<Lease>::new();
+    let held = lease_frame(&pool, 0, &DROPS);
+    let weak = held.downgrade().unwrap();
+    let stop = StdArc::new(AtomicBool::new(false));
+    let reader_stop = stop.clone();
+    let seen = StdArc::new(std::sync::atomic::AtomicU64::new(0));
+    let reader_seen = seen.clone();
+    // The reader upgrades the first incarnation while it may live, and after it is released and
+    // its node reused. Any frame it gets must still be the first incarnation's lease.
+    let reader = std::thread::spawn(move || {
+        let mut upgrades = 0u64;
+        while !reader_stop.load(Order::SeqCst) {
+            if let Some(frame) = weak.upgrade() {
+                assert_eq!(
+                    frame.downcast_ref::<Lease>().map(|l| l.id),
+                    Some(0),
+                    "a weak frame upgrades only into its own incarnation"
+                );
+                upgrades += 1;
+                reader_seen.store(upgrades, Order::SeqCst);
+            }
+            assert!(
+                weak.is_alive() || weak.upgrade().is_none(),
+                "a dead incarnation does not upgrade"
+            );
+        }
+        upgrades
+    });
+    // The first incarnation is seen alive before the race starts.
+    while seen.load(Order::SeqCst) == 0 {
+        std::thread::yield_now();
+    }
+    let mut held = Some(held);
+    for round in 1..=rounds {
+        if round == rounds / 2 {
+            // The reader races this last release, and the node is reused afterwards.
+            held = None;
+        }
+        let frame = lease_frame(&pool, round, &DROPS);
+        assert_eq!(frame.downcast_ref::<Lease>().map(|l| l.id), Some(round));
+    }
+    drop(held);
+    stop.store(true, Order::SeqCst);
+    let upgrades = reader.join().unwrap();
+    assert!(upgrades > 0, "the reader saw the first incarnation alive");
+    assert_eq!(
+        DROPS.load(Order::SeqCst) as u64,
+        rounds + 1,
+        "every lease dropped exactly once"
+    );
 }
