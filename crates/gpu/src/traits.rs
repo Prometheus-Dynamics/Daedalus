@@ -15,6 +15,15 @@ use std::sync::Arc;
 ///
 pub trait GpuBackend: Send + Sync {
     fn kind(&self) -> GpuBackendKind;
+    /// Whether the device has been lost (the driver reported it, or it can no longer be used).
+    /// A lost context is replaced by its source's next request under the retry backoff.
+    fn is_lost(&self) -> bool {
+        false
+    }
+    /// The loss's message, when the device is lost.
+    fn lost_reason(&self) -> Option<String> {
+        None
+    }
     fn adapter_info(&self) -> GpuAdapterInfo;
     fn capabilities(&self) -> GpuCapabilities;
     fn select_adapter(&self, opts: &GpuOptions) -> Result<GpuAdapterInfo, GpuError>;

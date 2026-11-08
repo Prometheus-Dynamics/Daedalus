@@ -23,6 +23,7 @@ mod handles;
 #[cfg(all(feature = "gpu-vulkan-raw", feature = "gpu-cuda", target_os = "linux"))]
 pub mod interop;
 mod kind;
+mod loss;
 mod memory_hints;
 #[cfg(feature = "gpu-mock")]
 mod mock;

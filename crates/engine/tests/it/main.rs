@@ -13,5 +13,7 @@ mod host_output_adapters;
 mod lazy_gpu;
 #[cfg(feature = "gpu")]
 mod lazy_gpu_backoff;
+#[cfg(feature = "gpu")]
+mod lazy_gpu_reopen;
 mod support;
 mod transport_run;

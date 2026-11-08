@@ -64,6 +64,9 @@ pub struct WgpuBackend {
     dmabuf_support: crate::ExternalImportSupport,
     /// Resolved at device creation: `Performance` or `MemoryUsage`.
     memory_hints: crate::GpuMemoryHints,
+    /// Set by the device-lost callback: the context is then replaced by its source.
+    lost: Arc<std::sync::atomic::AtomicBool>,
+    lost_reason: Arc<Mutex<Option<String>>>,
 }
 
 impl WgpuBackend {
@@ -222,6 +225,22 @@ impl WgpuBackend {
 
         // Avoid process-level panics on uncaptured backend errors (OOM/validation).
         // We still surface the error for diagnostics, but keep the runtime alive.
+        let lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let lost_reason = Arc::new(Mutex::new(None::<String>));
+        {
+            let lost = lost.clone();
+            let lost_reason = lost_reason.clone();
+            device.set_device_lost_callback(move |reason, message| {
+                tracing::error!(
+                    target: "daedalus_gpu::wgpu",
+                    reason = ?reason,
+                    message = %message,
+                    "gpu device lost"
+                );
+                *lost_reason.lock() = Some(format!("device lost ({reason:?}): {message}"));
+                lost.store(true, std::sync::atomic::Ordering::Release);
+            });
+        }
         device.on_uncaptured_error(std::sync::Arc::new(|err| {
             tracing::error!(
                 target: "daedalus_gpu::wgpu",
@@ -246,6 +265,8 @@ impl WgpuBackend {
             device_key,
             dmabuf_support,
             memory_hints,
+            lost,
+            lost_reason,
         })
     }
 
@@ -348,6 +369,14 @@ impl Drop for WgpuBackend {
 impl GpuBackend for WgpuBackend {
     fn kind(&self) -> GpuBackendKind {
         GpuBackendKind::Wgpu
+    }
+
+    fn is_lost(&self) -> bool {
+        self.lost.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn lost_reason(&self) -> Option<String> {
+        self.lost_reason.lock().clone()
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

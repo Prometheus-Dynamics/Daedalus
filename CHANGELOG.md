@@ -8,6 +8,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- GPU context loss: a lost context (the backend's device-lost callback, or `RetryingGpu::mark_lost`)
+  is replaced by the source's next request, under the same capped backoff as a failed open (250 ms
+  doubling, at most 5 s). The backend's loss message reaches the caller. References to a replaced
+  context stay valid. NOT DONE YET: bounded polls (a device that stops answering can still hang a
+  wait) and reporting of uncaptured wgpu errors to the dispatching node; both follow in a later
+  commit. Real device loss is not verified on hardware.
 - Plugin load and reload retry: `daedalus::dylib::PluginRetry` retries a plugin's load, or a
   requested reload, off the tick path. A failed attempt is retried with a capped backoff (250 ms
   doubling, at most 5 s by default, at most 10 s with `with_backoff`) and is never given up. A
