@@ -90,6 +90,7 @@ pub(crate) struct SegmentCosts<'c> {
 
 /// Run `order` on `exec`, leaving its host outputs queued, and add its telemetry to the
 /// executor's: a parallel worker runs several segments this way, then its telemetry is taken once.
+#[cfg(feature = "threads")]
 pub(crate) fn run_order<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     order: &[daedalus_planner::NodeRef],
@@ -97,7 +98,7 @@ pub(crate) fn run_order<H: NodeHandler>(
     run_order_timed(exec, order, None, false)
 }
 
-/// [`run_order`] as a whole run: its telemetry is finished and taken. With `drain_outputs`, the
+/// `run_order` as a whole run: its telemetry is finished and taken. With `drain_outputs`, the
 /// host outputs it produced are drained into that telemetry first.
 pub(crate) fn run_order_telemetry<H: NodeHandler>(
     exec: &mut Executor<'_, H>,

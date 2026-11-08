@@ -72,7 +72,9 @@ impl NodeMetricsMap {
         self.values().next().is_none()
     }
 
-    /// Move every entry out, in index order: the table keeps its size, with the slots empty.
+    /// Move every entry out, in index order: the table keeps its size, with the slots empty (a
+    /// parallel worker's telemetry absorbed into the run's).
+    #[cfg(feature = "threads")]
     pub(crate) fn take_present(&mut self) -> impl Iterator<Item = (usize, NodeMetrics)> + '_ {
         self.slots
             .iter_mut()

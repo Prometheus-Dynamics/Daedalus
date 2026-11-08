@@ -524,7 +524,7 @@ fn merge_combines_ffi_telemetry() {
 /// run takes it: beginning the run keeps those counts, and absorbing the run's telemetries moves
 /// every count into the run's once and zeroes them.
 #[test]
-#[cfg(feature = "metrics")]
+#[cfg(all(feature = "metrics", feature = "threads"))]
 fn pooled_telemetry_keeps_its_counts_when_the_next_worker_begins_the_run() {
     let clock = daedalus_core::platform::Clock::default();
     let mut first = ExecutionTelemetry::default();

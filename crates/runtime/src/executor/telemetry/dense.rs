@@ -16,7 +16,9 @@ impl<T> DenseSlots<T> {
         self.slots.get(index)?.as_ref()
     }
 
-    /// Make room for `len` indices, so recording into any of them allocates nothing.
+    /// Make room for `len` indices, so recording into any of them allocates nothing (a parallel
+    /// worker's telemetry, before its first run).
+    #[cfg(feature = "threads")]
     pub(crate) fn reserve(&mut self, len: usize) {
         if self.slots.len() < len {
             self.slots.resize_with(len, || None);
@@ -54,7 +56,7 @@ impl<T> DenseSlots<T> {
         self.slots.fill_with(|| None);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "metrics"))]
     pub(crate) fn is_empty(&self) -> bool {
         self.slots.iter().all(Option::is_none)
     }
