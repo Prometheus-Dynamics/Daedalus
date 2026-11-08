@@ -53,6 +53,11 @@ struct InFlightNodeTransportMetrics {
 /// Aggregated timing + diagnostics for a run.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionTelemetry {
+    /// Requests for the engine's GPU context so far (`ExecutionContext::gpu` calls and the edge
+    /// adapters' device uses), whether or not they opened the device. Cumulative for the
+    /// executor's GPU source, not per run.
+    #[serde(default)]
+    pub gpu_accesses: u64,
     pub nodes_executed: usize,
     pub cpu_segments: usize,
     pub gpu_segments: usize,

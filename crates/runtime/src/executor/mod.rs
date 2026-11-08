@@ -172,11 +172,6 @@ pub fn panic_message(payload: &(dyn ::core::any::Any + Send)) -> String {
     }
 }
 
-#[cfg(feature = "gpu")]
-type MaybeGpu = Option<daedalus_gpu::GpuContextHandle>;
-#[cfg(not(feature = "gpu"))]
-type MaybeGpu = Option<()>;
-
 /// A node's const inputs as ready-made `Value` payloads, shared with each call's `NodeIo`.
 pub use crate::io::NodeConstInputs;
 /// Each node's const inputs; a patch replaces (copy-on-write) the node's list.

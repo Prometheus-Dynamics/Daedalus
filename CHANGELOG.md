@@ -6,6 +6,29 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Changed
+
+- The GPU device opens on a request, not at compile or on a GPU segment: `ExecutionContext::gpu()`
+  (`Result<Option<&GpuContextHandle>, NodeError>`) opens it on the first call, and the edge
+  adapters open it on their first device use. A compiled graph whose nodes never ask creates no
+  device. A Cpu engine never creates one. The planner still requests GPU caps when planner GPU is
+  on, which opens the device at plan time until the plan-time caps source lands.
+- `ExecutionContext::gpu` replaces the public `gpu` field (now private): read the context through
+  `gpu()`, which may fail with `NodeError::GpuUnavailable(cause)`. A CPU node's `gpu()` is `Ok(None)`.
+- `daedalus_runtime::with_current_gpu` takes `Result<Option<&GpuContextHandle>, GpuError>`: the
+  device opens on the adapter's first use, and an open failure reaches the adapter's error with
+  its cause. Device upload and download functions are unchanged.
+- The executor and its contexts hold a `GpuSource` (`daedalus_runtime::GpuSource`), not a device
+  handle. `Executor::with_gpu(handle)` still works (it wraps the handle in `ReadyGpu`);
+  `with_gpu_source` is new.
+- A failed device open is retried with a capped backoff (250 ms doubling, at most 5 s) and never
+  given up. A request inside the backoff returns the cached error without another open.
+- `NodeError` gains `GpuUnavailable(String)` (its `code()` is `gpu_unavailable`); the enum is
+  non-exhaustive, so existing matches need no change beyond handling the new variant.
+- `ExecutionTelemetry::gpu_accesses` (cumulative for the engine's GPU source) counts GPU context
+  requests.
+
+
 The workspace is versioned `3.0.1-dev` (from `3.0.0`): dev builds carry a `-dev` pre-release
 patch version, and only the patch moves until a release is agreed. A git dependency on Daedalus
 with `version = "3.0.0"` no longer resolves; drop the `version` requirement and pin the commit.

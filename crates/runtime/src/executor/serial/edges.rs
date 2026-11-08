@@ -233,7 +233,7 @@ pub(super) fn adapt_edge_payload(
     // Device transfers registered with a GPU context (`#[device]` functions taking
     // `&GpuContextHandle`) read the executor's through this scope.
     #[cfg(feature = "gpu")]
-    let gpu_scope = crate::gpu_scope::enter(v.core.gpu.as_ref());
+    let gpu_scope = crate::gpu_scope::enter(v.core.gpu_source.as_ref());
     let adapted =
         runtime_transport.execute_adapter_path(inner, &edge_transport.adapter_steps, &request);
     #[cfg(feature = "gpu")]

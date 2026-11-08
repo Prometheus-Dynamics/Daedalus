@@ -1,7 +1,7 @@
 use super::telemetry::PayloadTexts;
 use super::{
-    DirectSlot, EdgeStorage, ExecutionTelemetry, ExecutorInit, ExecutorRunConfig, MaybeGpu,
-    MetricsLevel, NodeMetadataStore, RuntimeDataSizeInspectors,
+    DirectSlot, EdgeStorage, ExecutionTelemetry, ExecutorInit, ExecutorRunConfig, MetricsLevel,
+    NodeMetadataStore, RuntimeDataSizeInspectors,
 };
 use crate::io::{NodeConstInputs, NodeIo, NodeIoEnv, NodePort, PortPool};
 use crate::portable::Arc;
@@ -46,7 +46,9 @@ impl core::ops::DerefMut for CoreRef<'_> {
 pub(crate) struct ExecutorCore {
     pub(crate) state: StateStore,
     pub(crate) gpu_available: bool,
-    pub(crate) gpu: MaybeGpu,
+    /// Where the GPU context comes from; the first segment that runs on a GPU opens it.
+    #[cfg(feature = "gpu")]
+    pub(crate) gpu_source: Option<Arc<dyn crate::gpu_source::GpuSource>>,
     pub(crate) queues: Arc<Vec<EdgeStorage>>,
     /// Per edge, whether it uses a direct slot (unless `run_config` masks override it).
     pub(crate) direct_edges: Arc<[bool]>,
@@ -111,9 +113,7 @@ impl ExecutorCore {
             state: StateStore::default(),
             gpu_available: false,
             #[cfg(feature = "gpu")]
-            gpu: None,
-            #[cfg(not(feature = "gpu"))]
-            gpu: None,
+            gpu_source: None,
             queues: init.queues.clone(),
             direct_edges: init.direct_edges.clone(),
             queued_edges: init.queued_edges.clone(),
@@ -181,6 +181,20 @@ impl ExecutorCore {
     }
 
     /// Rebuild [`Self::contexts`] from the current state, capabilities and GPU.
+    /// Whether a GPU source is attached to this executor. Nothing opens here: a node opens the
+    /// device when it asks for its context (`ExecutionContext::gpu`), or an edge adapter does.
+    pub(crate) fn gpu_attached(&self) -> bool {
+        #[cfg(feature = "gpu")]
+        {
+            self.gpu_available && self.gpu_source.is_some()
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            let _ = self;
+            false
+        }
+    }
+
     pub(crate) fn refresh_contexts(&mut self) {
         self.contexts = self
             .node_ids
@@ -197,7 +211,7 @@ impl ExecutorCore {
                 );
                 #[cfg(feature = "gpu")]
                 {
-                    ctx.gpu = self.gpu.clone();
+                    ctx.gpu = self.gpu_source.clone();
                 }
                 ctx
             })
@@ -224,9 +238,7 @@ impl ExecutorCore {
             state: self.state.clone(),
             gpu_available: self.gpu_available,
             #[cfg(feature = "gpu")]
-            gpu: self.gpu.clone(),
-            #[cfg(not(feature = "gpu"))]
-            gpu: self.gpu,
+            gpu_source: self.gpu_source.clone(),
             queues: self.queues.clone(),
             direct_edges: self.direct_edges.clone(),
             queued_edges: self.queued_edges.clone(),

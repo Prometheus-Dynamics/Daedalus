@@ -41,8 +41,7 @@ fn gpu_ticket(_tick: i64, ctx: &ExecutionContext, state: &mut Pending) -> Result
     }
     if state.work.is_none() {
         let gpu = ctx
-            .gpu
-            .as_ref()
+            .gpu()?
             .ok_or_else(|| NodeError::Handler("no GPU".into()))?;
         let (device, _) = gpu
             .wgpu()

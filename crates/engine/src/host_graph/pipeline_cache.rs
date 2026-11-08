@@ -54,7 +54,8 @@ impl Engine {
     pub fn pipeline_cache_status(&self) -> Option<PipelineCacheStatus> {
         #[cfg(feature = "gpu-wgpu")]
         {
-            self.pipeline_cache
+            self.lazy_gpu
+                .pipeline_cache
                 .lock()
                 .as_ref()
                 .map(|cache| cache.status())
@@ -68,7 +69,8 @@ impl Engine {
     /// A new graph's handle on the cache, when the engine has one.
     #[cfg(feature = "gpu-wgpu")]
     pub(crate) fn pipeline_cache_saver(&self) -> Option<crate::pipeline_cache::PipelineCacheSaver> {
-        self.pipeline_cache
+        self.lazy_gpu
+            .pipeline_cache
             .lock()
             .clone()
             .map(crate::pipeline_cache::PipelineCacheSaver::new)

@@ -22,8 +22,7 @@ struct State {
 fn cached_pass(go: i64, ctx: &ExecutionContext, state: &mut State) -> Result<bool, NodeError> {
     let _ = go;
     let gpu = ctx
-        .gpu
-        .as_ref()
+        .gpu()?
         .ok_or_else(|| NodeError::Handler("no GPU".into()))?;
     if state.pass.is_none() {
         let pass = FragmentPass::new(

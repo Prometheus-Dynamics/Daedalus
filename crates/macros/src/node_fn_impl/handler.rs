@@ -547,7 +547,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             };
 
             let shader_gpu_init = if shader_tokens.is_some() {
-                quote! { let __ctx_gpu: Option<#gpu_crate::GpuContextHandle> = ctx.gpu.clone(); }
+                quote! { let __ctx_gpu: Option<#gpu_crate::GpuContextHandle> = ctx.gpu()?.cloned(); }
             } else {
                 quote! {}
             };

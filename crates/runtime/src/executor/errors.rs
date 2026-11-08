@@ -23,6 +23,9 @@ pub enum NodeError {
     /// [`RecoveryTelemetry::dropped_inputs`](crate::executor::RecoveryTelemetry::dropped_inputs)
     /// instead of the failure list.
     InputDropped(String),
+    /// The node asked for its GPU context and the device could not be opened; the message is the
+    /// device's own error (the open is retried with a capped backoff on the next request).
+    GpuUnavailable(String),
 }
 
 impl core::fmt::Display for NodeError {
@@ -41,6 +44,7 @@ impl core::fmt::Display for NodeError {
             NodeError::InvalidInput(s) => write!(f, "invalid input: {s}"),
             NodeError::BackpressureDrop(s) => write!(f, "backpressure drop: {s}"),
             NodeError::InputDropped(s) => write!(f, "input dropped: {s}"),
+            NodeError::GpuUnavailable(s) => write!(f, "gpu unavailable: {s}"),
         }
     }
 }
@@ -70,6 +74,7 @@ impl NodeError {
             NodeError::InvalidInput(_) => "invalid_input",
             NodeError::BackpressureDrop(_) => "backpressure_drop",
             NodeError::InputDropped(_) => "input_dropped",
+            NodeError::GpuUnavailable(_) => "gpu_unavailable",
         }
     }
 

@@ -32,7 +32,7 @@ has no wgpu at all, and `ci.sh cross` checks that.
 ## State on the engine's device
 
 Build GPU resources once and keep them in the node's `state(T)`. Create them on the device the
-engine uses, `ctx.gpu.as_ref()?.wgpu()`, so other GPU nodes and the transfers can share them.
+engine uses, `ctx.gpu()?.and_then(|gpu| gpu.wgpu())`, so other GPU nodes and the transfers can share them.
 Dropping the state, as `Restart` or a reload does, frees them.
 
 | Need | Type |
@@ -41,7 +41,7 @@ Dropping the state, as `Restart` or a reload does, frees them.
 | Scratch buffers whose size changes per frame | `GpuStoragePool` (`take` / `give`, size classes, a cap, stats) |
 | Images: inputs and render targets | `GpuTexture` (`write`, `start_read`, `read_into`) |
 | A fragment kernel | `FragmentPass` (+ `FragmentBinding`, `FragmentRects`) |
-| Your own pipelines | `ctx.gpu.wgpu()` → `(&Device, &Queue)` |
+| Your own pipelines | `ctx.gpu()?.and_then(|gpu| gpu.wgpu())` → `(&Device, &Queue)` |
 
 ## Fragment passes or compute
 
@@ -236,7 +236,7 @@ chains. A transfer done inside a handler is invisible to the plan.
 Let the engine keep the Vulkan pipeline cache: `EngineConfig::gpu(GpuBackend::Device)
 .with_gpu_pipeline_cache(dir)` (or `DAEDALUS_GPU_PIPELINE_CACHE=dir`). When the engine creates
 its device it opens the cache file for the adapter in `dir` and installs it, so `FragmentPass`,
-shader dispatch, and the pipelines a node builds from `ctx.gpu` in its first tick all use it. A
+shader dispatch, and the pipelines a node builds from `ctx.gpu()` in its first tick all use it. A
 node building its own pipelines passes `pipeline_cache_for(device)` as the descriptor's
 `cache`. Each graph saves the cache when it grew: after its 1st, 2nd, 4th, ... 256th tick, on
 `HostGraph::save_pipeline_cache()`, and on drop, so a process that is killed keeps what its
@@ -257,7 +257,7 @@ cache off); on desktop 3 ms instead of 82 ms.
 
 ## Limits and portability
 
-`ctx.gpu.capabilities().compute` reports workgroup and storage limits and the enabled shader
+`ctx.gpu()?.map(|gpu| gpu.capabilities().compute)` reports workgroup and storage limits and the enabled shader
 features (f16, int64, int64 atomics, subgroups, timestamps). Staying within
 `GpuComputeCaps::WEBGPU_DEFAULTS` (16 KiB workgroup storage, 256 invocations, 8 storage
 buffers / 4 storage textures per stage) runs unchanged on V3D, Mali and desktop. V3D has no

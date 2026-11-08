@@ -63,8 +63,7 @@ impl NodeHandler for CudaHandler {
                     .find_map(|p| p.inner.get_ref::<Vec<f32>>().cloned())
                     .ok_or_else(|| NodeError::InvalidInput("no f32 input".into()))?;
                 let gpu = ctx
-                    .gpu
-                    .as_ref()
+                    .gpu()?
                     .ok_or_else(|| NodeError::Handler("no GPU context".into()))?;
                 let cuda = gpu.cuda().ok_or_else(|| {
                     NodeError::Handler(format!("GPU is {}, not CUDA", gpu.backend_kind().as_str()))

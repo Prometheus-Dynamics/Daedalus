@@ -110,6 +110,10 @@ pub mod fanin;
 pub mod foreign;
 #[cfg(feature = "gpu")]
 mod gpu_scope;
+#[cfg(feature = "gpu")]
+mod gpu_source;
+#[cfg(feature = "gpu")]
+pub use gpu_source::{GpuSource, RETRY_BASE, RETRY_CAP, ReadyGpu, RetryingGpu};
 pub mod graph_builder;
 #[cfg(feature = "gpu")]
 pub use gpu_scope::with_current_gpu;

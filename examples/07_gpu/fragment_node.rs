@@ -146,7 +146,7 @@ fn box3(
 ) -> Result<Option<Vec<u8>>, NodeError> {
     if device == "gpu" {
         #[cfg(feature = "gpu-wgpu")]
-        if let Some(handle) = ctx.gpu.as_ref().filter(|g| g.wgpu().is_some()) {
+        if let Some(handle) = ctx.gpu()?.filter(|g| g.wgpu().is_some()) {
             let gpu_err = |e: daedalus::gpu::GpuError| NodeError::Handler(e.to_string());
             if state.gpu.is_none() {
                 state.gpu = Some(gpu::Box3Gpu::new(handle).map_err(gpu_err)?);

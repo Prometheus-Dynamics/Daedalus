@@ -89,12 +89,9 @@ mod gpu_context;
 pub struct Engine {
     pub(crate) config: EngineConfig,
     caches: Arc<EngineCaches>,
+    /// The GPU context, opened on first use (see `gpu_context`).
     #[cfg(feature = "gpu")]
-    gpu_handle: daedalus_runtime::sync::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
-    /// Opened with the GPU device when `cache.gpu_pipeline_dir` is set.
-    #[cfg(feature = "gpu-wgpu")]
-    pub(crate) pipeline_cache:
-        daedalus_runtime::sync::Mutex<Option<Arc<crate::pipeline_cache::EnginePipelineCache>>>,
+    pub(crate) lazy_gpu: Arc<gpu_context::LazyGpu>,
 }
 
 impl Engine {
@@ -105,6 +102,8 @@ impl Engine {
         if matches!(config.gpu, GpuBackend::Device | GpuBackend::Mock) && !cfg!(feature = "gpu") {
             return Err(EngineError::FeatureDisabled("gpu"));
         }
+        #[cfg(feature = "gpu")]
+        let lazy_gpu = Arc::new(gpu_context::LazyGpu::new(&config));
         Ok(Self {
             caches: crate::cache::new_caches(
                 config.cache.planner_max_entries,
@@ -112,9 +111,7 @@ impl Engine {
             ),
             config,
             #[cfg(feature = "gpu")]
-            gpu_handle: daedalus_runtime::sync::Mutex::new(None),
-            #[cfg(feature = "gpu-wgpu")]
-            pipeline_cache: daedalus_runtime::sync::Mutex::new(None),
+            lazy_gpu,
         })
     }
 
@@ -155,8 +152,8 @@ impl Engine {
         }
         #[cfg(feature = "gpu")]
         {
-            if let Some(gpu) = self.gpu_handle_if(exec.needs_gpu())? {
-                exec = exec.with_gpu((*gpu).clone());
+            if !matches!(self.config.gpu, GpuBackend::Cpu) {
+                exec = exec.with_gpu_source(self.lazy_gpu.source.clone());
             }
         }
         #[cfg(not(feature = "gpu"))]
@@ -200,8 +197,8 @@ impl Engine {
         }
         #[cfg(feature = "gpu")]
         {
-            if let Some(gpu) = self.gpu_handle_if(exec.needs_gpu())? {
-                exec = exec.with_gpu((*gpu).clone());
+            if !matches!(self.config.gpu, GpuBackend::Cpu) {
+                exec = exec.with_gpu_source(self.lazy_gpu.source.clone());
             }
         }
         #[cfg(not(feature = "gpu"))]

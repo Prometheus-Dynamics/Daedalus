@@ -124,6 +124,13 @@ pub(crate) fn finish_telemetry(core: &mut ExecutorCore) -> ExecutionTelemetry {
     core.telemetry.recompute_unattributed_runtime_duration();
     core.telemetry.aggregate_group_ids(&core.node_groups);
     core.telemetry.node_health = core.node_health.reports(&core.node_ids, &core.clock);
+    #[cfg(feature = "gpu")]
+    {
+        core.telemetry.gpu_accesses = core
+            .gpu_source
+            .as_ref()
+            .map_or(0, |source| source.accesses());
+    }
     let level = core.telemetry.metrics_level;
     let telemetry = core::mem::take(&mut core.telemetry);
     core.telemetry.metrics_level = level;
@@ -244,7 +251,7 @@ fn run_order_timed<H: NodeHandler>(
                 v.core.telemetry.cpu_segments = v.core.telemetry.cpu_segments.saturating_add(1);
             }
             ComputeAffinity::GpuPreferred => {
-                if v.core.gpu_available {
+                if v.core.gpu_attached() {
                     v.core.telemetry.gpu_segments = v.core.telemetry.gpu_segments.saturating_add(1);
                 } else {
                     v.core.telemetry.gpu_fallbacks =
@@ -257,7 +264,7 @@ fn run_order_timed<H: NodeHandler>(
                 }
             }
             ComputeAffinity::GpuRequired => {
-                if v.core.gpu_available {
+                if v.core.gpu_attached() {
                     v.core.telemetry.gpu_segments = v.core.telemetry.gpu_segments.saturating_add(1);
                 } else {
                     return Err(ExecuteError::GpuUnavailable {

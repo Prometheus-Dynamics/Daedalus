@@ -27,8 +27,7 @@ struct Volume {
 )]
 fn gpu_volume(tick: i64, ctx: &ExecutionContext, state: &mut Volume) -> Result<i64, NodeError> {
     let gpu = ctx
-        .gpu
-        .as_ref()
+        .gpu()?
         .ok_or_else(|| NodeError::Handler("no GPU context".into()))?;
     let (device, queue) = gpu
         .wgpu()
@@ -164,8 +163,7 @@ struct Holder {
 #[node(id = "test.gpu_holder", inputs("fail"), outputs("out"), state(Holder))]
 fn gpu_holder(fail: bool, ctx: &ExecutionContext, state: &mut Holder) -> Result<i64, NodeError> {
     let gpu = ctx
-        .gpu
-        .as_ref()
+        .gpu()?
         .ok_or_else(|| NodeError::Handler("no GPU context".into()))?;
     if state.held.is_none() {
         let storage = GpuStorage::new(gpu, 64, Some("held"))

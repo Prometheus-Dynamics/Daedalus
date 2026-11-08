@@ -20,8 +20,10 @@ pub struct ExecutionContext {
     /// Graph-level metadata (typed values) shared by all nodes in the graph.
     pub graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
     pub capabilities: Arc<crate::capabilities::CapabilityRegistry>,
+    /// The engine's GPU source (cfg gpu). Read through [`gpu`](Self::gpu), which opens the device
+    /// on its first call.
     #[cfg(feature = "gpu")]
-    pub gpu: Option<GpuContextHandle>,
+    pub(crate) gpu: Option<crate::portable::Arc<dyn crate::gpu_source::GpuSource>>,
     /// `node_id`'s slot in `state`, resolved when the context is built.
     node_state: Arc<NodeStateSlot>,
 }
@@ -348,5 +350,21 @@ impl ExecutionContext {
         F: FnOnce(&mut [u8]) -> R,
     {
         self.resources().with_persistent_bytes(name, len, f)
+    }
+}
+
+#[cfg(feature = "gpu")]
+impl ExecutionContext {
+    /// The node's GPU context. The device opens on the first call (a node that never calls this
+    /// creates no device). `Ok(None)` on an engine without a GPU backend; `Err` with the device's
+    /// own error when it cannot be opened.
+    pub fn gpu(&self) -> Result<Option<&GpuContextHandle>, crate::executor::NodeError> {
+        match &self.gpu {
+            None => Ok(None),
+            Some(source) => source
+                .get()
+                .map(Some)
+                .map_err(|err| crate::executor::NodeError::GpuUnavailable(err.to_string())),
+        }
     }
 }

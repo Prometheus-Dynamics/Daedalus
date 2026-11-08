@@ -11,5 +11,7 @@ mod host_graph_selected;
 mod host_output_adapters;
 #[cfg(feature = "gpu")]
 mod lazy_gpu;
+#[cfg(feature = "gpu")]
+mod lazy_gpu_backoff;
 mod support;
 mod transport_run;

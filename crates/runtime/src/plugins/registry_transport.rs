@@ -346,11 +346,17 @@ impl PluginRegistry {
             spec,
             move |cpu| {
                 crate::gpu_scope::with_current_gpu(|gpu| {
+                    let gpu = gpu.map_err(|err| {
+                        TransportError::Unsupported(format!("device upload: {err}"))
+                    })?;
                     upload(cpu, gpu.ok_or_else(|| no_gpu("device upload"))?)
                 })
             },
             move |device| {
                 crate::gpu_scope::with_current_gpu(|gpu| {
+                    let gpu = gpu.map_err(|err| {
+                        TransportError::Unsupported(format!("device download: {err}"))
+                    })?;
                     download(device, gpu.ok_or_else(|| no_gpu("device download"))?)
                 })
             },

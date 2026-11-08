@@ -132,10 +132,10 @@ pub(crate) trait ExecutorConfigTarget {
     }
 
     #[cfg(feature = "gpu")]
-    fn apply_gpu(&mut self, gpu: daedalus_gpu::GpuContextHandle) {
+    fn apply_gpu_source(&mut self, source: crate::portable::Arc<dyn crate::gpu_source::GpuSource>) {
         let core = self.core_mut();
         core.gpu_available = true;
-        core.gpu = Some(gpu);
+        core.gpu_source = Some(source);
         core.refresh_contexts();
     }
 
@@ -341,7 +341,18 @@ macro_rules! executor_config_api {
         /// Provide a GPU handle when available.
         #[cfg(feature = "gpu")]
         pub fn with_gpu(mut self, gpu: daedalus_gpu::GpuContextHandle) -> Self {
-            self.apply_gpu(gpu);
+            self.apply_gpu_source(crate::portable::Arc::new(crate::gpu_source::ReadyGpu(gpu)));
+            self
+        }
+
+        /// Provide the GPU context source. The device it opens is created by the first segment
+        /// that runs on a GPU, not when the executor is configured.
+        #[cfg(feature = "gpu")]
+        pub fn with_gpu_source(
+            mut self,
+            source: crate::portable::Arc<dyn crate::gpu_source::GpuSource>,
+        ) -> Self {
+            self.apply_gpu_source(source);
             self
         }
 

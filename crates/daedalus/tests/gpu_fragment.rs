@@ -96,8 +96,7 @@ fn fragment_pair(
     state: &mut State,
 ) -> Result<(Vec<f32>, Vec<f32>), NodeError> {
     let gpu = ctx
-        .gpu
-        .as_ref()
+        .gpu()?
         .ok_or_else(|| NodeError::Handler("no GPU".into()))?;
     if state.pass.is_none() {
         let pass = FragmentPass::new(

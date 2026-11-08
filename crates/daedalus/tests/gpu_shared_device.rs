@@ -17,8 +17,7 @@ static SEEN: Mutex<Vec<wgpu::Device>> = Mutex::new(Vec::new());
 #[node(id = "test.device_seen", inputs("tick"), outputs("seen"))]
 fn device_seen(tick: i64, ctx: &ExecutionContext) -> Result<i64, NodeError> {
     let gpu = ctx
-        .gpu
-        .as_ref()
+        .gpu()?
         .ok_or_else(|| NodeError::Handler("no GPU".into()))?;
     let (device, _) = gpu
         .wgpu()

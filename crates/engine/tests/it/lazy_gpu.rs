@@ -98,15 +98,38 @@ fn gpu_graph_creates_the_gpu_context() {
 }
 
 #[test]
-fn redeploying_a_cpu_plan_keeps_the_created_context() {
-    // A created context stays with the engine: executors and GPU payloads hold clones of it, and
-    // the device is shared process-wide, so the engine cannot release it while they may use it.
+fn compiling_a_gpu_plan_opens_no_device() {
+    // The device opens on a request (a node's `ExecutionContext::gpu` call, or the planner's caps
+    // request), not when a plan is compiled: a compiled GPU plan that never runs one creates none.
     let engine = engine();
     let gpu = runtime_plan(ComputeAffinity::GpuPreferred);
     let _gpu_run = engine.compile_runtime_plan(gpu, Noop).expect("gpu compile");
-    assert!(engine.gpu_context_created());
-
+    assert!(
+        !engine.gpu_context_created(),
+        "compiling a GPU plan opened the device"
+    );
     let cpu = runtime_plan(ComputeAffinity::CpuOnly);
     let _cpu_run = engine.compile_runtime_plan(cpu, Noop).expect("cpu compile");
-    assert!(engine.gpu_context_created(), "kept: see the comment above");
+    assert!(!engine.gpu_context_created());
+}
+#[test]
+fn a_cpu_engine_creates_no_device_for_gpu_nodes() {
+    // gpu = Cpu (the default; the planner GPU setting must stay off with it, which the engine
+    // enforces): a CPU-only plan plans, and a GPU-required runtime plan compiles, with no device.
+    let before = daedalus_gpu::devices_created();
+    let engine = Engine::new(EngineConfig::default()).expect("engine");
+    plan(&engine, graph(ComputeAffinity::CpuOnly)).expect("a CPU-only plan");
+    let gpu_plan = runtime_plan(ComputeAffinity::GpuRequired);
+    let _compiled = engine
+        .compile_runtime_plan(gpu_plan, Noop)
+        .expect("compile");
+    assert!(
+        !engine.gpu_context_created(),
+        "a Cpu engine opened a GPU context"
+    );
+    assert_eq!(
+        daedalus_gpu::devices_created(),
+        before,
+        "a Cpu engine created a wgpu device"
+    );
 }
