@@ -35,16 +35,19 @@ fn priority_value(node: usize, id: String, priority: u8) -> Value {
 
 pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Diagnostic>) {
     let mut gpu_reasons: Vec<String> = Vec::new();
-    // The caps source's answer, for `explain_plan`: which of the three applied.
+    // The caps source's answer, for `explain_plan`: which of the three applied. Only where the GPU
+    // is planned, so a plan without one keeps its metadata.
     let absent = matches!(config.gpu_caps, GpuPlanCaps::Absent);
-    graph.metadata.insert(
-        PLAN_GPU_CAPS_KEY.into(),
-        string_value(match config.gpu_caps {
-            GpuPlanCaps::Known(_) => "known",
-            GpuPlanCaps::Probe => "probe",
-            GpuPlanCaps::Absent => "absent",
-        }),
-    );
+    if config.enable_gpu {
+        graph.metadata.insert(
+            PLAN_GPU_CAPS_KEY.into(),
+            string_value(match config.gpu_caps {
+                GpuPlanCaps::Known(_) => "known",
+                GpuPlanCaps::Probe => "probe",
+                GpuPlanCaps::Absent => "absent",
+            }),
+        );
+    }
     // If GPU is disabled, or this machine has none, flag required nodes.
     if !config.enable_gpu || absent {
         gpu_reasons.push(
