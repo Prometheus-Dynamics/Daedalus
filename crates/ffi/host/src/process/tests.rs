@@ -722,3 +722,27 @@ fn assert_payload_ownership_telemetry(telemetry: &FfiHostTelemetry) {
 mod lifecycle;
 mod payload;
 mod persistent;
+
+#[test]
+fn a_java_worker_logs_jvm_warnings_to_stderr_not_the_message_channel() {
+    use daedalus_ffi_core::{BackendConfig, BackendKind};
+    let java = BackendConfig::persistent_worker(BackendKind::Java, "/opt/jdk/bin/java", "add")
+        .with_args(["-cp", "classes"]);
+    assert_eq!(
+        super::worker_args(&java, "/opt/jdk/bin/java"),
+        [
+            "-Xlog:disable",
+            "-Xlog:all=warning:stderr",
+            "-cp",
+            "classes"
+        ]
+    );
+    // A launcher script is not a JVM, and neither is another backend's executable.
+    assert_eq!(
+        super::worker_args(&java, "./run-worker.sh"),
+        ["-cp", "classes"]
+    );
+    let python =
+        BackendConfig::persistent_worker(BackendKind::Python, "python3", "add").with_args(["w.py"]);
+    assert_eq!(super::worker_args(&python, "python3"), ["w.py"]);
+}

@@ -827,6 +827,8 @@ plugin ABI and does not load.
 
 ### Fixed
 
+- FFI: a `java` worker now logs JVM warnings to stderr. They went to stdout, the worker's message
+  channel, so one JVM startup warning failed the worker's handshake.
 - Serial runs: the fused-edge carry no longer allocates per tick for a node with more than two
   fused outputs (Eidos's `tracked_detect`, three). It holds four inline and the executor keeps it
   between runs (`ExecutorCore::fused_carry`), so a spilled buffer is reused. Test:

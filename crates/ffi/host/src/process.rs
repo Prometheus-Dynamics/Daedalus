@@ -7,8 +7,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use daedalus_ffi_core::{
-    BackendConfig, BackendRuntimeModel, InvokeEvent, InvokeRequest, InvokeResponse, WorkerError,
-    WorkerHello, WorkerMessage, WorkerMessagePayload, WorkerProtocolAck, WorkerProtocolError,
+    BackendConfig, BackendKind, BackendRuntimeModel, InvokeEvent, InvokeRequest, InvokeResponse,
+    WorkerError, WorkerHello, WorkerMessage, WorkerMessagePayload, WorkerProtocolAck,
+    WorkerProtocolError,
 };
 use daedalus_runtime::{FfiPayloadTelemetry, FfiWorkerTelemetry};
 
@@ -74,9 +75,10 @@ impl PersistentWorkerRunner {
         let executable = config.executable.clone().ok_or_else(|| {
             RunnerPoolError::Runner("persistent worker executable missing".into())
         })?;
+        let args = worker_args(config, &executable);
         Ok(Self {
             executable,
-            args: config.args.clone(),
+            args,
             env: config.env.clone(),
             working_dir: config.working_dir.clone(),
             request_timeout: limits.request_timeout,
@@ -340,6 +342,23 @@ fn validate_persistent_worker_limits(limits: &RunnerLimits) -> Result<(), Runner
         });
     }
     Ok(())
+}
+
+/// The arguments a worker starts with. A JVM writes its own warnings to stdout by default, and
+/// stdout is the worker's message channel: one startup warning (a host short of large pages or
+/// threads, say) would fail the handshake. So a `java` worker logs to stderr, ahead of the
+/// configured arguments so that a backend's own `-Xlog` still applies.
+fn worker_args(config: &BackendConfig, executable: &str) -> Vec<String> {
+    let is_jvm = config.backend == BackendKind::Java
+        && std::path::Path::new(executable)
+            .file_stem()
+            .is_some_and(|name| name == "java");
+    let jvm_log = is_jvm
+        .then_some(["-Xlog:disable", "-Xlog:all=warning:stderr"])
+        .into_iter()
+        .flatten()
+        .map(String::from);
+    jvm_log.chain(config.args.iter().cloned()).collect()
 }
 
 fn worker_id_from_backend(config: &BackendConfig) -> String {
