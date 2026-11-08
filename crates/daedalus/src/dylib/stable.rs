@@ -111,8 +111,10 @@ use std::ffi::c_void;
 
 /// Version of the stable handler ABI ([`StableHandlers`], [`StableValue`], [`StableInput`],
 /// [`StableOutputSink`], the [`status`] codes and the `#[repr(C)]` layouts of
-/// `ForeignHandle`/`ForeignInterfaceInfo`). A plugin is installed through the stable path only
-/// when its version equals the host's.
+/// `ForeignHandle`/`ForeignInterfaceInfo`). A plugin is installed through the stable path when
+/// its version is in [`STABLE_ABI_MIN_VERSION`]`..=`[`STABLE_ABI_VERSION`]
+/// ([`stable_abi_supported`]); an older version within that range is read with its own layout, as
+/// the notes per version below say.
 ///
 /// Version 2: per-instance handles ([`CreateFn`]), ports by index ([`StableInput::port`],
 /// [`OutputPushFn`]), [`UnloadFn`], and the [`tag::HANDLE_FROM_SENDER`] flag.

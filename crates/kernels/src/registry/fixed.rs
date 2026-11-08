@@ -30,8 +30,8 @@ const VGLITE: (&str, &str) = (
     "lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-vglite/tests/vglite.rs",
 );
 
-/// Fixed-function image nodes other repos lower onto (Eidos's pyramids): only the scalar
-/// reference and the fixed-function rows are Daedalus's.
+/// Fixed-function image nodes callers lower onto (image pyramids among them). Only the scalar
+/// reference and the fixed-function rows exist so far; the SIMD and GPU rows are still to fill.
 const NODE_ONLY: &[Backend] = &[Backend::Scalar, Backend::FixedFunction];
 const NODE_REASON: &str = "a fixed-function node: the CPU kernels and the callers are Eidos's";
 
@@ -98,7 +98,7 @@ static IMAGE_OPS: [Op; 11] = [
     .only_on(NODE_ONLY, NODE_REASON),
     op(
         "daedalus.image.line",
-        "A one-pixel line between two points, both ends included (Bresenham, Eidos's plain line)",
+        "A one-pixel line between two points, both ends included (Bresenham)",
         "daedalus_kernels::reference::line",
     )
     .only_on(NODE_ONLY, NODE_REASON),

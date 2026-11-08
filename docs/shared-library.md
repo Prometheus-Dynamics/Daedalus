@@ -201,7 +201,7 @@ release numbers are the ones that count.
 
 ## Order
 
-1. `lemnos-abi` lands (Lemnos). Done: pinned at `fa2e617` (1.0, layout hash `0xa02cfb4a8dd4545b`).
+1. `lemnos-abi` lands (Lemnos). Done: pinned at `cef4f36` (1.0, layout hash `0xa02cfb4a8dd4545b`).
 2. The stable plugin ABI moves onto its primitives. Done in place (`STABLE_ABI_VERSION` stays 7; the
    handshake is additive and optional), with the decisions below.
 3. `daedalus-surface` and `daedalus-host`, with a test that runs the same graph statically and

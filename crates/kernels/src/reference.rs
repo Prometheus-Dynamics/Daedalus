@@ -340,7 +340,7 @@ pub fn fill(
 
 /// `buf` with a one-pixel line from `from` to `to` (both ends included) set to the pixel
 /// `value`, for tightly packed `value.len()`-byte pixels in a `width` by `height` frame:
-/// Bresenham's steps, as Eidos's plain `draw_line`. Pixels outside the frame are skipped.
+/// Bresenham's steps. Pixels outside the frame are skipped.
 pub fn line(
     buf: &[u8],
     width: usize,

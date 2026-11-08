@@ -28,7 +28,7 @@ plugin ABI and does not load.
   field is `context`, and `write` is safe, as `MessageSink::write` is.
 - The stable path's `release` and `unload` use `lemnos_abi::guard_or`. The facade takes
   `lemnos-abi` as an optional dependency under `dylib-plugins`.
-- The Lemnos lock moved to `fa2e617` (lemnos-abi 1.0, layout hash `0xa02cfb4a8dd4545b`, unchanged).
+- The Lemnos lock moved to `cef4f36` (lemnos-abi 1.0, layout hash `0xa02cfb4a8dd4545b`, unchanged).
 
 ### Added
 

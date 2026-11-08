@@ -2,7 +2,7 @@
 //! of the board fence test ([`super::fence_board`]).
 //!
 //! The job is copies back and forth between two device buffers, recorded in one command buffer:
-//! no shader, so it runs on any Vulkan driver (v3dv on the Raze). Its completion is exported as a
+//! no shader, so it runs on any Vulkan driver (v3dv on a CM5). Its completion is exported as a
 //! `sync_file` through an exportable binary semaphore (`VK_KHR_external_semaphore_fd`,
 //! `SYNC_FD`) that the submission signals. The loader is opened at run time
 //! (`libvulkan.so.1`), so nothing links against Vulkan.

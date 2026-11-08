@@ -8,7 +8,7 @@
 //! Without it, the same tick returns while the job still runs.
 //!
 //! Ignored: it needs a Vulkan device that exports `SYNC_FD` and the kernel's dma-buf sync-file
-//! ioctls. Run on Raze #1 (CM5, v3dv): `cargo test -p daedalus-surface --lib fence -- --ignored
+//! ioctls. Run on a CM5 board (v3dv): `cargo test -p daedalus-surface --lib fence -- --ignored
 //! --nocapture` (cross-built for the board; results in `docs/benchmarks-log.md`).
 
 use std::os::fd::{AsFd, AsRawFd};
@@ -46,7 +46,7 @@ fn read_at(graph: lemnos_abi::Handle) -> i64 {
 }
 
 #[test]
-#[ignore = "board: needs a Vulkan device exporting SYNC_FD (Raze #1, v3dv)"]
+#[ignore = "board: needs a Vulkan device exporting SYNC_FD (a CM5 board, v3dv)"]
 #[allow(clippy::print_stderr)]
 fn a_gpu_acquire_fence_delays_the_frame_reader_until_the_job_is_done() {
     let _serial = serial();
