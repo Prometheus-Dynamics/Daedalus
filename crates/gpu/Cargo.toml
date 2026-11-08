@@ -22,7 +22,7 @@ path = "src/lib.rs"
 default = ["gpu-noop"]
 gpu-noop = []
 gpu-mock = []
-# wgpu backend: Vulkan everywhere, plus Metal on Apple and DX12 on Windows.
+# wgpu backend: Vulkan everywhere, plus Metal on Apple and DX12 on Windows (target tables below).
 gpu-wgpu = ["wgpu", "pollster", "bytemuck", "daedalus-wgsl-infer", "dep:ash"]
 # wgpu's OpenGL/GLES backend (glow, EGL, Wayland loaders) for devices without Vulkan.
 gpu-gles = ["gpu-wgpu", "wgpu/gles"]
@@ -55,6 +55,14 @@ tracing = { workspace = true, features = ["std"] }
 daedalus-kernels = { workspace = true, features = ["std"] }
 # Opening libcuda at runtime for `gpu-cuda`.
 libloading = { workspace = true, optional = true }
+
+# Metal on Apple and DX12 on Windows: target-only backends, so the other platforms neither build
+# nor link them (on Linux they added no crates).
+[target.'cfg(windows)'.dependencies]
+wgpu = { workspace = true, optional = true, features = ["dx12"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu = { workspace = true, optional = true, features = ["metal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 lemnos-linux = { workspace = true, features = ["dma"] }

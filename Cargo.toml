@@ -157,7 +157,8 @@ tempfile = "3.27.0"
 thiserror = { version = "2.0.21", default-features = false }
 tokio = { version = "1.53.2", features = ["rt", "macros", "sync"] }
 trybuild = "1.0.121"
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "metal", "dx12"] }
+# Vulkan only here: Metal (Apple) and DX12 (Windows) are target-table features of `daedalus-gpu`.
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing = { version = "0.1.44", default-features = false }
