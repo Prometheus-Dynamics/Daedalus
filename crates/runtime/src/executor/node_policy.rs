@@ -360,6 +360,22 @@ pub(crate) trait NodePolicyTarget: ExecutorConfigTarget {
         Ok(())
     }
 
+    fn apply_node_enabled(&mut self, node: &str, enabled: bool) -> Result<(), UnknownNodeError> {
+        let idx = self.node_index(node)?;
+        self.core_mut().node_health.set_enabled(idx, enabled);
+        Ok(())
+    }
+
+    /// The index of `node`: its instance key, or its id (as the per-node overrides match them).
+    fn node_index(&mut self, node: &str) -> Result<usize, UnknownNodeError> {
+        let nodes = self.policy_nodes();
+        let keys = self.core_mut().node_ids.clone();
+        keys.iter()
+            .position(|key| **key == *node)
+            .or_else(|| nodes.iter().position(|n| n.id == node))
+            .ok_or_else(|| UnknownNodeError { node: node.into() })
+    }
+
     fn apply_blocking_backpressure(&mut self, enabled: bool) {
         let mask: Option<Box<[bool]>> = enabled
             .then(|| {
@@ -455,6 +471,18 @@ macro_rules! node_policy_builders {
             priority: i32,
         ) -> Result<(), UnknownNodeError> {
             self.apply_node_priority(node.as_ref(), priority)
+        }
+
+        /// Switch `node` off (`enabled` false) or on, between ticks. A node that is off runs no
+        /// frame: its consumers see no new value this tick (a Latest edge keeps its last value).
+        /// Switching it on again clears its failure backoff at once and keeps its typed state.
+        /// The node is named by id or instance key.
+        pub fn try_set_node_enabled(
+            &mut self,
+            node: impl AsRef<str>,
+            enabled: bool,
+        ) -> Result<(), UnknownNodeError> {
+            self.apply_node_enabled(node.as_ref(), enabled)
         }
 
         /// Make bounded queue edges block instead of overflowing: a node whose bounded output

@@ -12,6 +12,7 @@ mod executor_gpu;
 mod executor_shared;
 mod fusion_equivalence;
 mod graph_document_requirements;
+mod manual_off;
 mod node_error;
 mod node_io_ports;
 mod order_property;

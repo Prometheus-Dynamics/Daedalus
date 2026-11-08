@@ -23,6 +23,7 @@ use crate::compiled_run::{CompiledRun, RunResult};
 use crate::error::EngineError;
 
 mod bindings;
+mod control;
 mod drive;
 mod frame_overhead;
 mod introspect;

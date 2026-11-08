@@ -20,6 +20,8 @@ pub const MAX_BACKOFF_CAP: Duration = Duration::from_secs(10);
 
 const READY: usize = 0;
 const BACKED_OFF: usize = 1;
+/// Switched off by hand (`set_enabled`): the node runs no frame until it is switched on again.
+const DISABLED: usize = 2;
 
 /// One node's health: the atomic state the tick path reads, and the detail a failure writes.
 #[derive(Default)]
@@ -60,6 +62,23 @@ impl NodeHealthTable {
         match self.nodes.get(idx) {
             Some(health) if health.state.load(Relaxed) != READY => health.admit_cold(clock),
             _ => Some(false),
+        }
+    }
+
+    /// Switch node `idx` off (`enabled` false) or on. Off, its frames are skipped until it is on
+    /// again; its failure record is kept. On, its backoff is cleared at once and it runs next tick.
+    pub(crate) fn set_enabled(&self, idx: usize, enabled: bool) {
+        let Some(health) = self.nodes.get(idx) else {
+            return;
+        };
+        self.touched.fetch_add(1, Relaxed);
+        let mut detail = health.detail.lock();
+        if enabled {
+            detail.consecutive = 0;
+            detail.until = None;
+            health.state.store(READY, Relaxed);
+        } else {
+            health.state.store(DISABLED, Relaxed);
         }
     }
 
@@ -107,16 +126,25 @@ impl NodeHealthTable {
             .enumerate()
             .filter_map(|(idx, health)| {
                 let detail = health.detail.lock();
-                if detail.failures == 0 {
+                let state = health.state.load(Relaxed);
+                let disabled = state == DISABLED;
+                if detail.failures == 0 && !disabled {
                     return None;
                 }
-                let backed_off = health.state.load(Relaxed) != READY;
+                let backed_off = state == BACKED_OFF;
+                let state = if disabled {
+                    "disabled"
+                } else if backed_off {
+                    "backed_off"
+                } else {
+                    "ready"
+                };
                 Some(NodeHealthReport {
                     node_id: node_ids
                         .get(idx)
                         .map(|id| id.to_string())
                         .unwrap_or_default(),
-                    state: if backed_off { "backed_off" } else { "ready" }.into(),
+                    state: state.into(),
                     failures: detail.failures,
                     consecutive_failures: detail.consecutive,
                     backoff_remaining: detail
@@ -132,9 +160,12 @@ impl NodeHealthTable {
 
 impl NodeHealth {
     /// The backed-off node's gate: skipped inside its delay, else it runs again (its state stays
-    /// backed off until it succeeds).
+    /// backed off until it succeeds). A node switched off never runs.
     #[cold]
     fn admit_cold(&self, clock: &Clock) -> Option<bool> {
+        if self.state.load(Relaxed) == DISABLED {
+            return None;
+        }
         let detail = self.detail.lock();
         match detail.until {
             Some(until) if clock.now() < until => None,
@@ -164,7 +195,8 @@ pub(crate) fn backoff_delay(consecutive: u32, base: Duration, cap: Duration) -> 
 pub struct NodeHealthReport {
     /// The node's instance key, or its id.
     pub node_id: String,
-    /// `"ready"` (it runs) or `"backed_off"` (its next attempt waits `backoff_remaining`).
+    /// `"ready"` (it runs), `"backed_off"` (its next attempt waits `backoff_remaining`) or
+    /// `"disabled"` (switched off by hand; it runs nothing until switched on).
     pub state: String,
     /// Failures recorded for the node over the executor's lifetime.
     pub failures: u64,
