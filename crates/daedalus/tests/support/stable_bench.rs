@@ -118,6 +118,7 @@ pub fn config_case(registry: &PluginRegistry, mixed: bool, n: usize) -> (Host, S
         (false, 8) => "config_s8",
         (false, 16) => "config_s16",
         (false, 49) => "config_s49",
+        (false, 70) => "config_s70",
         (true, 8) => "config_m8",
         (true, 16) => "config_m16",
         (true, 49) => "config_m49",

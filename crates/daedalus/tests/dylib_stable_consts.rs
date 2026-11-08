@@ -53,11 +53,12 @@ fn check_patch(
     statics: &PluginRegistry,
     stables: &PluginRegistry,
     mixed: bool,
+    consts: usize,
     patch: GraphPatch,
     delta: i64,
 ) {
-    let (mut want, mut want_step) = bench::config_case(statics, mixed, 8);
-    let (mut got, mut got_step) = bench::config_case(stables, mixed, 8);
+    let (mut want, mut want_step) = bench::config_case(statics, mixed, consts);
+    let (mut got, mut got_step) = bench::config_case(stables, mixed, consts);
     for _ in 0..3 {
         assert_eq!(
             tick(&mut want, &mut want_step),
@@ -110,6 +111,7 @@ fn patched_consts_reach_a_stable_instance_like_the_static_install() {
         &statics,
         &stables,
         false,
+        8,
         set_const("c0", Value::Int(1000)),
         1 + (1000 - 3),
     );
@@ -119,7 +121,32 @@ fn patched_consts_reach_a_stable_instance_like_the_static_install() {
         &statics,
         &stables,
         true,
+        8,
         set_const("c3", longer),
         1 + (31 - 17),
+    );
+}
+
+/// A stable node with 70 const inputs: the list is over the shared cap (64), so the consts
+/// spill into the call's inputs. The last one (`c69`, an `i64`, `69 * 7 + 3` = 486) must read
+/// as it does on the static install: patching it moves the output by the same amount on both.
+#[test]
+fn the_last_const_of_a_stable_node_over_the_shared_cap_is_read() {
+    let path = cdylib::build_cdylib(
+        "daedalus-plugins-stable-bench",
+        "daedalus_plugins_stable_bench",
+        "dylib",
+    );
+    // Safety: a trusted test plugin, kept loaded for the process.
+    let library: &'static PluginLibrary =
+        Box::leak(Box::new(unsafe { PluginLibrary::load(&path) }.unwrap()));
+    let (statics, stables) = (bench::static_registry(), bench::stable_registry(library));
+    check_patch(
+        &statics,
+        &stables,
+        false,
+        70,
+        set_const("c69", Value::Int(1000)),
+        1 + (1000 - (69 * 7 + 3)),
     );
 }

@@ -51,6 +51,7 @@ pub use handle::DetectionsInterface;
         config_s8,
         config_s16,
         config_s49,
+        config_s70,
         config_m8,
         config_m16,
         config_m49
