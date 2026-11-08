@@ -13,6 +13,8 @@ mod host_output_adapters;
 mod lazy_gpu;
 #[cfg(feature = "gpu")]
 mod lazy_gpu_backoff;
+#[cfg(all(feature = "gpu-wgpu", feature = "plugins"))]
+mod lazy_gpu_probe;
 #[cfg(feature = "gpu")]
 mod lazy_gpu_reopen;
 mod support;
