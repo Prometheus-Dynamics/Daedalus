@@ -291,6 +291,11 @@ pub struct CacheSection {
     /// [`HostGraph::pipeline_cache_status`](crate::HostGraph::pipeline_cache_status).
     #[cfg_attr(feature = "config-env", serde(default))]
     pub gpu_pipeline_dir: Option<String>,
+    /// Directory of the GPU caps cache (`gpu-caps`): the caps of an earlier real enumeration, read
+    /// by the planner. Overrides `DAEDALUS_GPU_CAPS_CACHE`. A missing, read-only or corrupt cache is
+    /// no cache: nothing is surfaced, and the planner probes.
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub gpu_caps_dir: Option<String>,
 }
 
 fn default_cache_entries() -> usize {
@@ -303,6 +308,7 @@ impl Default for CacheSection {
             planner_max_entries: default_cache_entries(),
             runtime_plan_max_entries: default_cache_entries(),
             gpu_pipeline_dir: None,
+            gpu_caps_dir: None,
         }
     }
 }
@@ -504,6 +510,12 @@ impl EngineConfig {
     /// Keep the GPU pipeline cache in `dir` ([`CacheSection::gpu_pipeline_dir`]).
     pub fn with_gpu_pipeline_cache(mut self, dir: impl Into<String>) -> Self {
         self.cache.gpu_pipeline_dir = Some(dir.into());
+        self
+    }
+
+    /// Keep the GPU caps cache (`gpu-caps`) in `dir` ([`CacheSection::gpu_caps_dir`]).
+    pub fn with_gpu_caps_dir(mut self, dir: impl Into<String>) -> Self {
+        self.cache.gpu_caps_dir = Some(dir.into());
         self
     }
 

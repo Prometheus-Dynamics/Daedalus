@@ -8,6 +8,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- The GPU caps cache location is settable: `EngineConfig::with_gpu_caps_dir` (`CacheSection::gpu_caps_dir`)
+  or the environment variable `DAEDALUS_GPU_CAPS_CACHE` (the config wins). Any failed read or write of the
+  cache, including a missing or read-only directory or a corrupt file, is no cache: nothing is surfaced to
+  the engine or the node, one debug line is logged per process, and the planner probes.
 - GPU context loss: a lost context (the backend's device-lost callback, or `RetryingGpu::mark_lost`)
   is replaced by the source's next request, under the same capped backoff as a failed open (250 ms
   doubling, at most 5 s). The backend's loss message reaches the caller. References to a replaced

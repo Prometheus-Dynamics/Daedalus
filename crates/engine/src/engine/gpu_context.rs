@@ -52,6 +52,7 @@ impl LazyGpu {
             pipeline_cache.clone(),
             config.cache.gpu_pipeline_dir.clone(),
         );
+        let caps_dir = super::gpu_caps::cache_dir(config);
         let source = RetryingGpu::new(move || {
             let handle = if shared {
                 shared_context(&opts)?
@@ -60,7 +61,7 @@ impl LazyGpu {
             };
             // The first real enumeration: the caps are recorded for the next plan, and a cached
             // entry that disagrees with them is replaced.
-            super::gpu_caps::record_real_caps(real_caps(&handle));
+            super::gpu_caps::record_real_caps(caps_dir.as_deref(), real_caps(&handle));
             #[cfg(feature = "gpu-wgpu")]
             if let Some(dir) = dir.as_deref() {
                 *slot.lock() = Some(Arc::new(crate::pipeline_cache::EnginePipelineCache::open(
