@@ -146,6 +146,10 @@ pub struct RuntimeSection {
     pub backoff_base: Duration,
     #[cfg_attr(feature = "config-env", serde(default = "default_backoff_cap"))]
     pub backoff_cap: Duration,
+    /// How many failures in a row start a node's backoff (default 3; 0 is taken as 1). Until then
+    /// a failure costs only its own frame. See `EngineConfig::with_backoff_after`.
+    #[cfg_attr(feature = "config-env", serde(default = "default_backoff_after"))]
+    pub backoff_after: u32,
     /// Switch a node off after this many failures in a row (0, the default: never). A node that is
     /// switched off runs nothing until it is switched on. See `EngineConfig::with_auto_off`.
     #[cfg_attr(feature = "config-env", serde(default))]
@@ -209,6 +213,10 @@ fn default_backoff_cap() -> Duration {
     daedalus_runtime::DEFAULT_BACKOFF_CAP
 }
 
+fn default_backoff_after() -> u32 {
+    daedalus_runtime::DEFAULT_BACKOFF_AFTER
+}
+
 fn default_node_fusion() -> bool {
     true
 }
@@ -245,6 +253,7 @@ impl Default for RuntimeSection {
             backoff_base: default_backoff_base(),
             auto_off_after: 0,
             backoff_cap: default_backoff_cap(),
+            backoff_after: default_backoff_after(),
             recovery: NodeRecovery::default(),
             blocking_backpressure: false,
             stream_error_policy: StreamErrorPolicy::default(),
@@ -426,9 +435,17 @@ impl EngineConfig {
         self
     }
 
-    /// The backoff of a failed node across ticks ([`RuntimeSection::backoff_base`] and
-    /// [`RuntimeSection::backoff_cap`]): skipped until a delay that doubles from `base` per
-    /// failure in a row, at most `cap` (and at most 10 s). A success makes it ready again.
+    /// How many failures in a row start a node's backoff ([`RuntimeSection::backoff_after`],
+    /// default 3; 0 is taken as 1). Until then each failure is reported and costs only its own
+    /// frame.
+    pub fn with_backoff_after(mut self, failures: u32) -> Self {
+        self.runtime.backoff_after = failures;
+        self
+    }
+
+    /// The backoff of a node that keeps failing, across ticks ([`RuntimeSection::backoff_base`]
+    /// and [`RuntimeSection::backoff_cap`]): skipped until a delay that doubles from `base` per
+    /// further failure in a row, at most `cap` (and at most 10 s). A success makes it ready again.
     pub fn with_backoff(mut self, base: Duration, cap: Duration) -> Self {
         self.runtime.backoff_base = base;
         self.runtime.backoff_cap = cap;

@@ -88,6 +88,7 @@ fn a_fifo_consumer_sees_no_value_while_its_producer_is_backed_off() {
     };
     let seen = handler.seen.clone();
     let mut exec = OwnedExecutor::new(rt, handler)
+        .with_backoff_after(1)
         .with_backoff(Duration::from_secs(10), Duration::from_secs(10));
     exec.run_in_place().expect("tick 1");
     assert_eq!(*seen.lock(), vec![2]);
@@ -111,6 +112,7 @@ fn a_latest_consumer_keeps_the_last_value_while_its_producer_is_backed_off() {
     };
     let seen = handler.seen.clone();
     let mut exec = OwnedExecutor::new(rt, handler)
+        .with_backoff_after(1)
         .with_backoff(Duration::from_secs(10), Duration::from_secs(10));
     exec.run_in_place().expect("tick 1");
     exec.run_in_place().expect("tick 2: fails and backs off");
@@ -146,6 +148,7 @@ fn backoff_on_an_injected_clock_skips_runs_again_and_caps_the_delay() {
     let seen = handler.seen.clone();
     let mut exec = OwnedExecutor::new(rt.clone(), handler)
         .with_clock(clock.clone())
+        .with_backoff_after(1)
         .with_backoff(ms(100), ms(400));
     let failed = exec.run_in_place().expect("contained");
     assert_eq!(failed.node_health[0].backoff_remaining, Some(ms(100)));
@@ -169,6 +172,7 @@ fn backoff_on_an_injected_clock_skips_runs_again_and_caps_the_delay() {
     // Delays double per failure in a row and stop at the cap (400 ms): 100, 200, 400, 400.
     let mut exec = OwnedExecutor::new(rt, Flaky::new(u32::MAX))
         .with_clock(clock)
+        .with_backoff_after(1)
         .with_backoff(ms(100), ms(400));
     let mut remaining = Vec::new();
     for _ in 0..4 {
@@ -196,10 +200,68 @@ fn the_backoff_delay_never_exceeds_ten_seconds() {
     ));
     let mut exec = OwnedExecutor::new(rt, Flaky::new(u32::MAX))
         .with_clock(clock)
+        .with_backoff_after(1)
         .with_backoff(Duration::from_secs(60), Duration::from_secs(60));
     let telemetry = exec.run_in_place().expect("contained");
     assert_eq!(
         telemetry.node_health[0].backoff_remaining,
         Some(daedalus_runtime::MAX_BACKOFF_CAP)
     );
+}
+
+/// One failed frame costs that frame only: the next frame runs at once, even under a long delay,
+/// and the failure stays visible in the run's errors and the node's report.
+#[test]
+fn one_failed_frame_does_not_silence_the_frames_after_it() {
+    let rt = Arc::new(build_runtime(
+        &chain(&["src", "flaky", "sink"]),
+        &SchedulerConfig::default(),
+    ));
+    let handler = SecondCallFails {
+        calls: AtomicU32::new(0),
+        seen: Arc::default(),
+    };
+    let seen = handler.seen.clone();
+    let mut exec = OwnedExecutor::new(rt, handler)
+        .with_backoff(Duration::from_secs(10), Duration::from_secs(10));
+    exec.run_in_place().expect("tick 1");
+
+    let failed = exec.run_in_place().expect("tick 2: fails");
+    assert_eq!(failed.errors.len(), 1, "the failure is reported");
+    assert_eq!(failed.node_health[0].state, "ready");
+    assert_eq!(failed.node_health[0].consecutive_failures, 1);
+    assert_eq!(failed.node_health[0].backoff_remaining, None);
+
+    // Every frame after the failure runs and delivers: none is skipped.
+    for delivered in 2..=7 {
+        let next = exec.run_in_place().expect("a good frame runs");
+        assert_eq!(next.recovery().backoff_skips, 0);
+        assert!(next.errors.is_empty());
+        assert_eq!(next.node_health[0].consecutive_failures, 0, "reset");
+        assert_eq!(seen.lock().len(), delivered);
+    }
+}
+
+/// A node that keeps failing is backed off from the third failure in a row, starting at the base
+/// delay; a success between failures restarts the count.
+#[test]
+fn the_third_failure_in_a_row_starts_the_backoff_at_the_base_delay() {
+    let rt = Arc::new(build_runtime(
+        &chain(&["src", "flaky", "sink"]),
+        &SchedulerConfig::default(),
+    ));
+    let base = Duration::from_secs(10);
+    let mut exec = OwnedExecutor::new(rt, Flaky::new(u32::MAX)).with_backoff(base, base);
+    for failures in 1..=2 {
+        let telemetry = exec.run_in_place().expect("contained");
+        assert_eq!(telemetry.recovery().backoff_skips, 0);
+        assert_eq!(telemetry.node_health[0].consecutive_failures, failures);
+        assert_eq!(telemetry.node_health[0].state, "ready");
+    }
+    let third = exec.run_in_place().expect("contained");
+    assert_eq!(third.node_health[0].state, "backed_off");
+    let remaining = third.node_health[0].backoff_remaining.expect("backed off");
+    assert!(remaining <= base && remaining > base / 2, "{remaining:?}");
+    let skipped = exec.run_in_place().expect("skipped");
+    assert_eq!(skipped.recovery().backoff_skips, 1);
 }

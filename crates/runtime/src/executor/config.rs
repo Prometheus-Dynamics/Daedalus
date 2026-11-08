@@ -19,6 +19,8 @@ pub(crate) struct ExecutorRunConfig {
     /// The first backoff delay of a failed node, and the cap on it (`with_backoff`).
     pub(crate) backoff_base: core::time::Duration,
     pub(crate) backoff_cap: core::time::Duration,
+    /// The count of failures in a row that starts a node's backoff (`with_backoff_after`).
+    pub(crate) backoff_after: u32,
     /// Switch a node off after this many failures in a row (0: never; `with_auto_off`).
     pub(crate) auto_off_after: u32,
 }
@@ -39,6 +41,7 @@ impl Default for ExecutorRunConfig {
             frame_probe: None,
             backoff_base: super::node_health::DEFAULT_BACKOFF_BASE,
             backoff_cap: super::node_health::DEFAULT_BACKOFF_CAP,
+            backoff_after: super::node_health::DEFAULT_BACKOFF_AFTER,
             auto_off_after: 0,
         }
     }
@@ -89,6 +92,10 @@ impl ExecutorRunConfig {
 
     /// Backoff base and cap; the cap is clamped to [`super::node_health::MAX_BACKOFF_CAP`] and
     /// the base to the cap.
+    pub(crate) fn set_backoff_after(&mut self, after: u32) {
+        self.backoff_after = after.max(1);
+    }
+
     pub(crate) fn set_auto_off(&mut self, after: u32) {
         self.auto_off_after = after;
     }

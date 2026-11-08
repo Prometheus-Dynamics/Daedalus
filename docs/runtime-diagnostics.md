@@ -281,6 +281,12 @@ Retries run inside the tick, so a `backoff` delays the whole tick (and, in a par
 worker running that segment). Keep backoffs short on frame graphs, or prefer `SkipFrame` and let
 the next frame retry.
 
+A failure costs its own frame; the next frame runs as usual. From the third failure in a row
+(`with_backoff_after(n)`, 1 for the first failure) the node is backed off across ticks: its frames
+are skipped and counted in `backoff_skips` until a delay that starts at 50 ms and doubles per
+further failure in a row, capped at 5 s (`with_backoff(base, cap)`, the cap at most 10 s). A
+success clears it.
+
 ### Stream workers
 
 Errors a node policy does not recover still fail the tick. A continuous worker

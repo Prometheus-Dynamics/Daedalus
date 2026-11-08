@@ -38,6 +38,7 @@ fn a_failing_node_is_never_switched_off_by_default() {
 #[test]
 fn the_policy_switches_a_node_off_after_n_failures_and_on_again_clears_it() {
     let mut exec = OwnedExecutor::new(plan(), Flaky::new(u32::MAX))
+        .with_backoff_after(1)
         .with_backoff(Duration::ZERO, Duration::ZERO)
         .with_auto_off(2);
 

@@ -70,6 +70,10 @@ pub(crate) trait ExecutorConfigTarget {
         self.core_mut().run_config.set_auto_off(after);
     }
 
+    fn apply_backoff_after(&mut self, after: u32) {
+        self.core_mut().run_config.set_backoff_after(after);
+    }
+
     fn apply_backoff(&mut self, base: ::core::time::Duration, cap: ::core::time::Duration) {
         self.core_mut().run_config.set_backoff(base, cap);
     }
@@ -283,9 +287,18 @@ macro_rules! executor_config_api {
             self
         }
 
-        /// The backoff of a failed node across ticks: its first delay is `base`, doubling per
-        /// failure in a row up to `cap` (default 50 ms and 5 s; `cap` is at most 10 s). A node
-        /// that succeeds is ready again at once.
+        /// How many failures in a row start a node's backoff (default 3; 0 is taken as 1, which
+        /// backs a node off at its first failure). Until then each failure is reported and costs
+        /// only its own frame: the next frame runs as usual.
+        pub fn with_backoff_after(mut self, failures: u32) -> Self {
+            self.apply_backoff_after(failures);
+            self
+        }
+
+        /// The backoff of a node that keeps failing, across ticks: its first delay is `base`,
+        /// doubling per further failure in a row up to `cap` (default 50 ms and 5 s; `cap` is at
+        /// most 10 s). [`Self::with_backoff_after`] sets when it starts. A node that succeeds is
+        /// ready again at once.
         pub fn with_backoff(
             mut self,
             base: ::core::time::Duration,

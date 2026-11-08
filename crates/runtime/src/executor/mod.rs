@@ -43,7 +43,8 @@ pub use errors::{ExecuteError, ExecutorBuildError, ExecutorMaskError, NodeError}
 pub use handler::{DirectPayloadFn, NodeHandler};
 pub(crate) use init::{ExecutorInit, build_executor_init};
 pub use node_health::{
-    DEFAULT_BACKOFF_BASE, DEFAULT_BACKOFF_CAP, MAX_BACKOFF_CAP, NodeHealthReport,
+    DEFAULT_BACKOFF_AFTER, DEFAULT_BACKOFF_BASE, DEFAULT_BACKOFF_CAP, MAX_BACKOFF_CAP,
+    NodeHealthReport,
 };
 pub(crate) use node_policy::NodePolicies;
 pub use node_policy::{

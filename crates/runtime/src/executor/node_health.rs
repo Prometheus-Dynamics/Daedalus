@@ -1,8 +1,10 @@
-//! Per-node health across ticks. A node whose handler, flush or publish fails is backed off: its
-//! next attempt waits an exponentially growing delay (from the executor's base, capped at its
-//! cap), and until then the node is skipped, its frame dropped and its consumers not ready. A
-//! success resets it. Nothing sleeps: the tick path reads one atomic per node, and the timestamps
-//! and details sit behind a lock that only a failure or a recovery takes.
+//! Per-node health across ticks. A node whose handler, flush or publish keeps failing is backed
+//! off: a failure or two in a row only costs their frames, and the next frame runs as usual. From
+//! the executor's `backoff_after`-th failure in a row its next attempt waits an exponentially
+//! growing delay (from the executor's base, capped at its cap), and until then the node is
+//! skipped, its frame dropped and its consumers not ready. A success resets it. Nothing sleeps:
+//! the tick path reads one atomic per node, and the timestamps and details sit behind a lock that
+//! only a failure or a recovery takes.
 
 use crate::portable::{Arc, AtomicUsize};
 use crate::prelude::*;
@@ -11,10 +13,15 @@ use core::sync::atomic::Ordering::Relaxed;
 use core::time::Duration;
 use daedalus_core::platform::{Clock, Instant};
 
+use super::config::ExecutorRunConfig;
+
 /// The default delay before a failed node's first retry (`with_backoff`).
 pub const DEFAULT_BACKOFF_BASE: Duration = Duration::from_millis(50);
 /// The default cap on a node's backoff delay (`with_backoff`).
 pub const DEFAULT_BACKOFF_CAP: Duration = Duration::from_secs(5);
+/// The default count of failures in a row that starts a node's backoff (`with_backoff_after`):
+/// the frames of one or two failures are lost, not the frames after them.
+pub const DEFAULT_BACKOFF_AFTER: u32 = 3;
 /// The largest cap `with_backoff` accepts: a node is never left out for longer than this.
 pub const MAX_BACKOFF_CAP: Duration = Duration::from_secs(10);
 
@@ -22,6 +29,9 @@ const READY: usize = 0;
 const BACKED_OFF: usize = 1;
 /// Switched off by hand (`set_enabled`): the node runs no frame until it is switched on again.
 const DISABLED: usize = 2;
+/// Failed recently, too few times in a row to back off: it runs every frame, and its next success
+/// clears the count.
+const FAILING: usize = 3;
 
 /// One node's health: the atomic state the tick path reads, and the detail a failure writes.
 #[derive(Default)]
@@ -85,16 +95,15 @@ impl NodeHealthTable {
         }
     }
 
-    /// Record a failure of node `idx`: back it off for the next delay.
+    /// Record a failure of node `idx`: from `config.backoff_after` failures in a row, back it off
+    /// for the next delay; before that it keeps running.
     #[cold]
     pub(crate) fn on_failure(
         &self,
         idx: usize,
         error: String,
         clock: &Clock,
-        base: Duration,
-        cap: Duration,
-        auto_off_after: u32,
+        config: &ExecutorRunConfig,
     ) {
         let Some(health) = self.nodes.get(idx) else {
             return;
@@ -104,14 +113,24 @@ impl NodeHealthTable {
         detail.failures = detail.failures.saturating_add(1);
         detail.consecutive = detail.consecutive.saturating_add(1);
         detail.last_error = Some(error);
-        if auto_off_after > 0 && detail.consecutive >= auto_off_after {
+        if config.auto_off_after > 0 && detail.consecutive >= config.auto_off_after {
             // The auto-off policy: switched off until someone switches it on.
             detail.until = None;
             detail.auto_off = true;
             health.state.store(DISABLED, Relaxed);
             return;
         }
-        let delay = backoff_delay(detail.consecutive, base, cap);
+        let after = config.backoff_after.max(1);
+        if detail.consecutive < after {
+            detail.until = None;
+            health.state.store(FAILING, Relaxed);
+            return;
+        }
+        let delay = backoff_delay(
+            detail.consecutive - (after - 1),
+            config.backoff_base,
+            config.backoff_cap,
+        );
         detail.until = Some(clock.now() + delay);
         health.state.store(BACKED_OFF, Relaxed);
     }
@@ -178,12 +197,15 @@ impl NodeHealthTable {
 }
 
 impl NodeHealth {
-    /// The backed-off node's gate: skipped inside its delay, else it runs again (its state stays
-    /// backed off until it succeeds). A node switched off never runs.
+    /// The gate of a node that is not ready: skipped inside its delay, else it runs again (its
+    /// state stays as it is until it succeeds). A node switched off never runs; a node that has
+    /// failed too few times to back off always runs.
     #[cold]
     fn admit_cold(&self, clock: &Clock) -> Option<bool> {
-        if self.state.load(Relaxed) == DISABLED {
-            return None;
+        match self.state.load(Relaxed) {
+            DISABLED => return None,
+            FAILING => return Some(true),
+            _ => {}
         }
         let detail = self.detail.lock();
         match detail.until {
@@ -214,7 +236,7 @@ pub(crate) fn backoff_delay(consecutive: u32, base: Duration, cap: Duration) -> 
 pub struct NodeHealthReport {
     /// The node's instance key, or its id.
     pub node_id: String,
-    /// `"ready"` (it runs), `"backed_off"` (its next attempt waits `backoff_remaining`) or
+    /// `"ready"` (it runs, also after a failure too recent to back it off), `"backed_off"` (its next attempt waits `backoff_remaining`) or
     /// `"disabled"` (switched off by hand; it runs nothing until switched on).
     pub state: String,
     /// Failures recorded for the node over the executor's lifetime.

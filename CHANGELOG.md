@@ -33,11 +33,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `request_reload`, `stop_retrying` and `resume_retrying` are the manual controls, and `status()`
   (`PluginRetryStatus`: `state`, `reload_pending`, `attempts`, `consecutive_failures`,
   `retry_in`, `last_error`, `generation`) reports it.
-- Per-node backoff across ticks: a node whose handler, flush or publish fails is skipped until a
-  delay that starts at 50 ms, doubles per failure in a row, and is capped at 5 s by default (at
-  most 10 s). A success makes it ready again. A backed-off node's frame is dropped, so its
-  consumers see no new value (a Latest edge keeps its last value). Nothing sleeps on the tick
-  path. Configure with `with_backoff(base, cap)` on executors and `EngineConfig::with_backoff`.
+- Per-node backoff across ticks: a node whose handler, flush or publish keeps failing is skipped
+  until a delay that starts at 50 ms, doubles per further failure in a row, and is capped at 5 s
+  by default (at most 10 s). The backoff starts at the third failure in a row
+  (`with_backoff_after(n)`, `DEFAULT_BACKOFF_AFTER`); before that a failure is reported and costs
+  only its own frame, and the next frame runs as usual. A success makes it ready again. A
+  backed-off node's frame is dropped, so its consumers see no new value (a Latest edge keeps its
+  last value). Nothing sleeps on the tick path. Configure with `with_backoff(base, cap)` and
+  `with_backoff_after(n)` on executors and on `EngineConfig`.
 - Telemetry: `ExecutionTelemetry::node_health` (`NodeHealthReport`: `node_id`, `state` of
   `"ready"`, `"backed_off"` or `"disabled"`, `failures`, `consecutive_failures`,
   `backoff_remaining`, `disabled_by`, `last_error`) and `RecoveryTelemetry::backoff_skips`

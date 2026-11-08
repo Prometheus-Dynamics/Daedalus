@@ -139,14 +139,12 @@ pub(super) fn handle_failure(
         return Ok(());
     }
     record_failure(&mut v.core.telemetry, node_idx, node_id, &error);
-    // Back the node off for its next delay: across ticks, never inside this one.
+    // A node that keeps failing is backed off: across ticks, never inside this one.
     v.core.node_health.on_failure(
         node_idx,
         error.to_string(),
         &v.core.clock,
-        v.core.run_config.backoff_base,
-        v.core.run_config.backoff_cap,
-        v.core.run_config.auto_off_after,
+        &v.core.run_config,
     );
     // Fail-fast ends the run on any failure, whatever the node's policy (CI and tests).
     if v.core.run_config.fail_fast {

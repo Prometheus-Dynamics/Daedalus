@@ -50,6 +50,7 @@ fn switching_on_clears_the_backoff_and_keeps_the_failure_record() {
         &SchedulerConfig::default(),
     ));
     let mut exec = OwnedExecutor::new(rt, Flaky::new(u32::MAX))
+        .with_backoff_after(1)
         .with_backoff(Duration::from_secs(10), Duration::from_secs(10));
 
     let failed = exec.run_in_place().expect("contained");
