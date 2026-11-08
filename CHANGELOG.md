@@ -16,6 +16,13 @@ plugin built from a 3.0.0 dev commit with plugin ABI 10 (before 11) still instal
 plugin ABI and does not load.
 
 ### Changed
+- **The facade no longer enables `tracing` by default (`daedalus-rs`).** The default features are now
+  `threads` only. A build that relied on the default to keep spans must enable `tracing` (or
+  `embedded,tracing`). HeliOS's engine, vision-probe and any other facade consumer that uses the
+  defaults add `tracing` to their `features` list. Measured on the same probe body (`engine,plugins`,
+  x86_64 Linux, release, thin LTO): `threads` adds 142,880 bytes of `.text`, `tracing` adds 40,928
+  bytes; the two together are the 185 KB the defaults used to cost. Consumers that already set
+  `default-features = false` (every in-tree crate, through the workspace dependency) are unaffected.
 
 - **Camera frame import does one fstat per fd.** `GpuFrameImports::import` identifies a multi-plane frame's dmabuf with one fstat per distinct fd number, not one per plane. The identity is never kept across calls: fd numbers are reused, and a frame carries no identity of its own. Measured on the host GPU (best of five batches of 2000 hits): NV12 with duplicated plane fds 12.7 -> 9.2 µs per frame. The GREY single-plane frame, whose path has no change, moved 9.5 -> 6.9 µs, which is host load. The `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` skip is not made: a frame carries no acquire fence, so skipping the implicit-fence wait would race the producer. That waits for the frame identity and the frame interface of the SharedFrame work (Lemnos).
 - **GPU dispatch passes the device key down.** The per-device cache key (`device_key`: an `as_hal`

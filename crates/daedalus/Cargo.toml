@@ -53,7 +53,7 @@ host-only-features = [
 ]
 
 [features]
-default = ["threads", "tracing"]
+default = ["threads"]
 # Worker threads: `RuntimeMode::Parallel`/`Adaptive` on a worker pool, stream workers and
 # blocking host waits (`HostGraph::drive_blocking`, ...). Without it (e.g. on
 # `wasm32-unknown-unknown`) those modes run serially and the thread-only APIs do not exist.
@@ -118,8 +118,8 @@ metrics = ["daedalus-runtime/metrics", "daedalus-engine?/metrics"]
 # `daedalus::alloc_probe`: a counting global allocator attributing allocations to node handlers,
 # the runtime and host-bridge calls; `HostGraph::frame_overhead` reports them per tick.
 alloc-probe = ["daedalus-runtime/alloc-probe", "daedalus-engine?/alloc-probe"]
-# `tracing` spans and events of the runtime, engine, planner and demo nodes (default). Separate
-# from `threads`/`std`: `default-features = false` builds (`embedded`, wasm) opt in explicitly.
+# `tracing` spans and events of the runtime, engine, planner and demo nodes. Not a default: add it
+# (`tracing`, or `embedded,tracing`) to keep spans. Separate from `threads`/`std`.
 tracing = [
     "daedalus-runtime/tracing",
     "daedalus-engine?/tracing",
