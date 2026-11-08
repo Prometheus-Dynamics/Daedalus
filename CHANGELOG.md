@@ -12,6 +12,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   or the environment variable `DAEDALUS_GPU_CAPS_CACHE` (the config wins). Any failed read or write of the
   cache, including a missing or read-only directory or a corrupt file, is no cache: nothing is surfaced to
   the engine or the node, one debug line is logged per process, and the planner probes.
+- GPU waits are bounded: a submission throttle or readback wait that outlives the bound (default
+  5 s; `DAEDALUS_GPU_WAIT_TIMEOUT_MS`, read once) fails its dispatch
+  with a `GpuError::Internal` whose message starts "gpu wait timed out", and the context is marked
+  lost, so its source replaces it under the backoff. A dispatch that hits no timeout is unchanged.
+- An uncaptured wgpu error the driver reports is returned as the next dispatch's error (a
+  `GpuError::Internal` "uncaptured gpu error: ..."), so a node fails rather than using suspect
+  output. Still not done: the async dispatch path (`dispatch_async`) keeps its untimed waits.
+  Real device loss and real timeouts are not verified on hardware.
 - GPU context loss: a lost context (the backend's device-lost callback, or `RetryingGpu::mark_lost`)
   is replaced by the source's next request, under the same capped backoff as a failed open (250 ms
   doubling, at most 5 s). The backend's loss message reaches the caller. References to a replaced

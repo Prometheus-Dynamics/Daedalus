@@ -30,6 +30,7 @@ mod storage_pool;
 mod submission;
 pub(crate) mod submit_lock;
 mod types;
+pub(crate) mod wait;
 mod workgroups;
 
 pub use bindings::*;

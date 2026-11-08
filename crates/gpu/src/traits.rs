@@ -24,6 +24,13 @@ pub trait GpuBackend: Send + Sync {
     fn lost_reason(&self) -> Option<String> {
         None
     }
+    /// Mark the device lost (a bounded wait timed out): its source replaces the context.
+    fn mark_lost(&self, _reason: String) {}
+    /// Uncaptured errors the driver reported since the last call, joined; `None` while there are
+    /// none. A dispatch returns one as its error, so the node fails rather than using its output.
+    fn take_uncaptured_error(&self) -> Option<String> {
+        None
+    }
     fn adapter_info(&self) -> GpuAdapterInfo;
     fn capabilities(&self) -> GpuCapabilities;
     fn select_adapter(&self, opts: &GpuOptions) -> Result<GpuAdapterInfo, GpuError>;

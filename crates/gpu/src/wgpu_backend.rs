@@ -67,6 +67,8 @@ pub struct WgpuBackend {
     /// Set by the device-lost callback: the context is then replaced by its source.
     lost: Arc<std::sync::atomic::AtomicBool>,
     lost_reason: Arc<Mutex<Option<String>>>,
+    /// Uncaptured errors the device reported, returned by the next dispatch.
+    pending: Arc<crate::shader::wait::PendingErrors>,
 }
 
 impl WgpuBackend {
@@ -241,13 +243,18 @@ impl WgpuBackend {
                 lost.store(true, std::sync::atomic::Ordering::Release);
             });
         }
-        device.on_uncaptured_error(std::sync::Arc::new(|err| {
-            tracing::error!(
-                target: "daedalus_gpu::wgpu",
-                error = %err,
-                "uncaptured wgpu error"
-            );
-        }));
+        let pending = Arc::new(crate::shader::wait::PendingErrors::default());
+        {
+            let pending = pending.clone();
+            device.on_uncaptured_error(std::sync::Arc::new(move |err| {
+                tracing::error!(
+                    target: "daedalus_gpu::wgpu",
+                    error = %err,
+                    "uncaptured wgpu error"
+                );
+                pending.record(err.to_string());
+            }));
+        }
 
         Ok(Self {
             dmabuf,
@@ -267,6 +274,7 @@ impl WgpuBackend {
             memory_hints,
             lost,
             lost_reason,
+            pending,
         })
     }
 
@@ -377,6 +385,15 @@ impl GpuBackend for WgpuBackend {
 
     fn lost_reason(&self) -> Option<String> {
         self.lost_reason.lock().clone()
+    }
+
+    fn mark_lost(&self, reason: String) {
+        *self.lost_reason.lock() = Some(reason);
+        self.lost.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    fn take_uncaptured_error(&self) -> Option<String> {
+        self.pending.take()
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

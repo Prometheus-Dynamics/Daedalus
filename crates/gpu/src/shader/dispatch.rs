@@ -104,7 +104,7 @@ impl SubmissionTracker {
         &self,
         device: &wgpu::Device,
         submission: wgpu::SubmissionIndex,
-    ) {
+    ) -> Result<(), GpuError> {
         {
             let mut in_flight = self.in_flight.lock();
             in_flight.push_back(submission.clone());
@@ -139,10 +139,14 @@ impl SubmissionTracker {
             // every throttle event.
             let poll_result = device.poll(wgpu::PollType::Wait {
                 submission_index: Some(wait_for.clone()),
-                timeout: None,
+                timeout: Some(super::wait::gpu_wait_timeout()),
             });
 
             match poll_result {
+                Err(wgpu::PollError::Timeout) => {
+                    // The device stopped answering: the dispatch fails, the context is marked lost.
+                    return Err(super::wait::timed_out("submission throttle"));
+                }
                 Ok(_) => {
                     tracing::debug!(
                         target: "daedalus_gpu::dispatch",
@@ -158,18 +162,9 @@ impl SubmissionTracker {
                     );
                     self.in_flight.lock().clear();
                 }
-                Err(error) => {
-                    // Never leave the oldest entry in place: retrying the same wait would spin.
-                    tracing::warn!(
-                        target: "daedalus_gpu::dispatch",
-                        submission = ?wait_for,
-                        error = ?error,
-                        "gpu submission throttle wait failed; retiring submission"
-                    );
-                    self.in_flight.lock().pop_front();
-                }
             }
         }
+        Ok(())
     }
 
     #[cfg(feature = "gpu-async")]
@@ -481,7 +476,13 @@ pub fn dispatch_shader_with_options(
 
     let submission_idx = queue.submit(Some(encoder.finish()));
     if let Some(tracker) = submission_tracker {
-        tracker.track_and_throttle(device, submission_idx);
+        tracker
+            .track_and_throttle(device, submission_idx)
+            .inspect_err(|err| {
+                if super::wait::is_timeout(err) {
+                    backend.mark_lost(err.to_string());
+                }
+            })?;
     } else {
         tracing::warn!(
             target: "daedalus_gpu::dispatch",
@@ -490,9 +491,19 @@ pub fn dispatch_shader_with_options(
         let _ = device.poll(wgpu::PollType::Poll);
     }
 
-    let result = resolve_readbacks(device, device_key, &queue, readbacks)?;
+    let result = resolve_readbacks(device, device_key, &queue, readbacks).inspect_err(|err| {
+        if super::wait::is_timeout(err) {
+            backend.mark_lost(err.to_string());
+        }
+    })?;
     return_pooled_textures(pool_textures_to_return);
 
+    // An uncaptured error the driver reported while this dispatch ran: its output is suspect.
+    if let Some(message) = backend.take_uncaptured_error() {
+        return Err(GpuError::Internal(format!(
+            "uncaptured gpu error: {message}"
+        )));
+    }
     Ok(ShaderRunOutput {
         buffers: result,
         textures: texture_handles,

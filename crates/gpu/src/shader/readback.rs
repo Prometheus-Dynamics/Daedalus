@@ -215,10 +215,14 @@ pub(crate) fn resolve_readbacks(
         receivers.push(rx);
     }
     if !receivers.is_empty() {
-        let _ = device.poll(wgpu::PollType::Wait {
+        // A bounded wait: a device that stops answering fails the readback, not the thread.
+        let waited = device.poll(wgpu::PollType::Wait {
             submission_index: None,
-            timeout: None,
+            timeout: Some(super::wait::gpu_wait_timeout()),
         });
+        if let Err(wgpu::PollError::Timeout) = waited {
+            return Err(super::wait::timed_out("readback"));
+        }
     }
 
     let mut result = HashMap::with_capacity(readbacks.len());
