@@ -7,11 +7,11 @@ use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::gpu_segments::gpu_dependency_segments;
 use crate::graph::{ComputeAffinity, Graph};
 use crate::metadata::{
-    PLAN_GPU_SEGMENTS_KEY, PLAN_GPU_WHY_KEY, PLAN_SCHEDULE_ORDER_KEY, PLAN_SCHEDULE_PRIORITY_KEY,
-    PLAN_TOPO_ORDER_KEY, metadata_node_indices, node_index_list,
+    PLAN_GPU_CAPS_KEY, PLAN_GPU_SEGMENTS_KEY, PLAN_GPU_WHY_KEY, PLAN_SCHEDULE_ORDER_KEY,
+    PLAN_SCHEDULE_PRIORITY_KEY, PLAN_TOPO_ORDER_KEY, metadata_node_indices, node_index_list,
 };
 
-use super::{PlannerConfig, diagnostic_node_id};
+use super::{GpuPlanCaps, PlannerConfig, diagnostic_node_id};
 
 fn string_value(value: impl Into<String>) -> Value {
     Value::String(Cow::Owned(value.into()))
@@ -35,9 +35,26 @@ fn priority_value(node: usize, id: String, priority: u8) -> Value {
 
 pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Diagnostic>) {
     let mut gpu_reasons: Vec<String> = Vec::new();
-    // If GPU is disabled, flag required nodes.
-    if !config.enable_gpu {
-        gpu_reasons.push("gpu-disabled".into());
+    // The caps source's answer, for `explain_plan`: which of the three applied.
+    let absent = matches!(config.gpu_caps, GpuPlanCaps::Absent);
+    graph.metadata.insert(
+        PLAN_GPU_CAPS_KEY.into(),
+        string_value(match config.gpu_caps {
+            GpuPlanCaps::Known(_) => "known",
+            GpuPlanCaps::Probe => "probe",
+            GpuPlanCaps::Absent => "absent",
+        }),
+    );
+    // If GPU is disabled, or this machine has none, flag required nodes.
+    if !config.enable_gpu || absent {
+        gpu_reasons.push(
+            if absent {
+                "no-gpu-device"
+            } else {
+                "gpu-disabled"
+            }
+            .into(),
+        );
         let mut gpu_nodes: Vec<usize> = Vec::new();
         for (idx, node) in graph.nodes.iter().enumerate() {
             if matches!(node.compute, ComputeAffinity::GpuRequired) {
@@ -45,7 +62,15 @@ pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Dia
                 diags.push(
                     Diagnostic::new(
                         DiagnosticCode::GpuUnsupported,
-                        format!("node {} requires GPU but GPU is disabled", node.id.0),
+                        format!(
+                            "node {} requires GPU but {}",
+                            node.id.0,
+                            if absent {
+                                "this machine has no GPU"
+                            } else {
+                                "GPU is disabled"
+                            }
+                        ),
                     )
                     .in_pass("gpu")
                     .at_node(diagnostic_node_id(node)),
@@ -63,27 +88,14 @@ pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Dia
         return;
     }
 
-    // If caps are provided, validate support.
-    #[cfg(feature = "gpu")]
-    if let Some(caps) = &config.gpu_caps {
-        let require_format = daedalus_gpu::GpuFormat::Rgba8Unorm;
-        let mut ok = true;
-        let has_format = caps
-            .format_features
-            .iter()
-            .find(|f| f.format == require_format && f.sampleable);
-        if caps.queue_count == 0 || !caps.has_transfer_queue {
-            ok = false;
-        }
-        if has_format.is_none() {
-            ok = false;
-        }
+    // Known caps: check the GPU-capable nodes against them. Probe (unknown caps) keeps those
+    // nodes GPU-capable, and the first dispatch checks the real device.
+    if let GpuPlanCaps::Known(caps) = config.gpu_caps {
+        let ok = caps.queue_count > 0 && caps.has_transfer_queue && caps.rgba8_unorm_sampleable;
         if !ok {
             gpu_reasons.push(format!(
                 "insufficient-caps:queues={} transfer={} format_sampleable={}",
-                caps.queue_count,
-                caps.has_transfer_queue,
-                has_format.is_some()
+                caps.queue_count, caps.has_transfer_queue, caps.rgba8_unorm_sampleable
             ));
             for node in &graph.nodes {
                 if matches!(
@@ -94,12 +106,11 @@ pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Dia
                         Diagnostic::new(
                             DiagnosticCode::GpuUnsupported,
                             format!(
-                                "node {} cannot run on GPU: insufficient caps (queues={}, transfer={}, format={:?} sampleable={})",
+                                "node {} cannot run on GPU: insufficient caps (queues={}, transfer={}, format_sampleable={})",
                                 node.id.0,
                                 caps.queue_count,
                                 caps.has_transfer_queue,
-                                require_format,
-                                has_format.is_some()
+                                caps.rgba8_unorm_sampleable
                             ),
                         )
                         .in_pass("gpu")

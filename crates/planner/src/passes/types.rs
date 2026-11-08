@@ -31,8 +31,8 @@ pub struct PlannerConfig {
     /// persisted contract. It is deliberately off by default so "minimal" graphs (that omit
     /// declared ports and rely only on edges) remain valid.
     pub strict_port_declarations: bool,
-    #[cfg(feature = "gpu")]
-    pub gpu_caps: Option<daedalus_gpu::GpuCapabilities>,
+    /// The GPU's capabilities as the planner needs them, read without opening a device.
+    pub gpu_caps: GpuPlanCaps,
 }
 
 impl PlannerConfig {
@@ -46,8 +46,7 @@ impl PlannerConfig {
                 Option<daedalus_registry::capability::CapabilityRegistrySnapshot>,
             lowerings: Vec<PlannerLoweringInfo>,
             strict_port_declarations: bool,
-            #[cfg(feature = "gpu")]
-            gpu_caps: &'a Option<daedalus_gpu::GpuCapabilities>,
+            gpu_caps: &'a GpuPlanCaps,
         }
 
         let fingerprint = PlannerConfigFingerprint {
@@ -60,11 +59,35 @@ impl PlannerConfig {
                 .map(CapabilityRegistry::snapshot),
             lowerings: self.lowerings.registered(),
             strict_port_declarations: self.strict_port_declarations,
-            #[cfg(feature = "gpu")]
             gpu_caps: &self.gpu_caps,
         };
         stable_hash_serialized("daedalus_planner::PlannerConfig", &fingerprint)
     }
+}
+
+/// What the planner knows of the GPU, read without opening a device (the engine's GPU capability
+/// source decides it: board facts, a cache of an earlier enumeration, or a probe).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum GpuPlanCaps {
+    /// The device's caps are known: the planner checks the GPU-capable nodes against them.
+    Known(GpuCaps),
+    /// A GPU may be present but its caps are unknown: GPU-capable nodes stay GPU-capable, and the
+    /// first dispatch checks the real device against the plan.
+    #[default]
+    Probe,
+    /// No GPU on this machine: GPU nodes are planned as on a machine without one.
+    Absent,
+}
+
+/// The capabilities the planner reads of a GPU device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GpuCaps {
+    /// Command queues the device exposes (at least one is required).
+    pub queue_count: u32,
+    /// Whether the device has a transfer queue (required).
+    pub has_transfer_queue: bool,
+    /// Whether `Rgba8Unorm` can be sampled (required).
+    pub rgba8_unorm_sampleable: bool,
 }
 
 /// Input to the planner.

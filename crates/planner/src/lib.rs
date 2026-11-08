@@ -52,10 +52,10 @@ pub use metadata::{
 };
 pub use passes::{
     AdapterResolutionMode, AppliedPlannerLowering, EdgeResolutionExplanation, EdgeResolutionKind,
-    NodeOverloadResolution, OverloadPortResolution, PlanExplanation, PlannerConfig, PlannerInput,
-    PlannerLoweringContext, PlannerLoweringInfo, PlannerLoweringPhase, PlannerLoweringRegistry,
-    PlannerOutput, build_plan, edge_explanations, explain_plan, register_planner_lowering,
-    registered_planner_lowerings,
+    GpuCaps, GpuPlanCaps, NodeOverloadResolution, OverloadPortResolution, PlanExplanation,
+    PlannerConfig, PlannerInput, PlannerLoweringContext, PlannerLoweringInfo, PlannerLoweringPhase,
+    PlannerLoweringRegistry, PlannerOutput, build_plan, edge_explanations, explain_plan,
+    register_planner_lowering, registered_planner_lowerings,
 };
 pub use patch::{GraphMetadataSelector, GraphNodeSelector, GraphPatch, GraphPatchOp, PatchReport};
 pub use refresh::{NodePortRefresh, PortRefreshReport, RefreshPolicy};

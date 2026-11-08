@@ -63,3 +63,5 @@ pub const PLAN_SCHEDULE_PRIORITY_KEY: &str = "schedule_priority";
 pub const PLAN_GPU_SEGMENTS_KEY: &str = "gpu_segments";
 /// Planner-owned graph metadata key for GPU rejection/selection rationale.
 pub const PLAN_GPU_WHY_KEY: &str = "gpu_why";
+/// Plan metadata: which of the GPU caps source's answers applied: "known", "probe" or "absent".
+pub const PLAN_GPU_CAPS_KEY: &str = "gpu_caps";

@@ -1,7 +1,7 @@
 use crate::portable::Arc;
 use crate::prelude::*;
 
-use daedalus_planner::{Graph, PlannerConfig, PlannerInput, build_plan};
+use daedalus_planner::{GpuPlanCaps, Graph, PlannerConfig, PlannerInput, build_plan};
 use daedalus_runtime::executor::{ExecutionTelemetry, Executor, NodeHandler, OwnedExecutor};
 #[cfg(feature = "plugins")]
 use daedalus_runtime::handler_registry::HandlerRegistry;
@@ -81,6 +81,7 @@ pub(crate) fn validate_boundary_contracts(
     Ok(())
 }
 
+mod gpu_caps;
 #[cfg(feature = "gpu")]
 mod gpu_context;
 
@@ -626,37 +627,21 @@ impl Engine {
         {
             return Err(EngineError::FeatureDisabled("gpu"));
         }
-        #[cfg(feature = "gpu")]
-        let mut cfg = PlannerConfig {
+        // The caps come from the GPU caps source, never from a device: planning opens nothing.
+        let gpu_caps = if self.config.planner.enable_gpu && want_caps {
+            gpu_caps::plan_gpu_caps(&self.config)
+        } else {
+            GpuPlanCaps::default()
+        };
+        Ok(PlannerConfig {
             enable_gpu: self.config.planner.enable_gpu,
             enable_lints: self.config.planner.enable_lints,
             active_features: self.config.planner.active_features.clone(),
             transport_capabilities: None,
             lowerings: Default::default(),
             strict_port_declarations: false,
-            gpu_caps: None,
-        };
-        #[cfg(not(feature = "gpu"))]
-        let cfg = PlannerConfig {
-            enable_gpu: self.config.planner.enable_gpu,
-            enable_lints: self.config.planner.enable_lints,
-            active_features: self.config.planner.active_features.clone(),
-            transport_capabilities: None,
-            lowerings: Default::default(),
-            strict_port_declarations: false,
-        };
-        #[cfg(feature = "gpu")]
-        {
-            if self.config.planner.enable_gpu && want_caps {
-                let ctx = self.get_gpu_handle()?;
-                cfg.gpu_caps = ctx.as_ref().map(|c| c.capabilities());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            let _ = (cfg.enable_gpu, want_caps);
-        }
-        Ok(cfg)
+            gpu_caps,
+        })
     }
 }
 

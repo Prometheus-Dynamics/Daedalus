@@ -4,10 +4,9 @@
 //! Cpu engine never creates the device.
 
 use daedalus_gpu::{GpuBackendKind, GpuContextHandle, GpuOptions, select_backend, shared_context};
-use daedalus_runtime::{GpuSource, RetryingGpu};
+use daedalus_runtime::RetryingGpu;
 
 use crate::config::{EngineConfig, GpuBackend};
-use crate::error::EngineError;
 use crate::portable::Arc;
 
 /// The engine's GPU source, and the pipeline cache that opens with its device.
@@ -59,6 +58,9 @@ impl LazyGpu {
             } else {
                 select_backend(&opts)?
             };
+            // The first real enumeration: the caps are recorded for the next plan, and a cached
+            // entry that disagrees with them is replaced.
+            super::gpu_caps::record_real_caps(real_caps(&handle));
             #[cfg(feature = "gpu-wgpu")]
             if let Some(dir) = dir.as_deref() {
                 *slot.lock() = Some(Arc::new(crate::pipeline_cache::EnginePipelineCache::open(
@@ -75,15 +77,20 @@ impl LazyGpu {
     }
 }
 
-impl super::Engine {
-    /// The GPU context for the planner: opened on the first request. None for a Cpu engine.
-    pub(crate) fn get_gpu_handle(&self) -> Result<Option<&GpuContextHandle>, EngineError> {
-        if matches!(self.config.gpu, GpuBackend::Cpu) {
-            return Ok(None);
-        }
-        Ok(Some(self.lazy_gpu.source.get()?))
+/// The caps the planner reads, from a real enumeration of `handle`.
+fn real_caps(handle: &GpuContextHandle) -> daedalus_planner::GpuCaps {
+    let caps = handle.capabilities();
+    daedalus_planner::GpuCaps {
+        queue_count: caps.queue_count,
+        has_transfer_queue: caps.has_transfer_queue,
+        rgba8_unorm_sampleable: caps
+            .format_features
+            .iter()
+            .any(|f| f.format == daedalus_gpu::GpuFormat::Rgba8Unorm && f.sampleable),
     }
+}
 
+impl super::Engine {
     /// Whether this engine has opened its GPU device (tests: a CPU-only plan leaves it closed).
     #[doc(hidden)]
     pub fn gpu_context_created(&self) -> bool {

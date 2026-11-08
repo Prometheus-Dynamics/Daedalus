@@ -57,8 +57,8 @@ use type_utils::{
 use typecheck::{check_const_inputs, typecheck};
 pub use types::{
     AdapterResolutionMode, AppliedPlannerLowering, EdgeResolutionExplanation, EdgeResolutionKind,
-    NodeOverloadResolution, OverloadPortResolution, PlanExplanation, PlannerConfig, PlannerInput,
-    PlannerLoweringInfo, PlannerLoweringPhase, PlannerOutput,
+    GpuCaps, GpuPlanCaps, NodeOverloadResolution, OverloadPortResolution, PlanExplanation,
+    PlannerConfig, PlannerInput, PlannerLoweringInfo, PlannerLoweringPhase, PlannerOutput,
 };
 use validate::validate_port_declarations;
 

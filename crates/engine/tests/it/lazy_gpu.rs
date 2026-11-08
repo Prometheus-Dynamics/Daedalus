@@ -74,11 +74,10 @@ fn cpu_only_graph_plans_and_compiles_without_a_gpu_context() {
 }
 
 #[test]
-fn gpu_graph_creates_the_gpu_context() {
+fn planning_a_gpu_graph_opens_no_device() {
     let engine = engine();
-    // The mock has no transfer queue, so the planner's GPU pass rejects the node. That is the
-    // point of this test: the device must open during planning, before the rejection, so the
-    // assertion pins that ordering and the rejection itself.
+    // The mock's caps (no transfer queue) are planned without a device: the planner's GPU pass
+    // rejects the node from the caps source's answer, and planning opens nothing.
     let err = plan(&engine, graph(ComputeAffinity::GpuRequired))
         .expect_err("the mock has no transfer queue, so the GPU node is rejected");
     let diagnostics = match err {
@@ -92,8 +91,8 @@ fn gpu_graph_creates_the_gpu_context() {
         "{diagnostics:?}"
     );
     assert!(
-        engine.gpu_context_created(),
-        "a GPU-required node must open the device"
+        !engine.gpu_context_created(),
+        "planning a GPU graph opened the device"
     );
 }
 
