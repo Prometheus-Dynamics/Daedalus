@@ -9,7 +9,6 @@ mod device_cache;
 mod dispatch;
 #[cfg(feature = "gpu-async")]
 mod dispatch_async;
-mod fallback;
 mod fragment;
 mod gpu_state;
 mod gpu_storage;
@@ -26,6 +25,7 @@ mod readback;
 #[cfg(feature = "gpu-async")]
 mod readback_async;
 mod run_output;
+mod spec_cache;
 mod storage_pool;
 mod submission;
 pub(crate) mod submit_lock;
@@ -78,7 +78,6 @@ pub use submit_lock::{SubmitGuard, SubmitLock};
 pub use types::*;
 
 // Needed by gpu_state and inference helpers.
-pub(crate) use fallback::ctx;
 
 /// Extremely lightweight parser to extract @workgroup_size(x[,...]) from WGSL.
 pub(crate) fn infer_workgroup_size(src: &str) -> Option<[u32; 3]> {

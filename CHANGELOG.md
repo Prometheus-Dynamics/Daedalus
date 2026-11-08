@@ -29,6 +29,17 @@ plugin ABI and does not load.
   of a LINEAR XRGB8888 dmabuf makes 44 heap allocations on the host GPU, down from 50 (`steady_import`
   probe in `wgpu_backend/dmabuf/tests/alloc.rs`); the rest is wgpu-core and wgpu-hal bookkeeping, the
   drop-callback box and the texture `Arc`, which a cached texture per dmabuf would remove.
+- **No GPU context is created behind the caller's back (breaking).** Daedalus used to open a second
+  wgpu instance and device, process-global, for any helper called without a handle (the sync and async
+  dispatches, `GpuState::new`). That device and its helpers are removed. A caller now passes the
+  engine's `GpuContextHandle`, or gets `GpuError::NoContext`:
+  - `dispatch_shader_with_options`, `dispatch_shader_with_bindings` and their `_async` forms with
+    `gpu_ctx: None`: now `Err(GpuError::NoContext)`. Replacement: pass `Some(&handle)`.
+  - `GpuState::new(initial)`: now `Err(GpuError::NoContext)`. Replacement: `GpuState::new_with_gpu(initial, &handle)`.
+  - `GpuState::new_stateful()`: now `Err(GpuError::NoContext)`. Replacement: `GpuState::new_stateful_with_gpu(&handle)`.
+  - New `GpuError::NoContext` variant: adding it breaks exhaustive matches on `GpuError`; add an arm.
+  Internal: the fallback context (`GPU_CTX`, `ctx()`, `ctx_async()`) is removed; `selection` is
+  unchanged, and `shared_context` remains the way to get the process device.
 - **Stable plugin handshake (changed in place, no bump).** `daedalus::dylib::STABLE_ABI_VERSION`
   stays 7. A plugin may export `daedalus_plugin_stable_abi` (`STABLE_HANDSHAKE_SYMBOL`): a
   `lemnos_abi::AbiVersion` whose layout is `STABLE_LAYOUT_HASH`, the hash of the stable `#[repr(C)]`

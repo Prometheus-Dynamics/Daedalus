@@ -11,10 +11,10 @@ use std::sync::{
 #[cfg(feature = "gpu-async")]
 use std::task::Poll;
 
-use super::fallback::{cached_spec, ctx};
 use super::pipeline::{bind_group, pipeline_entry};
 use super::prepare::prepare_resources;
 use super::readback::{enqueue_readbacks, resolve_readbacks, return_pooled_textures};
+use super::spec_cache::cached_spec;
 use super::workgroups::derive_workgroups;
 use super::{DispatchOptions, GpuBindings, ShaderBinding, ShaderRunOutput, ShaderSpec};
 use crate::{GpuContextHandle, GpuError};
@@ -405,28 +405,11 @@ pub fn dispatch_shader_with_options(
     gpu_ctx: Option<&GpuContextHandle>,
     opts: &DispatchOptions,
 ) -> Result<ShaderRunOutput, GpuError> {
-    let (device, queue, backend_handle, submission_tracker, device_key) =
-        if let Some(gpu_ctx) = gpu_ctx {
-            let backend = gpu_ctx.backend_ref();
-            let (device, queue) = gpu_ctx.wgpu_locked().ok_or(GpuError::Unsupported)?;
-            let key = gpu_ctx.wgpu_device_key().ok_or(GpuError::Unsupported)?;
-            (
-                device,
-                queue,
-                Some(backend),
-                backend.wgpu_submission_tracker(),
-                key,
-            )
-        } else {
-            let ctx = ctx()?;
-            (
-                ctx.device.as_ref(),
-                ctx.queue.clone(),
-                None,
-                Some(ctx.submission_tracker.as_ref()),
-                ctx.device_key,
-            )
-        };
+    let handle = gpu_ctx.ok_or(GpuError::NoContext)?;
+    let backend = handle.backend_ref();
+    let (device, queue) = handle.wgpu_locked().ok_or(GpuError::Unsupported)?;
+    let device_key = handle.wgpu_device_key().ok_or(GpuError::Unsupported)?;
+    let (backend_handle, submission_tracker) = (Some(backend), backend.wgpu_submission_tracker());
 
     let cached = cached_spec(spec)?;
     let layout_bindings = cached.bindings.clone();
@@ -447,7 +430,7 @@ pub fn dispatch_shader_with_options(
         backend_handle,
         bindings,
         layout_bindings.as_ref(),
-        gpu_ctx,
+        Some(handle),
     )?;
 
     let entry = pipeline_entry(
@@ -536,5 +519,37 @@ mod tests {
 
         assert_eq!(first.tracked_len_for_test(), 0);
         assert_eq!(second.tracked_len_for_test(), 0);
+    }
+}
+
+#[cfg(test)]
+mod no_context_tests {
+    use super::*;
+    use crate::shader::GpuState;
+
+    const SRC: &str = "@group(0) @binding(0) var<storage, read_write> out: array<u32>; \
+        @compute @workgroup_size(1) fn main() { out[0] = 1u; }";
+
+    const SPEC: ShaderSpec = ShaderSpec {
+        name: "no-context",
+        src: SRC,
+        entry: "main",
+        workgroup_size: Some([1, 1, 1]),
+        bindings: &[],
+    };
+
+    /// With no context nothing is created: the dispatch and the state refuse it. The device
+    /// count is compared before and after, as other tests may create devices concurrently.
+    #[test]
+    fn dispatch_and_state_without_a_context_create_no_device() {
+        let before = crate::devices_created();
+        let result = dispatch_shader_with_bindings(&SPEC, SRC, &[], None, None, None);
+        assert_eq!(result.err(), Some(GpuError::NoContext));
+        assert!(matches!(GpuState::new(0u32), Err(GpuError::NoContext)));
+        assert_eq!(
+            crate::devices_created(),
+            before,
+            "a device was created without a context"
+        );
     }
 }

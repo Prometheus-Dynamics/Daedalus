@@ -273,6 +273,11 @@ fn async_shader_dispatch_readback_completes_without_external_device_polling() {
     std::thread::spawn(move || {
         let result = (|| -> Result<(), GpuError> {
             let input: [u32; 4] = [1, 2, 3, 4];
+            let gpu = crate::select_backend_async(&GpuOptions {
+                preferred_backend: Some(GpuBackendKind::Wgpu),
+                ..Default::default()
+            })
+            .block_on()?;
             let bindings = [
                 crate::shader::ShaderBinding {
                     binding: 0,
@@ -297,7 +302,7 @@ fn async_shader_dispatch_readback_completes_without_external_device_polling() {
                 &SPEC,
                 SPEC.src,
                 &bindings,
-                None,
+                Some(&gpu),
                 None,
                 Some([input.len() as u32, 1, 1]),
             )
@@ -387,6 +392,11 @@ fn async_shader_dispatch_maps_multiple_readbacks_together() {
         let result = (|| -> Result<(), GpuError> {
             let input: [u32; 4] = [3, 5, 8, 13];
             let out_size = std::mem::size_of_val(&input) as u64;
+            let gpu = crate::select_backend_async(&GpuOptions {
+                preferred_backend: Some(GpuBackendKind::Wgpu),
+                ..Default::default()
+            })
+            .block_on()?;
             let bindings = [
                 crate::shader::ShaderBinding {
                     binding: 0,
@@ -420,7 +430,7 @@ fn async_shader_dispatch_maps_multiple_readbacks_together() {
                 &SPEC,
                 SPEC.src,
                 &bindings,
-                None,
+                Some(&gpu),
                 None,
                 Some([input.len() as u32, 1, 1]),
             )

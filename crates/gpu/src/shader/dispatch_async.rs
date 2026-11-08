@@ -1,8 +1,8 @@
 use super::dispatch::{ShaderContext, SingleDispatch};
-use super::fallback::{cached_spec, ctx_async};
 use super::pipeline::{bind_group, pipeline_entry};
 use super::prepare::prepare_resources_async;
 use super::readback::{enqueue_readbacks, resolve_readbacks_async, return_pooled_textures};
+use super::spec_cache::cached_spec;
 use super::workgroups::derive_workgroups;
 use super::{DispatchOptions, GpuBindings, ShaderBinding, ShaderRunOutput, ShaderSpec};
 use crate::{GpuContextHandle, GpuError};
@@ -37,28 +37,11 @@ pub async fn dispatch_shader_with_options_async<'a>(
     gpu_ctx: Option<&GpuContextHandle>,
     opts: &DispatchOptions,
 ) -> Result<ShaderRunOutput, GpuError> {
-    let (device, queue, backend_handle, submission_tracker, device_key) =
-        if let Some(gpu_ctx) = gpu_ctx {
-            let backend = gpu_ctx.backend_ref();
-            let (device, queue) = gpu_ctx.wgpu_locked().ok_or(GpuError::Unsupported)?;
-            let key = gpu_ctx.wgpu_device_key().ok_or(GpuError::Unsupported)?;
-            (
-                device,
-                queue,
-                Some(backend),
-                backend.wgpu_submission_tracker(),
-                key,
-            )
-        } else {
-            let ctx = ctx_async().await?;
-            (
-                ctx.device.as_ref(),
-                ctx.queue.clone(),
-                None,
-                Some(ctx.submission_tracker.as_ref()),
-                ctx.device_key,
-            )
-        };
+    let handle = gpu_ctx.ok_or(GpuError::NoContext)?;
+    let backend = handle.backend_ref();
+    let (device, queue) = handle.wgpu_locked().ok_or(GpuError::Unsupported)?;
+    let device_key = handle.wgpu_device_key().ok_or(GpuError::Unsupported)?;
+    let (backend_handle, submission_tracker) = (Some(backend), backend.wgpu_submission_tracker());
 
     let cached = cached_spec(spec)?;
     let layout_bindings = cached.bindings.clone();
@@ -79,7 +62,7 @@ pub async fn dispatch_shader_with_options_async<'a>(
         backend_handle,
         bindings,
         layout_bindings.as_ref(),
-        gpu_ctx,
+        Some(handle),
     )
     .await?;
 

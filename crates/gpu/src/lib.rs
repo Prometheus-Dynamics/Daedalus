@@ -279,6 +279,9 @@ pub enum GpuError {
     AdapterUnavailable,
     /// A caller-supplied size, offset or range the operation cannot accept.
     InvalidInput(String),
+    /// No GPU context was given: the operation needs the `GpuContextHandle` of the engine (or
+    /// `select_backend`/`shared_context`). Daedalus creates no device on its own.
+    NoContext,
     Internal(String),
 }
 
@@ -289,6 +292,7 @@ impl fmt::Display for GpuError {
             GpuError::AllocationFailed => write!(f, "allocation failed"),
             GpuError::AdapterUnavailable => write!(f, "adapter unavailable"),
             GpuError::InvalidInput(msg) => write!(f, "invalid input: {msg}"),
+            GpuError::NoContext => write!(f, "no GPU context: pass a GpuContextHandle"),
             GpuError::Internal(msg) => write!(f, "internal: {msg}"),
         }
     }

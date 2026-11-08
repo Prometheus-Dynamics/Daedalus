@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::GpuError;
 
-use super::{Access, BindingData, BindingKind, ShaderBinding, ctx, staging_size, temp_pool};
+use super::{Access, BindingData, BindingKind, ShaderBinding, staging_size, temp_pool};
 
 /// Marker for GPU state structs; derive sets whether to zero-init and default readback.
 pub trait GpuStateful: bytemuck::Pod + Copy {
@@ -90,9 +90,10 @@ pub struct GpuState<T: bytemuck::Pod + Copy> {
 }
 
 impl<T: bytemuck::Pod + Copy> GpuState<T> {
-    pub fn new(initial: T) -> Result<Self, GpuError> {
-        let ctx = ctx()?;
-        Self::new_with_device(initial, ctx.device.as_ref(), &ctx.queue)
+    /// Needs a GPU context, and none is created here: this returns `GpuError::NoContext`. Use
+    /// [`GpuState::new_with_gpu`] with the engine's handle.
+    pub fn new(_initial: T) -> Result<Self, GpuError> {
+        Err(GpuError::NoContext)
     }
 
     #[cfg(feature = "gpu-wgpu")]

@@ -85,13 +85,6 @@ impl<'g> LockedInstance<'g> {
     pub(crate) async fn enumerate_adapters(&self, backends: wgpu::Backends) -> Vec<wgpu::Adapter> {
         self.instance.enumerate_adapters(backends).await
     }
-
-    pub(crate) async fn request_adapter(
-        &self,
-        options: &wgpu::RequestAdapterOptions<'_, '_>,
-    ) -> Result<wgpu::Adapter, wgpu::RequestAdapterError> {
-        self.instance.request_adapter(options).await
-    }
 }
 
 /// Open a device on `adapter`, under the driver lock.
