@@ -11,6 +11,7 @@
 use daedalus_planner::{GpuCaps, GpuPlanCaps};
 
 use crate::config::{EngineConfig, GpuBackend};
+#[cfg(feature = "std")]
 use crate::prelude::*;
 #[cfg(feature = "std")]
 use crate::trace::debug;
@@ -33,7 +34,7 @@ const MOCK_CAPS: GpuCaps = GpuCaps {
 pub const GPU_CAPS_CACHE_ENV: &str = "DAEDALUS_GPU_CAPS_CACHE";
 
 /// The cache file in the caps directory.
-#[cfg(any(feature = "std", test))]
+#[cfg(feature = "std")]
 const CACHE_FILE: &str = "gpu-caps";
 
 /// Board facts: the caps measured on a known board, keyed by the device tree's model string. The
