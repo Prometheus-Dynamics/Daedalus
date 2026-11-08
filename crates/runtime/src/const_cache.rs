@@ -15,6 +15,7 @@ use daedalus_transport::Payload;
 
 use crate::NodeError;
 use crate::config::{NodeConfig, log_config_changes};
+use crate::const_index::NameSet;
 use crate::io::{NodeConstInputs, NodeIo};
 use crate::portable::Arc;
 
@@ -25,6 +26,9 @@ pub struct ConfigCache<C> {
     /// a call shares the same list and no edge feeds a config port, nothing changed.
     consts: Option<Arc<NodeConstInputs>>,
     value: Option<C>,
+    /// The config port names as a set, built on the first call: an edge input is checked
+    /// against it (one probe each), not against every config port.
+    config_names: Option<NameSet>,
 }
 
 impl<C> Default for ConfigCache<C> {
@@ -33,6 +37,7 @@ impl<C> Default for ConfigCache<C> {
             sources: Vec::new(),
             consts: None,
             value: None,
+            config_names: None,
         }
     }
 }
@@ -42,9 +47,16 @@ impl<C: NodeConfig> ConfigCache<C> {
     /// only when one of their payloads differs from the last call's.
     pub fn get(&mut self, io: &NodeIo, node_id: &str) -> Result<&C, NodeError> {
         let names = C::port_names();
-        // No edge input this call: every config port comes from the const list (the common case).
+        if self.config_names.is_none() {
+            self.config_names = Some(NameSet::new(names));
+        }
+        let config_names = self.config_names.as_ref();
+        // No edge input on a config port this call: every config port comes from the const list
+        // (the common case). Each edge input is one probe of the config names' set.
         let from_consts = |io: &NodeIo| {
-            !io.has_edge_inputs() || !names.iter().any(|name| io.has_edge_input(name))
+            !io.edge_inputs()
+                .iter()
+                .any(|(port, _)| config_names.is_some_and(|set| set.contains(port.as_str())))
         };
         let same_consts = match (&self.consts, io.shared_consts()) {
             (Some(cached), Some(now)) => Arc::ptr_eq(cached, now),

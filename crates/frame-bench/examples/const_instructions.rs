@@ -126,6 +126,47 @@ fn main() {
             }
             hits
         }
+        Some("edge_build") => {
+            // The harness's own cost per call (the io and its edge payload), without the cache.
+            let iters: usize = args[2].parse().expect("ITERS");
+            let list = const_list(52);
+            let mut hits = 0usize;
+            for _ in 0..iters {
+                let edge = (
+                    PortId::new("value"),
+                    CorrelatedPayload::from_edge(Payload::owned("value", Value::Int(1))),
+                );
+                let io = NodeIo::from_inputs(std::iter::once(edge))
+                    .with_shared_consts(Some(list.clone()));
+                if black_box(io.edge_inputs().len()) > 0 {
+                    hits += 1;
+                }
+            }
+            hits
+        }
+        Some("config_edge") => {
+            // An edge input on a non-config port (as a fused node gets its frame each call), so
+            // ConfigCache's no-edge shortcut does not apply and it checks every config name.
+            let iters: usize = args[2].parse().expect("ITERS");
+            let list = const_list(52);
+            let mut cache = ConfigCache::<Wide>::default();
+            let call = || {
+                let edge = (
+                    PortId::new("value"),
+                    CorrelatedPayload::from_edge(Payload::owned("value", Value::Int(1))),
+                );
+                NodeIo::from_inputs(std::iter::once(edge)).with_shared_consts(Some(list.clone()))
+            };
+            black_box(cache.get(&call(), "idle").map(|cfg| *cfg).ok());
+            let mut hits = 0usize;
+            for _ in 0..iters {
+                let io = call();
+                if black_box(cache.get(&io, "idle").map(|cfg| *cfg).ok()).is_some() {
+                    hits += 1;
+                }
+            }
+            hits
+        }
         _ => {
             eprintln!("usage: const_instructions lookup PORTS ITERS | config ITERS");
             std::process::exit(2);

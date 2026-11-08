@@ -348,15 +348,6 @@ impl NodeIo {
         &self.inputs
     }
 
-    pub(crate) fn has_edge_input(&self, port: &str) -> bool {
-        self.inputs.iter().any(|(name, _)| name == port)
-    }
-
-    /// Whether any edge input arrived this call (none, for a node fed only by its consts).
-    pub(crate) fn has_edge_inputs(&self) -> bool {
-        !self.inputs.is_empty()
-    }
-
     pub fn outputs(&self) -> &[NodePort] {
         &self.outputs
     }

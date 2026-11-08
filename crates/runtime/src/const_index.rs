@@ -112,6 +112,45 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// A set of static names (a node's config ports), built once: membership costs one hash and a
+/// probe, not a scan of the names. `ConfigCache` checks each edge input against it.
+#[derive(Clone)]
+pub(crate) struct NameSet {
+    names: &'static [&'static str],
+    slots: Vec<u32>,
+    mask: usize,
+}
+
+impl NameSet {
+    pub(crate) fn new(names: &'static [&'static str]) -> Self {
+        let cap = (names.len() * 2).next_power_of_two().max(8);
+        let mask = cap - 1;
+        let mut slots: Vec<u32> = (0..cap).map(|_| 0).collect();
+        for (idx, name) in names.iter().enumerate() {
+            let mut at = fnv1a(name.as_bytes()) as usize & mask;
+            while slots[at] != 0 {
+                at = (at + 1) & mask;
+            }
+            slots[at] = idx as u32 + 1;
+        }
+        Self { names, slots, mask }
+    }
+
+    pub(crate) fn contains(&self, name: &str) -> bool {
+        let mut at = fnv1a(name.as_bytes()) as usize & self.mask;
+        loop {
+            let slot = self.slots[at];
+            if slot == 0 {
+                return false;
+            }
+            if self.names[slot as usize - 1] == name {
+                return true;
+            }
+            at = (at + 1) & self.mask;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +242,19 @@ mod tests {
         assert!(io.take_input_payload("p69").is_some());
         assert!(io.get_payload("p69").is_none(), "taken once");
         assert_eq!(io.inputs().count(), 69);
+    }
+
+    #[test]
+    fn a_name_set_answers_membership_for_each_static_name() {
+        static NAMES: [&str; 5] = ["c0", "c1", "frame", "c3", "level"];
+        let set = NameSet::new(&NAMES);
+        for name in NAMES {
+            assert!(set.contains(name), "{name} is in the set");
+        }
+        assert!(!set.contains("c2"));
+        assert!(!set.contains(""));
+        assert!(!set.contains("c"));
+        let empty = NameSet::new(&[]);
+        assert!(!empty.contains("c0"));
     }
 }
