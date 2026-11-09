@@ -15,9 +15,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   rotate, fill, Porter-Duff blend, palette, colour key and mask ROP on GPU-resident frames
   (`crates/gpu/src/shader/image.wgsl`, integer arithmetic only). Each matches its scalar reference bit
   for bit on the conformance shapes, and the backend matrix has a `gpu` cell for each of them, passing
-  on the RX 6800 XT (RADV) that the GPU step selected on this host (no Mali or PowerVR evidence yet).
-  Line has no GPU form: one line is a serial walk, so its `gpu` cell reads "not data-parallel". The
-  image ops now allow the `gpu` backend.
+  on the RX 6800 XT (RADV) and on lavapipe (no Mali or PowerVR evidence yet). Line is closed form: each
+  pixel decides whether it is on the segment, with the reference's rounding (ties half up, along the
+  line's direction), so its `gpu` cell passes too. A segment's major extent is limited to 46340 steps
+  (the 32-bit test); longer segments are an InvalidInput on the GPU and stay on the CPU. The image ops
+  now allow the `gpu` backend.
 - The GPU caps cache location is settable: `EngineConfig::with_gpu_caps_dir` (`CacheSection::gpu_caps_dir`)
   or the environment variable `DAEDALUS_GPU_CAPS_CACHE` (the config wins). Any failed read or write of the
   cache, including a missing or read-only directory or a corrupt file, is no cache: nothing is surfaced to

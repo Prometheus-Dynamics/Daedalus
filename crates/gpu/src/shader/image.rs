@@ -1,7 +1,6 @@
 //! The image ops on GPU-resident frames (`image.wgsl`): the GPU form of the `daedalus.image.*`
 //! ops in `docs/backend-matrix.md`, bit-exact with their scalar references in
-//! `daedalus_kernels::reference`. Line is not here: one line is a serial walk, so it has no
-//! data-parallel form (the registry says so).
+//! `daedalus_kernels::reference`. A line is closed form: each pixel tests whether it is on it.
 
 use daedalus_kernels::reference::Blend;
 use wgpu::util::DeviceExt as _;
@@ -19,6 +18,10 @@ const PARAMS_BYTES: u64 = 64;
 const MAX_BYTES: u64 = 1 << 30;
 /// Bilinear taps are exact in u32 only below this many output samples per axis.
 const MAX_TAP_SAMPLES: u64 = 1 << 20;
+/// Line endpoints lie within this many pixels of the origin (offsets stay in i32).
+const MAX_LINE_COORD: i64 = 1 << 29;
+/// The longest major extent of a line: `2 * major * major + major` must fit u32 (46340 steps).
+pub const MAX_LINE_MAJOR: u64 = 46_340;
 
 /// The shape of a tightly packed frame: `width` by `height` pixels of `channels` bytes each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +91,10 @@ pub enum ImageOp {
     ColorKeyMask { min: [u8; 3], max: [u8; 3] },
     /// AND, OR or XOR of `src` and `aux` (`reference::mask_rop`).
     MaskRop(MaskRop),
+    /// A one-pixel line between two points, both ends included, in the colour `aux`
+    /// (`reference::line`). The endpoints may lie off the frame; each segment's major extent is
+    /// at most [`MAX_LINE_MAJOR`] steps, the bound of the 32-bit test in `image.wgsl`.
+    Line { from: (i32, i32), to: (i32, i32) },
 }
 
 /// One dispatch: `op` over `src` (of `shape`), with `aux` where the op takes one, into `dst`.
@@ -260,6 +267,40 @@ fn plan(op: ImageOp, s: ImageShape) -> Result<Plan, GpuError> {
                 MaskRop::Xor => 2,
             };
             (s, same, 9, [f0, 0, 0, 0, 0, 0, 0, 0])
+        }
+        ImageOp::Line { from, to } => {
+            let ends = [from.0, from.1, to.0, to.1];
+            if ends.iter().any(|&c| i64::from(c).abs() > MAX_LINE_COORD) {
+                return invalid(format!(
+                    "line {from:?} -> {to:?} has an endpoint beyond 2^29"
+                ));
+            }
+            let a = (i64::from(to.0) - i64::from(from.0)).unsigned_abs();
+            let b = (i64::from(to.1) - i64::from(from.1)).unsigned_abs();
+            let major = a.max(b);
+            if major > MAX_LINE_MAJOR {
+                return invalid(format!(
+                    "line {from:?} -> {to:?} has a major extent of {major}; the 32-bit test takes at most {MAX_LINE_MAJOR}"
+                ));
+            }
+            let sx = if to.0 >= from.0 { 1i32 } else { -1 };
+            let sy = if to.1 >= from.1 { 1i32 } else { -1 };
+            let x_major = u32::from(a >= b);
+            (
+                s,
+                u64::from(ch),
+                10,
+                [
+                    from.0 as u32,
+                    from.1 as u32,
+                    sx as u32,
+                    sy as u32,
+                    a as u32,
+                    b as u32,
+                    x_major,
+                    0,
+                ],
+            )
         }
     };
     let src_bytes = s.bytes();

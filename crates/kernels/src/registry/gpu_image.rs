@@ -1,9 +1,9 @@
-//! The GPU rows of the image ops: the compute form of each op but line, on frames that are
-//! already on the device (`GpuImages`, `crates/gpu/src/shader/image.wgsl`). Each is bit-exact
-//! with its scalar reference (`crates/gpu/src/shader/image_tests.rs`). Line is one serial walk
-//! with at most `width + height` steps, so it has no data-parallel GPU form.
+//! The GPU rows of the image ops: the compute form of each op, on frames that are already on the
+//! device (`GpuImages`, `crates/gpu/src/shader/image.wgsl`). Each is bit-exact with its scalar
+//! reference (`crates/gpu/src/shader/image_tests.rs`). Line is closed form: each pixel decides
+//! whether it is on the segment.
 
-use daedalus_accel::{Backend, Exempt, Kernel, Registry, Status};
+use daedalus_accel::{Backend, Exempt, Kernel, Registry};
 
 const SOURCE: &str = "crates/gpu/src/shader/image.wgsl";
 const TEST: &str = "crates/gpu/src/shader/image_tests.rs";
@@ -23,13 +23,7 @@ static GPU_IMAGE_KERNELS: [Kernel; 11] = [
     gpu("daedalus.image.palette"),
     gpu("daedalus.image.color_key_mask"),
     gpu("daedalus.image.mask_rop"),
-    Kernel::missing(
-        "daedalus.image.line",
-        Backend::Gpu,
-        Status::NotDataParallel(
-            "one line is a serial walk of at most width + height Bresenham steps; no data-parallel form",
-        ),
-    ),
+    gpu("daedalus.image.line"),
 ];
 
 pub(super) static GPU_IMAGE_TABLE: Registry = Registry {

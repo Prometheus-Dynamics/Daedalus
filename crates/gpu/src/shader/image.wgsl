@@ -6,7 +6,7 @@
 
 struct Params {
     // 0 area, 1 bilinear, 2 crop, 3 flip, 4 rotate, 5 fill, 6 blend, 7 palette, 8 colour key,
-    // 9 mask ROP.
+    // 9 mask ROP, 10 line.
     op: u32,
     width: u32,
     height: u32,
@@ -19,7 +19,8 @@ struct Params {
     threads: u32,
     // Op-specific: area factor (f0); crop left, top (f0, f1); flip flags (f0, f1); quarter turns
     // (f0); fill rectangle (f0..f3); blend mode and premultiplied (f0, f1); mask op (f0); colour
-    // key min r, g, b and max r, g, b (f0..f5).
+    // key min r, g, b and max r, g, b (f0..f5); line from x, y, the signs of the steps, |dx|,
+    // |dy|, and whether x is the major axis (f0..f6, the signs as i32 bits).
     f0: u32,
     f1: u32,
     f2: u32,
@@ -197,6 +198,48 @@ fn img_color_key(j: u32) -> u32 {
     return select(0u, 255u, inside);
 }
 
+// reference::line: whether pixel (px, py) is on the segment (`on_line` in image_tests.rs, which
+// checks it against the reference on a grid). The major axis is x when |dx| >= |dy|; step i along
+// it lands on minor offset floor((2 * minor * i + major) / (2 * major)), rounding half up in the
+// direction of the line. A segment with no extent on an axis has offset 0 there.
+fn img_line_on(px: i32, py: i32) -> bool {
+    let x0 = bitcast<i32>(params.f0);
+    let y0 = bitcast<i32>(params.f1);
+    let sx = bitcast<i32>(params.f2);
+    let sy = bitcast<i32>(params.f3);
+    let a = params.f4;
+    let b = params.f5;
+    let dx = px - x0;
+    let dy = py - y0;
+    if (a == 0u && b == 0u) {
+        return dx == 0 && dy == 0;
+    }
+    if (params.f6 != 0u) {
+        let i = dx * sx;
+        if (i < 0 || u32(i) > a) {
+            return false;
+        }
+        let ui = u32(i);
+        return dy == sy * i32((2u * b * ui + a) / (2u * a));
+    }
+    let j = dy * sy;
+    if (j < 0 || u32(j) > b) {
+        return false;
+    }
+    let uj = u32(j);
+    return dx == sx * i32((2u * a * uj + b) / (2u * b));
+}
+
+// reference::line: the aux colour (`channels` bytes) on the segment, else the source.
+fn img_line(j: u32) -> u32 {
+    let ch = params.channels;
+    let p = j / ch;
+    if (img_line_on(i32(p % params.width), i32(p / params.width))) {
+        return img_aux(j % ch);
+    }
+    return img_src(j);
+}
+
 fn img_unpack(w: u32) -> vec4<u32> {
     return vec4<u32>(w & 0xffu, (w >> 8u) & 0xffu, (w >> 16u) & 0xffu, w >> 24u);
 }
@@ -247,6 +290,7 @@ fn img_out_byte(j: u32) -> u32 {
         case 7u: { return img_palette(j); }
         case 8u: { return img_color_key(j); }
         case 9u: { return img_mask_rop(j); }
+        case 10u: { return img_line(j); }
         default: { return 0u; }
     }
 }

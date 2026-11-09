@@ -435,3 +435,108 @@ fn colour_ops_match_the_references() {
         &|f, a| r::blend(f, a.unwrap_or(&[]), Blend::SrcOver, false),
     );
 }
+
+/// The line test of `image.wgsl` (`img_line_on`) in 64-bit host arithmetic: whether pixel `p` is
+/// on the segment from `from` to `to`. The major axis is x when |dx| >= |dy|. Along it, step `i`
+/// (of `|dx|`) lands on minor offset `floor((2 * minor * i + major) / (2 * major))`: the
+/// reference's error rule rounds the exact minor coordinate half up, in the direction of the
+/// line (its signs are taken from `to`, and `0` when a segment has no extent on that axis).
+fn on_line(from: (i32, i32), to: (i32, i32), p: (i32, i32)) -> bool {
+    let (x0, y0) = (i64::from(from.0), i64::from(from.1));
+    let a = (i64::from(to.0) - x0).abs();
+    let b = (i64::from(to.1) - y0).abs();
+    let sx = if i64::from(to.0) >= x0 { 1 } else { -1 };
+    let sy = if i64::from(to.1) >= y0 { 1 } else { -1 };
+    let dx = i64::from(p.0) - x0;
+    let dy = i64::from(p.1) - y0;
+    if a == 0 && b == 0 {
+        return dx == 0 && dy == 0;
+    }
+    if a >= b {
+        let i = dx * sx;
+        if !(0..=a).contains(&i) {
+            return false;
+        }
+        dy == sy * ((2 * b * i + a) / (2 * a))
+    } else {
+        let j = dy * sy;
+        if !(0..=b).contains(&j) {
+            return false;
+        }
+        dx == sx * ((2 * a * j + b) / (2 * b))
+    }
+}
+
+/// The closed form against the scalar reference on every segment with endpoints in a grid that
+/// runs off a 8 by 8 frame on both sides: all octants, every slope up to the frame, ties,
+/// zero-length segments and endpoints outside the frame. No GPU is needed for this check.
+#[test]
+fn closed_form_line_matches_the_reference_on_a_grid() {
+    let (w, h) = (8usize, 8usize);
+    let coords: Vec<i32> = (-3..=10).collect();
+    let mut checked = 0u64;
+    for &fx in &coords {
+        for &fy in &coords {
+            for &tx in &coords {
+                for &ty in &coords {
+                    let want = r::line(&vec![0; w * h], w, h, (fx, fy), (tx, ty), &[1]);
+                    for y in 0..h {
+                        for x in 0..w {
+                            let got = on_line((fx, fy), (tx, ty), (x as i32, y as i32));
+                            assert_eq!(
+                                got,
+                                want[y * w + x] == 1,
+                                "line {:?} -> {:?} at ({x}, {y})",
+                                (fx, fy),
+                                (tx, ty)
+                            );
+                        }
+                    }
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 14u64.pow(4));
+}
+
+/// Lines against the reference on the GPU: for each shape, every segment whose end is offset by
+/// -4 to 4 pixels on each axis from an anchor (all octants, the slopes between, zero length),
+/// the anchor inside the frame or off it on either side, in one colour.
+#[test]
+fn line_matches_the_reference() {
+    let mut cases = Vec::new();
+    for (w, h, ch) in SHAPES {
+        let shape = ImageShape::new(w, h, ch);
+        let f = frame(shape, w * 41 + h * 7 + 3);
+        let value = bytes(ch as usize, w + 5 * h);
+        let (wi, hi) = (w as i32, h as i32);
+        for anchor in [(wi / 2, hi / 2), (-3, -2), (wi + 2, hi - 1), (-7, hi + 5)] {
+            for dx in -4..=4 {
+                for dy in -4..=4 {
+                    let to = (anchor.0 + dx, anchor.1 + dy);
+                    let want = r::line(&f, w as usize, h as usize, anchor, to, &value);
+                    let op = ImageOp::Line { from: anchor, to };
+                    cases.push(case(op, shape, &f, Some(&value), want));
+                }
+            }
+        }
+    }
+    let big = ImageShape::new(1024, 1024, 4);
+    let big_frame = frame(big, 12);
+    let value = [200u8, 100, 50, 255];
+    check(
+        "daedalus.image.line",
+        &cases,
+        &Bench {
+            op: ImageOp::Line {
+                from: (0, 0),
+                to: (1023, 700),
+            },
+            shape: big,
+            frame: big_frame,
+            aux: Some(value.to_vec()),
+        },
+        &|f, a| r::line(f, 1024, 1024, (0, 0), (1023, 700), a.unwrap_or(&[])),
+    );
+}
