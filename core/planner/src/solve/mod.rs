@@ -1,6 +1,7 @@
 //! Solving: everything that needs no backend.
 
 pub mod catalog;
+pub mod consts;
 pub mod defaults;
 mod dynamic;
 pub mod expand;
@@ -10,7 +11,9 @@ pub mod ports;
 mod suggest;
 pub mod typecheck;
 
-use daedalus_graph::{EdgeDoc, NodeDoc};
+use std::collections::BTreeMap;
+
+use daedalus_graph::{EdgeDoc, Lit, NodeDoc};
 use daedalus_registry::{Fire, TypeRef};
 use daedalus_types::Literal;
 use daedalus_value::Access;
@@ -41,6 +44,8 @@ pub struct Node {
     pub shareable: bool,
     pub inputs: Vec<Port>,
     pub outputs: Vec<Port>,
+    /// The value of each port that has one, from the graph or its declared default.
+    pub consts: BTreeMap<String, Lit>,
 }
 
 impl Node {
@@ -54,6 +59,7 @@ impl Node {
             shareable: false,
             inputs: Vec::new(),
             outputs: Vec::new(),
+            consts: BTreeMap::new(),
         }
     }
 }
