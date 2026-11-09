@@ -16,6 +16,8 @@ mod ports;
 #[cfg(feature = "std")]
 mod snapshot;
 mod state;
+#[cfg(feature = "std")]
+pub mod stream;
 mod take;
 mod telemetry;
 

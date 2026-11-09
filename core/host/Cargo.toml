@@ -9,7 +9,7 @@ repository.workspace = true
 [features]
 default = ["std"]
 # Snapshots of the state store, which need std.
-std = []
+std = ["daedalus-runner/std"]
 
 [dependencies]
 daedalus-runner = { path = "../runner" }
