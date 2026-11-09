@@ -26,6 +26,8 @@ mod slots;
 mod status;
 mod step;
 mod step_cx;
+#[cfg(feature = "test-run")]
+pub mod testing;
 mod version;
 mod word;
 

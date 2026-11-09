@@ -1,0 +1,18 @@
+[package]
+name = "daedalus-sim"
+description = "A fake backend with two memory spaces, for planner tests and the conformance suite."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-abi = { path = "../../core/abi" }
+daedalus-backend = { path = "../../core/backend" }
+daedalus-types = { path = "../../core/types" }
+
+[dev-dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["test-run"] }
+
+[lints]
+workspace = true
