@@ -1,0 +1,7 @@
+error: #[transfer] needs `from`
+ --> tests/ui/transfer/fail/missing_from.rs:6:1
+  |
+6 | #[transfer(to = "b", cost = copy, backend = fixture)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `transfer` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 
 use daedalus_types::TypeKey;
 
-use crate::{BodyRecord, NodeDecl, NodeRecord, PortDecl, RegError, SourceAt, TypeRef};
+use crate::{
+    BodyRecord, NodeDecl, NodeRecord, PortDecl, RegError, SourceAt, TransferRecord, TypeRef,
+};
 
 /// One node: its declaration and every body registered for it.
 #[derive(Clone, Debug)]
@@ -48,6 +50,7 @@ pub struct ConversionEntry {
 #[derive(Clone, Debug, Default)]
 pub struct Registry {
     entries: BTreeMap<&'static str, Entry>,
+    transfers: BTreeMap<(TypeKey, &'static str, &'static str), &'static TransferRecord>,
 }
 
 /// Compares what every body shares, everything but the source location. Port types are compared separately, because a port's type
@@ -190,6 +193,37 @@ impl Registry {
     /// Sorted by id.
     pub fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.entries.values()
+    }
+
+    /// Adds a memory handler. One type has one handler between a pair of spaces.
+    pub fn register_transfer(&mut self, record: &'static TransferRecord) -> Result<(), RegError> {
+        let slot = (record.key.clone(), record.from, record.to);
+        if let Some(known) = self.transfers.get(&slot) {
+            return Err(RegError::DuplicateTransfer {
+                key: record.key.clone(),
+                from: record.from,
+                to: record.to,
+                first: known.at,
+                second: record.at,
+            });
+        }
+        self.transfers.insert(slot, record);
+        Ok(())
+    }
+
+    /// The handler for a type between two spaces.
+    pub fn transfer(
+        &self,
+        key: &TypeKey,
+        from: &'static str,
+        to: &'static str,
+    ) -> Option<&'static TransferRecord> {
+        self.transfers.get(&(key.clone(), from, to)).copied()
+    }
+
+    /// Sorted by type, then source, then destination.
+    pub fn transfers(&self) -> impl Iterator<Item = &'static TransferRecord> + '_ {
+        self.transfers.values().copied()
     }
 
     /// Every node marked as a conversion whose two types are known.

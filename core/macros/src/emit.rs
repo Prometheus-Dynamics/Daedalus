@@ -175,7 +175,7 @@ fn conversion_tokens(args: &NodeArgs) -> TokenStream {
     }
 }
 
-fn error_check(error: &Option<Type>) -> TokenStream {
+pub(crate) fn error_check(error: &Option<Type>) -> TokenStream {
     let Some(error) = error else {
         return TokenStream::new();
     };

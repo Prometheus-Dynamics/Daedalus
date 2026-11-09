@@ -31,7 +31,7 @@ fn same(a: &Type, b: &Type) -> bool {
 }
 
 /// The argument of `Name<T>` if the last path segment is `name`.
-fn generic_of<'a>(ty: &'a Type, name: &str) -> Option<Vec<&'a Type>> {
+pub(crate) fn generic_of<'a>(ty: &'a Type, name: &str) -> Option<Vec<&'a Type>> {
     let Type::Path(path) = ty else { return None };
     let last = path.path.segments.last()?;
     if last.ident != name {
@@ -87,17 +87,21 @@ pub(crate) struct Shape {
     pub modifies: bool,
 }
 
+/// The type's key, checked to be usable from this crate.
+pub(crate) fn checked_key(ty: &Type) -> TokenStream {
+    quote! {{
+        const _: () = {
+            static KEY: ::daedalus_registry::__private::TypeKey =
+                <#ty as ::daedalus_registry::__private::Typed>::KEY;
+            ::daedalus_registry::__private::require_local_key(&KEY, ::core::module_path!())
+        };
+        <#ty as ::daedalus_registry::__private::Typed>::KEY
+    }}
+}
+
 pub(crate) fn key_of(ty: &Type) -> TokenStream {
-    quote! {
-        ::daedalus_registry::TypeRef::Key({
-            const _: () = {
-                static KEY: ::daedalus_registry::__private::TypeKey =
-                    <#ty as ::daedalus_registry::__private::Typed>::KEY;
-                ::daedalus_registry::__private::require_local_key(&KEY, ::core::module_path!())
-            };
-            <#ty as ::daedalus_registry::__private::Typed>::KEY
-        })
-    }
+    let key = checked_key(ty);
+    quote!(::daedalus_registry::TypeRef::Key(#key))
 }
 
 pub(crate) fn body_type() -> TokenStream {

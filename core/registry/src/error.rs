@@ -24,6 +24,14 @@ pub enum RegError {
         first: SourceAt,
         second: SourceAt,
     },
+    /// Two handlers for one type between one pair of spaces.
+    DuplicateTransfer {
+        key: TypeKey,
+        from: &'static str,
+        to: &'static str,
+        first: SourceAt,
+        second: SourceAt,
+    },
     /// A body names no backend.
     UnknownBackend {
         id: String,
@@ -68,6 +76,19 @@ impl fmt::Display for RegError {
                 f,
                 "node `{id}` has two `{backend}` bodies, at {} and {}",
                 first.0, second.0
+            ),
+            RegError::DuplicateTransfer {
+                key,
+                from,
+                to,
+                first,
+                second,
+            } => write!(
+                f,
+                "two handlers move `{}` from `{from}` to `{to}`, at {} and {}",
+                key.as_str(),
+                first.0,
+                second.0
             ),
             RegError::UnknownBackend { id, at } => {
                 write!(f, "node `{id}` at {} names no backend", at.0)

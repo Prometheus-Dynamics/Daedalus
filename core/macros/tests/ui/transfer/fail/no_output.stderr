@@ -1,0 +1,5 @@
+error: a transfer returns the moved value
+ --> tests/ui/transfer/fail/no_output.rs:7:8
+  |
+7 | pub fn m(value: u8) {
+  |        ^

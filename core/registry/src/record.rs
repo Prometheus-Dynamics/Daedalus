@@ -168,3 +168,26 @@ pub struct NodeRecord {
     pub decl: &'static NodeDecl,
     pub body: BodyRecord,
 }
+
+/// How expensive a memory handler is, cheapest first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TransferClass {
+    Handoff,
+    Import,
+    Copy,
+}
+
+/// A memory handler a `#[transfer]` function declares, listed by hand beside the nodes.
+#[derive(Clone, Debug)]
+pub struct TransferRecord {
+    pub id: &'static str,
+    pub at: SourceAt,
+    /// The type it reads.
+    pub key: TypeKey,
+    /// The type it produces.
+    pub output: TypeKey,
+    pub from: &'static str,
+    pub to: &'static str,
+    pub class: TransferClass,
+    pub body: BodyRecord,
+}

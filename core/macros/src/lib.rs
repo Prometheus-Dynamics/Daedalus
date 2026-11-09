@@ -6,6 +6,7 @@
 mod args;
 mod emit;
 mod ports;
+mod transfer;
 
 use proc_macro::TokenStream;
 
@@ -15,6 +16,16 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = syn::parse_macro_input!(args as args::NodeArgs);
     let item = syn::parse_macro_input!(item as syn::Item);
     emit::expand(args, item)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Declares a memory handler on a function. See `docs/design.md`.
+#[proc_macro_attribute]
+pub fn transfer(args: TokenStream, item: TokenStream) -> TokenStream {
+    let args = syn::parse_macro_input!(args as transfer::TransferArgs);
+    let item = syn::parse_macro_input!(item as syn::ItemFn);
+    transfer::expand(args, item)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
