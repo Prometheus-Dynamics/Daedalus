@@ -1,11 +1,11 @@
 //! The solve stages, in their one fixed order. Only this file calls stages.
 
 use std::fmt;
-use std::sync::Arc;
 
 use daedalus_graph::GraphBody;
 use daedalus_registry::Registry;
 
+use crate::config::Config;
 use crate::solve::catalog::Catalog;
 use crate::solve::consts::{self, ConstError};
 use crate::solve::convert::{self, ConvertError};
@@ -16,18 +16,9 @@ use crate::solve::hydrate::{self, HydrateError};
 use crate::solve::order::{self, OrderError};
 use crate::solve::ports::{self, PortError};
 use crate::solve::rates::{self, RateError};
-use crate::solve::rewrite::{self, Rewrite, RewriteError};
+use crate::solve::rewrite::{self, RewriteError};
 use crate::solve::typecheck::{self, TypeCheckError};
 use crate::solve::{Graph, Work};
-
-/// What a planning run is told. Nothing here is global.
-#[derive(Clone, Default)]
-pub struct Config {
-    /// Also check a graph's own port lists against the declaration.
-    pub strict_ports: bool,
-    /// Graph rewrites, run in this order.
-    pub rewrites: Vec<Arc<dyn Rewrite>>,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]

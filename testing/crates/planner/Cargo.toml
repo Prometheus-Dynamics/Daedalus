@@ -8,7 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-daedalus-abi = { path = "../../../core/abi" }
+daedalus-abi = { path = "../../../core/abi", features = ["test-run"] }
 daedalus-plan = { path = "../../../core/plan" }
 daedalus-sim = { path = "../../../backends/sim" }
 daedalus-backend = { path = "../../../core/backend" }

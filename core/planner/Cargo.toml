@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+daedalus-abi = { path = "../abi" }
 daedalus-backend = { path = "../backend" }
 daedalus-graph = { path = "../graph" }
 daedalus-plan = { path = "../plan" }

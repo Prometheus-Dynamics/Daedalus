@@ -26,7 +26,8 @@ use daedalus_registry::{Fire, TypeRef};
 use daedalus_types::Literal;
 use daedalus_value::Access;
 
-use crate::pipeline::{Config, SolveError};
+use crate::config::Config;
+use crate::pipeline::SolveError;
 use catalog::Catalog;
 pub use rates::Rate;
 
