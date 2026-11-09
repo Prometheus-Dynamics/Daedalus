@@ -1,0 +1,136 @@
+{
+  "nodes": [
+    {
+      "node": 0,
+      "id": "s.cpu",
+      "backend": "cpu",
+      "reason": {
+        "kind": "forced"
+      }
+    },
+    {
+      "node": 1,
+      "id": "x.cgn",
+      "backend": "cpu",
+      "reason": {
+        "kind": "chosen",
+        "crossings": 1,
+        "rank": 0
+      }
+    },
+    {
+      "node": 2,
+      "id": "x.gn",
+      "backend": "npu",
+      "reason": {
+        "kind": "chosen",
+        "crossings": 1,
+        "rank": 2
+      }
+    },
+    {
+      "node": 3,
+      "id": "s.npu",
+      "backend": "npu",
+      "reason": {
+        "kind": "forced"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from_node": 0,
+      "from_port": "out",
+      "to_node": 1,
+      "to_port": "in",
+      "conversion": [],
+      "transfer": []
+    },
+    {
+      "from_node": 1,
+      "from_port": "out",
+      "to_node": 2,
+      "to_port": "in",
+      "conversion": [],
+      "transfer": []
+    },
+    {
+      "from_node": 2,
+      "from_port": "out",
+      "to_node": 3,
+      "to_port": "in",
+      "conversion": [],
+      "transfer": []
+    }
+  ],
+  "regions": [
+    {
+      "region": 0,
+      "backend": "cpu",
+      "nodes": [
+        0,
+        1
+      ],
+      "rate": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "inputs": [],
+      "outputs": [
+        {
+          "node": 1,
+          "port": "out"
+        }
+      ]
+    },
+    {
+      "region": 1,
+      "backend": "npu",
+      "nodes": [
+        2,
+        3
+      ],
+      "rate": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          1
+        ]
+      ],
+      "inputs": [
+        {
+          "node": 2,
+          "port": "in"
+        }
+      ],
+      "outputs": []
+    }
+  ],
+  "units": [
+    {
+      "region": 0,
+      "unit": 0,
+      "covers": [
+        0,
+        1
+      ]
+    },
+    {
+      "region": 1,
+      "unit": 0,
+      "covers": [
+        2,
+        3
+      ]
+    }
+  ]
+}
