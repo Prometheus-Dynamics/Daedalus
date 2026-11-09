@@ -57,6 +57,15 @@ impl TypeKey {
         }
     }
 
+    /// The text, if it was written at compile time. Usable in a `const`.
+    pub const fn literal_text(&self) -> Option<&'static str> {
+        match &self.0 {
+            KeyText::Static(text) => Some(text),
+            #[cfg(feature = "alloc")]
+            KeyText::Shared(_) => None,
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         match &self.0 {
             KeyText::Static(text) => text,

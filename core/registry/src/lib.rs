@@ -25,8 +25,8 @@ pub use offer::OfferData;
 #[cfg(feature = "std")]
 pub use owned::{OwnedBody, OwnedDecl, OwnedPort};
 pub use record::{
-    BodyRecord, ConfigDecl, Conversion, FanInDecl, Fire, NoCode, NodeDecl, NodeRecord, PortDecl,
-    SourceAt, StateDecl, TypeRef,
+    BodyRecord, ConfigDecl, Conversion, FanInDecl, FieldRule, Fire, NoCode, NodeDecl, NodeRecord,
+    PortDecl, SourceAt, StateDecl, TypeRef,
 };
 #[cfg(feature = "std")]
 pub use registry::{ConversionEntry, Entry, Registry};
@@ -35,7 +35,4 @@ pub use types::{TypeRecord, TypeTable};
 
 /// What the macros' generated code names. Not part of the interface.
 #[doc(hidden)]
-pub mod __private {
-    pub use daedalus_types::{Literal, TypeKey, Typed};
-    pub use daedalus_value::Access;
-}
+pub mod __private;

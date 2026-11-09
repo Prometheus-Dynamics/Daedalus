@@ -8,6 +8,9 @@
 pub use daedalus_registry as registry;
 pub use daedalus_types as types;
 
+#[doc(hidden)]
+pub use daedalus_derive as derive;
+
 /// A fan-in parameter. The macro recognizes it by name.
 pub struct FanIn<T>(pub T);
 
@@ -74,6 +77,13 @@ pub mod sample {
     }
 
     pub const SOURCE: &str = "source text";
+
+    /// A default key, built for bare metal and used from another crate by the derive tests.
+    #[derive(daedalus_derive::Type)]
+    pub struct Sample {
+        pub count: u32,
+        pub flag: bool,
+    }
 
     pub const NODES: &[&NodeRecord] = &[&ADD_NODE, &PICK_U32_NODE, &PICK_U8_NODE];
 }

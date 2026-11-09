@@ -1,0 +1,19 @@
+error[E0080]: evaluation panicked: this type has a default key and comes from another crate: give it an explicit #[type_key]
+ --> tests/ui/fail/foreign_default_key_on_a_port.rs:5:1
+  |
+5 | #[node(id = "ui.foreign", backend = fixture)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `F_DECL::_` failed inside this call
+  |
+note: inside `daedalus_registry::__private::require_local_key`
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: $WORKSPACE/core/registry/src/__private.rs
+  |
+  | /         assert!(
+  | |             same_crate(rest, module.as_bytes()),
+  | |             "this type has a default key and comes from another crate: give it an explicit #[type_key]"
+  | |         );
+  | |_________- in this macro invocation

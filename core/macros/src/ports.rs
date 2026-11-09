@@ -89,9 +89,14 @@ pub(crate) struct Shape {
 
 pub(crate) fn key_of(ty: &Type) -> TokenStream {
     quote! {
-        ::daedalus_registry::TypeRef::Key(
+        ::daedalus_registry::TypeRef::Key({
+            const _: () = {
+                static KEY: ::daedalus_registry::__private::TypeKey =
+                    <#ty as ::daedalus_registry::__private::Typed>::KEY;
+                ::daedalus_registry::__private::require_local_key(&KEY, ::core::module_path!())
+            };
             <#ty as ::daedalus_registry::__private::Typed>::KEY
-        )
+        })
     }
 }
 
