@@ -6,7 +6,11 @@
 // the error type large on purpose.
 #![allow(clippy::result_large_err)]
 
+#[cfg(feature = "alloc-probe")]
+pub mod alloc_probe;
 mod config_cache;
+#[cfg(feature = "std")]
+mod diagnostics;
 #[cfg(feature = "std")]
 mod drive;
 mod freshness;
@@ -26,6 +30,7 @@ mod state;
 pub mod stream;
 mod take;
 mod telemetry;
+mod tick_overhead;
 mod value;
 #[cfg(feature = "std")]
 mod wait;
@@ -33,6 +38,8 @@ mod wait;
 pub use daedalus_runner::TickReport;
 
 pub use config_cache::ConfigCache;
+#[cfg(feature = "std")]
+pub use diagnostics::{PlanReport, StepReport, render_error};
 #[cfg(feature = "std")]
 pub use drive::StopHandle;
 pub use inbound::{Drops, PortPolicy};
@@ -45,6 +52,7 @@ pub use state::{Codec, StateCodec, StateStore};
 #[cfg(feature = "std")]
 pub use state::{SnapshotError, restore_json, snapshot_json};
 pub use telemetry::{Event, EventLog, ExecutionReport, Level, NodeRow, Telemetry};
+pub use tick_overhead::{TickOverheadReport, TickOverheadWindow};
 pub use value::HostValue;
 #[cfg(feature = "std")]
 pub use wait::{InboundSignal, InboundWait, InboundWaiter};

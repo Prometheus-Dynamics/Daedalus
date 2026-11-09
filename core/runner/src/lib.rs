@@ -31,6 +31,7 @@ mod lanes;
 mod nested;
 mod owned;
 mod policy;
+mod probe;
 mod progress;
 mod reuse;
 mod step;
@@ -58,6 +59,7 @@ pub use owned::{INLINE_BYTES, InlineCell, Untyped, place};
 #[cfg(feature = "alloc")]
 pub use owned::{TypedOps, typed_ops, typed_raw};
 pub use policy::Recovery;
+pub use probe::{ClockFn, HISTOGRAM_BUCKETS, StepHistogram, TickProbe, TickSample};
 pub use reuse::{
     InputVersion, ReuseEntry, ReuseMarker, ReuseMemory, ReuseReason, ReuseRefused, check_reuse,
 };
@@ -147,6 +149,8 @@ pub struct Runner<'a> {
     progress: &'a [Progress],
     /// The reuse table, for a plan with a reusable step.
     reuse: Option<reuse::Table<'a>>,
+    /// Timing, when a host attached a probe.
+    probe: Option<&'a probe::TickProbe<'a>>,
 }
 
 // SAFETY: a `Runner` holds exclusive borrows of its buffers and calls each step from whichever
@@ -266,6 +270,7 @@ impl<'a> Runner<'a> {
             tick: 0,
             progress: &[],
             reuse: None,
+            probe: None,
         })
     }
 
@@ -298,6 +303,11 @@ impl<'a> Runner<'a> {
         if (step as usize) < self.steps.len() {
             bits::set(self.dirty, step as usize);
         }
+    }
+
+    /// The wiring of `step`, for hosts and reports.
+    pub fn step_meta(&self, step: u32) -> Option<StepMeta> {
+        self.meta.get(step as usize).copied()
     }
 
     /// The queue state of `slot`, for hosts and tests.
