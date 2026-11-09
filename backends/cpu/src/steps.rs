@@ -55,10 +55,7 @@ macro_rules! __cpu_body {
 #[doc(hidden)]
 macro_rules! __cpu_body {
     ($make:ident, $shape:expr, $arena:expr) => {
-        $crate::steps::CpuBody {
-            shape: $shape,
-            arena: $arena,
-        }
+        $crate::steps::CpuBody { arena: $arena }
     };
 }
 

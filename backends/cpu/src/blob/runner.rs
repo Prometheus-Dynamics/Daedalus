@@ -7,7 +7,7 @@ use daedalus_types::Typed;
 use super::library::{Library, name_hash};
 use super::load::{
     self, ABSENT, CONST_LEN, CONST_LINK, EDGE_LEN, HOST_LEN, LINK_LEN, LINK_SHIFT, Layout,
-    LoadError, PARAM_LEN, STEP_LEN, get_u16, get_u32, put_u16,
+    LoadError, PARAM_LEN, STEP_LEN, get_u8, get_u16, get_u32, put_u16,
 };
 use super::{MAX_PORTS, Overflow};
 use crate::chip::{ParamError, Scalar, Tunable};
@@ -30,9 +30,14 @@ const CELLS: usize = MAX_PORTS * 2;
 /// Runs plans over a [`Library`], in an arena of at most 65535 bytes that holds the steps, tables
 /// and queues.
 pub struct Interpreter<const ARENA: usize> {
-    library: &'static Library,
     layout: Option<Layout>,
     arena: StepArena<ARENA>,
+}
+
+impl<const ARENA: usize> Default for Interpreter<ARENA> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const ARENA: usize> Interpreter<ARENA> {
@@ -41,10 +46,10 @@ impl<const ARENA: usize> Interpreter<ARENA> {
         "an arena is at most 65535 bytes"
     );
 
-    pub const fn new(library: &'static Library) -> Self {
+    /// All zeroes, so a `static` one takes no flash.
+    pub const fn new() -> Self {
         let () = Self::SIZE_OK;
         Interpreter {
-            library,
             layout: None,
             arena: StepArena::new(),
         }
@@ -52,20 +57,20 @@ impl<const ARENA: usize> Interpreter<ARENA> {
 
     /// The arena bytes `blob` needs.
     pub fn required(library: &Library, blob: &[u8]) -> Result<usize, LoadError> {
-        Ok(load::check(library, blob)?.size)
+        Ok(load::check(library, blob)?.1.size)
     }
 
     /// Checks `blob` and swaps it in: queues empty and node states new. Called
     /// between ticks, and if it's refused the running plan carries on.
-    pub fn load(&mut self, blob: &[u8]) -> Result<(), LoadError> {
-        let layout = load::check(self.library, blob)?;
+    pub fn load(&mut self, library: &Library, blob: &[u8]) -> Result<(), LoadError> {
+        let (stored, layout) = load::check(library, blob)?;
         if layout.size > ARENA {
             return Err(LoadError::Arena {
                 needed: layout.size as u32,
             });
         }
         self.layout = None;
-        load::lay_out(self.library, blob, &layout, &mut self.arena)?;
+        load::lay_out(library, &stored, &layout, &mut self.arena)?;
         self.layout = Some(layout);
         Ok(())
     }
@@ -83,8 +88,7 @@ impl<const ARENA: usize> Interpreter<ARENA> {
         self.layout.map_or(0, |layout| layout.size)
     }
 
-    fn port(&self, name: &str, at: impl Fn(&Layout) -> (u16, u16)) -> Option<u16> {
-        let (count, table) = at(self.layout.as_ref()?);
+    fn port(&self, name: &str, count: u16, table: u16) -> Option<u16> {
         let data = self.arena.data_ref();
         let hash = name_hash(name);
         (0..count)
@@ -93,54 +97,85 @@ impl<const ARENA: usize> Interpreter<ARENA> {
 
     /// The number of host input `name`.
     pub fn input(&self, name: &str) -> Option<u16> {
-        self.port(name, |layout| (layout.inputs, layout.inputs_at))
+        let layout = self.layout.as_ref()?;
+        self.port(name, layout.inputs, layout.inputs_at)
     }
 
     /// The number of host output `name`.
     pub fn output(&self, name: &str) -> Option<u16> {
-        self.port(name, |layout| (layout.outputs, layout.outputs_at))
+        let layout = self.layout.as_ref()?;
+        self.port(name, layout.outputs, layout.outputs_at)
     }
 
-    fn host<T: Typed + Copy>(&self, port: u16, count: u16, table: u16) -> Result<usize, RunError> {
+    fn host(
+        &self,
+        (port, count, table): (u16, u16, u16),
+        key: u32,
+        size: usize,
+    ) -> Result<usize, RunError> {
         let bad = RunError::Port { port };
         if port >= count {
             return Err(bad);
         }
         let record = usize::from(table) + usize::from(port) * HOST_LEN;
         let data = self.arena.data_ref();
-        let matches = get_u32(data, record + 4) == name_hash(T::KEY.as_str())
-            && usize::from(data[record + 8]) == core::mem::size_of::<T>();
+        let matches =
+            get_u32(data, record + 4) == key && usize::from(get_u8(data, record + 8)) == size;
         matches.then_some(record).ok_or(bad)
     }
 
     /// Pushes a value to every edge host input `port` feeds.
     pub fn push<T: Typed + Copy>(&mut self, port: u16, value: T) -> Result<(), RunError> {
-        let layout = self.layout.ok_or(RunError::Port { port })?;
-        let record = self.host::<T>(port, layout.inputs, layout.inputs_at)?;
         let mut bytes = [0; 16];
         let len = bytes_of(&value, &mut bytes);
+        self.push_bytes(
+            port,
+            name_hash(T::KEY.as_str()),
+            core::mem::size_of::<T>(),
+            bytes.get(..len).unwrap_or(&[]),
+        )
+    }
+
+    fn push_bytes(
+        &mut self,
+        port: u16,
+        key: u32,
+        size: usize,
+        bytes: &[u8],
+    ) -> Result<(), RunError> {
+        let layout = self.layout.ok_or(RunError::Port { port })?;
+        let record = self.host((port, layout.inputs, layout.inputs_at), key, size)?;
         let data = self.arena.data();
-        let count = usize::from(data[record + 9]);
+        let count = usize::from(get_u8(data, record + 9));
         let first = usize::from(get_u16(data, record + 10));
         for at in 0..count {
             let link = usize::from(layout.links_at) + (first + at) * LINK_LEN;
             let edge = get_u16(data, link);
-            ring_push(data, &layout, edge, &bytes[..len])?;
+            ring_push(data, &layout, edge, bytes)?;
         }
         Ok(())
     }
 
     /// Takes the oldest value on host output `port`.
     pub fn pop<T: Typed + Copy>(&mut self, port: u16) -> Result<Option<T>, RunError> {
+        let mut bytes = [0; 16];
+        let key = name_hash(T::KEY.as_str());
+        let got = self.pop_bytes(port, key, core::mem::size_of::<T>(), &mut bytes)?;
+        Ok(got.and_then(|len| value_of::<T>(&bytes, len)))
+    }
+
+    fn pop_bytes(
+        &mut self,
+        port: u16,
+        key: u32,
+        size: usize,
+        bytes: &mut InlineCell,
+    ) -> Result<Option<usize>, RunError> {
         let layout = self.layout.ok_or(RunError::Port { port })?;
-        let record = self.host::<T>(port, layout.outputs, layout.outputs_at)?;
+        let record = self.host((port, layout.outputs, layout.outputs_at), key, size)?;
         let data = self.arena.data();
         let edge = get_u16(data, record + 10);
-        let mut bytes = [0; 16];
-        match ring_pop(data, &layout, edge, &mut bytes) {
-            Some(len) => Ok(value_of::<T>(&bytes, len)),
-            None => Ok(None),
-        }
+        Ok(ring_pop(data, &layout, edge, bytes))
     }
 
     /// Runs every node once, in order.
@@ -165,10 +200,10 @@ impl<const ARENA: usize> Interpreter<ARENA> {
         let data = self.arena.data();
         let at = usize::from(layout.steps_at) + usize::from(step) * STEP_LEN;
         let (all, reads, writes, required) = (
-            data[at] != 0,
-            usize::from(data[at + 1]),
-            usize::from(data[at + 2]),
-            data[at + 3],
+            get_u8(data, at) != 0,
+            usize::from(get_u8(data, at + 1)),
+            usize::from(get_u8(data, at + 2)),
+            get_u8(data, at + 3),
         );
         let links = usize::from(layout.links_at) + usize::from(get_u16(data, at + 4)) * LINK_LEN;
         if all && waiting(data, layout, links, reads, required) {
@@ -240,8 +275,8 @@ fn read_input(
     }
     if link & CONST_LINK != 0 {
         let at = usize::from(layout.consts_at) + usize::from(link & !CONST_LINK) * CONST_LEN;
-        let size = usize::from(data[at]);
-        out[..8].copy_from_slice(&data[at + 1..at + 9]);
+        let size = usize::from(get_u8(data, at));
+        out[..8].copy_from_slice(data.get(at + 1..at + 9)?);
         return Some(size);
     }
     let got = ring_pop(data, layout, link, out);
@@ -274,16 +309,19 @@ fn store_ring(data: &mut [u8], at: usize, ring: Ring) {
 fn ring_push(data: &mut [u8], layout: &Layout, edge: u16, value: &[u8]) -> Result<(), RunError> {
     let at = edge_at(layout, edge);
     let capacity = usize::from(get_u16(data, at + 4));
-    let stride = usize::from(data[at + 6]);
+    let stride = usize::from(get_u8(data, at + 6));
     let mut ring = ring_at(data, at);
     let Some(slot) = ring
-        .push(capacity, Overflow::from_byte(data[at + 7]))
+        .push(capacity, Overflow::from_byte(get_u8(data, at + 7)))
         .map_err(|_| RunError::QueueFull { edge })?
     else {
         return Ok(());
     };
     let base = usize::from(get_u16(data, at + 8)) + slot * stride;
-    data[base..base + value.len().min(stride)].copy_from_slice(&value[..value.len().min(stride)]);
+    let len = value.len().min(stride);
+    if let (Some(to), Some(value)) = (data.get_mut(base..base + len), value.get(..len)) {
+        to.copy_from_slice(value);
+    }
     store_ring(data, at, ring);
     Ok(())
 }
@@ -291,11 +329,13 @@ fn ring_push(data: &mut [u8], layout: &Layout, edge: u16, value: &[u8]) -> Resul
 fn ring_pop(data: &mut [u8], layout: &Layout, edge: u16, out: &mut InlineCell) -> Option<usize> {
     let at = edge_at(layout, edge);
     let capacity = usize::from(get_u16(data, at + 4));
-    let stride = usize::from(data[at + 6]);
+    let stride = usize::from(get_u8(data, at + 6));
     let mut ring = ring_at(data, at);
     let slot = ring.pop(capacity)?;
     let base = usize::from(get_u16(data, at + 8)) + slot * stride;
-    out[..stride].copy_from_slice(&data[base..base + stride]);
+    if let (Some(to), Some(from)) = (out.get_mut(..stride), data.get(base..base + stride)) {
+        to.copy_from_slice(from);
+    }
     store_ring(data, at, ring);
     Some(stride)
 }

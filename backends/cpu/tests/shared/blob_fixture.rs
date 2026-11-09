@@ -3,8 +3,8 @@
 #![allow(dead_code)]
 
 use daedalus_cpu::blob::{
-    ConstDesc, EdgeDesc, HostDesc, Library, Overflow, PlanDesc, ScalarKind, Source, StepDesc,
-    name_hash,
+    ConstDesc, EdgeDesc, Entry, HostDesc, Library, Overflow, PlanDesc, ScalarKind, Source,
+    StepDesc, name_hash,
 };
 use daedalus_cpu_author::{FanIn, Fault};
 use daedalus_macros::node;
@@ -47,7 +47,7 @@ pub fn heavy(a: u32) -> String {
     a.to_string()
 }
 
-const NODES: &[&NodeRecord] = &[
+const NODES: &[&NodeRecord; 6] = &[
     &GAIN_NODE,
     &SUM_NODE,
     &FIRST_NODE,
@@ -55,7 +55,7 @@ const NODES: &[&NodeRecord] = &[
     &BAD_NODE,
     &HEAVY_NODE,
 ];
-pub static LIBRARY: Library = Library::new(NODES);
+pub static LIBRARY: Library<[Entry; 6]> = Library::new(NODES);
 pub const GAIN: u32 = 0;
 pub const SUM: u32 = 1;
 pub const FIRST: u32 = 2;

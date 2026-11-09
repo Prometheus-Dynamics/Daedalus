@@ -254,13 +254,13 @@ fn members(
         let entry = library
             .position(body.id)
             .ok_or_else(|| refuse("this node isn't in the firmware's library"))?;
-        let (decl, arena) = library.entry(entry).ok_or_else(|| {
+        let (_, arena) = library.entry(entry).ok_or_else(|| {
             refuse("this node can't run in a blob: its ports need to be small Copy values, its state must have nothing to drop, and it can't take a config")
         })?;
         found.push(Member {
             node,
             entry: entry as u32,
-            decl,
+            decl: library.nodes[entry].decl,
             body: arena,
             inputs: body.inputs,
         });

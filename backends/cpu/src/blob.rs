@@ -10,7 +10,7 @@ mod runner;
 mod write;
 
 pub use crate::scalar_kind::ScalarKind;
-pub use library::{Library, name_hash};
+pub use library::{Entry, Library, name_hash};
 pub use load::LoadError;
 pub use runner::{Interpreter, RunError};
 #[cfg(feature = "std")]

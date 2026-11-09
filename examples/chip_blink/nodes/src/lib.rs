@@ -3,7 +3,8 @@
 #![no_std]
 #![forbid(unsafe_code)]
 
-use daedalus_cpu_author::Ctx;
+use daedalus_cpu::blob::{Entry, Library};
+use daedalus_cpu_author::{Ctx, FanIn};
 use daedalus_macros::node;
 use daedalus_registry::NodeRecord;
 
@@ -69,11 +70,28 @@ pub fn blink(ctx: &Ctx, active: bool, period: u32) -> bool {
     active && (ctx.now_ns as u32 / period.max(1)).is_multiple_of(2)
 }
 
-/// Every node, for planning on a host.
-pub const NODES: [&NodeRecord; 5] = [
+/// The newest of its inputs: the highest-numbered port with a value.
+#[node(id = "blink.latest", inputs(items), outputs(out), fire = "any")]
+pub fn latest(items: FanIn<'_, bool>) -> Option<bool> {
+    items.iter().last().map(|item| *item)
+}
+
+/// A command code as an on-or-off.
+#[node(id = "blink.command_active", inputs(code), outputs(active), conversion)]
+pub fn command_active(code: u8) -> bool {
+    code != 0
+}
+
+/// Every node, for planning on a host and for the firmware's library of stored plans.
+pub const NODES: [&NodeRecord; 7] = [
     &SCALE_NODE,
     &LOWPASS_NODE,
     &THRESHOLD_NODE,
     &RISING_NODE,
     &BLINK_NODE,
+    &LATEST_NODE,
+    &COMMAND_ACTIVE_NODE,
 ];
+
+/// What a stored plan names its nodes in.
+pub static LIBRARY: Library<[Entry; 7]> = Library::new(&NODES);

@@ -21,8 +21,8 @@ static ALLOC: CountingAlloc = CountingAlloc;
 type Running = Interpreter<2048>;
 
 fn running(plan: &daedalus_cpu::blob::PlanDesc) -> Box<Running> {
-    let mut running = Box::new(Running::new(&LIBRARY));
-    running.load(&encode(plan).unwrap()).unwrap();
+    let mut running = Box::new(Running::new());
+    running.load(&LIBRARY, &encode(plan).unwrap()).unwrap();
     running
 }
 
@@ -89,8 +89,8 @@ fn stored(graph: &GraphBody) -> Result<Vec<u8>, PlanError> {
 fn a_planned_graph_loads_and_runs() {
     let bytes = stored(&graph()).unwrap();
     assert_eq!(bytes, stored(&graph()).unwrap(), "the bytes are repeatable");
-    let mut running = Box::new(Running::new(&LIBRARY));
-    running.load(&bytes).unwrap();
+    let mut running = Box::new(Running::new());
+    running.load(&LIBRARY, &bytes).unwrap();
     let (input, output) = (running.input("in").unwrap(), running.output("out").unwrap());
     assert_eq!(running.input("nope"), None);
     for (value, expected) in [(1_u32, 3_u32), (2, 9), (10, 39)] {
@@ -228,16 +228,16 @@ fn rejects_blobs_the_fan_in_rules_forbid() {
     let mut no_fan = plan();
     no_fan.steps[1].entry = SUM;
     no_fan.steps[1].inputs.push(Source::Absent);
-    let mut loading = Box::new(Running::new(&LIBRARY));
+    let mut loading = Box::new(Running::new());
     assert_eq!(
-        loading.load(&encode(&no_fan).unwrap()),
+        loading.load(&LIBRARY, &encode(&no_fan).unwrap()),
         Err(LoadError::Node { node: 1 })
     );
 
     let mut mistyped = fan_in();
     mistyped.edges[1].key ^= 1;
     assert_eq!(
-        loading.load(&encode(&mistyped).unwrap()),
+        loading.load(&LIBRARY, &encode(&mistyped).unwrap()),
         Err(LoadError::Type { edge: 1 })
     );
 }
@@ -253,7 +253,7 @@ fn a_refused_load_leaves_the_running_plan_alone_and_a_new_one_starts_clean() {
     let mut broken = encode(&plan()).unwrap();
     let at = broken.len() / 2;
     broken[at] ^= 1;
-    assert!(running.load(&broken).is_err());
+    assert!(running.load(&LIBRARY, &broken).is_err());
     running.push(input, 1_u32).unwrap();
     running.tick().unwrap();
     assert_eq!(
@@ -262,7 +262,7 @@ fn a_refused_load_leaves_the_running_plan_alone_and_a_new_one_starts_clean() {
         "the sum carried on"
     );
 
-    running.load(&encode(&plan()).unwrap()).unwrap();
+    running.load(&LIBRARY, &encode(&plan()).unwrap()).unwrap();
     running.push(input, 1_u32).unwrap();
     running.tick().unwrap();
     assert_eq!(running.pop::<u32>(output), Ok(Some(3)), "the sum restarted");
@@ -284,9 +284,9 @@ fn a_node_with_a_heap_value_is_refused_while_planning() {
 #[test]
 fn loading_and_ticking_allocate_nothing() {
     let bytes = encode(&plan()).unwrap();
-    let mut running = Box::new(Running::new(&LIBRARY));
+    let mut running = Box::new(Running::new());
     let (_, allocations) = counted(|| {
-        running.load(&bytes).unwrap();
+        running.load(&LIBRARY, &bytes).unwrap();
         let (input, output) = (running.input("in").unwrap(), running.output("out").unwrap());
         for value in 0..50_u32 {
             running.push(input, value).unwrap();
@@ -309,8 +309,8 @@ fn a_marked_constant_can_be_changed_while_running() {
             value: range,
         }]),
     );
-    let mut running = Box::new(Running::new(&LIBRARY));
-    running.load(&stored(&marked).unwrap()).unwrap();
+    let mut running = Box::new(Running::new());
+    running.load(&LIBRARY, &stored(&marked).unwrap()).unwrap();
     let (input, output) = (running.input("in").unwrap(), running.output("out").unwrap());
     assert_eq!(running.param(0), Some(Scalar::U32(3)));
     running.push(input, 1_u32).unwrap();
