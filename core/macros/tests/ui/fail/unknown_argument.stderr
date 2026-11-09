@@ -1,0 +1,5 @@
+error: unsupported #[node] argument
+ --> tests/ui/fail/unknown_argument.rs:6:21
+  |
+6 | #[node(id = "ui.d", capability = "x", backend = fixture)]
+  |                     ^^^^^^^^^^

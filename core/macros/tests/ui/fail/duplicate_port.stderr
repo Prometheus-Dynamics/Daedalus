@@ -1,0 +1,5 @@
+error: duplicate port `same`
+ --> tests/ui/fail/duplicate_port.rs:6:34
+  |
+6 | #[node(id = "ui.d", inputs(same, same), backend = fixture)]
+  |                                  ^^^^

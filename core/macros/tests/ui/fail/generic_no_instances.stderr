@@ -1,0 +1,5 @@
+error: a generic node needs generics(T, instance(Type, "suffix"), ...)
+ --> tests/ui/fail/generic_no_instances.rs:7:10
+  |
+7 | pub fn f<T: Copy>(a: &T) -> T {
+  |          ^

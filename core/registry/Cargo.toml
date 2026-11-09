@@ -6,11 +6,18 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["std"]
+std = ["dep:daedalus-backend", "daedalus-types/alloc", "daedalus-value/std"]
+
+[package.metadata.daedalus]
+heap_free = true
+
 [dependencies]
-daedalus-backend = { path = "../backend" }
+daedalus-backend = { path = "../backend", optional = true }
 daedalus-graph = { path = "../graph", default-features = false }
-daedalus-types = { path = "../types" }
-daedalus-value = { path = "../value" }
+daedalus-types = { path = "../types", default-features = false }
+daedalus-value = { path = "../value", default-features = false }
 
 [lints]
 workspace = true

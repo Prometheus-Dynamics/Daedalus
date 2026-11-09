@@ -1,5 +1,7 @@
 //! Building what a backend is offered.
 
+#![cfg(feature = "std")]
+
 use daedalus_backend::{BodyIndex, OfferNode, PortInfo};
 use daedalus_types::{NodeIndex, TypeIndex};
 

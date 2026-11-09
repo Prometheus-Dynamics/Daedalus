@@ -1,6 +1,6 @@
 //! The constant records a `#[node]` emits. Records are only ever read.
 
-use std::any::Any;
+use core::any::Any;
 
 use daedalus_graph::GroupDef;
 use daedalus_types::{Literal, TypeExpr, TypeKey};
@@ -42,6 +42,9 @@ pub struct PortDecl {
     pub unit: &'static str,
     pub group: &'static str,
     pub advanced: bool,
+    pub description: &'static str,
+    /// Where a config field's value comes from, by name. Empty for an ordinary port.
+    pub source: &'static str,
 }
 
 impl PortDecl {
@@ -58,6 +61,8 @@ impl PortDecl {
             unit: "",
             group: "",
             advanced: false,
+            description: "",
+            source: "",
         }
     }
 }
@@ -90,6 +95,7 @@ pub struct NodeDecl {
     pub id: &'static str,
     pub at: SourceAt,
     pub summary: &'static str,
+    pub description: &'static str,
     pub inputs: &'static [PortDecl],
     pub outputs: &'static [PortDecl],
     pub config: &'static [ConfigDecl],
@@ -130,6 +136,20 @@ pub struct BodyRecord {
     pub code: &'static (dyn Any + Send + Sync),
     /// Source, for bodies written as text.
     pub text: &'static str,
+}
+
+impl BodyRecord {
+    /// Adds what the node's attribute says about this body, which the backend's own macro
+    /// doesn't see.
+    pub const fn with_node(
+        mut self,
+        state: Option<StateDecl>,
+        memory: &'static [(&'static str, &'static str)],
+    ) -> BodyRecord {
+        self.state = state;
+        self.memory = memory;
+        self
+    }
 }
 
 #[derive(Clone, Debug)]

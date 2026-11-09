@@ -1,5 +1,7 @@
 //! Joining records by id.
 
+#![cfg(feature = "std")]
+
 use std::collections::BTreeMap;
 
 use daedalus_types::TypeKey;
@@ -61,7 +63,9 @@ fn first_difference(a: &NodeDecl, b: &NodeDecl) -> Option<Option<&'static str>> 
                 && x.label == y.label
                 && x.unit == y.unit
                 && x.group == y.group
-                && x.advanced == y.advanced;
+                && x.advanced == y.advanced
+                && x.description == y.description
+                && x.source == y.source;
             if !same {
                 return Some(Some(x.name));
             }
@@ -78,7 +82,10 @@ fn first_difference(a: &NodeDecl, b: &NodeDecl) -> Option<Option<&'static str>> 
         .or_else(|| (a.fanin != b.fanin).then_some(None))
         .or_else(|| (a.fire != b.fire || a.reusable != b.reusable).then_some(None))
         .or_else(|| (a.shareable != b.shareable || a.conversion != b.conversion).then_some(None))
-        .or_else(|| (a.summary != b.summary || a.group != b.group).then_some(None))
+        .or_else(|| {
+            (a.summary != b.summary || a.description != b.description || a.group != b.group)
+                .then_some(None)
+        })
 }
 
 fn effective(port: &PortDecl, body: &BodyRecord) -> Option<TypeRef> {
