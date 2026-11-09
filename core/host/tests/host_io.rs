@@ -43,6 +43,7 @@ struct Graph {
     carry: Vec<u32>,
     always: Vec<u32>,
     pending: Vec<daedalus_runner::Pending>,
+    health: Vec<daedalus_runner::StepHealth>,
     activity: Vec<u32>,
     inline: Vec<[u8; 16]>,
 }
@@ -58,6 +59,7 @@ impl Graph {
             outputs: span(1, 1),
             always: false,
             may_pend: false,
+            recovery: daedalus_runner::Recovery::Fail,
         }];
         let specs = vec![
             SlotSpec {
@@ -82,6 +84,7 @@ impl Graph {
             carry: vec![0; 1],
             always: vec![0; 1],
             pending: Vec::new(),
+            health: vec![daedalus_runner::StepHealth::default(); 1],
             activity: vec![0; 1],
             inline: vec![[0; 16]; storage_len],
         }
@@ -103,6 +106,7 @@ impl Graph {
                 carry: &mut self.carry,
                 always: &mut self.always,
                 pending: &mut self.pending,
+                health: &mut self.health,
                 activity: &mut self.activity,
                 inline: &mut self.inline,
             },

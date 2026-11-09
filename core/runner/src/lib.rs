@@ -12,8 +12,10 @@ extern crate alloc;
 
 mod bits;
 mod error;
+mod failure;
 mod fence;
 mod owned;
+mod policy;
 mod step;
 mod tick;
 mod values;
@@ -23,9 +25,11 @@ use daedalus_plan::Span;
 use daedalus_value::OwnerKind;
 
 pub use error::{LoadError, MaskError, RunError};
+pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
 pub use owned::{INLINE_BYTES, InlineCell, Untyped};
 #[cfg(feature = "alloc")]
 pub use owned::{TypedOps, typed_ops, typed_raw};
+pub use policy::Recovery;
 pub use step::{Queue, SlotKind, SlotSpec, StepMeta};
 pub use tick::TickReport;
 pub use values::{put_inline, put_static};
@@ -76,6 +80,8 @@ pub struct Memory<'a> {
     pub always: &'a mut [u32],
     /// One entry per step with `may_pend`.
     pub pending: &'a mut [Pending],
+    /// One failure record per step. Its length is at least the step count.
+    pub health: &'a mut [StepHealth],
     /// The activity mask, in `words_for(steps)` words. Only used once a host sets a mask.
     pub activity: &'a mut [u32],
     /// One inline buffer per queue entry, so an inline value's bytes sit beside its entry. Its
@@ -97,6 +103,8 @@ pub struct Runner<'a> {
     always: &'a mut [u32],
     pending: &'a mut [Pending],
     pending_len: usize,
+    health: &'a mut [StepHealth],
+    failure: FailurePolicy,
     activity: &'a mut [u32],
     inline: &'a mut [InlineCell],
     masked: bool,
@@ -121,6 +129,7 @@ impl<'a> Runner<'a> {
             carry,
             always,
             pending,
+            health,
             activity,
             inline,
         } = memory;
@@ -134,6 +143,7 @@ impl<'a> Runner<'a> {
             || carry.len() < words
             || always.len() < words
             || activity.len() < words
+            || health.len() < count
         {
             return Err(LoadError::Length);
         }
@@ -155,6 +165,7 @@ impl<'a> Runner<'a> {
         }
         dirty[..words].fill(0);
         carry[..words].fill(0);
+        health[..count].fill(StepHealth::default());
         always[..words].fill(0);
         let mut may_pend = 0;
         for (index, record) in meta.iter().enumerate() {
@@ -198,6 +209,8 @@ impl<'a> Runner<'a> {
             always,
             pending,
             pending_len: 0,
+            health,
+            failure: FailurePolicy::DEFAULT,
             activity,
             inline,
             masked: false,

@@ -35,6 +35,8 @@ pub struct StepMeta {
     pub always: bool,
     /// May return `Pending`, so it needs a pending entry.
     pub may_pend: bool,
+    /// What a fault of this step does to its tick.
+    pub recovery: crate::policy::Recovery,
 }
 
 /// One slot's queue: a ring over its part of the shared queue storage.
