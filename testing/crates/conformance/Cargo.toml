@@ -1,0 +1,20 @@
+[package]
+name = "daedalus-conformance"
+description = "The checks every backend must pass."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi", features = ["count-alloc", "test-run"] }
+daedalus-backend = { path = "../../../core/backend" }
+daedalus-types = { path = "../../../core/types" }
+daedalus-value = { path = "../../../core/value" }
+
+[dev-dependencies]
+daedalus-sim = { path = "../../../backends/sim" }
+
+[lints]
+workspace = true
