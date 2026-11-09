@@ -82,7 +82,7 @@ fn layout_pinned() {
 }
 
 #[cfg(target_pointer_width = "64")]
-const PINNED: u64 = 17447101256681323871;
+const PINNED: u64 = 532345246090911079;
 
 #[test]
 fn write_out_is_all_or_nothing() {

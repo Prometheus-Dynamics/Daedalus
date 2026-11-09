@@ -16,6 +16,7 @@ extern crate alloc;
 pub mod counting;
 mod features;
 mod fence;
+mod foreign;
 mod guard;
 mod handle;
 mod layout;
@@ -30,6 +31,10 @@ mod word;
 
 pub use features::Features;
 pub use fence::{Fence, FencePoll, FenceWord};
+pub use foreign::{
+    ForeignHandle, ForeignInterface, ForeignInterfaceInfo, ForeignInterfaceMismatch, ForeignOwner,
+    ForeignRef, ProvideForeign, foreign_layout_hash,
+};
 pub use guard::{guard, guard_or};
 pub use handle::Handle;
 pub use layout::{LAYOUT_HASH, SHAPES, layout_hash};
