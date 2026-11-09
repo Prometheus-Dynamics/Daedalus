@@ -202,6 +202,7 @@ struct View<'t> {
     pending_len: *mut usize,
     progress: &'t [Progress],
     reuse: Option<ReuseParts>,
+    probe: Option<&'t crate::probe::TickProbe<'t>>,
 }
 
 // SAFETY: during a fan-out each step's health and body are touched by the one worker running it.
@@ -237,6 +238,9 @@ impl<'t> Env<'t> for Lane<'t> {
     }
     fn progress(&self, index: usize) -> *const Progress {
         crate::progress::cell(self.view.progress, index)
+    }
+    fn probe(&self) -> Option<&'t crate::probe::TickProbe<'t>> {
+        self.view.probe
     }
     fn reuse(&mut self) -> Option<ReuseParts> {
         self.view.reuse
@@ -330,7 +334,12 @@ impl Runner<'_> {
             tick: self.tick,
             ..TickReport::default()
         };
+        let probe = self.probe;
+        let start = probe.map_or(0, |probe| probe.now());
         let result = self.run_parallel(lanes, &mut report);
+        if let Some(probe) = probe {
+            probe.finish_tick(probe.now().saturating_sub(start));
+        }
         self.counters.absorb(&report);
         result.map(|()| report)
     }
@@ -377,6 +386,7 @@ impl Runner<'_> {
                 pending_len: &mut self.pending_len,
                 progress: self.progress,
                 reuse: self.reuse.as_mut().map(|table| table.parts()),
+                probe: self.probe,
             };
             lanes.pool.run(&|number| work(&view, number));
         }

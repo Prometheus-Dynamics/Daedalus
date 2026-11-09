@@ -1,0 +1,202 @@
+//! The tick probe: relaxed-atomic time sums and counts for each tick, behind one `None` check when
+//! no probe is attached. `take_tick` moves a finished tick out. The probe never allocates, and the
+//! clock is a function the host supplies, because the runner has no clock of its own.
+
+use daedalus_abi::Word;
+
+use crate::Runner;
+
+/// A sum that many steps add to. It is 64-bit where the target has that, and otherwise a 32-bit
+/// word on chips that run one step at a time.
+#[cfg(target_has_atomic = "64")]
+mod sum {
+    use core::sync::atomic::{AtomicU64, Ordering};
+
+    pub struct Sum(AtomicU64);
+
+    impl Sum {
+        pub const fn new() -> Sum {
+            Sum(AtomicU64::new(0))
+        }
+        pub fn get(&self) -> u64 {
+            self.0.load(Ordering::Relaxed)
+        }
+        pub fn add(&self, value: u64) {
+            self.0.fetch_add(value, Ordering::Relaxed);
+        }
+        pub fn set(&self, value: u64) {
+            self.0.store(value, Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(not(target_has_atomic = "64"))]
+mod sum {
+    use daedalus_abi::Word;
+
+    pub struct Sum(Word);
+
+    impl Sum {
+        pub const fn new() -> Sum {
+            Sum(Word::new(0))
+        }
+        pub fn get(&self) -> u64 {
+            u64::from(self.0.get())
+        }
+        pub fn add(&self, value: u64) {
+            self.0.set(self.0.get().saturating_add(value as u32));
+        }
+        pub fn set(&self, value: u64) {
+            self.0.set(value as u32);
+        }
+    }
+}
+
+use sum::Sum;
+
+/// Log-scale buckets of a step's run time: bucket `i` counts runs under `2^(i+8)` ns.
+pub const HISTOGRAM_BUCKETS: usize = 16;
+
+/// One step's run-time histogram.
+pub struct StepHistogram {
+    buckets: [Sum; HISTOGRAM_BUCKETS],
+}
+
+impl Default for StepHistogram {
+    fn default() -> StepHistogram {
+        StepHistogram::new()
+    }
+}
+
+impl StepHistogram {
+    pub const fn new() -> StepHistogram {
+        StepHistogram {
+            buckets: [const { Sum::new() }; HISTOGRAM_BUCKETS],
+        }
+    }
+
+    fn record(&self, nanos: u64) {
+        let bucket = ((64 - (nanos >> 8).leading_zeros()) as usize).min(HISTOGRAM_BUCKETS - 1);
+        self.buckets[bucket].add(1);
+    }
+
+    /// The counts, one per bucket.
+    pub fn counts(&self) -> [u32; HISTOGRAM_BUCKETS] {
+        core::array::from_fn(|at| self.buckets[at].get() as u32)
+    }
+}
+
+/// The finished figures of one tick, or of a tick still being measured.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TickSample {
+    /// The whole tick.
+    pub tick_ns: u64,
+    /// Time inside step bodies.
+    pub body_ns: u64,
+    /// Step bodies called.
+    pub steps: u32,
+}
+
+impl TickSample {
+    /// Time that was the runner's own: the tick minus the bodies.
+    pub const fn overhead_ns(&self) -> u64 {
+        self.tick_ns.saturating_sub(self.body_ns)
+    }
+}
+
+/// Reads the host's clock, in nanoseconds.
+pub type ClockFn = fn() -> u64;
+
+/// One graph's probe. A runner borrows it for as long as it is attached.
+pub struct TickProbe<'a> {
+    clock: ClockFn,
+    tick_ns: Sum,
+    body_ns: Sum,
+    steps: Sum,
+    /// Set when a tick has finished and not yet been taken.
+    finished: Word,
+    /// One per step, for the profile level. Empty means no histograms.
+    histograms: &'a [StepHistogram],
+}
+
+impl<'a> TickProbe<'a> {
+    pub const fn new(clock: ClockFn) -> TickProbe<'a> {
+        TickProbe {
+            clock,
+            tick_ns: Sum::new(),
+            body_ns: Sum::new(),
+            steps: Sum::new(),
+            finished: Word::new(0),
+            histograms: &[],
+        }
+    }
+
+    /// A probe that also fills one histogram per step.
+    pub const fn with_histograms(clock: ClockFn, histograms: &'a [StepHistogram]) -> TickProbe<'a> {
+        TickProbe {
+            clock,
+            tick_ns: Sum::new(),
+            body_ns: Sum::new(),
+            steps: Sum::new(),
+            finished: Word::new(0),
+            histograms,
+        }
+    }
+
+    pub(crate) fn now(&self) -> u64 {
+        (self.clock)()
+    }
+
+    pub(crate) fn add_body(&self, step: usize, nanos: u64) {
+        self.body_ns.add(nanos);
+        self.steps.add(1);
+        if let Some(histogram) = self.histograms.get(step) {
+            histogram.record(nanos);
+        }
+    }
+
+    pub(crate) fn finish_tick(&self, nanos: u64) {
+        self.tick_ns.set(nanos);
+        self.finished.set(1);
+    }
+
+    /// True when a tick has finished and hasn't been taken.
+    pub fn has_tick(&self) -> bool {
+        self.finished.get() != 0
+    }
+
+    /// Moves the finished tick into `sample` and resets the probe.
+    pub fn take_tick(&self, sample: &mut TickSample) {
+        self.peek_tick(sample);
+        self.tick_ns.set(0);
+        self.body_ns.set(0);
+        self.steps.set(0);
+        self.finished.set(0);
+    }
+
+    /// Copies the current figures into `sample`, leaving the probe as it is.
+    pub fn peek_tick(&self, sample: &mut TickSample) {
+        *sample = TickSample {
+            tick_ns: self.tick_ns.get(),
+            body_ns: self.body_ns.get(),
+            steps: self.steps.get() as u32,
+        };
+    }
+
+    /// One histogram, for reports.
+    pub fn histogram(&self, step: usize) -> Option<&StepHistogram> {
+        self.histograms.get(step)
+    }
+}
+
+impl<'a> Runner<'a> {
+    /// Attaches `probe`. Every tick from now on fills it.
+    pub fn set_probe(&mut self, probe: &'a TickProbe<'a>) {
+        self.probe = Some(probe);
+    }
+
+    /// Detaches the probe.
+    pub fn clear_probe(&mut self) {
+        self.probe = None;
+    }
+}

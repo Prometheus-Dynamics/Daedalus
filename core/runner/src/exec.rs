@@ -147,6 +147,8 @@ pub(crate) trait Env<'t> {
     fn progress(&self, index: usize) -> *const Progress;
     /// The cells bodies see, and the context for the call.
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx);
+    /// The attached probe, if any.
+    fn probe(&self) -> Option<&'t crate::probe::TickProbe<'t>>;
     /// The reuse table, if the plan has one.
     fn reuse(&mut self) -> Option<ReuseParts>;
     fn failure(&self) -> FailurePolicy;
@@ -198,6 +200,8 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
     let end = loop {
         load_cells(env, meta);
         let flags = env.health(index).call_flags();
+        let probe = env.probe();
+        let start = probe.map_or(0, |probe| probe.now());
         let progress = env.progress(index);
         let (cells, cx) = env.parts();
         cx.flags = flags;
@@ -207,6 +211,9 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         // SAFETY: `run` and `data` come from one `Step`, so the body was built to take that data.
         // `slots` and `cx` are exclusive to this call, and they stay valid until it returns.
         let end = unsafe { run(data, &mut slots, cx) };
+        if let Some(probe) = probe {
+            probe.add_body(index, probe.now().saturating_sub(start));
+        }
         let health = env.health(index);
         health.calls = health.calls.saturating_add(1);
         // The restart flag is spent by the call it was set for.
@@ -382,6 +389,10 @@ impl<'a> Env<'a> for Runner<'a> {
     #[inline]
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx) {
         (&mut self.cells[..self.slots], &mut self.cx)
+    }
+    #[inline]
+    fn probe(&self) -> Option<&'a crate::probe::TickProbe<'a>> {
+        self.probe
     }
     #[inline]
     fn reuse(&mut self) -> Option<ReuseParts> {
