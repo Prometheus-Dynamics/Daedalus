@@ -30,10 +30,10 @@ const VGLITE: (&str, &str) = (
     "lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-vglite/tests/vglite.rs",
 );
 
-/// Fixed-function image nodes callers lower onto (image pyramids among them). Only the scalar
-/// reference and the fixed-function rows exist so far; the SIMD and GPU rows are still to fill.
-const NODE_ONLY: &[Backend] = &[Backend::Scalar, Backend::FixedFunction];
-const NODE_REASON: &str = "a fixed-function node: the CPU kernels and the callers are Eidos's";
+/// Image nodes callers lower onto (image pyramids among them). The scalar reference, the GPU
+/// rows (`registry/gpu_image.rs`) and the fixed-function rows exist; the SIMD rows are Eidos's.
+const NODE_ONLY: &[Backend] = &[Backend::Scalar, Backend::Gpu, Backend::FixedFunction];
+const NODE_REASON: &str = "a node Eidos lowers onto: its SIMD rows are Eidos's (the CPU kernels), the scalar, GPU and fixed-function rows are here";
 
 static IMAGE_OPS: [Op; 11] = [
     op(

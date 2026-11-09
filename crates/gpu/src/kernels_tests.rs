@@ -16,7 +16,7 @@ use crate::{
 /// One wgpu context for the whole test process. Opening a device per check made some opens fail
 /// under load, and a check that then skipped silently lost its inventory evidence; now no adapter
 /// skips every check, and a device that fails to open after another opened fails the test.
-fn wgpu_ctx() -> Option<GpuContextHandle> {
+pub(crate) fn wgpu_ctx() -> Option<GpuContextHandle> {
     static CTX: std::sync::OnceLock<Option<GpuContextHandle>> = std::sync::OnceLock::new();
     CTX.get_or_init(|| {
         let ctx = select_backend(&GpuOptions {
@@ -42,12 +42,12 @@ fn wgpu_ctx() -> Option<GpuContextHandle> {
     .clone()
 }
 
-fn adapter(ctx: &GpuContextHandle) -> String {
+pub(crate) fn adapter(ctx: &GpuContextHandle) -> String {
     let info = ctx.wgpu().unwrap().0.adapter_info();
     format!("{} ({})", info.name, info.driver_info)
 }
 
-fn bytes(len: usize, seed: u32) -> Vec<u8> {
+pub(crate) fn bytes(len: usize, seed: u32) -> Vec<u8> {
     let mut x = seed.wrapping_mul(2_654_435_761) | 1;
     (0..len)
         .map(|_| {
@@ -59,15 +59,15 @@ fn bytes(len: usize, seed: u32) -> Vec<u8> {
         .collect()
 }
 
-fn storage(ctx: &GpuContextHandle, data: &[u8]) -> GpuStorage {
+pub(crate) fn storage(ctx: &GpuContextHandle, data: &[u8]) -> GpuStorage {
     GpuStorage::with_data(ctx, if data.is_empty() { &[0; 4] } else { data }, None).unwrap()
 }
 
-fn out_storage(ctx: &GpuContextHandle, len: u64) -> GpuStorage {
+pub(crate) fn out_storage(ctx: &GpuContextHandle, len: u64) -> GpuStorage {
     GpuStorage::new(ctx, len.next_multiple_of(4).max(4), None).unwrap()
 }
 
-fn read(s: &GpuStorage, len: usize) -> Vec<u8> {
+pub(crate) fn read(s: &GpuStorage, len: usize) -> Vec<u8> {
     let mut out = vec![0u8; len.next_multiple_of(4)];
     s.read_into(0, &mut out).unwrap();
     out.truncate(len);

@@ -3,7 +3,9 @@
 use daedalus_accel::{Backend, CallSite, Exempt, Ext, Kernel, Op, Registry, Status};
 
 mod fixed;
+mod gpu_image;
 use fixed::{IMAGE_TABLE, RGA_TABLE};
+use gpu_image::GPU_IMAGE_TABLE;
 
 /// Unused once every op has a `core::simd` kernel; kept for ops added without one.
 #[allow(dead_code)]
@@ -718,5 +720,12 @@ pub static ACCEL: Registry = Registry {
             reason: "RISC-V extension detection (riscv_hwprobe syscall)",
         },
     ],
-    children: &[&GPU_OPS, &CRC_TABLE, &F16C_TABLE, &RGA_TABLE, &IMAGE_TABLE],
+    children: &[
+        &GPU_OPS,
+        &CRC_TABLE,
+        &F16C_TABLE,
+        &RGA_TABLE,
+        &IMAGE_TABLE,
+        &GPU_IMAGE_TABLE,
+    ],
 };

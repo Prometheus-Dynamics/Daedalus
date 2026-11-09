@@ -11,6 +11,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `scripts/board.sh` profiles for the ROCK 5C, ZERO 3E, Cubie A7A/A7S/A7Z and Luckfox Aura; written,
   untested on board.
 
+- GPU kernels for the image ops: `daedalus_gpu::GpuImages` runs resize (area and bilinear), crop, flip,
+  rotate, fill, Porter-Duff blend, palette, colour key and mask ROP on GPU-resident frames
+  (`crates/gpu/src/shader/image.wgsl`, integer arithmetic only). Each matches its scalar reference bit
+  for bit on the conformance shapes, and the backend matrix has a `gpu` cell for each of them, passing
+  on the desktop adapters that CI and this host ran (no Mali or PowerVR evidence yet). Line has no GPU
+  form: one line is a serial walk, so its `gpu` cell reads "not data-parallel". The image ops now
+  allow the `gpu` backend.
 - The GPU caps cache location is settable: `EngineConfig::with_gpu_caps_dir` (`CacheSection::gpu_caps_dir`)
   or the environment variable `DAEDALUS_GPU_CAPS_CACHE` (the config wins). Any failed read or write of the
   cache, including a missing or read-only directory or a corrupt file, is no cache: nothing is surfaced to

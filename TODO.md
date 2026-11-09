@@ -147,7 +147,8 @@ order:
 - [ ] **[board] What:** RK3588S (Mali-G610, ROCK 5C): `gpu_probe`, the `ci.sh pi` hardware tests, `gpu_bench`
       and the `GpuKernels` evidence on the shipped driver (libmali or PanVK). Written, untested on
       board: `GpuDeviceProfile` (Mali Valhall, warp 16; b095018), the GPU kernels and fragment
-      passes, the AFBC modifier helpers, the checklist in `docs/testing.md`.
+      passes, the image GPU kernels (`GpuImages`, the `gpu` cells of `daedalus.image.*` except line),
+      the AFBC modifier helpers, the checklist in `docs/testing.md`.
       **Why:** proper hardware support on every board.
       **Done when:** `scripts/board.sh rockchip` has run; the reports are in `docs/testing.md`, the
       matrix has Mali evidence, and the
@@ -167,7 +168,8 @@ order:
       **Blocked by:** a board. **Measured:** nothing on this chip.
 - [ ] **[board] What:** RK3576, RK3566 (ZERO 3E) and RK3562 (Mali-G52): the same reports, or a confirmed
       clean CPU fallback where the driver has no usable Vulkan compute. Written, untested on board
-      (Mali Bifrost, warp 8 on G52).
+      (Mali Bifrost, warp 8 on G52). The image GPU kernels (`GpuImages`) are written, untested on
+      board; they use 32-bit integer arithmetic only.
       **Why:** as above.
       **Done when:** as above, per chip.
       **Blocked by:** boards and Gaia's driver choice.

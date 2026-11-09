@@ -88,7 +88,7 @@ run_target "$host" native
 
 step "GPU conformance (wgpu adapter)"
 ACCEL_TARGET=$host ACCEL_RUNNER=native ACCEL_REQUIRE_GPU=1 \
-  cargo test -q -p daedalus-gpu --features gpu-dmabuf,gpu-vulkan-raw --lib -- storage_frames_copy_into_textures kernels_tests zero_copy raw_vulkan --test-threads 1
+  cargo test -q -p daedalus-gpu --features gpu-dmabuf,gpu-vulkan-raw --lib -- storage_frames_copy_into_textures kernels_tests image_tests zero_copy raw_vulkan --test-threads 1
 # A repeated kernel dispatch allocates no more than the same dispatch written in raw wgpu.
 cargo test -q -p daedalus-gpu --features gpu-wgpu --test gpu_allocations
 
