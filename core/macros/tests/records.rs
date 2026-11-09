@@ -42,7 +42,10 @@ fn every_attribute_reaches_the_record() {
     );
     assert_eq!(decl.fire, Fire::Any);
     assert!(
-        decl.at.0.starts_with("core/macros/tests/records.rs:"),
+        decl.at
+            .0
+            .replace('\\', "/")
+            .starts_with("core/macros/tests/records.rs:"),
         "{}",
         decl.at.0
     );
