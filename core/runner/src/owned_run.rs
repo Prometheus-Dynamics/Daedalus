@@ -118,13 +118,18 @@ pub fn build(
     let stored: usize = reusable().map(|record| record.outputs.len as usize).sum();
     let storage: u32 = slots.iter().map(|spec| spec.cap).sum();
     let nslots = slots.len();
+    let widest = meta
+        .iter()
+        .map(|record| (record.inputs.len + record.outputs.len) as usize)
+        .max()
+        .unwrap_or(0);
     let may_pend = meta.iter().filter(|record| record.may_pend).count();
     let buffers = RunBuffers {
         _steps: Raw::new(steps),
         _meta: Raw::new(meta),
         _table: Raw::new(table),
         _slots: Raw::new(slots),
-        _cells: Raw::new(vec![Slot::EMPTY; nslots]),
+        _cells: Raw::new(vec![Slot::EMPTY; widest]),
         _queues: Raw::new(vec![Queue::default(); nslots]),
         _storage: Raw::new(vec![Slot::EMPTY; storage as usize]),
         _dirty: Raw::new(vec![0; words]),

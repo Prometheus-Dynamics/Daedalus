@@ -168,7 +168,15 @@ fn input_port(name: String, span: Span, ty: &Type, arg: PortArg) -> (Port, bool,
         name,
         span,
         type_ref,
-        access: access(mode),
+        access: if mode == "Move" {
+            quote! {{
+                #[allow(unused_imports)]
+                use ::daedalus_registry::__private::MovedByValue as _;
+                ::daedalus_registry::__private::ByValue::<#value>::ACCESS
+            }}
+        } else {
+            access(mode)
+        },
         optional,
         conditional: false,
         arg,

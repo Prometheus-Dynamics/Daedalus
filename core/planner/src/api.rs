@@ -196,6 +196,7 @@ fn transfer_steps(
         consts: &[],
         spaces: &[],
         bodies: &[],
+        edges: &[],
         merge_allowed: false,
     };
     let mut steps: Vec<Option<Step>> = Vec::with_capacity(stitched.transfers.len());

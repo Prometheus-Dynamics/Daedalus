@@ -3,16 +3,18 @@
 use std::collections::BTreeSet;
 
 use daedalus_backend::{
-    Backend, CompileCx, Compiled, ConstOf, Incoming, NodeBody, PortRef, Refusal, Region, UnitInfo,
+    Backend, CompileCx, Compiled, ConstOf, Incoming, InnerEdge, NodeBody, PortRef, Refusal, Region,
+    UnitInfo,
 };
+use daedalus_graph::{EdgePolicyDoc, Lit, NodeDoc};
 use daedalus_registry::Registry;
-use daedalus_types::NodeIndex;
+use daedalus_types::{NodeIndex, PortIndex};
 
 use super::Formed;
 use super::RegionError;
 use crate::assign::Assignment;
-use crate::solve::Graph;
 use crate::solve::type_table::TypeTable;
+use crate::solve::{Graph, Port};
 
 pub(super) struct Compiling<'a> {
     pub graph: &'a Graph,
@@ -51,11 +53,13 @@ pub(super) fn compile_region(
                 body,
                 inputs: solved.inputs.len() as u16,
                 outputs: solved.outputs.len() as u16,
+                merges: !opted_out(&solved.doc),
                 code: record.code,
                 text: record.text,
             });
         }
     }
+    let edges = inner_edges(cx.graph, &formed.nodes);
     let spaces = backend.memory();
     let region = Region {
         backend: formed.backend,
@@ -72,9 +76,54 @@ pub(super) fn compile_region(
             consts: &consts,
             spaces: &spaces,
             bodies: &bodies,
+            edges: &edges,
             merge_allowed: cx.merge_allowed,
         },
     )
+}
+
+/// Node metadata that forbids merging the node with its neighbours.
+const NO_MERGE_KEY: &str = "daedalus.node.fusion";
+
+fn opted_out(doc: &NodeDoc) -> bool {
+    match doc.metadata.get(NO_MERGE_KEY) {
+        Some(Lit::Bool(allowed)) => !allowed,
+        Some(Lit::Str(value)) => matches!(value.as_str(), "never" | "false" | "off"),
+        _ => false,
+    }
+}
+
+fn port_at(ports: &[Port], name: &str) -> Option<PortIndex> {
+    let at = ports.iter().position(|port| port.name == name)?;
+    Some(PortIndex(at as u16))
+}
+
+fn inner_edges(graph: &Graph, nodes: &[u32]) -> Vec<InnerEdge> {
+    let mut edges = Vec::new();
+    for edge in &graph.edges {
+        let (from, to) = (edge.from.node, edge.to.node);
+        if !nodes.contains(&from) || !nodes.contains(&to) {
+            continue;
+        }
+        let (Some(out), Some(input)) = (
+            port_at(&graph.nodes[from as usize].outputs, &edge.from.port),
+            port_at(&graph.nodes[to as usize].inputs, &edge.to.port),
+        ) else {
+            continue;
+        };
+        edges.push(InnerEdge {
+            from: PortRef {
+                node: NodeIndex(from),
+                port: out,
+            },
+            to: PortRef {
+                node: NodeIndex(to),
+                port: input,
+            },
+            queued: matches!(edge.policy, EdgePolicyDoc::Bounded { .. }),
+        });
+    }
+    edges
 }
 
 pub(super) fn units(compiled: &Compiled) -> Vec<&UnitInfo> {

@@ -66,6 +66,9 @@ pub fn take<T: 'static>(
     if cell.owner == INLINE {
         return (kind.read?)(cell);
     }
+    if kind.copy {
+        return typed_view::<T>(cell).and_then(|value| kind.clone.map(|clone| clone(value)));
+    }
     match Arc::try_unwrap(take_typed::<T>(cell)?) {
         Ok(value) => Some(value),
         Err(shared) => kind.clone.map(|clone| clone(&shared)),

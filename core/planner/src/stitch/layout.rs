@@ -245,7 +245,11 @@ pub(super) fn lay_out(regions: &Regions, types: &TypeTable) -> Stitched {
         at_end.push((output.reader.value, output.reader.space));
     }
     let draft = walk.draft;
-    let numbered = number(&draft, &at_start, &at_end);
+    let steps = regions
+        .regions
+        .iter()
+        .any(|region| matches!(region.compiled, Compiled::Steps(_)));
+    let numbered = number(&draft, &at_start, &at_end, !steps);
     let slot_of = |live: &Live| numbered.of[live];
     let slot_or_none = |live: &Option<Live>| live.as_ref().map_or(NO_SLOT, slot_of);
     let mut uses: Vec<TransferUse> = Vec::new();

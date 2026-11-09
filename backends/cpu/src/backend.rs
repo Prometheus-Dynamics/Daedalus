@@ -5,6 +5,7 @@ use alloc::format;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use daedalus_abi::Step;
 use daedalus_backend::{
     Backend, CompileCx, Compiled, MemorySpace, NodeBody, NodeRef, Offer, PortRef, Refusal, Region,
     SpaceKind, StepUnit, Transfer, UnitInfo,
@@ -20,7 +21,7 @@ pub const HOST_SPACE: &str = "cpu.host";
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CpuBackend;
 
-fn ports(node: NodeIndex, count: u16) -> Vec<PortRef> {
+pub(crate) fn ports(node: NodeIndex, count: u16) -> Vec<PortRef> {
     (0..count)
         .map(|port| PortRef {
             node,
@@ -29,7 +30,12 @@ fn ports(node: NodeIndex, count: u16) -> Vec<PortRef> {
         .collect()
 }
 
-fn unit(node: NodeIndex, body: &NodeBody<'_>, cx: &CompileCx<'_>) -> Result<StepUnit, Refusal> {
+/// Builds one node's step.
+pub(crate) fn step_of(
+    node: NodeIndex,
+    body: &NodeBody<'_>,
+    cx: &CompileCx<'_>,
+) -> Result<Step, Refusal> {
     let Some(cpu) = body.code.downcast_ref::<CpuBody>() else {
         return Err(Refusal::new(vec![node], "this body isn't a CPU function"));
     };
@@ -38,7 +44,22 @@ fn unit(node: NodeIndex, body: &NodeBody<'_>, cx: &CompileCx<'_>) -> Result<Step
         inputs: body.inputs,
         consts: cx.consts,
     };
-    let step = (cpu.make)(&setup).map_err(|reason| Refusal::new(vec![node], &reason))?;
+    (cpu.make)(&setup).map_err(|reason| Refusal::new(vec![node], &reason))
+}
+
+pub(crate) fn body_of<'a>(
+    node: NodeIndex,
+    cx: &'a CompileCx<'a>,
+) -> Result<&'a NodeBody<'a>, Refusal> {
+    cx.bodies
+        .iter()
+        .find(|body| body.node == node)
+        .ok_or_else(|| Refusal::new(vec![node], &format!("no body for node {}", node.0)))
+}
+
+pub(crate) fn unit(node: NodeIndex, cx: &CompileCx<'_>) -> Result<StepUnit, Refusal> {
+    let body = body_of(node, cx)?;
+    let step = step_of(node, body, cx)?;
     Ok(StepUnit {
         step,
         info: UnitInfo {
@@ -80,16 +101,11 @@ impl Backend for CpuBackend {
     }
 
     fn compile(&self, region: &Region<'_>, cx: &CompileCx<'_>) -> Result<Compiled, Refusal> {
-        let mut units = Vec::with_capacity(region.nodes.len());
-        for &node in region.nodes {
-            let Some(body) = cx.bodies.iter().find(|body| body.node == node) else {
-                return Err(Refusal::new(
-                    vec![node],
-                    &format!("no body for node {}", node.0),
-                ));
-            };
-            units.push(unit(node, body, cx)?);
+        #[cfg(feature = "merge")]
+        if cx.merge_allowed {
+            return crate::merge::compile(region, cx).map(Compiled::Steps);
         }
-        Ok(Compiled::Steps(units))
+        let units = region.nodes.iter().map(|&node| unit(node, cx));
+        Ok(Compiled::Steps(units.collect::<Result<_, _>>()?))
     }
 }

@@ -302,7 +302,11 @@ fn a_planned_graph_runs_through_the_backend() {
         edges: vec![wire(0, "out", 1, "a"), wire(1, "out", 2, "a")],
         groups: Vec::new(),
     };
-    let mut planned = plan(&graph, &registry, &[&CpuBackend], &Config::default()).unwrap();
+    let config = Config {
+        merge: false,
+        ..Config::default()
+    };
+    let mut planned = plan(&graph, &registry, &[&CpuBackend], &config).unwrap();
     let mut cells = vec![Slot::EMPTY; planned.stitched.slots.len()];
     for item in planned.stitched.layout.clone() {
         let Item::Run {

@@ -178,7 +178,13 @@ impl Nested {
     fn publish(&mut self, at: usize, inputs: usize) {
         for (from, &read) in self.steps[at].reads.iter().enumerate() {
             let consumed = self.scratch[from].state == SlotState::Moved as u32;
-            if consumed && read != NO_SLOT && !self.is_view(read as usize) {
+            if !consumed || read == NO_SLOT {
+                continue;
+            }
+            if self.is_view(read as usize) {
+                // Whoever lent this has to know it's gone.
+                self.cells[read as usize].state = SlotState::Moved as u32;
+            } else {
                 // The reference went to one of this step's outputs, so it's only forgotten.
                 self.cells[read as usize] = Slot::EMPTY;
             }
@@ -209,6 +215,29 @@ impl Nested {
             }
         }
         StepEnd::Done
+    }
+
+    /// Runs the steps as one chain, each woken by the one before: the list stops at the first
+    /// step that didn't finish and ends the way that step did, so a skip stops what it feeds and
+    /// nothing downstream is woken for it.
+    pub fn run_chain(&mut self, inputs: &[Slot], cx: &mut StepCx) -> StepEnd {
+        for (&cell, input) in self.views.iter().zip(inputs) {
+            self.cells[cell as usize] = *input;
+        }
+        for at in 0..self.steps.len() {
+            match self.run_one(at, cx) {
+                StepEnd::Done => {}
+                end => return end,
+            }
+        }
+        StepEnd::Done
+    }
+
+    /// Whether a step took the value lent in view `cell`.
+    pub fn moved(&self, cell: u32) -> bool {
+        self.cells
+            .get(cell as usize)
+            .is_some_and(|slot| slot.state == SlotState::Moved as u32)
     }
 
     /// Takes an output, which then belongs to the caller. A cell holding a view has none to give.

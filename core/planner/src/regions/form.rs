@@ -139,8 +139,13 @@ pub(super) fn form(graph: &Graph, assignment: &Assignment) -> (Vec<Formed>, Vec<
     }
     let mut rates = Vec::new();
     let mut formed = Vec::new();
+    // A region's nodes are listed producers first, because that's the order its steps run in.
+    let mut position = vec![0; graph.nodes.len()];
+    for (at, &node) in graph.order.iter().enumerate() {
+        position[node as usize] = at;
+    }
     for mut nodes in members.into_iter().filter(|nodes| !nodes.is_empty()) {
-        nodes.sort_unstable();
+        nodes.sort_unstable_by_key(|&node| position[node as usize]);
         let Some(index) = backend(nodes[0]) else {
             continue;
         };

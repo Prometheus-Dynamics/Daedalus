@@ -5,6 +5,21 @@ pub use daedalus_types::{
 };
 pub use daedalus_value::Access;
 
+/// How a by-value parameter uses its value. A `Copy` type only reads it, so many consumers can
+/// share one output with no copy step in between.
+pub struct ByValue<T>(core::marker::PhantomData<T>);
+
+impl<T: Copy> ByValue<T> {
+    pub const ACCESS: Access = Access::Read;
+}
+
+/// The answer for a type that isn't `Copy`.
+pub trait MovedByValue {
+    const ACCESS: Access = Access::Move;
+}
+
+impl<T> MovedByValue for ByValue<T> {}
+
 const fn starts_with(text: &[u8], prefix: &[u8]) -> bool {
     if text.len() < prefix.len() {
         return false;

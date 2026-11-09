@@ -12,7 +12,7 @@ use std::time::Instant;
 use std::vec;
 use std::vec::Vec;
 
-use daedalus_abi::Step;
+use daedalus_abi::{NO_SLOT, Step};
 use daedalus_backend::{Compiled, StepUnit, UnitInfo};
 use daedalus_graph::{EdgePolicyDoc, NodeDoc, NodeKindDoc};
 use daedalus_plan::Span;
@@ -225,12 +225,12 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                     reads: reads.clone(),
                     writes: writes.clone(),
                     may_pend: info.may_pend,
-                    always: reads.is_empty(),
+                    always: reads.iter().all(|slot| *slot == NO_SLOT),
                     fire,
                     required,
                     reuse: covers.len() == 1
                         && planned.graph.nodes[covers[0] as usize].reusable
-                        && writes.iter().all(|slot| {
+                        && writes.iter().filter(|slot| **slot != NO_SLOT).all(|slot| {
                             host_spaces.contains(&stitched.slots[*slot as usize].space)
                         }),
                 });
@@ -286,27 +286,25 @@ fn host_spaces(stitched: &Stitched) -> Vec<u32> {
         .collect()
 }
 
-/// The unit's reads that have an edge, as (slot, edge). A read with no edge has no slot, so these
-/// line up with the layout's `reads`. A unit where they don't gets no join and no edge rule.
+/// The unit's reads that have a slot and an edge, as (slot, edge). The layout's `reads` line up
+/// with the unit's, with `NO_SLOT` at a port nothing feeds.
 fn connected_reads(planned: &Planned, info: &UnitInfo, reads: &[u32]) -> Vec<(u32, usize)> {
     let edges = &planned.graph.edges;
-    let found: Vec<usize> = info
-        .reads
+    let edge_of = |input: &daedalus_backend::PortRef| {
+        let node = input.node.0;
+        let port = planned.graph.nodes[node as usize]
+            .inputs
+            .get(usize::from(input.port.0))?;
+        edges
+            .iter()
+            .position(|edge| edge.to.node == node && edge.to.port == port.name)
+    };
+    info.reads
         .iter()
-        .filter_map(|input| {
-            let node = input.node.0;
-            let port = planned.graph.nodes[node as usize]
-                .inputs
-                .get(usize::from(input.port.0))?;
-            edges
-                .iter()
-                .position(|edge| edge.to.node == node && edge.to.port == port.name)
-        })
-        .collect();
-    if found.len() != reads.len() {
-        return Vec::new();
-    }
-    reads.iter().copied().zip(found).collect()
+        .zip(reads)
+        .filter(|(_, slot)| **slot != NO_SLOT)
+        .filter_map(|(input, slot)| Some((*slot, edge_of(input)?)))
+        .collect()
 }
 
 /// The join rule of a unit: whether a partial set waits, and the slots its nodes require.
@@ -382,14 +380,14 @@ fn wire(drafts: &[Draft]) -> (Vec<StepMeta>, Vec<u32>) {
     let mut last_writer: HashMap<u32, usize> = HashMap::new();
     let mut wakes: Vec<Vec<u32>> = vec![Vec::new(); drafts.len()];
     for (at, draft) in drafts.iter().enumerate() {
-        for slot in &draft.reads {
+        for slot in draft.reads.iter().filter(|slot| **slot != NO_SLOT) {
             if let Some(&writer) = last_writer.get(slot)
                 && writer != at
             {
                 wakes[writer].push(at as u32);
             }
         }
-        for slot in &draft.writes {
+        for slot in draft.writes.iter().filter(|slot| **slot != NO_SLOT) {
             last_writer.insert(*slot, at);
         }
     }
@@ -556,6 +554,12 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         // A slot a kept rule can't apply to stays on the default.
         let _ = runner.set_pressure(slot, rule.pressure);
         let _ = runner.set_blocking(slot, rule.blocking);
+    }
+    // A slot with several readers holds its newest value, so a new one replaces it.
+    for (slot, info) in planned.stitched.slots.iter().enumerate() {
+        if info.consumers > 1 {
+            let _ = runner.set_pressure(slot as u32, Pressure::LatestOnly);
+        }
     }
     let mut host = Host::new(runner, ports, types);
     host.owned = Some(buffers);
