@@ -69,6 +69,12 @@ pub struct Queue {
     pub pressure: daedalus_value::Pressure,
     /// When the value in a coalescing window was stored.
     pub opened_ns: u64,
+    /// A full queue holds its producer back rather than taking a value.
+    pub blocking: bool,
+    /// Rejected values count as backpressure events.
+    pub counts_rejects: bool,
+    /// How many values were rejected while `counts_rejects` was set.
+    pub rejected: u32,
 }
 
 impl Queue {

@@ -4,6 +4,7 @@
 use daedalus_abi::{NO_NODE, NO_SLOT, Progress, Slot, SlotState, Slots, StepCx, StepEnd};
 use daedalus_value::Decision;
 
+use crate::backpressure::output_blocked;
 use crate::error::RunError;
 use crate::failure::{FailurePolicy, StepHealth};
 use crate::fault_log::FaultLog;
@@ -153,6 +154,10 @@ pub(crate) trait Env<'t> {
     /// The reuse table, if the plan has one.
     fn reuse(&mut self) -> Option<ReuseParts>;
     fn failure(&self) -> FailurePolicy;
+    /// Whether any slot is a blocking edge, so the check costs nothing when none is.
+    fn any_blocking(&self) -> bool;
+    /// How many slots the plan has.
+    fn slot_count(&self) -> usize;
     /// Where a failure goes, and the tick it happened in.
     fn fault_log(&self) -> (FaultLog, u32);
     /// What an output written to `slot` is stamped with, if the plan says.
@@ -193,6 +198,11 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
             return Ok(());
         }
         env.health(index).backing_off = false;
+    }
+    if env.any_blocking() && output_blocked(env, meta) {
+        env.counters().backpressure_deferrals += 1;
+        env.carry(index);
+        return Ok(());
     }
     if meta.required.len != 0 && !join_ready(env, meta) {
         return Ok(());
@@ -380,6 +390,15 @@ fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<(), RunError> 
         };
         if stored == Stored::Dropped {
             env.counters().dropped += 1;
+            let counted = env.with_queue(slot, |queue, _| {
+                if queue.counts_rejects {
+                    queue.rejected = queue.rejected.wrapping_add(1);
+                }
+                queue.counts_rejects
+            });
+            if counted {
+                env.counters().backpressure_events += 1;
+            }
         }
         if stored == Stored::Full {
             // SAFETY: the cell is Full and this step wrote it, so the reference is still the
@@ -421,6 +440,14 @@ impl<'a> Env<'a> for Runner<'a> {
     #[inline]
     fn health(&mut self, index: usize) -> &mut StepHealth {
         &mut self.health[index]
+    }
+    #[inline]
+    fn any_blocking(&self) -> bool {
+        self.any_blocking
+    }
+    #[inline]
+    fn slot_count(&self) -> usize {
+        self.slots
     }
     #[inline]
     fn fault_log(&self) -> (FaultLog, u32) {

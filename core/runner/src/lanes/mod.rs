@@ -211,6 +211,8 @@ struct View<'t> {
     progress: &'t [Progress],
     fault_log: FaultLog,
     tick: u32,
+    any_blocking: bool,
+    slots: usize,
     reuse: Option<ReuseParts>,
     probe: Option<&'t crate::probe::TickProbe<'t>>,
 }
@@ -245,6 +247,12 @@ impl<'t> Env<'t> for Lane<'t> {
     fn health(&mut self, index: usize) -> &mut StepHealth {
         // SAFETY: `index` is the step this worker is running, and no other worker touches it.
         unsafe { &mut *self.view.health.add(index) }
+    }
+    fn any_blocking(&self) -> bool {
+        self.view.any_blocking
+    }
+    fn slot_count(&self) -> usize {
+        self.view.slots
     }
     fn fault_log(&self) -> (FaultLog, u32) {
         (self.view.fault_log, self.view.tick)
@@ -404,6 +412,8 @@ impl Runner<'_> {
                 progress: self.progress,
                 fault_log: self.fault_log,
                 tick: self.tick,
+                any_blocking: self.any_blocking,
+                slots: self.slots,
                 reuse: self.reuse.as_mut().map(|table| table.parts()),
                 probe: self.probe,
             };

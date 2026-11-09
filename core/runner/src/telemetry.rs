@@ -21,6 +21,10 @@ pub struct Counters {
     pub backoff_skips: u64,
     /// Dirty steps held back because the activity mask cleared them.
     pub deferrals: u64,
+    /// Steps not called because a blocking output was full.
+    pub backpressure_deferrals: u64,
+    /// Values a bounded edge rejected.
+    pub backpressure_events: u64,
     /// Steps that went pending.
     pub pending: u64,
     /// Dirty steps a cancel left unrun, counted when the cancel stopped a tick.

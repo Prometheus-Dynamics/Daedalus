@@ -162,7 +162,13 @@ struct Built {
 }
 
 /// The pressure each edge declared, by the slot it lands on.
-type EdgeRules = BTreeMap<u32, Pressure>;
+type EdgeRules = BTreeMap<u32, EdgeRule>;
+
+#[derive(Clone, Copy)]
+struct EdgeRule {
+    pressure: Pressure,
+    blocking: bool,
+}
 
 /// One step's wiring while it's being laid out.
 struct Draft {
@@ -334,12 +340,13 @@ fn apply_edge(rules: &mut EdgeRules, slot: u32, policy: &EdgePolicyDoc) {
             cap: (*capacity).max(1),
             overflow: match overflow.as_str() {
                 "drop_newest" => Overflow::DropNewest,
-                "error_on_full" => Overflow::ErrorOnFull,
+                "error_on_full" | "block" => Overflow::ErrorOnFull,
                 _ => Overflow::DropOldest,
             },
         },
     };
-    rules.insert(slot, pressure);
+    let blocking = matches!(policy, EdgePolicyDoc::Bounded { overflow, .. } if overflow == "block");
+    rules.insert(slot, EdgeRule { pressure, blocking });
 }
 
 /// Each slot's capacity and read rule. A slot with several readers keeps its value for all of
@@ -357,8 +364,8 @@ fn slot_specs(planned: &Planned, options: LoadOptions, edges: &EdgeRules) -> Vec
                     kind: SlotKind::Held,
                 };
             }
-            let cap = match edges.get(&(at as u32)) {
-                Some(Pressure::Bounded { cap, .. }) => *cap,
+            let cap = match edges.get(&(at as u32)).map(|rule| rule.pressure) {
+                Some(Pressure::Bounded { cap, .. }) => cap,
                 Some(Pressure::LatestOnly) => 1,
                 _ => options.fifo_capacity.max(1),
             };
@@ -545,9 +552,10 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         .collect();
     let (mut runner, buffers) =
         owned_run::build(steps, meta, table, slots, &host_inputs, clock).map_err(LoadError::Run)?;
-    for (slot, pressure) in edges {
+    for (slot, rule) in edges {
         // A slot a kept rule can't apply to stays on the default.
-        let _ = runner.set_pressure(slot, pressure);
+        let _ = runner.set_pressure(slot, rule.pressure);
+        let _ = runner.set_blocking(slot, rule.blocking);
     }
     let mut host = Host::new(runner, ports, types);
     host.owned = Some(buffers);
