@@ -1,6 +1,7 @@
 //! One row per step for a Detailed report.
 
 use daedalus_runner::Runner;
+use std::vec::Vec;
 
 /// One step's state at report time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

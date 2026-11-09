@@ -1,6 +1,7 @@
 //! Host telemetry. The runner keeps fixed counters; this module adds the clock, the levels, the
 //! event log and the reports. Nothing here is in the runner's tick path, except the counters.
 
+use std::vec::Vec;
 mod events;
 mod levels;
 mod node;

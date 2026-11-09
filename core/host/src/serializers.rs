@@ -1,7 +1,7 @@
 //! The serializer map, keyed by type key. The registry supplies the entries.
 
 use std::boxed::Box;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::string::String;
 
 use daedalus_types::TypeKey;
@@ -24,7 +24,7 @@ pub struct SerializerEntry {
 /// Serializers by type key.
 #[derive(Default)]
 pub struct ValueSerializers {
-    entries: HashMap<String, SerializerEntry>,
+    entries: BTreeMap<String, SerializerEntry>,
 }
 
 impl ValueSerializers {

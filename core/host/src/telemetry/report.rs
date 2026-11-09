@@ -1,6 +1,8 @@
 //! The execution report: a text table and a JSON form. Both are host side, so they may allocate.
 
 use std::fmt::Write;
+use std::string::String;
+use std::vec::Vec;
 
 use daedalus_runner::Counters;
 

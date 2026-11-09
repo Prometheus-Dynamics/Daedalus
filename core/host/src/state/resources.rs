@@ -2,7 +2,9 @@
 //! never written to snapshots. A reload moves them to the new store with [`StateStore::carry_resources`],
 //! so each one is dropped exactly once.
 
-use std::any::Any;
+use core::any::Any;
+use std::boxed::Box;
+use std::vec::Vec;
 
 use daedalus_types::NodeId;
 
@@ -36,7 +38,7 @@ impl StateStore {
     pub fn carry_resources(&mut self, from: &mut StateStore, nodes: &[NodeId]) -> usize {
         let mut moved = 0;
         let mut kept = Vec::new();
-        for entry in std::mem::take(&mut from.entries) {
+        for entry in core::mem::take(&mut from.entries) {
             if entry.resource && nodes.contains(&entry.node) {
                 self.put(entry.node, entry.instance, true, entry.value, entry.codec);
                 moved += 1;
