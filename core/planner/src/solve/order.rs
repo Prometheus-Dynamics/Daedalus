@@ -4,6 +4,8 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fmt;
 
+use daedalus_graph::NodeKindDoc;
+
 use super::Work;
 use crate::pipeline::SolveError;
 
@@ -50,6 +52,9 @@ pub fn run(work: &mut Work<'_>) {
         .iter()
         .map(|edge| (edge.from.node as usize, edge.to.node as usize))
         .filter(|&(from, to)| from < count && to < count)
+        // A host bridge hands values in at the start of a tick and collects them at the end, so
+        // one bridge can both feed and read a chain without that being a cycle.
+        .filter(|&(_, to)| work.graph.nodes[to].doc.kind != NodeKindDoc::HostBridge)
         .collect();
     let mut waiting = vec![0u32; count];
     let mut leaving = vec![Vec::new(); count];

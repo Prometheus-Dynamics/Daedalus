@@ -5,6 +5,7 @@
 
 pub mod assign;
 pub mod pipeline;
+pub mod regions;
 pub mod solve;
 
 pub use pipeline::{Config, SolveError, solve};

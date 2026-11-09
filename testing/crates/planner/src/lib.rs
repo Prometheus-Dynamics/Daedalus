@@ -3,14 +3,15 @@
 #![forbid(unsafe_code)]
 
 use daedalus_backend::{
-    Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, Transfer,
+    Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, Transfer, UnitInfo,
 };
-use daedalus_graph::{EdgeDoc, EdgePolicyDoc, NodeDoc, PortRefDoc};
+use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, NodeDoc, PortRefDoc};
+use daedalus_planner::solve::type_table::TypeTable;
 use daedalus_registry::{
     BodyRecord, ConfigDecl, Conversion, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, Registry,
     SourceAt, TypeRef,
 };
-use daedalus_types::{Literal, Scalar, TypeKey};
+use daedalus_types::{Literal, NodeIndex, Scalar, TypeKey};
 
 fn leak_str(text: impl Into<String>) -> &'static str {
     Box::leak(text.into().into_boxed_str())
@@ -231,7 +232,91 @@ impl Backend for Named {
             .collect()
     }
 
-    fn compile(&self, _: &Region<'_>, _: &CompileCx<'_>) -> Result<Compiled, Refusal> {
-        Err(Refusal::whole_region("placement tests compile nothing"))
+    fn compile(&self, region: &Region<'_>, _: &CompileCx<'_>) -> Result<Compiled, Refusal> {
+        Ok(blob(region))
     }
+}
+
+/// One unit doing all of a region's work.
+fn blob(region: &Region<'_>) -> Compiled {
+    Compiled::Blob {
+        bytes: Vec::new(),
+        units: vec![UnitInfo {
+            covers: region.nodes.to_vec(),
+            reads: region.inputs.to_vec(),
+            writes: region.outputs.to_vec(),
+            absorbed: Vec::new(),
+        }],
+    }
+}
+
+/// Takes everything, and refuses any compile holding a body in `refuse` (a body's text is its
+/// node's id). With `whole`, the refusal names the whole region.
+pub struct Refuser {
+    pub id: &'static str,
+    pub refuse: &'static [&'static str],
+    pub whole: bool,
+}
+
+impl Backend for Refuser {
+    fn id(&self) -> &str {
+        self.id
+    }
+
+    fn memory(&self) -> Vec<MemorySpace> {
+        Vec::new()
+    }
+
+    fn transfers(&self) -> Vec<Transfer> {
+        Vec::new()
+    }
+
+    fn can_take(&self, offer: &Offer<'_>) -> Vec<NodeRef> {
+        offer
+            .nodes
+            .iter()
+            .map(|node| NodeRef {
+                node: node.node,
+                body: node.body,
+            })
+            .collect()
+    }
+
+    fn compile(&self, region: &Region<'_>, cx: &CompileCx<'_>) -> Result<Compiled, Refusal> {
+        let refused: Vec<NodeIndex> = cx
+            .bodies
+            .iter()
+            .filter(|body| self.refuse.contains(&body.text))
+            .map(|body| body.node)
+            .collect();
+        if refused.is_empty() {
+            Ok(blob(region))
+        } else if self.whole {
+            Err(Refusal::whole_region("refused"))
+        } else {
+            Err(Refusal::new(refused, "refused"))
+        }
+    }
+}
+
+/// Solves a graph and gathers the types its ports use, the way a planning run does.
+pub fn solved(
+    registry: &Registry,
+    nodes: Vec<NodeDoc>,
+    edges: Vec<EdgeDoc>,
+) -> (daedalus_planner::solve::Graph, TypeTable) {
+    let body = GraphBody {
+        nodes,
+        edges,
+        groups: Vec::new(),
+    };
+    let graph =
+        daedalus_planner::solve(&body, registry, &daedalus_planner::Config::default()).unwrap();
+    let mut types = TypeTable::default();
+    for node in &graph.nodes {
+        for port in node.inputs.iter().chain(&node.outputs) {
+            types.add(&port.ty);
+        }
+    }
+    (graph, types)
 }

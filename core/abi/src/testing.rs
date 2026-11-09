@@ -16,8 +16,5 @@ pub fn run_once(step: &mut Step, slots: &mut Slots, cx: &mut StepCx) -> StepEnd 
 
 /// Frees what the step owns. Call it once, when finished with the step.
 pub fn release(step: Step) {
-    if let Some(release) = step.release {
-        // SAFETY: `step` is consumed here, so this is the one call, with the step's own `data`.
-        unsafe { release(step.data) }
-    }
+    step.discard();
 }
