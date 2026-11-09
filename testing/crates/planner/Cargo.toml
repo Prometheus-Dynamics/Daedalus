@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+daedalus-backend = { path = "../../../core/backend" }
 daedalus-graph = { path = "../../../core/graph" }
 daedalus-planner = { path = "../../../core/planner" }
 daedalus-registry = { path = "../../../core/registry" }

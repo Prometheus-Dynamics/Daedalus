@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod assign;
 pub mod pipeline;
 pub mod solve;
 

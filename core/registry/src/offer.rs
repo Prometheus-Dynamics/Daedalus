@@ -39,13 +39,13 @@ impl OfferData {
 
 impl Registry {
     /// What to offer `backend`: the graph's nodes, given as index and id, that have a body for
-    /// it, in the order given. `type_index` maps a port type to the solved table. A node with a
-    /// port type it can't map is left out.
+    /// it, in the order given. `type_index` maps a node's port and its declared type to the
+    /// solved table. A node with a port type it can't map is left out.
     pub fn offer_data(
         &self,
         backend: &str,
         nodes: &[(NodeIndex, &str)],
-        type_index: impl Fn(&TypeRef) -> Option<TypeIndex>,
+        type_index: impl Fn(NodeIndex, &str, &TypeRef) -> Option<TypeIndex>,
     ) -> OfferData {
         let mut data = OfferData {
             ports: Vec::new(),
@@ -59,9 +59,10 @@ impl Registry {
                 continue;
             };
             let start = data.ports.len();
-            let inputs = push_ports(&mut data.ports, entry, entry.decl.inputs, &type_index);
+            let type_of = |port: &str, ty: &TypeRef| type_index(*node, port, ty);
+            let inputs = push_ports(&mut data.ports, entry, entry.decl.inputs, &type_of);
             let outputs = inputs.and_then(|inputs| {
-                push_ports(&mut data.ports, entry, entry.decl.outputs, &type_index)
+                push_ports(&mut data.ports, entry, entry.decl.outputs, &type_of)
                     .map(|outputs| (inputs, outputs))
             });
             let Some((inputs, outputs)) = outputs else {
@@ -84,13 +85,13 @@ fn push_ports(
     out: &mut Vec<PortInfo<'static>>,
     entry: &Entry,
     ports: &'static [PortDecl],
-    type_index: &impl Fn(&TypeRef) -> Option<TypeIndex>,
+    type_index: &impl Fn(&str, &TypeRef) -> Option<TypeIndex>,
 ) -> Option<(usize, usize)> {
     let start = out.len();
     for port in ports {
         out.push(PortInfo {
             name: port.name,
-            ty: type_index(&entry.port_type(port))?,
+            ty: type_index(port.name, &entry.port_type(port))?,
             access: port.access,
             optional: port.optional,
         });
