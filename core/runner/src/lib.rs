@@ -17,6 +17,7 @@ mod fence;
 mod owned;
 mod policy;
 mod step;
+mod telemetry;
 mod tick;
 mod values;
 
@@ -31,6 +32,7 @@ pub use owned::{INLINE_BYTES, InlineCell, Untyped};
 pub use owned::{TypedOps, typed_ops, typed_raw};
 pub use policy::Recovery;
 pub use step::{Queue, SlotKind, SlotSpec, StepMeta};
+pub use telemetry::Counters;
 pub use tick::TickReport;
 pub use values::{put_inline, put_static};
 #[cfg(feature = "alloc")]
@@ -105,6 +107,7 @@ pub struct Runner<'a> {
     pending_len: usize,
     health: &'a mut [StepHealth],
     failure: FailurePolicy,
+    counters: Counters,
     activity: &'a mut [u32],
     inline: &'a mut [InlineCell],
     masked: bool,
@@ -211,6 +214,7 @@ impl<'a> Runner<'a> {
             pending_len: 0,
             health,
             failure: FailurePolicy::DEFAULT,
+            counters: Counters::default(),
             activity,
             inline,
             masked: false,

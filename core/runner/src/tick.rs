@@ -36,6 +36,13 @@ impl Runner<'_> {
             tick: self.tick,
             ..TickReport::default()
         };
+        let result = self.run_tick(&mut report);
+        self.counters.absorb(&report);
+        result.map(|()| report)
+    }
+
+    /// The tick's work, with its report filled in as it goes.
+    fn run_tick(&mut self, report: &mut TickReport) -> Result<(), RunError> {
         let words = words_for(self.steps.len());
         let mut any = 0;
         for word in 0..words {
@@ -45,10 +52,10 @@ impl Runner<'_> {
         report.word_reads = words as u32;
         if any == 0 && self.pending_len == 0 {
             report.idle = true;
-            return Ok(report);
+            return Ok(());
         }
         if self.pending_len > 0 {
-            self.poll_fences(&mut report);
+            self.poll_fences(report);
         }
         for word in 0..words {
             loop {
@@ -59,19 +66,20 @@ impl Runner<'_> {
                 let bit = bits.trailing_zeros();
                 self.dirty[word] = bits & !(1 << bit);
                 report.word_reads += 1;
-                self.step_once(word * 32 + bit as usize, &mut report)?;
+                self.step_once(word * 32 + bit as usize, report)?;
             }
         }
         for word in 0..words {
             self.dirty[word] |= self.carry[word];
             self.carry[word] = 0;
         }
-        Ok(report)
+        Ok(())
     }
 
     /// Calls step `index` once, or runs its recovery, and applies what it returned.
     fn step_once(&mut self, index: usize, report: &mut TickReport) -> Result<(), RunError> {
         if self.masked && !bits::get(self.activity, index) {
+            self.counters.deferrals += 1;
             return Ok(());
         }
         let meta: StepMeta = self.meta[index];
@@ -83,6 +91,7 @@ impl Runner<'_> {
         if health.backing_off() {
             if self.cx.now_ns < health.until_ns() {
                 // Still in backoff: stay dirty, so the step is tried again on a later tick.
+                self.counters.backoff_skips += 1;
                 bits::set(self.carry, index);
                 return Ok(());
             }
@@ -95,6 +104,7 @@ impl Runner<'_> {
             self.cx.flags = self.call_flags(index);
             let mut slots = Slots::of(&mut self.cells[..self.slots]);
             report.step_calls += 1;
+            self.health[index].calls = self.health[index].calls.saturating_add(1);
             // SAFETY: `run` and `data` come from one `Step`, so the body was built to take that data.
             // `slots` and `cx` are exclusive to this call, and they stay valid until it returns.
             let end = unsafe { run(data, &mut slots, &mut self.cx) };

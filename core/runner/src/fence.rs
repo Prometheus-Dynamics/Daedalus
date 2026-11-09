@@ -21,6 +21,7 @@ impl Runner<'_> {
         }
         self.pending[at] = entry;
         self.pending_len += 1;
+        self.counters.pending += 1;
         true
     }
 

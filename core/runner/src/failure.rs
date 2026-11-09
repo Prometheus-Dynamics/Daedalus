@@ -112,6 +112,7 @@ pub struct StepHealth {
     pub(crate) disabled: bool,
     pub(crate) auto_off: bool,
     pub(crate) restart: bool,
+    pub(crate) calls: u32,
 }
 
 impl StepHealth {
@@ -138,6 +139,11 @@ impl StepHealth {
     /// True when the step was turned off by an automatic policy rather than by the host.
     pub const fn auto_off(&self) -> bool {
         self.auto_off
+    }
+
+    /// How many times the body has been called, counting recovery retries.
+    pub const fn calls(&self) -> u32 {
+        self.calls
     }
 
     /// True when the next call must reset the body's state.
