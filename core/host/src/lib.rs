@@ -7,9 +7,13 @@
 #![allow(clippy::result_large_err)]
 
 mod config_cache;
+#[cfg(feature = "std")]
+mod drive;
 mod freshness;
 mod held;
 mod inbound;
+#[cfg(all(feature = "std", target_os = "linux"))]
+pub mod inbound_fd;
 mod io;
 mod label;
 mod ports;
@@ -20,10 +24,14 @@ mod state;
 pub mod stream;
 mod take;
 mod telemetry;
+#[cfg(feature = "std")]
+mod wait;
 
 pub use daedalus_runner::TickReport;
 
 pub use config_cache::ConfigCache;
+#[cfg(feature = "std")]
+pub use drive::StopHandle;
 pub use inbound::{Drops, PortPolicy};
 pub use io::{FeedOutcome, Host, HostError};
 pub use label::{LABEL_BYTES, Label};
@@ -32,3 +40,5 @@ pub use state::{Codec, StateCodec, StateStore};
 #[cfg(feature = "std")]
 pub use state::{SnapshotError, restore_json, snapshot_json};
 pub use telemetry::{Event, EventLog, ExecutionReport, Level, NodeRow, Telemetry};
+#[cfg(feature = "std")]
+pub use wait::{InboundSignal, InboundWait, InboundWaiter};

@@ -4,7 +4,7 @@
 
 mod input;
 mod output;
-mod worker;
+pub(crate) mod worker;
 
 use std::string::String;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -18,7 +18,7 @@ pub use input::{GraphInput, InputStats, StreamFeed};
 pub use output::{GraphOutput, OutputStats, OutputSubscription};
 pub use worker::{StreamGraphWorker, StreamWorkerDiagnostics, StreamWorkerStopError, WorkerStop};
 
-use crate::{FeedOutcome, Host, HostError, PortPolicy};
+use crate::{FeedOutcome, Host, HostError, InboundSignal, PortPolicy};
 use input::InputPort;
 use output::OutputPort;
 
@@ -132,6 +132,8 @@ pub(crate) struct Shared {
     pub(crate) outputs: Vec<(String, Arc<OutputPort>)>,
     pub(crate) state: Mutex<Lifecycle>,
     pub(crate) wake: Condvar,
+    /// Readiness for the drive loops: set by every feed, cleared when it is taken.
+    pub(crate) signal: Arc<InboundSignal>,
 }
 
 /// The mutable part of the shared state.
@@ -163,8 +165,8 @@ impl Shared {
 
 /// A graph and its stream ports.
 pub struct StreamGraph<H> {
-    host: Option<H>,
-    shared: Arc<Shared>,
+    pub(crate) host: Option<H>,
+    pub(crate) shared: Arc<Shared>,
     worker: Option<StreamGraphWorker<H>>,
 }
 
@@ -182,6 +184,7 @@ impl<H: StreamHost> StreamGraph<H> {
                 .collect(),
             state: Mutex::new(Lifecycle::default()),
             wake: Condvar::new(),
+            signal: Arc::new(InboundSignal::new()),
         });
         StreamGraph {
             host: Some(host),
@@ -243,6 +246,7 @@ impl<H: StreamHost> StreamGraph<H> {
         for (_, port) in &self.shared.inputs {
             port.close();
         }
+        self.shared.signal.close();
         self.shared.set_state(StreamGraphState::Closed);
     }
 

@@ -74,6 +74,11 @@ impl InputPort {
         }
     }
 
+    /// Whether a value is waiting.
+    pub(crate) fn has_items(&self) -> bool {
+        !self.lock().items.is_empty()
+    }
+
     /// The oldest queued value, if any.
     pub(crate) fn pop(&self) -> Option<Value> {
         self.lock().items.pop_front()
@@ -135,6 +140,7 @@ impl GraphInput {
         let outcome = self.port.feed(value);
         if matches!(outcome, StreamFeed::Accepted | StreamFeed::Dropped(_)) {
             self.shared.kick();
+            self.shared.signal.notify();
         }
         outcome
     }

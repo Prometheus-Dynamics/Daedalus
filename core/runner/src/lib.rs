@@ -17,6 +17,8 @@ mod async_step;
 mod bits;
 mod cancel;
 mod error;
+#[cfg(all(feature = "std", target_os = "linux"))]
+pub mod event_fd;
 mod exec;
 mod failure;
 #[cfg(feature = "alloc")]
