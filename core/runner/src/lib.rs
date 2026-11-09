@@ -23,6 +23,8 @@ mod fence;
 mod join;
 #[cfg(feature = "threads")]
 mod lanes;
+#[cfg(feature = "alloc")]
+mod nested;
 mod owned;
 mod policy;
 mod progress;
@@ -44,7 +46,9 @@ pub use fanin::fanin_order;
 pub use join::Fire;
 #[cfg(feature = "threads")]
 pub use lanes::{LaneError, Lanes, Pool};
-pub use owned::{INLINE_BYTES, InlineCell, Untyped};
+#[cfg(feature = "alloc")]
+pub use nested::{Nested, SlotList, drop_owned, read_bool, typed_view};
+pub use owned::{INLINE_BYTES, InlineCell, Untyped, place};
 #[cfg(feature = "alloc")]
 pub use owned::{TypedOps, typed_ops, typed_raw};
 pub use policy::Recovery;
@@ -54,7 +58,7 @@ pub use reuse::{
 pub use step::{Queue, SlotKind, SlotSpec, StepMeta};
 pub use telemetry::Counters;
 pub use tick::TickReport;
-pub use values::{put_inline, put_static};
+pub use values::{put, put_inline, put_static};
 #[cfg(feature = "alloc")]
 pub use values::{put_shared, put_typed};
 

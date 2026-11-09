@@ -166,6 +166,9 @@ pub struct NodeDoc {
     pub outputs: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, Lit>,
+    /// What a `control` node does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<ControlDoc>,
 }
 
 impl NodeDoc {
@@ -188,8 +191,30 @@ impl NodeDoc {
             inputs: Vec::new(),
             outputs: Vec::new(),
             metadata: BTreeMap::new(),
+            control: None,
         }
     }
+}
+
+/// Which control operator a node is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlOp {
+    If,
+    ForEach,
+    Until,
+}
+
+/// A control node's operator and its named body graphs. Each body is closed: its one host bridge
+/// holds its ports, and nothing in it names anything outside.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ControlDoc {
+    pub op: ControlOp,
+    /// `until` only: how many times the body may run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<u32>,
+    pub bodies: BTreeMap<String, GraphBody>,
 }
 
 /// How the runner lines up a sync group's inputs.

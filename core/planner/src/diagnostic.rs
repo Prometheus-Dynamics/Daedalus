@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::PlanError;
 use crate::assign::error::AssignError;
+use crate::control::ControlError;
 use crate::pipeline::SolveError;
 use crate::regions::RegionError;
 use crate::solve::consts::ConstError;
@@ -57,6 +58,11 @@ pub enum Code {
     Encode,
     Write,
     LintWarning,
+    ControlBodyMissing,
+    ControlBodyEdge,
+    ControlBodyInvalid,
+    ControlMaxInvalid,
+    ControlBodyWaits,
 }
 
 /// Only errors stop planning. Warnings come back with the plan.
@@ -251,6 +257,24 @@ impl From<&RateError> for Diagnostic {
     }
 }
 
+impl From<&ControlError> for Diagnostic {
+    fn from(error: &ControlError) -> Diagnostic {
+        let base = |code| Diagnostic::error(code, error);
+        match error {
+            ControlError::BodyMissing { node, .. } => base(Code::ControlBodyMissing).on(node),
+            ControlError::BodyEdge { node, port, .. } => base(Code::ControlBodyEdge).at(node, port),
+            ControlError::BodyInvalid { node, .. } | ControlError::BodyShape { node, .. } => {
+                base(Code::ControlBodyInvalid).on(node)
+            }
+            ControlError::TypeMismatch { node, port, .. } => {
+                base(Code::TypeMismatch).at(node, port)
+            }
+            ControlError::MaxInvalid { node, .. } => base(Code::ControlMaxInvalid).on(node),
+            ControlError::BodyWaits { node, .. } => base(Code::ControlBodyWaits).on(node),
+        }
+    }
+}
+
 impl From<&SolveError> for Diagnostic {
     fn from(error: &SolveError) -> Diagnostic {
         match error {
@@ -265,6 +289,7 @@ impl From<&SolveError> for Diagnostic {
             SolveError::Rewrite(error) => error.into(),
             SolveError::Order(error) => error.into(),
             SolveError::Rates(error) => error.into(),
+            SolveError::Control(error) => error.into(),
         }
     }
 }
@@ -319,6 +344,7 @@ impl PlanError {
             PlanError::TransferUnavailable { .. } => {
                 vec![Diagnostic::error(Code::TransferUnavailable, self)]
             }
+            PlanError::Control { .. } => vec![Diagnostic::error(Code::ControlBodyInvalid, self)],
             PlanError::Encode(_) => vec![Diagnostic::error(Code::Encode, self)],
             PlanError::Write { .. } => vec![Diagnostic::error(Code::Write, self)],
         }

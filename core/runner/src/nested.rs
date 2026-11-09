@@ -1,0 +1,192 @@
+//! Running a step list inside a step, and the values a control node passes around.
+//!
+//! An input is a view: a copy of the cell that owns nothing, as for any step. An output is a `Full`
+//! cell that owns its value.
+
+#![cfg(feature = "alloc")]
+
+use alloc::vec;
+use alloc::vec::Vec;
+use core::any::TypeId;
+
+use daedalus_abi::{Slot, SlotState, Slots, Step, StepCx, StepEnd};
+use daedalus_value::OwnerKind;
+
+use crate::owned::{self, INLINE_BYTES, InlineCell};
+
+fn is_full(slot: &Slot) -> bool {
+    slot.state == SlotState::Full as u32
+}
+
+/// Releases what `slot` owns. Pass only a cell that owns its value, never a view of an input.
+pub fn drop_owned(slot: Slot) {
+    if is_full(&slot) {
+        // SAFETY: the caller hands over a cell that owns its value, by value, so it's released
+        // once.
+        unsafe { owned::release(&slot) };
+    }
+}
+
+/// The `T` a typed cell holds, without taking it.
+pub fn typed_view<T: 'static>(slot: &Slot) -> Option<&T> {
+    if !is_full(slot) || slot.owner != OwnerKind::Typed as u32 {
+        return None;
+    }
+    // SAFETY: a full typed cell's `cap` was written by `typed_raw`, so it names this table.
+    let ops = unsafe { owned::typed_ops(slot.cap) };
+    // SAFETY: the table says the payload is a `T`, and the holder of `slot` keeps its reference
+    // for as long as the borrow of `slot` lasts.
+    ((ops.type_id)() == TypeId::of::<T>()).then(|| unsafe { &*slot.data.cast::<T>().cast_const() })
+}
+
+/// The bool in a cell, typed or as one byte.
+pub fn read_bool(slot: &Slot) -> Option<bool> {
+    if !is_full(slot) {
+        return None;
+    }
+    if slot.owner == OwnerKind::Typed as u32 {
+        return typed_view::<bool>(slot).copied();
+    }
+    let bytes = slot.owner == OwnerKind::Inline as u32 || slot.owner == OwnerKind::Static as u32;
+    // SAFETY: inline and static cells hold `len` readable bytes, and `len` is checked to be 1.
+    (bytes && slot.len == 1).then(|| unsafe { *slot.data } != 0)
+}
+
+/// A list of values of any one type: what a `for_each` reads and writes. Elements stay owned here
+/// and are lent to the body as views.
+#[derive(Debug, Default)]
+pub struct SlotList {
+    cells: Vec<Slot>,
+    inline: Vec<InlineCell>,
+}
+
+// SAFETY: a list owns its cells outright and only hands out shared views. Their payloads are
+// `Send + Sync` values or plain bytes, which is what a typed or shared cell holds.
+unsafe impl Send for SlotList {}
+// SAFETY: as above; nothing mutates a list once it is shared.
+unsafe impl Sync for SlotList {}
+
+impl SlotList {
+    /// Room for `capacity` elements. Pushing more is refused, so inline elements never move.
+    pub fn with_capacity(capacity: usize) -> SlotList {
+        SlotList {
+            cells: Vec::with_capacity(capacity),
+            inline: vec![[0; INLINE_BYTES]; capacity],
+        }
+    }
+
+    /// Takes ownership of `slot`. If the list is full, the value is released and `false` returned.
+    pub fn push(&mut self, slot: Slot) -> bool {
+        let at = self.cells.len();
+        let Some(buffer) = self.inline.get_mut(at) else {
+            drop_owned(slot);
+            return false;
+        };
+        self.cells.push(owned::place(slot, buffer));
+        true
+    }
+
+    pub fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    /// A view of one element. The list keeps it.
+    pub fn get(&self, index: usize) -> Option<&Slot> {
+        self.cells.get(index)
+    }
+}
+
+impl Drop for SlotList {
+    fn drop(&mut self) {
+        self.cells.drain(..).for_each(drop_owned);
+    }
+}
+
+/// A step list with cells of its own.
+#[derive(Debug)]
+pub struct Nested {
+    steps: Vec<Step>,
+    cells: Vec<Slot>,
+    inline: Vec<InlineCell>,
+    /// Which cells hold views, in the order `run` takes them.
+    views: Vec<u32>,
+}
+
+// SAFETY: steps are `Send`, and the cells are only touched by whoever holds this exclusively.
+unsafe impl Send for Nested {}
+
+impl Nested {
+    pub fn new(steps: Vec<Step>, cells: usize, views: Vec<u32>) -> Nested {
+        Nested {
+            steps,
+            cells: vec![Slot::EMPTY; cells],
+            inline: vec![[0; INLINE_BYTES]; cells],
+            views,
+        }
+    }
+
+    fn is_view(&self, cell: usize) -> bool {
+        self.views.contains(&(cell as u32))
+    }
+
+    fn settle(&mut self) {
+        for at in 0..self.cells.len() {
+            if !self.is_view(at) && is_full(&self.cells[at]) {
+                self.cells[at] = owned::place(self.cells[at], &mut self.inline[at]);
+            }
+        }
+    }
+
+    /// Lends `inputs` to the cells named at construction and runs every step in order. Stops at
+    /// the first fault. A step that was skipped doesn't stop the ones after it. Anything else
+    /// comes back as the step ended, for the caller to report.
+    pub fn run(&mut self, inputs: &[Slot], cx: &mut StepCx) -> StepEnd {
+        for (&cell, input) in self.views.iter().zip(inputs) {
+            self.cells[cell as usize] = *input;
+        }
+        let mut slots = Slots::of(&mut self.cells);
+        for at in 0..self.steps.len() {
+            let step = &self.steps[at];
+            // SAFETY: `slots` and `cx` are valid and exclusive for this call, and a `Step`'s `run`
+            // and `data` belong together, as they do for every step the runner calls.
+            match unsafe { (step.run)(step.data, &mut slots, cx) } {
+                StepEnd::Done | StepEnd::Skipped => {}
+                end => return end,
+            }
+            self.settle();
+        }
+        StepEnd::Done
+    }
+
+    /// Takes an output, which then belongs to the caller. A cell holding a view has none to give.
+    pub fn take(&mut self, cell: u32) -> Option<Slot> {
+        let at = cell as usize;
+        if self.is_view(at) || !self.cells.get(at).is_some_and(is_full) {
+            return None;
+        }
+        let slot = self.cells[at];
+        self.cells[at] = Slot::EMPTY;
+        Some(slot)
+    }
+
+    /// Clears every cell, releasing outputs nobody took.
+    pub fn reset(&mut self) {
+        for at in 0..self.cells.len() {
+            let slot = core::mem::replace(&mut self.cells[at], Slot::EMPTY);
+            if !self.is_view(at) {
+                drop_owned(slot);
+            }
+        }
+    }
+}
+
+impl Drop for Nested {
+    fn drop(&mut self) {
+        self.reset();
+        self.steps.drain(..).for_each(Step::discard);
+    }
+}

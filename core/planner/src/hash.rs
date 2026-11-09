@@ -5,8 +5,8 @@
 
 use daedalus_backend::Backend;
 use daedalus_graph::{
-    EdgeDoc, EdgePolicyDoc, GraphBody, GroupDoc, HostInputPolicy, Lit, NodeDoc, NodeKindDoc,
-    RateDoc, SyncGroupDoc, SyncPolicy,
+    ControlDoc, ControlOp, EdgeDoc, EdgePolicyDoc, GraphBody, GroupDoc, HostInputPolicy, Lit,
+    NodeDoc, NodeKindDoc, RateDoc, SyncGroupDoc, SyncPolicy,
 };
 use daedalus_registry::Registry;
 use daedalus_types::fnv1a64;
@@ -143,6 +143,7 @@ impl Canon {
             inputs,
             outputs,
             metadata,
+            control,
         } = node;
         self.text(id);
         self.byte(match kind {
@@ -182,6 +183,22 @@ impl Canon {
         self.texts(inputs);
         self.texts(outputs);
         self.lits(metadata.len(), metadata.iter());
+        self.flag(control.is_some());
+        if let Some(ControlDoc { op, max, bodies }) = control {
+            self.byte(match op {
+                ControlOp::If => 0,
+                ControlOp::ForEach => 1,
+                ControlOp::Until => 2,
+            });
+            self.word(max.map_or(u64::MAX, u64::from));
+            self.len(bodies.len());
+            for (name, body) in bodies {
+                self.text(name);
+                let bytes = graph_bytes(body);
+                self.len(bytes.len());
+                self.0.extend_from_slice(&bytes);
+            }
+        }
     }
 
     fn edge(&mut self, edge: &EdgeDoc) {

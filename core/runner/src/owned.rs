@@ -178,6 +178,8 @@ mod typed {
     /// The two functions a typed payload needs, monomorphised for its concrete type `T`. A slot's
     /// `cap` holds the address of one of these.
     pub struct TypedOps {
+        /// Which `T` this table is for.
+        pub(crate) type_id: fn() -> core::any::TypeId,
         /// Drops the reference, and nothing else.
         pub(super) release: unsafe fn(*mut u8),
         /// Takes another reference, and nothing else.
@@ -190,6 +192,7 @@ mod typed {
 
     impl<T: Send + Sync + 'static> Ops<T> {
         const OPS: TypedOps = TypedOps {
+            type_id: core::any::TypeId::of::<T>,
             release: release_typed::<T>,
             retain: retain_typed::<T>,
             rebuild: rebuild_typed::<T>,

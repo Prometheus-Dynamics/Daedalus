@@ -351,6 +351,32 @@
           },
           "type": "object"
         },
+        "control": {
+          "additionalProperties": false,
+          "properties": {
+            "bodies": {
+              "additionalProperties": {
+                "$ref": "#/$defs/graph"
+              },
+              "type": "object"
+            },
+            "max": {
+              "type": "integer"
+            },
+            "op": {
+              "enum": [
+                "if",
+                "for_each",
+                "until"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "bodies"
+          ],
+          "type": "object"
+        },
         "fire": {
           "type": "string"
         },

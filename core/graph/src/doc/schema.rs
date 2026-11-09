@@ -86,6 +86,11 @@ pub fn json_schema() -> Value {
                 "inputs": { "type": "array", "items": text },
                 "outputs": { "type": "array", "items": text },
                 "metadata": lits,
+                "control": object(json!({
+                    "op": { "enum": ["if", "for_each", "until"] },
+                    "max": { "type": "integer" },
+                    "bodies": { "type": "object", "additionalProperties": { "$ref": "#/$defs/graph" } },
+                }), &["op", "bodies"]),
             }), &["id"]),
             "port_ref": object(
                 json!({ "node": { "type": "integer" }, "port": text }),
