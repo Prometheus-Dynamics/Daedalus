@@ -416,3 +416,40 @@ build on them.
 - The sim's `SimConfig` has the knobs planner tests need: `refuse`, `merge`, `form`, `faults`,
   `absorb`, `no_transfers`, `drop_output`, `omit_covers`. A sim body's `text` is its node's id.
   `SimMemory` is the memory-only backend, and it has the absorbable `sim.import`.
+
+**The planner as built (B1 to B15).** `core/planner` is the reference, and `core/planner/README.md`
+documents the patch and refresh JSON.
+
+- `plan(graph, registry, backends, config)` takes the registry as an argument. The builder is
+  `Planner`. There are no feature flags on the config and no overloads on ports.
+- Solve runs expand, defaults, rewrite, hydrate, control, ports, typecheck, consts, convert,
+  exclusive, order, rates. A solved node records in `inserted` whether the planner added it, as a
+  conversion or as a copy.
+- `Backend` gained a defaulted `version()`. It changes whenever what the backend takes or compiles
+  may change on this machine, and a cached plan is only reused under the same version.
+- The assignment search has a rank lower bound, checked against brute force. Regions are laid out
+  in topological order, and `UnitInfo.may_pend` says whether a unit can wait on a fence.
+- `#[transfer]` records carry no step of their own: the loader binds them. `ConstOf.value` is a
+  `&Lit`, and `Step::discard` frees a step that was compiled and not used.
+- `core/graph` grew additive fields: `NodeDoc::new`, `host_inputs`, `sync_groups`, the `inputs` and
+  `outputs` lists, and `control`. The schema is regenerated with
+  `cargo run -p daedalus-graph --bin graph_schema`.
+- The cache key is the input graph's bytes and the settings' bytes, each hashed, and an entry keeps
+  the full bytes. The settings cover the config, each backend's id, version, memory and transfers,
+  in the order they'll be tried, and everything the registry declares. Priority enters only as
+  that order, so a reordering that changes nothing leaves the key alone and one that changes which
+  backend comes first changes it. Lints don't count. `PlanCache` is generic, because `Planned` holds
+  steps that can only be taken once.
+- Sharing takes solved graphs. A node whose output type has no key text isn't shared, because a host
+  input couldn't name that type. Sharing is the caller's decision.
+- `Planned.warnings` holds what the lints found. `plan_dump` links no nodes or backends, so it plans
+  host bridges only. A host with a registry calls `explain_plan`.
+- A control node's body takes its ports from its one host bridge, and those ports are held, so a
+  node in a body that needs its input exclusively gets a copy and can't take the value it was lent.
+  A body with a unit that can wait is a planning error. Control nodes need the steps form, and the
+  control backend shares the first host memory space any backend declares.
+- `for_each` reads and writes `daedalus_runner::SlotList`, a list of cells of any one type. A
+  wrapper for a node that makes or takes a list builds on it (D1).
+- A step doesn't know its slot numbers when it's compiled, since stitching comes after compiling.
+  The control backend binds them after stitching. The general answer for node wrappers is still
+  open, and D1 has to settle it.
