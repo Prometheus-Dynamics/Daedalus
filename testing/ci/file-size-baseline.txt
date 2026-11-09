@@ -1,3 +1,0 @@
-# Existing oversized Rust files (over the check-file-sizes.sh line limit) to reduce over time.
-# One repo-relative path per line. scripts/check-file-sizes.sh fails when an entry points at a
-# missing file or at a file that is back within the limit, so remove entries as files are split.
