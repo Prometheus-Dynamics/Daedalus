@@ -12,6 +12,8 @@ alloc = []
 std = ["alloc"]
 # A counting global allocator, for tests.
 count-alloc = ["std"]
+# Runs one step from safe test code.
+test-run = []
 
 [package.metadata.daedalus]
 heap_free = true
