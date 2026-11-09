@@ -24,7 +24,7 @@ merge = []
 blob = []
 receive = ["blob"]
 # Generated Rust for a solved region (D4).
-source = []
+source = ["std", "merge", "blob", "chip"]
 tunable = []
 # Bare-metal chips (D5).
 chip = []

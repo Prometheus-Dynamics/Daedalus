@@ -20,6 +20,7 @@ use daedalus_types::NodeIndex;
 use super::library::{Library, ScalarKind, name_hash, type_hash};
 use super::{CONST_BIT, Overflow, PORT_SHIFT};
 use crate::backend::{BACKEND_ID, CpuBackend};
+use crate::queue_shape::queue_shape;
 
 /// Where an input gets its value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,21 +161,6 @@ pub struct BlobBackend {
     pub library: &'static Library,
 }
 
-fn shape(policy: &EdgePolicyDoc, fifo: u32) -> (u32, Overflow) {
-    match policy {
-        EdgePolicyDoc::Fifo => (fifo.max(1), Overflow::Error),
-        EdgePolicyDoc::LatestOnly => (1, Overflow::DropOldest),
-        EdgePolicyDoc::Bounded { capacity, overflow } => (
-            (*capacity).max(1),
-            match overflow.as_str() {
-                "drop_newest" => Overflow::DropNewest,
-                "error_on_full" | "block" => Overflow::Error,
-                _ => Overflow::DropOldest,
-            },
-        ),
-    }
-}
-
 fn scalar_bits(kind: ScalarKind, value: &Lit) -> Option<u64> {
     let integer = |low: i128, high: i128, value: &Lit| {
         let Lit::Int(value) = value else { return None };
@@ -292,7 +278,7 @@ fn add_edge(
     fifo: u32,
     (key, size): (u32, u32),
 ) -> u32 {
-    let (capacity, overflow) = shape(policy, fifo);
+    let (capacity, overflow) = queue_shape(policy, fifo);
     plan.edges.push(EdgeDesc {
         capacity,
         overflow,

@@ -29,6 +29,7 @@ mod failure;
 mod fanin;
 mod fault_log;
 mod fence;
+mod fixed_queue;
 #[cfg(feature = "alloc")]
 mod forward;
 mod join;
@@ -67,6 +68,7 @@ pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
 #[cfg(feature = "alloc")]
 pub use fanin::fanin_order;
 pub use fault_log::StepFault;
+pub use fixed_queue::{FixedQueue, Overflow, QueueFull};
 #[cfg(feature = "alloc")]
 pub use forward::Forward;
 pub use join::Fire;

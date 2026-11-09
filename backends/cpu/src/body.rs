@@ -2,6 +2,8 @@
 
 use daedalus_runner::ArenaBody;
 
+use crate::shape::BodyShape;
+
 #[cfg(feature = "alloc")]
 use crate::steps::Setup;
 #[cfg(feature = "alloc")]
@@ -16,4 +18,7 @@ pub struct CpuBody {
     /// Runs the node in a fixed block of memory. `None` if a value or the state can't live there:
     /// ports have to be small `Copy` values, and the state must have nothing to drop.
     pub arena: Option<ArenaBody>,
+    /// How the function is called, for code generated around it.
+    #[cfg_attr(not(feature = "alloc"), allow(dead_code))]
+    pub shape: BodyShape,
 }

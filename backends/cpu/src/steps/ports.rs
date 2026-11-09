@@ -94,8 +94,12 @@ pub fn unusable(cx: &mut daedalus_abi::StepCx, node: u32) -> daedalus_abi::StepE
 
 /// The values on a fan-in input, in port number order.
 pub struct FanIn<'a, T: 'static> {
-    cells: &'a [Slot],
-    kind: Kind<T>,
+    from: Fan<'a, T>,
+}
+
+enum Fan<'a, T: 'static> {
+    Cells(&'a [Slot], Kind<T>),
+    Values(&'a [Option<T>]),
 }
 
 /// One value of a fan-in.
@@ -118,26 +122,41 @@ impl<T> Deref for FanItem<'_, T> {
 impl<'a, T: 'static> FanIn<'a, T> {
     #[doc(hidden)]
     pub fn new(cells: &'a [Slot], kind: Kind<T>) -> FanIn<'a, T> {
-        FanIn { cells, kind }
+        FanIn {
+            from: Fan::Cells(cells, kind),
+        }
+    }
+
+    /// A fan-in over values already at hand, for generated code.
+    pub fn values(values: &'a [Option<T>]) -> FanIn<'a, T> {
+        FanIn {
+            from: Fan::Values(values),
+        }
     }
 
     /// How many ports this fan-in has in this graph, with or without a value this tick.
     pub fn len(&self) -> usize {
-        self.cells.len()
+        match self.from {
+            Fan::Cells(cells, _) => cells.len(),
+            Fan::Values(values) => values.len(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.cells.is_empty()
+        self.len() == 0
     }
 
     /// The value on port `index`, if there is one.
     pub fn get(&self, index: usize) -> Option<FanItem<'a, T>> {
-        item(self.cells.get(index)?, self.kind)
+        match self.from {
+            Fan::Cells(cells, kind) => item(cells.get(index)?, kind),
+            Fan::Values(values) => values.get(index)?.as_ref().map(FanItem::Borrowed),
+        }
     }
 
     /// Every value present, in port number order.
     pub fn iter(&self) -> impl Iterator<Item = FanItem<'a, T>> + use<'a, '_, T> {
-        self.cells.iter().filter_map(|cell| item(cell, self.kind))
+        (0..self.len()).filter_map(|index| self.get(index))
     }
 }
 

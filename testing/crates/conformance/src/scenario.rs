@@ -94,6 +94,7 @@ impl Scenario {
                 outputs: 0,
                 id: "test",
                 merges: true,
+                fire_all: false,
                 code: self.code,
                 text: self.text,
             })

@@ -56,6 +56,7 @@ pub(super) fn compile_region(
                 inputs: solved.inputs.len() as u16,
                 outputs: solved.outputs.len() as u16,
                 merges: !opted_out(&solved.doc),
+                fire_all: matches!(solved.fire, daedalus_registry::Fire::All),
                 code: record.code,
                 text: record.text,
             });

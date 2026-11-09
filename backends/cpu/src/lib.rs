@@ -9,7 +9,11 @@ extern crate alloc;
 
 #[cfg(feature = "alloc")]
 mod backend;
+#[cfg(any(feature = "alloc", feature = "blob"))]
 mod body;
+#[cfg(all(feature = "alloc", any(feature = "blob", feature = "source")))]
+mod queue_shape;
+pub mod shape;
 #[cfg(feature = "alloc")]
 pub mod steps;
 
@@ -18,7 +22,7 @@ pub mod blob;
 #[cfg(feature = "chip")]
 pub mod chip;
 #[cfg(all(feature = "alloc", feature = "merge"))]
-pub mod merge;
+pub(crate) mod merge;
 #[cfg(feature = "source")]
 pub mod source;
 

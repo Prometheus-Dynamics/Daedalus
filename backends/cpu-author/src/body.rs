@@ -97,6 +97,20 @@ macro_rules! __daedalus_body {
             memory: &[],
             code: &$crate::__cpu::CpuBody {
                 make: __make,
+                shape: $crate::__cpu::BodyShape {
+                    path: ::core::concat!(::core::module_path!(), "::", ::core::stringify!($($name)*)),
+                    params: &[$($crate::__cpu::ParamShape {
+                        role: $crate::__role!($role),
+                        at: $at,
+                        port: $port,
+                        ty: ::core::any::type_name::<$ty>,
+                    },)*],
+                    outputs: &[$($crate::__cpu::OutputShape {
+                        optional: $crate::__optional!($okind),
+                        ty: ::core::any::type_name::<$oty>,
+                    },)*],
+                    fallible: $crate::__fallible!($flow),
+                },
                 arena: $crate::__arena!(
                     config = ($($config)?),
                     fixed = $fixed,
@@ -208,6 +222,66 @@ macro_rules! __port_fits {
         const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
         __KIND.write.is_some()
     }};
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __role {
+    (read) => {
+        $crate::__cpu::Role::Read
+    };
+    (take) => {
+        $crate::__cpu::Role::Take
+    };
+    (modify) => {
+        $crate::__cpu::Role::Modify
+    };
+    (opt_read) => {
+        $crate::__cpu::Role::OptRead
+    };
+    (opt_take) => {
+        $crate::__cpu::Role::OptTake
+    };
+    (opt_modify) => {
+        $crate::__cpu::Role::OptModify
+    };
+    (state) => {
+        $crate::__cpu::Role::State
+    };
+    (config_ref) => {
+        $crate::__cpu::Role::ConfigRef
+    };
+    (config_val) => {
+        $crate::__cpu::Role::ConfigVal
+    };
+    (ctx) => {
+        $crate::__cpu::Role::Context
+    };
+    (fanin) => {
+        $crate::__cpu::Role::FanIn
+    };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __optional {
+    (option) => {
+        true
+    };
+    (value) => {
+        false
+    };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __fallible {
+    (fallible) => {
+        true
+    };
+    (plain) => {
+        false
+    };
 }
 
 #[macro_export]

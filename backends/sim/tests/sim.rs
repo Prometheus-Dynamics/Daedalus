@@ -32,6 +32,7 @@ fn compile(
             outputs: 0,
             id: "test",
             merges: true,
+            fire_all: false,
             code: &(),
             text,
         })
