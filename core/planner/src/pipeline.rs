@@ -9,11 +9,16 @@ use crate::solve::catalog::Catalog;
 use crate::solve::defaults::{self, DefaultsError};
 use crate::solve::expand::{self, ExpandError};
 use crate::solve::hydrate::{self, HydrateError};
+use crate::solve::ports::{self, PortError};
+use crate::solve::typecheck::{self, TypeCheckError};
 use crate::solve::{Graph, Work};
 
 /// What a planning run is told. Nothing here is global.
 #[derive(Clone, Default)]
-pub struct Config {}
+pub struct Config {
+    /// Also check a graph's own port lists against the declaration.
+    pub strict_ports: bool,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -21,6 +26,8 @@ pub enum SolveError {
     Expand(ExpandError),
     Defaults(DefaultsError),
     Hydrate(HydrateError),
+    Ports(PortError),
+    Types(TypeCheckError),
 }
 
 impl fmt::Display for SolveError {
@@ -29,6 +36,8 @@ impl fmt::Display for SolveError {
             SolveError::Expand(error) => error.fmt(f),
             SolveError::Defaults(error) => error.fmt(f),
             SolveError::Hydrate(error) => error.fmt(f),
+            SolveError::Ports(error) => error.fmt(f),
+            SolveError::Types(error) => error.fmt(f),
         }
     }
 }
@@ -52,6 +61,8 @@ pub fn solve(
     defaults::run(&mut work);
     // B5: the rewrite hook runs here.
     hydrate::run(&mut work);
+    ports::run(&mut work);
+    typecheck::run(&mut work);
     if work.errors.is_empty() {
         Ok(work.graph)
     } else {

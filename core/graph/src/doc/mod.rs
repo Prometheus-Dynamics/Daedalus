@@ -152,6 +152,12 @@ pub struct NodeDoc {
     pub ui_id: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub port_types: BTreeMap<String, String>,
+    /// The input ports a stored graph lists. Empty means none are listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<String>,
+    /// The output ports a stored graph lists. Empty means none are listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, Lit>,
 }
@@ -171,6 +177,8 @@ impl NodeDoc {
             shareable: false,
             ui_id: None,
             port_types: BTreeMap::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
             metadata: BTreeMap::new(),
         }
     }
