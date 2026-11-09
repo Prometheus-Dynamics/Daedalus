@@ -13,6 +13,7 @@ extern crate alloc;
 extern crate std;
 
 mod bits;
+mod cancel;
 mod error;
 mod exec;
 mod failure;
@@ -21,15 +22,17 @@ mod fence;
 mod lanes;
 mod owned;
 mod policy;
+mod progress;
 mod step;
 mod telemetry;
 mod tick;
 mod values;
 
-use daedalus_abi::{Fence, Slot, Step, StepCx};
+use daedalus_abi::{Fence, Progress, Slot, Step, StepCx};
 use daedalus_plan::Span;
 use daedalus_value::OwnerKind;
 
+pub use cancel::{CANCEL_REASON, CancelWord, skip_cancelled};
 pub use error::{LoadError, MaskError, RunError};
 pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
 #[cfg(feature = "threads")]
@@ -120,6 +123,8 @@ pub struct Runner<'a> {
     masked: bool,
     cx: StepCx,
     tick: u32,
+    /// One `(done, total)` pair per step, once a host attaches them.
+    progress: &'a [Progress],
 }
 
 impl<'a> Runner<'a> {
@@ -227,6 +232,7 @@ impl<'a> Runner<'a> {
             masked: false,
             cx: StepCx::new(),
             tick: 0,
+            progress: &[],
         })
     }
 

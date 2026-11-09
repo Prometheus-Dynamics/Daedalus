@@ -44,6 +44,9 @@ pub enum RunError {
     /// A step faulted under a policy that stops the run (`fail_fast`). The tick's other steps keep
     /// their dirty bits, and the faulted step's tick was dropped.
     Fault { step: u32 },
+    /// A cancel stopped the tick before `step` ran. That step and the ones after it are still
+    /// dirty, and run on the next tick once the word is cleared.
+    Cancelled { step: u32 },
     /// A host named a step the plan does not have.
     NoStep { step: u32 },
 }

@@ -1,7 +1,7 @@
 //! One step's run, written once for the serial tick and the parallel lanes. Each supplies an
 //! [`Env`], so both run the same logic and cannot drift apart.
 
-use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
+use daedalus_abi::{Progress, Slot, SlotState, Slots, StepCx, StepEnd};
 
 use crate::error::RunError;
 use crate::failure::{FailurePolicy, StepHealth};
@@ -89,6 +89,8 @@ pub(crate) trait Env<'t> {
     fn table(&self) -> &'t [u32];
     fn step_fn(&self, index: usize) -> (RunFn, *mut ());
     fn health(&mut self, index: usize) -> &mut StepHealth;
+    /// `index`'s progress cells, or null when nobody attached any.
+    fn progress(&self, index: usize) -> *const Progress;
     /// The cells bodies see, and the context for the call.
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx);
     fn failure(&self) -> FailurePolicy;
@@ -134,8 +136,10 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
     let end = loop {
         load_cells(env, meta);
         let flags = env.health(index).call_flags();
+        let progress = env.progress(index);
         let (cells, cx) = env.parts();
         cx.flags = flags;
+        cx.progress = progress;
         let mut slots = Slots::of(cells);
         report.step_calls += 1;
         // SAFETY: `run` and `data` come from one `Step`, so the body was built to take that data.
@@ -286,6 +290,10 @@ impl<'a> Env<'a> for Runner<'a> {
     #[inline]
     fn health(&mut self, index: usize) -> &mut StepHealth {
         &mut self.health[index]
+    }
+    #[inline]
+    fn progress(&self, index: usize) -> *const Progress {
+        crate::progress::cell(self.progress, index)
     }
     #[inline]
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx) {

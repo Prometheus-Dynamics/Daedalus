@@ -60,6 +60,9 @@ impl Runner<'_> {
                     break;
                 }
                 let bit = bits.trailing_zeros();
+                if self.cx.cancelled() {
+                    return Err(self.stop_cancelled(word * 32 + bit as usize));
+                }
                 self.dirty[word] = bits & !(1 << bit);
                 report.word_reads += 1;
                 step_once(self, word * 32 + bit as usize, report)?;

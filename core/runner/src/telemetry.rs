@@ -23,7 +23,7 @@ pub struct Counters {
     pub deferrals: u64,
     /// Steps that went pending.
     pub pending: u64,
-    /// Steps stopped by a cancel. Zero until cancellation lands.
+    /// Dirty steps a cancel left unrun, counted when the cancel stopped a tick.
     pub cancelled: u64,
 }
 
