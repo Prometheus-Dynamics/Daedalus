@@ -9,11 +9,16 @@
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
 
 mod bits;
 mod error;
+mod exec;
 mod failure;
 mod fence;
+#[cfg(feature = "threads")]
+mod lanes;
 mod owned;
 mod policy;
 mod step;
@@ -27,6 +32,8 @@ use daedalus_value::OwnerKind;
 
 pub use error::{LoadError, MaskError, RunError};
 pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
+#[cfg(feature = "threads")]
+pub use lanes::{LaneError, Lanes, Pool};
 pub use owned::{INLINE_BYTES, InlineCell, Untyped};
 #[cfg(feature = "alloc")]
 pub use owned::{TypedOps, typed_ops, typed_raw};

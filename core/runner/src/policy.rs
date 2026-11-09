@@ -1,7 +1,5 @@
 //! What the runner does with a step that faults, per step, and the host's manual switches.
 
-use daedalus_abi::RESTART;
-
 use crate::failure::{FailurePolicy, StepHealth};
 use crate::{RunError, Runner};
 
@@ -71,43 +69,6 @@ impl Runner<'_> {
             Ok(step as usize)
         } else {
             Err(RunError::NoStep { step })
-        }
-    }
-
-    /// Records one failure of `index`. Automatic turning off comes first, and only when the
-    /// policy sets it. Otherwise a step at or past `backoff_after` backs off.
-    pub(crate) fn record_failure(&mut self, index: usize, recovery: Recovery) {
-        let policy = self.failure;
-        let now = self.cx.now_ns;
-        let health = &mut self.health[index];
-        health.failures = health.failures.saturating_add(1);
-        if policy.auto_off_after() > 0 && health.failures >= policy.auto_off_after() {
-            health.disabled = true;
-            health.auto_off = true;
-            health.backing_off = false;
-        } else if health.failures >= policy.backoff_after() {
-            health.backing_off = true;
-            health.until_ns = now.saturating_add(policy.delay_ns(health.failures));
-        }
-        if recovery == Recovery::Restart {
-            health.restart = true;
-        }
-    }
-
-    /// Clears a step's failure record after a success.
-    pub(crate) fn record_success(&mut self, index: usize) {
-        let health = &mut self.health[index];
-        health.failures = 0;
-        health.backing_off = false;
-        health.until_ns = 0;
-    }
-
-    /// The flags a call to a step gets: the restart flag while one is pending.
-    pub(crate) fn call_flags(&self, index: usize) -> u32 {
-        if self.health[index].restart {
-            RESTART
-        } else {
-            0
         }
     }
 }

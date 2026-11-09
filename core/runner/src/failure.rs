@@ -2,6 +2,10 @@
 //! from `base` after `backoff_after` failures in a row, and stops at `cap`. Automatic turning off
 //! happens only when a policy sets `auto_off_after` above zero.
 
+use daedalus_abi::RESTART;
+
+use crate::policy::Recovery;
+
 /// The longest backoff any policy may ask for, in nanoseconds.
 pub const MAX_CAP_NS: u64 = 8_000_000_000;
 
@@ -116,6 +120,35 @@ pub struct StepHealth {
 }
 
 impl StepHealth {
+    /// Records one failure at clock time `now`. Automatic turning off comes first, and only when
+    /// the policy sets it. Otherwise a step at or past `backoff_after` backs off.
+    pub(crate) fn on_failure(&mut self, policy: FailurePolicy, now: u64, recovery: Recovery) {
+        self.failures = self.failures.saturating_add(1);
+        if policy.auto_off_after() > 0 && self.failures >= policy.auto_off_after() {
+            self.disabled = true;
+            self.auto_off = true;
+            self.backing_off = false;
+        } else if self.failures >= policy.backoff_after() {
+            self.backing_off = true;
+            self.until_ns = now.saturating_add(policy.delay_ns(self.failures));
+        }
+        if recovery == Recovery::Restart {
+            self.restart = true;
+        }
+    }
+
+    /// Clears the failure record after a success.
+    pub(crate) fn on_success(&mut self) {
+        self.failures = 0;
+        self.backing_off = false;
+        self.until_ns = 0;
+    }
+
+    /// The flags a call to this step gets: the restart flag while one is pending.
+    pub(crate) fn call_flags(&self) -> u32 {
+        if self.restart { RESTART } else { 0 }
+    }
+
     /// Failures in a row. A success sets it back to zero.
     pub const fn failures(&self) -> u32 {
         self.failures

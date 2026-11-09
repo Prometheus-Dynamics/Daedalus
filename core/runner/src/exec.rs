@@ -1,0 +1,326 @@
+//! One step's run, written once for the serial tick and the parallel lanes. Each supplies an
+//! [`Env`], so both run the same logic and cannot drift apart.
+
+use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
+
+use crate::error::RunError;
+use crate::failure::{FailurePolicy, StepHealth};
+use crate::fence::insert_pending;
+use crate::owned::{self, InlineCell};
+use crate::policy::Recovery;
+use crate::step::{Queue, SlotKind, StepMeta};
+use crate::telemetry::Counters;
+use crate::tick::TickReport;
+use crate::{Pending, Runner, spanned};
+
+/// A step's entry point.
+pub(crate) type RunFn = unsafe extern "C" fn(*mut (), *mut Slots, *mut StepCx) -> StepEnd;
+
+/// The queue storage and inline buffers of a runner. The caller of each method holds exclusive
+/// access to the slot's own range of these buffers.
+#[derive(Clone, Copy)]
+pub(crate) struct SlotParts {
+    pub storage: *mut Slot,
+    pub inline: *mut InlineCell,
+}
+
+impl SlotParts {
+    /// The head entry of `queue`, or an empty cell.
+    ///
+    /// # Safety
+    /// The caller has exclusive access to this queue's storage range, or shared access while no
+    /// one writes it.
+    unsafe fn head(self, queue: &Queue) -> Slot {
+        if queue.len > 0 {
+            // SAFETY: `head_index` is inside the queue's range, which the load sized in `storage`.
+            unsafe { *self.storage.add(queue.head_index()) }
+        } else {
+            Slot::EMPTY
+        }
+    }
+
+    /// Stores `cell` at the back of `queue`, moving its reference in. False when the queue is full.
+    ///
+    /// # Safety
+    /// The caller has exclusive access to this queue's storage and inline range.
+    unsafe fn publish(self, queue: &mut Queue, cell: Slot) -> bool {
+        if queue.is_full() {
+            return false;
+        }
+        let at = queue.tail_index();
+        // SAFETY: `at` is inside this queue's inline range, which the caller holds exclusively.
+        let raw = owned::place(cell, unsafe { &mut *self.inline.add(at) });
+        let raw = queue.stamp(raw);
+        // SAFETY: `at` is inside this queue's storage range, which the caller holds exclusively.
+        unsafe { self.storage.add(at).write(raw) };
+        true
+    }
+
+    /// Releases and removes every queued value.
+    ///
+    /// # Safety
+    /// The caller has exclusive access to this queue's storage range.
+    unsafe fn drop_all(self, queue: &mut Queue) {
+        while queue.len > 0 {
+            // SAFETY: the queue owns its head entry, and the pop below forgets it, so the
+            // reference is released exactly once.
+            unsafe { owned::release(&*self.storage.add(queue.head_index())) };
+            queue.pop_head();
+        }
+        queue.unconsumed = 0;
+    }
+
+    /// Removes the consumed head. Unless the step moved it out, it is released here, once.
+    ///
+    /// # Safety
+    /// The caller has exclusive access to this queue's storage range.
+    unsafe fn commit(self, queue: &mut Queue, moved: bool) {
+        if queue.kind == Some(SlotKind::Fifo) && queue.len > 0 && !moved {
+            // SAFETY: the queue owns its head entry and forgets it on the commit below.
+            unsafe { owned::release(&*self.storage.add(queue.head_index())) };
+        }
+        queue.commit();
+    }
+}
+
+/// What a step's run needs from whoever is running it.
+pub(crate) trait Env<'t> {
+    fn meta(&self, index: usize) -> StepMeta;
+    fn table(&self) -> &'t [u32];
+    fn step_fn(&self, index: usize) -> (RunFn, *mut ());
+    fn health(&mut self, index: usize) -> &mut StepHealth;
+    /// The cells bodies see, and the context for the call.
+    fn parts(&mut self) -> (&mut [Slot], &mut StepCx);
+    fn failure(&self) -> FailurePolicy;
+    fn counters(&mut self) -> &mut Counters;
+    /// False when the activity mask holds this step back.
+    fn active(&self, index: usize) -> bool;
+    /// Runs `f` with the queue of `slot`, holding whatever protects it.
+    fn with_queue<R>(&mut self, slot: usize, f: impl FnOnce(&mut Queue, SlotParts) -> R) -> R;
+    fn wake(&mut self, step: u32);
+    /// Keeps `step` dirty for the next tick.
+    fn carry(&mut self, step: usize);
+    fn register_pending(&mut self, entry: Pending) -> bool;
+}
+
+/// Calls step `index` once, or runs its recovery, and applies what it returned.
+pub(crate) fn step_once<'t, E: Env<'t>>(
+    env: &mut E,
+    index: usize,
+    report: &mut TickReport,
+) -> Result<(), RunError> {
+    if !env.active(index) {
+        env.counters().deferrals += 1;
+        return Ok(());
+    }
+    let meta = env.meta(index);
+    let health = *env.health(index);
+    if health.disabled() {
+        drop_inputs(env, meta);
+        return Ok(());
+    }
+    if health.backing_off() {
+        let now = env.parts().1.now_ns;
+        if now < health.until_ns() {
+            // Still in backoff: stay dirty, so the step is tried again on a later tick.
+            env.counters().backoff_skips += 1;
+            env.carry(index);
+            return Ok(());
+        }
+        env.health(index).backing_off = false;
+    }
+    let (run, data) = env.step_fn(index);
+    let mut attempt = 0;
+    let end = loop {
+        load_cells(env, meta);
+        let flags = env.health(index).call_flags();
+        let (cells, cx) = env.parts();
+        cx.flags = flags;
+        let mut slots = Slots::of(cells);
+        report.step_calls += 1;
+        // SAFETY: `run` and `data` come from one `Step`, so the body was built to take that data.
+        // `slots` and `cx` are exclusive to this call, and they stay valid until it returns.
+        let end = unsafe { run(data, &mut slots, cx) };
+        let health = env.health(index);
+        health.calls = health.calls.saturating_add(1);
+        // The restart flag is spent by the call it was set for.
+        health.restart = false;
+        let retry = match meta.recovery {
+            Recovery::Retry { max } => attempt < max,
+            _ => false,
+        };
+        if matches!(end, StepEnd::Fault) && retry {
+            discard_outputs(env, meta);
+            attempt += 1;
+            report.retries += 1;
+            continue;
+        }
+        break end;
+    };
+    match end {
+        StepEnd::Done => {
+            env.health(index).on_success();
+            commit_inputs(env, meta);
+            publish(env, meta)?;
+            for &to in spanned(env.table(), meta.wake) {
+                env.wake(to);
+            }
+        }
+        StepEnd::Skipped => {
+            commit_inputs(env, meta);
+            discard_outputs(env, meta);
+            report.skipped += 1;
+        }
+        StepEnd::Pending(fence) => {
+            // The outputs are stored now. Consumers wait for the fence to be Ready.
+            commit_inputs(env, meta);
+            publish(env, meta)?;
+            let step = index as u32;
+            if !env.register_pending(Pending { step, fence }) {
+                return Err(RunError::PendingFull { step });
+            }
+            env.counters().pending += 1;
+        }
+        StepEnd::Fault => {
+            // Containment: the tick is dropped. Its inputs are consumed, its outputs are
+            // released, and no consumer is woken.
+            report.faults += 1;
+            discard_outputs(env, meta);
+            commit_inputs(env, meta);
+            let now = env.parts().1.now_ns;
+            let policy = env.failure();
+            env.health(index).on_failure(policy, now, meta.recovery);
+            if meta.recovery != Recovery::SkipTick && policy.fail_fast() {
+                return Err(RunError::Fault { step: index as u32 });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Sets the input cells from their queues, and clears the output cells, before a call.
+fn load_cells<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
+    for &slot in spanned(env.table(), meta.inputs) {
+        let slot = slot as usize;
+        // SAFETY: `with_queue` holds what protects this queue, and only this step's slot range is
+        // read.
+        let head = env.with_queue(slot, |queue, parts| unsafe { parts.head(queue) });
+        env.parts().0[slot] = head;
+    }
+    for &slot in spanned(env.table(), meta.outputs) {
+        env.parts().0[slot as usize] = Slot::EMPTY;
+    }
+}
+
+/// Drops every value queued on a disabled step's inputs, releasing each once.
+fn drop_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
+    for &slot in spanned(env.table(), meta.inputs) {
+        // SAFETY: `with_queue` holds what protects this queue.
+        env.with_queue(slot as usize, |queue, parts| unsafe {
+            parts.drop_all(queue)
+        });
+    }
+}
+
+/// Removes what the step consumed. A moved entry's reference went to an output, so it is only
+/// forgotten.
+fn commit_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
+    for &slot in spanned(env.table(), meta.inputs) {
+        let slot = slot as usize;
+        let moved = env.parts().0[slot].state == SlotState::Moved as u32;
+        // SAFETY: `with_queue` holds what protects this queue.
+        env.with_queue(slot, |queue, parts| unsafe { parts.commit(queue, moved) });
+    }
+}
+
+/// Stores every output the body wrote, moving each one's reference into its queue. A cell the
+/// body left empty stores nothing. On overflow, the rest of the outputs are released.
+fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<(), RunError> {
+    let mut overflow = None;
+    for &slot in spanned(env.table(), meta.outputs) {
+        let slot = slot as usize;
+        let cell = core::mem::replace(&mut env.parts().0[slot], Slot::EMPTY);
+        if cell.state != SlotState::Full as u32 {
+            continue;
+        }
+        let stored = overflow.is_none()
+            // SAFETY: `with_queue` holds what protects this queue, and this step is its producer.
+            && env.with_queue(slot, |queue, parts| unsafe { parts.publish(queue, cell) });
+        if !stored {
+            // SAFETY: the cell is Full and this step wrote it, so the reference is still the
+            // cell's, and it is released once here.
+            unsafe { owned::release(&cell) };
+            overflow.get_or_insert(slot as u32);
+        }
+    }
+    match overflow {
+        Some(slot) => Err(RunError::Overflow { slot }),
+        None => Ok(()),
+    }
+}
+
+/// Releases the outputs a skipped or failed step wrote but did not publish.
+fn discard_outputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
+    for &slot in spanned(env.table(), meta.outputs) {
+        let cell = core::mem::replace(&mut env.parts().0[slot as usize], Slot::EMPTY);
+        if cell.state == SlotState::Full as u32 {
+            // SAFETY: the cell is Full and this step wrote it, so it owns the reference.
+            unsafe { owned::release(&cell) };
+        }
+    }
+}
+
+impl<'a> Env<'a> for Runner<'a> {
+    #[inline]
+    fn meta(&self, index: usize) -> StepMeta {
+        self.meta[index]
+    }
+    #[inline]
+    fn table(&self) -> &'a [u32] {
+        self.table
+    }
+    #[inline]
+    fn step_fn(&self, index: usize) -> (RunFn, *mut ()) {
+        (self.steps[index].run, self.steps[index].data)
+    }
+    #[inline]
+    fn health(&mut self, index: usize) -> &mut StepHealth {
+        &mut self.health[index]
+    }
+    #[inline]
+    fn parts(&mut self) -> (&mut [Slot], &mut StepCx) {
+        (&mut self.cells[..self.slots], &mut self.cx)
+    }
+    #[inline]
+    fn failure(&self) -> FailurePolicy {
+        self.failure
+    }
+    #[inline]
+    fn counters(&mut self) -> &mut Counters {
+        &mut self.counters
+    }
+    #[inline]
+    fn active(&self, index: usize) -> bool {
+        !self.masked || crate::bits::get(self.activity, index)
+    }
+    #[inline]
+    fn with_queue<R>(&mut self, slot: usize, f: impl FnOnce(&mut Queue, SlotParts) -> R) -> R {
+        let parts = SlotParts {
+            storage: self.storage.as_mut_ptr(),
+            inline: self.inline.as_mut_ptr(),
+        };
+        f(&mut self.queues[slot], parts)
+    }
+    #[inline]
+    fn wake(&mut self, step: u32) {
+        Runner::wake(self, step);
+    }
+    #[inline]
+    fn carry(&mut self, step: usize) {
+        crate::bits::set(self.carry, step);
+    }
+    #[inline]
+    fn register_pending(&mut self, entry: Pending) -> bool {
+        insert_pending(self.pending, &mut self.pending_len, entry)
+    }
+}

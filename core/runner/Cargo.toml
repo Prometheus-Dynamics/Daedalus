@@ -10,6 +10,10 @@ repository.workspace = true
 default = ["alloc"]
 # Shared and typed payloads, which need the heap to be built.
 alloc = ["daedalus-abi/alloc", "daedalus-value/alloc"]
+# Panics in bodies become faults instead of unwinding.
+std = ["alloc", "daedalus-abi/std"]
+# The parallel lanes: a worker pool and the shared ready queue.
+threads = ["std"]
 
 [package.metadata.daedalus]
 heap_free = true
@@ -21,7 +25,8 @@ daedalus-value = { path = "../value", default-features = false }
 daedalus-types = { path = "../types", default-features = false }
 
 [dev-dependencies]
-daedalus-abi = { path = "../abi", features = ["count-alloc", "test-run"] }
+daedalus-runner = { path = ".", features = ["threads"] }
+daedalus-abi = { path = "../abi", features = ["count-alloc", "test-run", "std"] }
 daedalus-types = { path = "../types" }
 
 # This crate calls step bodies through `Step::run`, so it may use unsafe (see AGENTS.md).
