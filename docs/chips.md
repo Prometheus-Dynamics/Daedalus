@@ -44,6 +44,10 @@ A host sends a 3 to 14 byte message. `daedalus_cpu::param_host::encode_update` w
 
 Setting `Config.freeze_params` turns every marker back into a plain constant, and gives the same module as a graph with no markers. Without the `f64` feature, no `f64` arithmetic is linked: an `f64` value sent to an `f32` parameter still converts, in integer arithmetic.
 
+## One set of nodes for a host and a chip
+
+A `#[node]` needs nothing to run on both. `examples/chip_shared` declares its nodes once, and the same records go into a host's registry, the generated module and a chip's stored plans. Only the `host` feature adds the facade, for tests, so a chip build doesn't pull it.
+
 ## Limitations
 
 - Port values must be `Copy`. Planning refuses anything else and names the type.

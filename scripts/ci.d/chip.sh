@@ -61,4 +61,12 @@ for entry in "${TARGETS[@]}"; do
     status=1
   fi
 done
+
+# One set of nodes for a host and a chip. A chip build must not pull the facade.
+cargo build -q --target thumbv7em-none-eabihf -p daedalus-chip-shared
+if cargo tree -p daedalus-chip-shared --target thumbv7em-none-eabihf -e normal --prefix none |
+  grep -qE '^daedalus v'; then
+  echo "  daedalus-chip-shared: a chip build pulls the facade" >&2
+  status=1
+fi
 exit "$status"

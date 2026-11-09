@@ -87,7 +87,7 @@ The first backend, merging, the Blob and Source forms, chips, the kernels, wasm 
 - [ ] [D10](docs/prs/D10.md) No-heap tier, cross-target CPU runs and Windows (wave 15; needs C1, C10, D1)
 - [ ] [D11](docs/prs/D11.md) Acceleration inventory engine (wave 2; needs A1)
 - [ ] [D12](docs/prs/D12.md) Chip board example: Raspberry Pi Pico (RP2040) (wave 19; needs D7; board run)
-- [ ] [D13](docs/prs/D13.md) Shared nodes: one #[node] for the host and the chip (wave 17; needs C14, D3, D4, D5)
+- [x] [D13](docs/prs/D13.md) Shared nodes: one #[node] for the host and the chip (wave 17; needs C14, D3, D4, D5)
 - [ ] [D14](docs/prs/D14.md) Acceleration matrix: generator, asm check and gate (wave 3; needs D11)
 - [ ] [D15](docs/prs/D15.md) CPU kernel inventory rows, evidence and backend matrix (wave 4; needs D8, D14, D16; board run)
 - [ ] [D16](docs/prs/D16.md) CRC-32 kernels: slice-by-8, carry-less and CRC-instruction paths (wave 3; needs D8; board run)
