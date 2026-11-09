@@ -9,6 +9,7 @@ use crate::fence::insert_pending;
 use crate::join::join_ready;
 use crate::owned::{self, InlineCell};
 use crate::policy::Recovery;
+use crate::reuse::{ReuseParts, forget, replay, stamp_versions, store};
 use crate::step::{Queue, SlotKind, StepMeta};
 use crate::telemetry::Counters;
 use crate::tick::TickReport;
@@ -38,6 +39,23 @@ impl SlotParts {
         } else {
             Slot::EMPTY
         }
+    }
+
+    /// Pushes a replayed value, which keeps its version. False when the queue is full.
+    ///
+    /// # Safety
+    /// The caller has exclusive access to this queue's storage and inline range.
+    pub(crate) unsafe fn replay(self, queue: &mut Queue, cell: Slot) -> bool {
+        if queue.is_full() {
+            return false;
+        }
+        let at = queue.tail_index();
+        // SAFETY: `at` is inside this queue's inline range, which the caller holds exclusively.
+        let raw = owned::place(cell, unsafe { &mut *self.inline.add(at) });
+        queue.count_replay();
+        // SAFETY: `at` is inside this queue's storage range, which the caller holds exclusively.
+        unsafe { self.storage.add(at).write(raw) };
+        true
     }
 
     /// Stores `cell` at the back of `queue`, moving its reference in. False when the queue is full.
@@ -94,6 +112,8 @@ pub(crate) trait Env<'t> {
     fn progress(&self, index: usize) -> *const Progress;
     /// The cells bodies see, and the context for the call.
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx);
+    /// The reuse table, if the plan has one.
+    fn reuse(&mut self) -> Option<ReuseParts>;
     fn failure(&self) -> FailurePolicy;
     fn counters(&mut self) -> &mut Counters;
     /// False when the activity mask holds this step back.
@@ -135,6 +155,9 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
     if meta.required.len != 0 && !join_ready(env, meta) {
         return Ok(());
     }
+    if meta.reuse && replay(env, index, meta)? {
+        return Ok(());
+    }
     let (run, data) = env.step_fn(index);
     let mut attempt = 0;
     let end = loop {
@@ -168,8 +191,19 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
     match end {
         StepEnd::Done => {
             env.health(index).on_success();
+            if meta.reuse {
+                store(env, index, meta);
+            }
             commit_inputs(env, meta);
-            publish(env, meta)?;
+            if let Err(error) = publish(env, meta) {
+                if meta.reuse {
+                    forget(env, index, meta);
+                }
+                return Err(error);
+            }
+            if meta.reuse {
+                stamp_versions(env, index, meta);
+            }
             for &to in spanned(env.table(), meta.wake) {
                 env.wake(to);
             }
@@ -193,6 +227,9 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
             // Containment: the tick is dropped. Its inputs are consumed, its outputs are
             // released, and no consumer is woken.
             report.faults += 1;
+            if meta.reuse {
+                forget(env, index, meta);
+            }
             discard_outputs(env, meta);
             commit_inputs(env, meta);
             let now = env.parts().1.now_ns;
@@ -207,7 +244,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
 }
 
 /// Sets the input cells from their queues, and clears the output cells, before a call.
-fn load_cells<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
+pub(crate) fn load_cells<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
     for &slot in spanned(env.table(), meta.inputs) {
         let slot = slot as usize;
         // SAFETY: `with_queue` holds what protects this queue, and only this step's slot range is
@@ -232,7 +269,7 @@ fn drop_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
 
 /// Removes what the step consumed. A moved entry's reference went to an output, so it is only
 /// forgotten.
-fn commit_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
+pub(crate) fn commit_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
     for &slot in spanned(env.table(), meta.inputs) {
         let slot = slot as usize;
         let moved = env.parts().0[slot].state == SlotState::Moved as u32;
@@ -302,6 +339,10 @@ impl<'a> Env<'a> for Runner<'a> {
     #[inline]
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx) {
         (&mut self.cells[..self.slots], &mut self.cx)
+    }
+    #[inline]
+    fn reuse(&mut self) -> Option<ReuseParts> {
+        self.reuse.as_mut().map(|table| table.parts())
     }
     #[inline]
     fn failure(&self) -> FailurePolicy {

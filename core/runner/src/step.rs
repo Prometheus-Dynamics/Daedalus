@@ -41,6 +41,8 @@ pub struct StepMeta {
     pub fire: crate::join::Fire,
     /// Slot indexes the step cannot run without. Empty means the join check is skipped.
     pub required: Span,
+    /// The node opted into output reuse. A runner with no reuse table ignores it.
+    pub reuse: bool,
 }
 
 /// One slot's queue: a ring over its part of the shared queue storage.
@@ -85,6 +87,12 @@ impl Queue {
     pub(crate) fn push(&mut self, storage: &mut [Slot], value: Slot) {
         let at = self.tail_index();
         storage[at] = self.stamp(value);
+    }
+
+    /// Counts one more value, which the caller stores at `tail_index`. It keeps its version.
+    pub(crate) fn count_replay(&mut self) {
+        self.len += 1;
+        self.unconsumed += 1;
     }
 
     /// Counts one more value, which the caller stores at `tail_index`, and stamps its version.

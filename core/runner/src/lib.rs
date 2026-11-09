@@ -26,6 +26,7 @@ mod lanes;
 mod owned;
 mod policy;
 mod progress;
+mod reuse;
 mod step;
 mod telemetry;
 mod tick;
@@ -47,6 +48,9 @@ pub use owned::{INLINE_BYTES, InlineCell, Untyped};
 #[cfg(feature = "alloc")]
 pub use owned::{TypedOps, typed_ops, typed_raw};
 pub use policy::Recovery;
+pub use reuse::{
+    InputVersion, ReuseEntry, ReuseMarker, ReuseMemory, ReuseReason, ReuseRefused, check_reuse,
+};
 pub use step::{Queue, SlotKind, SlotSpec, StepMeta};
 pub use telemetry::Counters;
 pub use tick::TickReport;
@@ -131,6 +135,8 @@ pub struct Runner<'a> {
     tick: u32,
     /// One `(done, total)` pair per step, once a host attaches them.
     progress: &'a [Progress],
+    /// The reuse table, for a plan with a reusable step.
+    reuse: Option<reuse::Table<'a>>,
 }
 
 impl<'a> Runner<'a> {
@@ -244,6 +250,7 @@ impl<'a> Runner<'a> {
             cx: StepCx::new(),
             tick: 0,
             progress: &[],
+            reuse: None,
         })
     }
 
@@ -329,6 +336,7 @@ impl Drop for Runner<'_> {
     /// Releases every value still queued, once each. Cells hold only views and outputs that were
     /// already moved into queues, so they own nothing here.
     fn drop(&mut self) {
+        self.clear_reuse();
         for index in 0..self.slots {
             let queue = self.queues[index];
             for offset in 0..queue.len {

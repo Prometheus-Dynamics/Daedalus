@@ -10,7 +10,7 @@ static ALLOC: CountingAlloc = CountingAlloc;
 
 #[test]
 fn counters_have_a_fixed_size() {
-    assert_eq!(std::mem::size_of::<Counters>(), 9 * 8);
+    assert_eq!(std::mem::size_of::<Counters>(), 11 * 8);
 }
 
 struct Always;

@@ -185,6 +185,19 @@ impl<'a> Host<'a> {
         })
     }
 
+    /// Declares the version of what the input port `name` delivers, or clears it so the port
+    /// compares by identity. A reusable node's stamp uses this instead of the value's identity.
+    pub fn set_input_version(&mut self, name: &str, version: Option<u64>) -> Result<(), HostError> {
+        let spec = self.input(name)?;
+        self.runner.set_input_version(spec.slot, version);
+        Ok(())
+    }
+
+    /// Forgets every stored output, so reusable nodes run again.
+    pub fn clear_reuse(&mut self) {
+        self.runner.clear_reuse();
+    }
+
     /// Several feeds in order. Stops at the first refused one; the ones before it stay fed.
     pub fn feed_all<'n>(
         &mut self,
