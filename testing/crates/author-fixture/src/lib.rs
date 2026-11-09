@@ -41,6 +41,25 @@ macro_rules! __daedalus_body {
         }
     };
     (
+        kind = transfer,
+        name = ($($name:tt)*),
+        args = ($($args:tt)*),
+        params = ($($params:tt)*),
+        ret = $ret:ty,
+        decl = $decl:ident
+    ) => {
+        $crate::registry::BodyRecord {
+            backend: "fixture",
+            at: $crate::registry::SourceAt(::core::concat!(::core::file!(), ":", ::core::line!())),
+            needs: &[],
+            state: ::core::option::Option::None,
+            ports: &[],
+            memory: &[],
+            code: &$crate::registry::NoCode,
+            text: "",
+        }
+    };
+    (
         kind = fn,
         name = ($($name:tt)*),
         args = ($($args:tt)*),
@@ -77,6 +96,11 @@ pub mod sample {
     }
 
     pub const SOURCE: &str = "source text";
+
+    #[daedalus_macros::transfer(from = "fixture.a", to = "fixture.b", cost = copy, backend = crate)]
+    pub fn widen(value: &u8) -> u32 {
+        *value as u32
+    }
 
     /// A default key, built for bare metal and used from another crate by the derive tests.
     #[derive(daedalus_derive::Type)]

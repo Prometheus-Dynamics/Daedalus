@@ -1,0 +1,5 @@
+error: cost must be handoff, import or copy
+ --> tests/ui/transfer/fail/unknown_cost.rs:6:41
+  |
+6 | #[transfer(from = "a", to = "b", cost = free, backend = fixture)]
+  |                                         ^^^^

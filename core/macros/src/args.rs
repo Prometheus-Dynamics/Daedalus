@@ -62,7 +62,7 @@ pub(crate) struct NodeArgs {
     pub memory: Vec<(Ident, LitStr)>,
 }
 
-fn value<T: Parse>(input: ParseStream<'_>) -> Result<T> {
+pub(crate) fn value<T: Parse>(input: ParseStream<'_>) -> Result<T> {
     input.parse::<Token![=]>()?;
     input.parse()
 }
@@ -215,7 +215,7 @@ fn parse_conversion(input: ParseStream<'_>) -> Result<ConversionArg> {
     Ok(conversion)
 }
 
-fn parse_backend(input: ParseStream<'_>) -> Result<BackendArg> {
+pub(crate) fn parse_backend(input: ParseStream<'_>) -> Result<BackendArg> {
     input.parse::<Token![=]>()?;
     let path = input.call(Path::parse_mod_style)?;
     let mut args = TokenStream::new();
