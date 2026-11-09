@@ -3,7 +3,6 @@
 //! instead of failing to move it.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 use daedalus::{
     engine::{Engine, EngineConfig},
@@ -40,10 +39,7 @@ fn retry_reruns_a_by_value_node_on_its_input() {
         .and_then(|b| b.try_connect(&flaky.outputs.out, "out"))
         .expect("wire")
         .build();
-    let config = EngineConfig::default().with_recovery(NodeRecovery::Retry {
-        max: 2,
-        backoff: Duration::ZERO,
-    });
+    let config = EngineConfig::default().with_recovery(NodeRecovery::retry(2));
     let mut host = Engine::new(config)
         .expect("engine")
         .compile_registry(&registry, graph)

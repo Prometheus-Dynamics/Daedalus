@@ -11,11 +11,10 @@ use crate::plan::{RuntimeEdge, RuntimeNode};
 use crate::portable::Arc;
 use crate::prelude::*;
 use alloc::collections::BTreeMap;
-use core::time::Duration;
 use daedalus_data::model::Value;
 
 /// Node metadata selecting the node's [`NodeRecovery`]: `"fail"`, `"skip_frame"`, `"restart"`,
-/// `"retry:<max>"` or `"retry:<max>:<backoff_ms>"` (see [`NodeRecovery::parse`]). Executor
+/// `"retry"` or `"retry:<max>"` (see [`NodeRecovery::parse`]). Executor
 /// builders ([`Executor::with_node_recovery`]) override it.
 pub const NODE_RECOVERY_META_KEY: &str = "daedalus.node.recovery";
 
@@ -51,25 +50,21 @@ pub enum NodeRecovery {
     /// retries stay inside the tick, so nothing sleeps. An attempt that succeeds publishes
     /// normally; once the attempts are spent the error is handled as [`Self::SkipFrame`]. Flush
     /// and publish errors are not retried (outputs may be partly delivered). A node that
-    /// ultimately fails is backed off across ticks ([`Executor::with_backoff`]), so `backoff` is
-    /// no longer slept: it is kept for compatibility and ignored.
-    Retry { max: u32, backoff: Duration },
+    /// ultimately fails is backed off across ticks ([`Executor::with_backoff`]).
+    Retry { max: u32 },
     /// Reset the node, then skip the frame: its typed state (`#[node(state(..))]`), managed
     /// resources and custom metrics are dropped, so the next tick starts the node fresh.
     Restart,
 }
 
 impl NodeRecovery {
-    /// [`Self::Retry`] without backoff.
+    /// [`Self::Retry`].
     pub const fn retry(max: u32) -> Self {
-        Self::Retry {
-            max,
-            backoff: Duration::ZERO,
-        }
+        Self::Retry { max }
     }
 
     /// Parse the [`NODE_RECOVERY_META_KEY`] text form: `fail`, `skip_frame` (or `skip`),
-    /// `restart`, `retry` (one retry), `retry:<max>` or `retry:<max>:<backoff_ms>`.
+    /// `restart`, `retry` (one retry) or `retry:<max>`.
     pub fn parse(text: &str) -> Option<Self> {
         let mut parts = text.trim().split(':');
         let policy = match parts.next()? {
@@ -78,11 +73,7 @@ impl NodeRecovery {
             "restart" => Self::Restart,
             "retry" => {
                 let max = parts.next().map_or(Some(1), |max| max.parse().ok())?;
-                let backoff = parts
-                    .next()
-                    .map_or(Some(0), |ms| ms.parse().ok())
-                    .map(Duration::from_millis)?;
-                Self::Retry { max, backoff }
+                Self::Retry { max }
             }
             _ => return None,
         };
@@ -538,13 +529,7 @@ mod tests {
         assert_eq!(NodeRecovery::parse("restart"), Some(NodeRecovery::Restart));
         assert_eq!(NodeRecovery::parse("retry"), Some(NodeRecovery::retry(1)));
         assert_eq!(NodeRecovery::parse("retry:3"), Some(NodeRecovery::retry(3)));
-        assert_eq!(
-            NodeRecovery::parse("retry:2:15"),
-            Some(NodeRecovery::Retry {
-                max: 2,
-                backoff: Duration::from_millis(15)
-            })
-        );
+        assert_eq!(NodeRecovery::parse("retry:2:15"), None);
         assert_eq!(NodeRecovery::parse("retry:x"), None);
         assert_eq!(NodeRecovery::parse("retry:1:2:3"), None);
         assert_eq!(NodeRecovery::parse("explode"), None);
@@ -552,10 +537,7 @@ mod tests {
 
     #[test]
     fn recovery_round_trips_through_serde() {
-        let policy = NodeRecovery::Retry {
-            max: 2,
-            backoff: Duration::from_millis(5),
-        };
+        let policy = NodeRecovery::Retry { max: 2 };
         let json = serde_json::to_string(&policy).expect("serialize");
         assert_eq!(
             serde_json::from_str::<NodeRecovery>(&json).expect("deserialize"),

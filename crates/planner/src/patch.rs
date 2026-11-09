@@ -236,7 +236,8 @@ fn resolve_graph_indices(graph: &Graph, selector: &GraphNodeSelector) -> Vec<usi
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, node)| {
-                    crate::metadata::metadata_get_with_legacy(&node.metadata, key)
+                    node.metadata
+                        .get(key)
                         .filter(|value| *value == &meta.value)
                         .map(|_| idx)
                 })
@@ -302,11 +303,11 @@ mod tests {
     use crate::graph::NodeInstance;
 
     #[test]
-    fn apply_patch_selects_nodes_by_legacy_ui_node_id() {
+    fn apply_patch_selects_nodes_by_ui_node_id() {
         let mut graph = Graph::default();
         let mut node = NodeInstance::new("demo.node");
         node.metadata.insert(
-            daedalus_core::metadata::LEGACY_UI_NODE_ID_KEY.to_string(),
+            daedalus_core::metadata::UI_NODE_ID_KEY.to_string(),
             DaedalusValue::String("node-1".into()),
         );
         graph.nodes.push(node);

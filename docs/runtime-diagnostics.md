@@ -277,9 +277,8 @@ recovered failure leaves the run successful and is reported in its telemetry:
   `TelemetryReport::recovery` and the compact summary show the counters.
 - Tracing: `daedalus_runtime::executor` warns on every retry, skip and restart.
 
-Retries run inside the tick, so a `backoff` delays the whole tick (and, in a parallel run, the
-worker running that segment). Keep backoffs short on frame graphs, or prefer `SkipFrame` and let
-the next frame retry.
+Retries run inside the tick and never sleep. On frame graphs, prefer `SkipFrame` and let the next
+frame retry.
 
 A failure costs its own frame; the next frame runs as usual. From the third failure in a row
 (`with_backoff_after(n)`, 1 for the first failure) the node is backed off across ticks: its frames

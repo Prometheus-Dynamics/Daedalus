@@ -40,10 +40,6 @@ pub const NODE_OVERLOADS_KEY: &str = "daedalus.overloads";
 /// UI-provided node id used only as a human-readable diagnostic fallback.
 pub const UI_NODE_ID_KEY: &str = "daedalus.ui.node_id";
 
-/// Former spelling of [`UI_NODE_ID_KEY`]. Read as a fallback so graphs saved before the rename keep
-/// their diagnostic ids and patch selectors; never written.
-pub const LEGACY_UI_NODE_ID_KEY: &str = "helios.ui.node_id";
-
 /// Planner-owned graph metadata key containing applied lowering records.
 pub const PLAN_APPLIED_LOWERINGS_KEY: &str = "daedalus.plan.applied_lowerings";
 /// Planner-owned graph metadata key containing edge transport/conversion explanations.

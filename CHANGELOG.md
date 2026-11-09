@@ -83,8 +83,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   only: a stable (C ABI) plugin catches its own panic at the boundary, so it is 0 on that path.
 - `ExecutionDomain`: a contained node failure does not fail its graph's tick, so `failed` counts
   graph-level errors only.
-- In-tick `NodeRecovery::Retry { backoff }` no longer sleeps. Its `backoff` field is kept and
-  ignored; a failed node backs off across ticks instead (`with_backoff`).
+- `NodeRecovery::Retry` no longer has a `backoff` field and retries no longer sleep, and the
+  `retry:<max>:<backoff_ms>` text form is gone; a failed node backs off across ticks instead
+  (`with_backoff`).
+- Removed `LEGACY_UI_NODE_ID_KEY`: `helios.ui.node_id` is no longer read. Graphs must use
+  `daedalus.ui.node_id`.
 
 - The GPU device opens on a request, not at compile or on a GPU segment: `ExecutionContext::gpu()`
   (`Result<Option<&GpuContextHandle>, NodeError>`) opens it on the first call, and the edge

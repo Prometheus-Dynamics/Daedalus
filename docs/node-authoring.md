@@ -689,7 +689,7 @@ declare how the executor should recover, through node metadata in a declaration 
 use daedalus::runtime::{NODE_PRIORITY_META_KEY, NODE_RECOVERY_META_KEY};
 
 let decl = NodeDecl::new("camera.read")
-    .metadata(NODE_RECOVERY_META_KEY, Value::String("retry:3:5".into()))
+    .metadata(NODE_RECOVERY_META_KEY, Value::String("retry:3".into()))
     .metadata(NODE_PRIORITY_META_KEY, Value::Int(10));
 ```
 
@@ -699,7 +699,7 @@ or on the executor, graph-wide or per node (a node id, or an instance key such a
 let exec = OwnedExecutor::new(plan, handler)
     .with_recovery(NodeRecovery::SkipFrame)          // every node without its own policy
     .with_node_recovery("decode", NodeRecovery::Restart)
-    .with_node_recovery("camera.read", NodeRecovery::Retry { max: 3, backoff: Duration::from_millis(5) })
+    .with_node_recovery("camera.read", NodeRecovery::retry(3))
     .with_node_priority("pose", 10);
 ```
 
@@ -711,7 +711,7 @@ engine-built executors.
 | --- | --- |
 | `Fail` (`"fail"`, default) | Fails the run under fail-fast; otherwise recorded and the run continues. Panics unwind. |
 | `SkipFrame` (`"skip_frame"`) | The node's outputs are dropped this tick; nodes that needed them are not ready. The run succeeds. |
-| `Retry { max, backoff }` (`"retry:<max>"`, `"retry:<max>:<backoff_ms>"`) | The handler runs again on the same inputs up to `max` times, sleeping `backoff` first (`std` only). Exhausted retries are handled as `Fail`; flush and publish errors are not retried but skipped. |
+| `Retry { max }` (`"retry"`, `"retry:<max>"`) | The handler runs again on the same inputs up to `max` times, inside the tick. Exhausted retries are handled as `Fail`; flush and publish errors are not retried but skipped. |
 | `Restart` (`"restart"`) | The node's typed state (`#[node(state(..))]`), managed resources and custom metrics are dropped, then the frame is skipped: the next tick starts the node fresh. |
 
 What a policy means for the handler:

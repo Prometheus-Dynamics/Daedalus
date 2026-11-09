@@ -51,22 +51,16 @@ impl NodeHandler for SecondCallFails {
     }
 }
 
-/// A backoff never sleeps the tick: an in-tick retry with a long `backoff` returns at once.
+/// A retry stays inside the tick and never sleeps it.
 #[test]
-fn an_in_tick_retry_with_a_backoff_does_not_sleep_the_tick() {
+fn an_in_tick_retry_does_not_sleep_the_tick() {
     let rt = build_runtime(
         &chain(&["src", "flaky", "sink"]),
         &SchedulerConfig::default(),
     );
     let started = std::time::Instant::now();
     let telemetry = Executor::new(&rt, Flaky::new(5))
-        .with_node_recovery(
-            "flaky",
-            NodeRecovery::Retry {
-                max: 2,
-                backoff: Duration::from_secs(5),
-            },
-        )
+        .with_node_recovery("flaky", NodeRecovery::retry(2))
         .run()
         .expect("contained");
     assert!(started.elapsed() < Duration::from_secs(1));
