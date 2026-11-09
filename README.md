@@ -2,9 +2,10 @@
 
 This branch is a clean-slate rebuild of Daedalus. `dev` is the current code and the frozen reference.
 
-The foundation (group A) is merged: the core interfaces, the `#[node]` and `#[transfer]` macros,
-the registry, a simulated backend and the backend conformance suite. The planner (group B) and the
-runner and host (group C) are in progress. Nothing runs a graph end to end yet.
+The foundation (group A) and the planner (group B) are merged: the core interfaces, the `#[node]`
+and `#[transfer]` macros, the registry, a simulated backend, the backend conformance suite, and a
+planner that turns a graph into a proven plan. The runner and host (group C) are in progress.
+Nothing runs a graph end to end yet.
 
 - [`AGENTS.md`](AGENTS.md): how to pick up work.
 - [`docs/design.md`](docs/design.md): the design.

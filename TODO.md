@@ -26,21 +26,21 @@ The core with nothing running yet. A3 to A9 are the shared interfaces everyone b
 
 Solve the graph, ask the backends, assign, compile, stitch. It runs on a host or in `build.rs`, and may allocate.
 
-- [ ] [B1](docs/prs/B1.md) Solve: expand groups, defaults, hydrate (wave 6; needs A8)
-- [ ] [B2](docs/prs/B2.md) Solve: ports, typecheck (wave 7; needs B1)
-- [ ] [B3](docs/prs/B3.md) Solve: const inputs and config (wave 8; needs B2)
-- [ ] [B4](docs/prs/B4.md) Solve: conversions, exclusive access, host input policy (wave 8; needs B2)
-- [ ] [B5](docs/prs/B5.md) Solve: rewrite hook (formerly lowerings) (wave 7; needs B1)
-- [ ] [B6](docs/prs/B6.md) Solve: order, rates, sync groups (wave 9; needs B2, B4)
-- [ ] [B7](docs/prs/B7.md) Assignment: offers, forced placement, fewest crossings, priority (wave 10; needs A11, B6)
-- [ ] [B8](docs/prs/B8.md) Regions: formation, rules, compile, refusal round (wave 11; needs B7)
-- [ ] [B9](docs/prs/B9.md) Stitch: memory spaces, transfers, fences, slots, step list (wave 12; needs A10, B8)
-- [ ] [B10](docs/prs/B10.md) Control regions: if, for-each, until (wave 13; needs A6, B9)
-- [ ] [B11](docs/prs/B11.md) Lint, diagnostics, explain a plan (wave 13; needs B9)
-- [ ] [B12](docs/prs/B12.md) Plan hashing, plan cache, schema drift guard (wave 13; needs B9)
-- [ ] [B13](docs/prs/B13.md) Planner public API and forms: plan, form, write (wave 13; needs B9)
-- [ ] [B14](docs/prs/B14.md) Graph patches and port refresh (wave 6; needs A8)
-- [ ] [B15](docs/prs/B15.md) Shared upstream across graphs (wave 6; needs A8)
+- [x] [B1](docs/prs/B1.md) Solve: expand groups, defaults, hydrate (wave 6; needs A8)
+- [x] [B2](docs/prs/B2.md) Solve: ports, typecheck (wave 7; needs B1)
+- [x] [B3](docs/prs/B3.md) Solve: const inputs and config (wave 8; needs B2)
+- [x] [B4](docs/prs/B4.md) Solve: conversions, exclusive access, host input policy (wave 8; needs B2)
+- [x] [B5](docs/prs/B5.md) Solve: rewrite hook (formerly lowerings) (wave 7; needs B1)
+- [x] [B6](docs/prs/B6.md) Solve: order, rates, sync groups (wave 9; needs B2, B4)
+- [x] [B7](docs/prs/B7.md) Assignment: offers, forced placement, fewest crossings, priority (wave 10; needs A11, B6)
+- [x] [B8](docs/prs/B8.md) Regions: formation, rules, compile, refusal round (wave 11; needs B7)
+- [x] [B9](docs/prs/B9.md) Stitch: memory spaces, transfers, fences, slots, step list (wave 12; needs A10, B8)
+- [x] [B10](docs/prs/B10.md) Control regions: if, for-each, until (wave 13; needs A6, B9)
+- [x] [B11](docs/prs/B11.md) Lint, diagnostics, explain a plan (wave 13; needs B9)
+- [x] [B12](docs/prs/B12.md) Plan hashing, plan cache, schema drift guard (wave 13; needs B9)
+- [x] [B13](docs/prs/B13.md) Planner public API and forms: plan, form, write (wave 13; needs B9)
+- [x] [B14](docs/prs/B14.md) Graph patches and port refresh (wave 6; needs A8)
+- [x] [B15](docs/prs/B15.md) Shared upstream across graphs (wave 6; needs A8)
 
 ## C. Runner and Host
 
