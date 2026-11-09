@@ -1,0 +1,29 @@
+[package]
+name = "daedalus-wasm-smoke"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "A small graph run under a host on WebAssembly, without threads."
+
+# One exported function, for a module that imports nothing.
+[lints.rust]
+unsafe_code = "allow"
+
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "daedalus-wasi-smoke"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+daedalus = { path = "../../core/daedalus", features = ["std"] }
+daedalus-cpu = { path = "../../backends/cpu" }
+daedalus-cpu-author = { path = "../../backends/cpu-author" }
+daedalus-graph = { path = "../../core/graph" }
+daedalus-macros = { path = "../../core/macros" }
+daedalus-registry = { path = "../../core/registry" }

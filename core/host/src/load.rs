@@ -578,6 +578,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
     }
     let mut host = Host::new(runner, ports, types);
     host.owned = Some(buffers);
+    host.held_feeds_wake = true;
     Ok(Parts {
         host,
         nodes,

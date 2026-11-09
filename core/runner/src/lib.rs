@@ -34,6 +34,11 @@ mod fixed_queue;
 mod forward;
 mod inline;
 mod join;
+#[cfg(all(feature = "threads", target_arch = "wasm32", target_os = "unknown"))]
+compile_error!(
+    "threads aren't available on wasm32-unknown-unknown: leave the `threads` feature off"
+);
+
 #[cfg(feature = "threads")]
 mod lanes;
 #[cfg(feature = "alloc")]

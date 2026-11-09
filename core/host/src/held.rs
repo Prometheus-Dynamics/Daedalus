@@ -32,11 +32,13 @@ impl Host<'_> {
         Ok(self.runner.is_held(self.input(name)?.slot))
     }
 
-    /// Replaces a held input's value. Nothing is woken.
+    /// Replaces a held input's value. Nothing is woken unless this host is one that a plan built,
+    /// where a slot with several readers is held even when its value is work.
     pub(crate) fn replace_held(
         &mut self,
         name: &str,
         slot: u32,
+        wake: &[u32],
         value: Value,
     ) -> Result<FeedOutcome, HostError> {
         self.runner.clear_held(slot).map_err(HostError::Run)?;
@@ -44,7 +46,11 @@ impl Host<'_> {
             .feed_value(slot, value)
             .map_err(|error| self.feed_error(name, error))?;
         Ok(FeedOutcome {
-            woke: 0,
+            woke: if self.held_feeds_wake {
+                self.wake_consumers(wake)
+            } else {
+                0
+            },
             dropped: None,
         })
     }
