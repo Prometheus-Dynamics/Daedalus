@@ -17,7 +17,10 @@ mod cancel;
 mod error;
 mod exec;
 mod failure;
+#[cfg(feature = "alloc")]
+mod fanin;
 mod fence;
+mod join;
 #[cfg(feature = "threads")]
 mod lanes;
 mod owned;
@@ -35,6 +38,9 @@ use daedalus_value::OwnerKind;
 pub use cancel::{CANCEL_REASON, CancelWord, skip_cancelled};
 pub use error::{LoadError, MaskError, RunError};
 pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
+#[cfg(feature = "alloc")]
+pub use fanin::fanin_order;
+pub use join::Fire;
 #[cfg(feature = "threads")]
 pub use lanes::{LaneError, Lanes, Pool};
 pub use owned::{INLINE_BYTES, InlineCell, Untyped};
@@ -188,6 +194,11 @@ impl<'a> Runner<'a> {
                 .iter()
                 .chain(span(table, record.outputs)?)
             {
+                if slot as usize >= nslots {
+                    return Err(LoadError::SlotRange);
+                }
+            }
+            for &slot in span(table, record.required)? {
                 if slot as usize >= nslots {
                     return Err(LoadError::SlotRange);
                 }

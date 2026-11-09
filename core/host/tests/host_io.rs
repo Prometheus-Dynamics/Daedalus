@@ -60,6 +60,8 @@ impl Graph {
             always: false,
             may_pend: false,
             recovery: daedalus_runner::Recovery::Fail,
+            fire: daedalus_runner::Fire::Any,
+            required: Span { start: 0, len: 0 },
         }];
         let specs = vec![
             SlotSpec {
@@ -286,4 +288,21 @@ fn a_bad_port_table_is_refused() {
         },
     ];
     assert!(Ports::new(&unsorted).is_err());
+}
+
+#[test]
+fn a_feed_to_a_held_input_replaces_it_and_wakes_nothing() {
+    let mut graph = Graph::new();
+    graph.specs[0] = SlotSpec {
+        cap: 1,
+        kind: SlotKind::Held,
+    };
+    let mut host = Host::new(graph.runner(), Ports::new(&PORTS).unwrap(), &TYPES);
+    assert!(host.is_held("in").unwrap());
+    assert_eq!(host.feed("in", bytes(TY_A, b"first")).unwrap().woke, 0);
+    // A second feed replaces the value even though the slot holds only one.
+    assert_eq!(host.feed("in", bytes(TY_A, b"second")).unwrap().woke, 0);
+    assert_eq!(host.step().unwrap().step_calls, 0);
+    host.clear_input("in").unwrap();
+    assert_eq!(host.runner().queue(0).unwrap().len, 0);
 }

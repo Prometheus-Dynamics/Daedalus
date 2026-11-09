@@ -84,7 +84,7 @@ impl fmt::Display for HostError {
 
 /// One loaded graph, its ports, and the key of each type index.
 pub struct Host<'a> {
-    runner: Runner<'a>,
+    pub(crate) runner: Runner<'a>,
     ports: Ports<'a>,
     types: &'a [TypeKey],
 }
@@ -115,7 +115,7 @@ impl<'a> Host<'a> {
         }
     }
 
-    fn input(&self, name: &str) -> Result<&'a crate::ports::PortSpec<'a>, HostError> {
+    pub(crate) fn input(&self, name: &str) -> Result<&'a crate::ports::PortSpec<'a>, HostError> {
         let spec = self.ports.find(name).ok_or(HostError::UnknownPort {
             port: Label::new(name),
         })?;
@@ -152,6 +152,9 @@ impl<'a> Host<'a> {
         if value.ty != spec.ty {
             return Err(self.mismatch(name, spec.ty, value.ty));
         }
+        if self.runner.is_held(spec.slot) {
+            return self.replace_held(name, spec.slot, value);
+        }
         self.runner
             .feed_value(spec.slot, value)
             .map_err(|error| self.feed_error(name, error))?;
@@ -167,9 +170,16 @@ impl<'a> Host<'a> {
         value: std::sync::Arc<T>,
     ) -> Result<FeedOutcome, HostError> {
         let spec = self.input(name)?;
+        let held = self.runner.is_held(spec.slot);
+        if held {
+            self.runner.clear_held(spec.slot).map_err(HostError::Run)?;
+        }
         self.runner
             .feed_typed(spec.slot, spec.ty, spec.space, value)
             .map_err(|error| self.feed_error(name, error))?;
+        if held {
+            return Ok(FeedOutcome { woke: 0 });
+        }
         Ok(FeedOutcome {
             woke: self.wake_consumers(spec.wake),
         })
@@ -186,7 +196,7 @@ impl<'a> Host<'a> {
         Ok(())
     }
 
-    fn feed_error(&self, name: &str, error: RunError) -> HostError {
+    pub(crate) fn feed_error(&self, name: &str, error: RunError) -> HostError {
         match error {
             RunError::Overflow { .. } => HostError::Full {
                 port: Label::new(name),
