@@ -19,7 +19,8 @@ pub use def::{
 pub use doc::json_schema;
 #[cfg(feature = "alloc")]
 pub use doc::{
-    DocError, EdgeDoc, EdgePolicyDoc, FORMAT, GraphBody, GraphDoc, GraphPatch, GroupDoc,
-    HostInputPolicy, Lit, LitField, NodeDoc, NodeKindDoc, NodeSelector, PatchOp, PortRefDoc,
-    RateDoc, Requirement, SCHEMA_VERSION, StageConstDoc, StagePortDoc, SyncGroupDoc, SyncPolicy,
+    ControlDoc, ControlOp, DocError, EdgeDoc, EdgePolicyDoc, FORMAT, GraphBody, GraphDoc,
+    GraphPatch, GroupDoc, HostInputPolicy, Lit, LitField, NodeDoc, NodeKindDoc, NodeSelector,
+    PatchOp, PortRefDoc, RateDoc, Requirement, SCHEMA_VERSION, StageConstDoc, StagePortDoc,
+    SyncGroupDoc, SyncPolicy,
 };

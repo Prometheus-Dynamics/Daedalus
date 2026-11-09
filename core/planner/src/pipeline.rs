@@ -6,6 +6,7 @@ use daedalus_graph::GraphBody;
 use daedalus_registry::Registry;
 
 use crate::config::Config;
+use crate::control::{self, ControlError};
 use crate::solve::catalog::Catalog;
 use crate::solve::consts::{self, ConstError};
 use crate::solve::convert::{self, ConvertError};
@@ -34,6 +35,7 @@ pub enum SolveError {
     Rewrite(RewriteError),
     Order(OrderError),
     Rates(RateError),
+    Control(ControlError),
 }
 
 impl fmt::Display for SolveError {
@@ -50,6 +52,7 @@ impl fmt::Display for SolveError {
             SolveError::Rewrite(error) => error.fmt(f),
             SolveError::Order(error) => error.fmt(f),
             SolveError::Rates(error) => error.fmt(f),
+            SolveError::Control(error) => error.fmt(f),
         }
     }
 }
@@ -73,6 +76,7 @@ pub fn solve(
     defaults::run(&mut work);
     rewrite::run(&mut work);
     hydrate::run(&mut work);
+    control::declare(&mut work, registry);
     ports::run(&mut work);
     typecheck::run(&mut work);
     consts::run(&mut work);

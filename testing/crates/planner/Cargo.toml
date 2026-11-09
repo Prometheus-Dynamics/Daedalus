@@ -14,6 +14,7 @@ daedalus-sim = { path = "../../../backends/sim" }
 daedalus-backend = { path = "../../../core/backend" }
 daedalus-graph = { path = "../../../core/graph" }
 daedalus-planner = { path = "../../../core/planner" }
+daedalus-runner = { path = "../../../core/runner" }
 daedalus-registry = { path = "../../../core/registry" }
 daedalus-types = { path = "../../../core/types" }
 daedalus-value = { path = "../../../core/value" }

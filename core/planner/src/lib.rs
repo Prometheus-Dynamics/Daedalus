@@ -7,6 +7,7 @@ pub mod api;
 pub mod assign;
 pub mod cache;
 pub mod config;
+pub mod control;
 pub mod debug;
 pub mod diagnostic;
 pub mod edit;

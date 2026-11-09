@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 
 use daedalus_backend::{Backend, BodyIndex, Offer};
+
+use crate::control::CONTROL_BACKEND;
 use daedalus_graph::NodeKindDoc;
 use daedalus_registry::Registry;
 use daedalus_types::NodeIndex;
@@ -90,7 +92,12 @@ pub(super) fn gather(
         .nodes
         .iter()
         .enumerate()
-        .filter(|(_, node)| node.doc.kind != NodeKindDoc::HostBridge)
+        .filter(|(_, node)| {
+            !matches!(
+                node.doc.kind,
+                NodeKindDoc::HostBridge | NodeKindDoc::Control
+            )
+        })
         .map(|(index, node)| (NodeIndex(index as u32), node.doc.id.as_str()))
         .collect();
     for (rank, backend) in backends.iter().enumerate() {
@@ -102,6 +109,20 @@ pub(super) fn gather(
     }
     let mut errors = Vec::new();
     let mut candidates = vec![Vec::new(); count];
+    let control = backends
+        .iter()
+        .position(|backend| backend.id() == CONTROL_BACKEND);
+    for (index, node) in graph.nodes.iter().enumerate() {
+        if node.doc.kind == NodeKindDoc::Control {
+            match control {
+                Some(rank) => candidates[index].push(rank as u8),
+                None => errors.push(AssignError::NodeUnplaceable {
+                    node: node.doc.id.clone(),
+                    bodies: Vec::new(),
+                }),
+            }
+        }
+    }
     for &(NodeIndex(index), id) in &offered {
         let at = index as usize;
         let list = || statuses(registry, id, index, backends, &bodies[at], removed);

@@ -12,6 +12,7 @@ daedalus-backend = { path = "../backend" }
 daedalus-graph = { path = "../graph" }
 daedalus-plan = { path = "../plan" }
 daedalus-registry = { path = "../registry" }
+daedalus-runner = { path = "../runner" }
 daedalus-types = { path = "../types" }
 daedalus-value = { path = "../value" }
 serde = { workspace = true }

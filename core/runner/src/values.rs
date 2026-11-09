@@ -100,7 +100,7 @@ impl Runner<'_> {
 /// Writes an owned payload into an output cell, releasing what the cell owned before. The cell
 /// must be one the step is writing: the view of an input owns nothing and must not be overwritten
 /// this way.
-fn put(cell: &mut Slot, raw: Slot) {
+pub fn put(cell: &mut Slot, raw: Slot) {
     if cell.state == SlotState::Full as u32 {
         // SAFETY: a `Full` output cell owns its reference (a body writes one only through these
         // helpers), and it is overwritten here, so the reference is released once.

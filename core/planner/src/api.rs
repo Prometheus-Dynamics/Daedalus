@@ -10,6 +10,7 @@ use daedalus_plan::encode;
 use daedalus_registry::Registry;
 
 use crate::config::Config;
+use crate::control::{ControlBackend, NestedBody};
 use crate::diagnostic::Diagnostic;
 use crate::form::Form;
 use crate::lint::lint;
@@ -24,6 +25,12 @@ use crate::stitch::{Stitched, stitch};
 #[non_exhaustive]
 pub enum PlanError {
     Solve(Vec<SolveError>),
+    /// A control node's body didn't plan.
+    Control {
+        node: String,
+        body: String,
+        error: Box<PlanError>,
+    },
     Regions(RegionError),
     /// A backend's output can't be delivered in the requested form.
     FormUnavailable {
@@ -42,6 +49,9 @@ pub enum PlanError {
 impl fmt::Display for PlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            PlanError::Control { node, body, error } => {
+                write!(f, "control node `{node}`, body `{body}`: {error}")
+            }
             PlanError::Solve(errors) => {
                 let text: Vec<String> = errors.iter().map(ToString::to_string).collect();
                 f.write_str(&text.join("; "))
@@ -73,6 +83,8 @@ pub struct Planned {
     pub transfer_steps: Vec<Option<Step>>,
     /// What the lints found. Empty unless the config turned them on.
     pub warnings: Vec<Diagnostic>,
+    /// What each control node runs, by body.
+    pub nested: Vec<NestedBody>,
     pub(crate) backend_ids: Vec<String>,
 }
 
@@ -224,7 +236,12 @@ pub fn plan(
         Vec::new()
     };
     let types = table_of(&solved);
-    let backends = by_priority(backends, &config.priority);
+    let control = ControlBackend::prepare(&solved, registry, backends, config)?;
+    let mut with_control = backends.to_vec();
+    if let Some(control) = &control {
+        with_control.push(control);
+    }
+    let backends = by_priority(&with_control, &config.priority);
     let regions = regions::build(&regions::Input {
         graph: &solved,
         registry,
@@ -235,6 +252,10 @@ pub fn plan(
     })
     .map_err(PlanError::Regions)?;
     let stitched = stitch(&regions, &types);
+    let nested = control
+        .as_ref()
+        .map(|control| control.bind(&solved, &regions, &stitched))
+        .unwrap_or_default();
     let mut planned = Planned {
         graph: solved,
         types,
@@ -243,6 +264,7 @@ pub fn plan(
         form: config.form,
         transfer_steps: Vec::new(),
         warnings,
+        nested,
         backend_ids: backends.iter().map(|b| b.id().to_string()).collect(),
     };
     check_form(&planned.regions, &backends, config.form)?;

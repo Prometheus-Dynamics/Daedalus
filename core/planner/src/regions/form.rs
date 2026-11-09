@@ -1,6 +1,7 @@
 //! Groups nodes into regions, greedily, in one fixed pass over the edges.
 
 use daedalus_backend::{PortRef, RateId};
+use daedalus_graph::NodeKindDoc;
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
 
 use super::Formed;
@@ -54,9 +55,12 @@ fn boundary(graph: &Graph, inside: &[bool], nodes: &[u32]) -> (Vec<PortRef>, Vec
 
 /// The edges in formation order: producer's position, port name, consumer.
 fn visit_order(graph: &Graph, adjacency: &Adjacency) -> Vec<(u32, u32)> {
+    // A control node is always a region of its own.
+    let alone = |node: u32| graph.nodes[node as usize].doc.kind == NodeKindDoc::Control;
     let mut edges: Vec<(u32, &str, u32, u32)> = graph
         .edges
         .iter()
+        .filter(|edge| !alone(edge.from.node) && !alone(edge.to.node))
         .map(|edge| {
             let position = adjacency.position[edge.from.node as usize];
             (

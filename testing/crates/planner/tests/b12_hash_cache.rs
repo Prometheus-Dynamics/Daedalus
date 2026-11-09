@@ -56,7 +56,7 @@ fn hash_golden() {
     assert_eq!(hash, 3668697832233095048u64);
     assert_eq!(
         key(&graph, &[&backend], &config).graph_hash(),
-        5994202344176154727u64
+        9274988837969866115u64
     );
 }
 
