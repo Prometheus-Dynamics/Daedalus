@@ -50,6 +50,7 @@ impl Graph {
                 recovery: daedalus_runner::Recovery::Fail,
                 fire: daedalus_runner::Fire::Any,
                 required: Span { start: 0, len: 0 },
+                reuse: false,
             }],
             specs: vec![SlotSpec {
                 cap: 1,

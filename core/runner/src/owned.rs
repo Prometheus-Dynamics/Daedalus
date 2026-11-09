@@ -180,6 +180,8 @@ mod typed {
     pub struct TypedOps {
         /// Drops the reference, and nothing else.
         pub(super) release: unsafe fn(*mut u8),
+        /// Takes another reference, and nothing else.
+        pub(super) retain: unsafe fn(*mut u8),
         /// Turns the reference into an `Arc<dyn Any>` for a `Value`.
         pub(super) rebuild: unsafe fn(*mut u8) -> Arc<dyn Any + Send + Sync>,
     }
@@ -189,6 +191,7 @@ mod typed {
     impl<T: Send + Sync + 'static> Ops<T> {
         const OPS: TypedOps = TypedOps {
             release: release_typed::<T>,
+            retain: retain_typed::<T>,
             rebuild: rebuild_typed::<T>,
         };
     }
@@ -200,6 +203,15 @@ mod typed {
     unsafe fn release_typed<T>(data: *mut u8) {
         // SAFETY: as the caller promises, `data` is one reference's worth from `Arc::into_raw`.
         drop(unsafe { Arc::from_raw(data.cast::<T>().cast_const()) });
+    }
+
+    /// # Safety
+    ///
+    /// `data` must come from `Arc::<T>::into_raw` and still be live.
+    // SAFETY: the caller upholds the `# Safety` contract documented above.
+    unsafe fn retain_typed<T>(data: *mut u8) {
+        // SAFETY: as the function's contract says, `data` is a live `Arc<T>` pointer.
+        unsafe { Arc::increment_strong_count(data.cast_const().cast::<T>()) };
     }
 
     /// # Safety
@@ -242,4 +254,27 @@ mod typed {
             cap: (table as *const TypedOps).expose_provenance(),
         }
     }
+}
+
+/// Takes a new reference to what `slot` owns, so a second holder can release it independently.
+///
+/// # Safety
+///
+/// `slot` must be a `Full` queue entry or a cell the caller owns.
+pub unsafe fn retain(slot: &Slot) {
+    #[cfg(feature = "alloc")]
+    {
+        if slot.owner == kind_word(OwnerKind::Shared) {
+            let raw = ptr::slice_from_raw_parts(slot.data.cast_const(), slot.len);
+            // SAFETY: the slot owns a reference to a live `Arc<[u8]>`.
+            unsafe { alloc::sync::Arc::increment_strong_count(raw) };
+        } else if slot.owner == kind_word(OwnerKind::Typed) {
+            // SAFETY: the table was written with the payload.
+            let ops = unsafe { typed_ops(slot.cap) };
+            // SAFETY: the slot owns a reference, and `retain` takes another.
+            unsafe { (ops.retain)(slot.data) };
+        }
+    }
+    #[cfg(not(feature = "alloc"))]
+    let _ = slot;
 }

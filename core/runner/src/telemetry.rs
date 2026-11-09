@@ -25,6 +25,10 @@ pub struct Counters {
     pub pending: u64,
     /// Dirty steps a cancel left unrun, counted when the cancel stopped a tick.
     pub cancelled: u64,
+    /// Reusable steps whose stamps were compared.
+    pub reuse_checks: u64,
+    /// Compared steps that replayed their stored outputs instead of running.
+    pub reuse_replays: u64,
 }
 
 impl Counters {

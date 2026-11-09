@@ -27,6 +27,7 @@ use crate::error::RunError;
 use crate::exec::{Env, RunFn, SlotParts, step_once};
 use crate::failure::{FailurePolicy, StepHealth};
 use crate::fence::insert_pending;
+use crate::reuse::ReuseParts;
 use crate::step::{Queue, SlotKind, StepMeta};
 use crate::telemetry::Counters;
 use crate::tick::TickReport;
@@ -200,6 +201,7 @@ struct View<'t> {
     pending_cap: usize,
     pending_len: *mut usize,
     progress: &'t [Progress],
+    reuse: Option<ReuseParts>,
 }
 
 // SAFETY: during a fan-out each step's health and body are touched by the one worker running it.
@@ -235,6 +237,9 @@ impl<'t> Env<'t> for Lane<'t> {
     }
     fn progress(&self, index: usize) -> *const Progress {
         crate::progress::cell(self.view.progress, index)
+    }
+    fn reuse(&mut self) -> Option<ReuseParts> {
+        self.view.reuse
     }
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx) {
         (&mut self.worker.cells, &mut self.worker.cx)
@@ -371,6 +376,7 @@ impl Runner<'_> {
                 pending_cap: self.pending.len(),
                 pending_len: &mut self.pending_len,
                 progress: self.progress,
+                reuse: self.reuse.as_mut().map(|table| table.parts()),
             };
             lanes.pool.run(&|number| work(&view, number));
         }
@@ -441,6 +447,8 @@ impl Runner<'_> {
             self.counters.backoff_skips += counters.backoff_skips;
             self.counters.deferrals += counters.deferrals;
             self.counters.pending += counters.pending;
+            self.counters.reuse_checks += counters.reuse_checks;
+            self.counters.reuse_replays += counters.reuse_replays;
             if let Some((step, failure)) = worker.error.take()
                 && error.is_none_or(|(first, _)| step < first)
             {

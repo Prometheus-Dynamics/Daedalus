@@ -40,6 +40,11 @@ impl Wiring {
         self.meta[step].fire = fire;
     }
 
+    /// Opts `step` into output reuse.
+    pub fn set_reuse(&mut self, step: usize) {
+        self.meta[step].reuse = true;
+    }
+
     /// Sets what a fault of `step` does.
     pub fn set_recovery(&mut self, step: usize, recovery: Recovery) {
         self.meta[step].recovery = recovery;
@@ -59,6 +64,7 @@ impl Wiring {
             recovery: Recovery::Fail,
             fire: Fire::Any,
             required,
+            reuse: false,
         });
     }
 }
