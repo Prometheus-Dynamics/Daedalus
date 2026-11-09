@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::vec;
 use std::vec::Vec;
 
-use daedalus_abi::{Slot, Step, StepCx};
+use daedalus_abi::{Progress, Slot, Step, StepCx};
 
 pub use pool::Pool;
 use ready::Ready;
@@ -199,6 +199,7 @@ struct View<'t> {
     pending: *mut Pending,
     pending_cap: usize,
     pending_len: *mut usize,
+    progress: &'t [Progress],
 }
 
 // SAFETY: during a fan-out each step's health and body are touched by the one worker running it.
@@ -231,6 +232,9 @@ impl<'t> Env<'t> for Lane<'t> {
     fn health(&mut self, index: usize) -> &mut StepHealth {
         // SAFETY: `index` is the step this worker is running, and no other worker touches it.
         unsafe { &mut *self.view.health.add(index) }
+    }
+    fn progress(&self, index: usize) -> *const Progress {
+        crate::progress::cell(self.view.progress, index)
     }
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx) {
         (&mut self.worker.cells, &mut self.worker.cx)
@@ -278,6 +282,17 @@ fn work(view: &View<'_>, number: usize) {
     while let Some(rank) = next {
         let index = lanes.by_rank[rank as usize] as usize;
         let mut stop = false;
+        let dirty = lanes.marks[index].load(Ordering::Acquire) == DIRTY;
+        if dirty && lane.worker.cx.cancelled() {
+            // The step stays marked, so it goes back to dirty and runs on a later tick.
+            let step = index as u32;
+            match lane.worker.error {
+                Some((first, _)) if first < step => {}
+                _ => lane.worker.error = Some((step, RunError::Cancelled { step })),
+            }
+            next = lanes.ready.next(true, &[], true);
+            continue;
+        }
         if lanes.marks[index].swap(CLEAN, Ordering::Acquire) == DIRTY {
             let mut report = lane.worker.report;
             if let Err(error) = step_once(&mut lane, index, &mut report) {
@@ -332,9 +347,11 @@ impl Runner<'_> {
         }
         let remaining = self.seed_lanes(lanes);
         if remaining > 0 {
-            let now = self.cx.now_ns;
+            let (now, cancel) = (self.cx.now_ns, self.cx.cancel);
             for worker in &mut lanes.workers {
-                worker.get_mut().cx.now_ns = now;
+                let cx = &mut worker.get_mut().cx;
+                cx.now_ns = now;
+                cx.cancel = cancel;
             }
             let view = View {
                 lanes: &*lanes,
@@ -353,6 +370,7 @@ impl Runner<'_> {
                 pending: self.pending.as_mut_ptr(),
                 pending_cap: self.pending.len(),
                 pending_len: &mut self.pending_len,
+                progress: self.progress,
             };
             lanes.pool.run(&|number| work(&view, number));
         }
@@ -436,6 +454,10 @@ impl Runner<'_> {
                 _ => {}
             }
         }
-        error.map(|(_, failure)| failure)
+        let error = error.map(|(_, failure)| failure);
+        if matches!(error, Some(RunError::Cancelled { .. })) {
+            self.count_cancelled();
+        }
+        error
     }
 }
