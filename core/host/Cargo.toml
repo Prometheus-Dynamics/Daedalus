@@ -6,6 +6,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["std"]
+# Snapshots of the state store, which need std.
+std = []
+
 [dependencies]
 daedalus-runner = { path = "../runner" }
 daedalus-types = { path = "../types" }
