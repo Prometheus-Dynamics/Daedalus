@@ -2,6 +2,7 @@
 
 This is the design the `next` branch builds. It is the source of truth for every brief in
 [`docs/prs/`](prs/). It is written so that an agent with no other context can work from it.
+[`architecture.md`](architecture.md) walks through the same design with worked examples and reasons.
 
 ## What Daedalus is
 
@@ -64,7 +65,7 @@ directly inside those folders must be a crate.
 
 ## The flow
 
-1. **Solve.** Expand groups, apply defaults, run rewrites, check ports and overloads, typecheck,
+1. **Solve.** Expand groups, apply defaults, run rewrites, check ports, typecheck,
    resolve const inputs, insert conversions, align rates, order the graph, lint. Nothing here knows
    about any backend.
 2. **Ask.** Each backend receives an `Offer` holding only the nodes it has a body for, and returns

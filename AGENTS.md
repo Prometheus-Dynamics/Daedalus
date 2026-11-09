@@ -7,6 +7,9 @@ reference, and nothing here changes it. The work is a pre-planned list of PRs in
 
 1. Read [`docs/design.md`](docs/design.md). It is the design every PR builds. Its "Settled details"
    section wins over anything a brief says.
+   [`docs/architecture.md`](docs/architecture.md) is the longer walkthrough of the same design: worked
+   examples, the reasoning, where each `dev` crate goes, the groups and waves. `docs/design.md` wins
+   if they differ. [`docs/architecture.html`](docs/architecture.html) is that document with diagrams.
 2. Run `python3 scripts/pr-status.py` to see what's merged, open, ready and blocked.
 3. Take a PR marked ready and read its brief at `docs/prs/<id>.md`. The brief is the whole
    assignment: what it needs, what it creates, which files on `dev` to read, what to build and what
@@ -53,8 +56,8 @@ reference, and nothing here changes it. The work is a pre-planned list of PRs in
 - Breaking other repositories is fine. They aren't built here.
 - Never push tags. Never force-push `next` or `dev`. Don't change `dev`. Don't bump versions.
 - Don't estimate how long anything will take. Describe size by scope and risk.
-- Product names appear only in the planning files (this file, `TODO.md`, `docs/design.md`,
-  `docs/prs/`).
+- Product names appear only in the planning files (this file, `TODO.md`, and everything in
+  `docs/` that describes the rebuild).
 
 ## Board runs
 
