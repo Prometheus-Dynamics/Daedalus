@@ -6,6 +6,7 @@ use daedalus_graph::GraphBody;
 use daedalus_registry::Registry;
 
 use crate::solve::catalog::Catalog;
+use crate::solve::consts::{self, ConstError};
 use crate::solve::defaults::{self, DefaultsError};
 use crate::solve::expand::{self, ExpandError};
 use crate::solve::hydrate::{self, HydrateError};
@@ -28,6 +29,7 @@ pub enum SolveError {
     Hydrate(HydrateError),
     Ports(PortError),
     Types(TypeCheckError),
+    Consts(ConstError),
 }
 
 impl fmt::Display for SolveError {
@@ -38,6 +40,7 @@ impl fmt::Display for SolveError {
             SolveError::Hydrate(error) => error.fmt(f),
             SolveError::Ports(error) => error.fmt(f),
             SolveError::Types(error) => error.fmt(f),
+            SolveError::Consts(error) => error.fmt(f),
         }
     }
 }
@@ -63,6 +66,7 @@ pub fn solve(
     hydrate::run(&mut work);
     ports::run(&mut work);
     typecheck::run(&mut work);
+    consts::run(&mut work);
     if work.errors.is_empty() {
         Ok(work.graph)
     } else {

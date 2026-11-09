@@ -4,8 +4,8 @@
 
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, NodeDoc, PortRefDoc};
 use daedalus_registry::{
-    BodyRecord, Conversion, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, Registry, SourceAt,
-    TypeRef,
+    BodyRecord, ConfigDecl, Conversion, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, Registry,
+    SourceAt, TypeRef,
 };
 use daedalus_types::{Literal, Scalar, TypeKey};
 
@@ -43,6 +43,7 @@ pub struct Decl {
     shareable: bool,
     conversion: Option<Conversion>,
     group: Option<&'static daedalus_graph::GroupDef>,
+    config: Vec<ConfigDecl>,
     bodies: Vec<(&'static str, &'static str, &'static [&'static str])>,
 }
 
@@ -56,6 +57,7 @@ pub fn decl(id: &str) -> Decl {
         shareable: false,
         conversion: None,
         group: None,
+        config: Vec::new(),
         bodies: Vec::new(),
     }
 }
@@ -83,6 +85,16 @@ impl Decl {
         self.inputs.push(PortDecl {
             default: Some(value),
             ..PortDecl::new(leak_str(name), ty)
+        });
+        self
+    }
+
+    pub fn config(mut self, name: &str, ty: TypeRef) -> Decl {
+        self.config.push(ConfigDecl {
+            name: leak_str(name),
+            ty,
+            fields: &[],
+            rules: &[],
         });
         self
     }
@@ -131,7 +143,7 @@ impl Decl {
             description: "",
             inputs: leak(self.inputs),
             outputs: leak(self.outputs),
-            config: &[],
+            config: leak(self.config),
             fanin: &[],
             fire: self.fire,
             reusable: self.reusable,
