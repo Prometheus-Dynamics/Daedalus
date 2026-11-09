@@ -2,6 +2,8 @@
 
 use core::mem::{align_of, offset_of, size_of};
 
+use crate::foreign::{ForeignHandle, ForeignInterfaceInfo, ForeignOwner};
+
 use crate::{AbiVersion, Fence, FencePoll, Handle, Slot, Slots, Status, Step, StepCx, StepEnd};
 
 /// FNV-1a over the words, each as little-endian bytes.
@@ -43,6 +45,9 @@ pub const SHAPES: &[u64] = &shape! {
     StepEnd { }
     Step { run, data, release }
     AbiVersion { struct_size, major, minor, layout }
+    ForeignInterfaceInfo { key_ptr, key_len, version, layout_hash }
+    ForeignOwner { ptr, retain, release }
+    ForeignHandle { data, vtable, interface, owner }
 };
 
 pub const LAYOUT_HASH: u64 = layout_hash(SHAPES);

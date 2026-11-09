@@ -11,6 +11,8 @@
 extern crate alloc;
 
 mod access;
+#[cfg(feature = "std")]
+pub mod foreign;
 mod inline;
 mod owner;
 mod pool;
