@@ -13,10 +13,12 @@ use super::{pool::staging_size, readback::ReadbackRequest, temp_pool};
 
 static NEXT_ASYNC_MAP_ID: AtomicU64 = AtomicU64::new(1);
 const DEFAULT_ASYNC_READBACK_POLL_INTERVAL_MS: u64 = 10;
-const DEFAULT_ASYNC_READBACK_TIMEOUT_MS: u64 = 30_000;
+/// The readback timeout follows the shared GPU wait bound (`DAEDALUS_GPU_WAIT_TIMEOUT_MS`) until
+/// `set_async_readback_timeout` overrides it.
+const FOLLOWS_GPU_WAIT_BOUND: u64 = u64::MAX;
 static ASYNC_READBACK_POLL_INTERVAL_MS: AtomicU64 =
     AtomicU64::new(DEFAULT_ASYNC_READBACK_POLL_INTERVAL_MS);
-static ASYNC_READBACK_TIMEOUT_MS: AtomicU64 = AtomicU64::new(DEFAULT_ASYNC_READBACK_TIMEOUT_MS);
+static ASYNC_READBACK_TIMEOUT_MS: AtomicU64 = AtomicU64::new(FOLLOWS_GPU_WAIT_BOUND);
 
 /// Set how long the async readback poll worker waits inside each `wgpu::Device::poll` call.
 ///
@@ -38,13 +40,17 @@ pub fn async_readback_poll_interval() -> Duration {
 /// A zero duration is normalized to 1ms so callers do not accidentally force every readback to time
 /// out before the GPU can make progress. Returns the previous timeout.
 pub fn set_async_readback_timeout(timeout: Duration) -> Duration {
-    let previous = ASYNC_READBACK_TIMEOUT_MS.swap(duration_millis(timeout), Ordering::Relaxed);
-    Duration::from_millis(previous)
+    let previous = async_readback_timeout();
+    ASYNC_READBACK_TIMEOUT_MS.store(duration_millis(timeout), Ordering::Relaxed);
+    previous
 }
 
-/// Current async readback timeout.
+/// Current async readback timeout: the shared GPU wait bound unless overridden.
 pub fn async_readback_timeout() -> Duration {
-    Duration::from_millis(ASYNC_READBACK_TIMEOUT_MS.load(Ordering::Relaxed))
+    match ASYNC_READBACK_TIMEOUT_MS.load(Ordering::Relaxed) {
+        FOLLOWS_GPU_WAIT_BOUND => super::wait::gpu_wait_timeout(),
+        millis => Duration::from_millis(millis),
+    }
 }
 
 fn duration_millis(duration: Duration) -> u64 {
@@ -299,10 +305,11 @@ fn complete_map_states(states: &[Arc<Mutex<MapState>>], error: GpuError) {
 }
 
 fn timeout_map_states(states: &[Arc<Mutex<MapState>>], timeout: Duration) {
+    // The bounded-wait error: the dispatch fails and its context is marked lost.
     complete_map_states(
         states,
         GpuError::Internal(format!(
-            "async gpu readback map timed out after {timeout:?}"
+            "gpu wait timed out (async readback) after {timeout:?}"
         )),
     );
 }
@@ -348,7 +355,7 @@ mod tests {
             assert!(matches!(
                 result,
                 Err(GpuError::Internal(message))
-                    if message == "async gpu readback map timed out after 1ms"
+                    if message == "gpu wait timed out (async readback) after 1ms"
             ));
         }
     }

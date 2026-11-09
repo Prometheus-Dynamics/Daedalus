@@ -30,14 +30,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   lost, so its source replaces it under the backoff. A dispatch that hits no timeout is unchanged.
 - An uncaptured wgpu error the driver reports is returned as the next dispatch's error (a
   `GpuError::Internal` "uncaptured gpu error: ..."), so a node fails rather than using suspect
-  output. Still not done: the async dispatch path (`dispatch_async`) keeps its untimed waits.
-  Real device loss and real timeouts are not verified on hardware.
+  output. The async dispatch path (`dispatch_shader_with_options_async`) has the same bounds: its
+  submission wait and readback wait time out at the same bound, and an uncaptured error is the
+  next dispatch's error. `set_async_readback_timeout` still overrides the readback bound, and
+  its default now follows the shared bound (it was 30 s). Real device loss and real timeouts are
+  not verified on hardware.
 - GPU context loss: a lost context (the backend's device-lost callback, or `RetryingGpu::mark_lost`)
   is replaced by the source's next request, under the same capped backoff as a failed open (250 ms
   doubling, at most 5 s). The backend's loss message reaches the caller. References to a replaced
-  context stay valid. NOT DONE YET: bounded polls (a device that stops answering can still hang a
-  wait) and reporting of uncaptured wgpu errors to the dispatching node; both follow in a later
-  commit. Real device loss is not verified on hardware.
+  context stay valid. Real device loss is not verified on hardware.
 - Plugin load and reload retry: `daedalus::dylib::PluginRetry` retries a plugin's load, or a
   requested reload, off the tick path. A failed attempt is retried with a capped backoff (250 ms
   doubling, at most 5 s by default, at most 10 s with `with_backoff`) and is never given up. A

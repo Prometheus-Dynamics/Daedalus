@@ -116,7 +116,12 @@ pub async fn dispatch_shader_with_options_async<'a>(
     if let Some(tracker) = submission_tracker {
         tracker
             .track_and_throttle_async(device, submission_idx)
-            .await;
+            .await
+            .inspect_err(|err| {
+                if super::wait::is_timeout(err) {
+                    backend.mark_lost(err.to_string());
+                }
+            })?;
     } else {
         tracing::warn!(
             target: "daedalus_gpu::dispatch",
@@ -125,9 +130,21 @@ pub async fn dispatch_shader_with_options_async<'a>(
         let _ = device.poll(wgpu::PollType::Poll);
     }
 
-    let result = resolve_readbacks_async(device, device_key, &queue, readbacks).await?;
+    let result = resolve_readbacks_async(device, device_key, &queue, readbacks)
+        .await
+        .inspect_err(|err| {
+            if super::wait::is_timeout(err) {
+                backend.mark_lost(err.to_string());
+            }
+        })?;
     return_pooled_textures(pool_textures_to_return);
 
+    // An uncaptured error the driver reported while this dispatch ran: its output is suspect.
+    if let Some(message) = backend.take_uncaptured_error() {
+        return Err(GpuError::Internal(format!(
+            "uncaptured gpu error: {message}"
+        )));
+    }
     Ok(ShaderRunOutput {
         buffers: result,
         textures: texture_handles,

@@ -53,6 +53,20 @@ struct SubmissionWaitState {
     waker: Option<std::task::Waker>,
 }
 
+/// The result of a submission wait: a timed-out wait is the bounded-wait error.
+#[cfg(feature = "gpu-async")]
+fn submission_wait_result(
+    waited: Result<wgpu::PollStatus, wgpu::PollError>,
+) -> Result<(), GpuError> {
+    match waited {
+        Ok(_) => Ok(()),
+        Err(wgpu::PollError::Timeout) => Err(super::wait::timed_out("submission throttle")),
+        Err(error) => Err(GpuError::Internal(format!(
+            "submission poll failed: {error:?}"
+        ))),
+    }
+}
+
 #[cfg(feature = "gpu-async")]
 async fn wait_for_submission_async(
     device: &wgpu::Device,
@@ -65,13 +79,11 @@ async fn wait_for_submission_async(
     let wait_state = Arc::clone(&state);
     let device = device.clone();
     if let Err(error) = super::poll_driver::submit_poll_job("submission_wait", move || {
-        let result = device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission),
-                timeout: None,
-            })
-            .map(|_| ())
-            .map_err(|error| GpuError::Internal(format!("submission poll failed: {error:?}")));
+        // Bounded: the wait runs on the poll driver's thread, while the async task yields.
+        let result = submission_wait_result(device.poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: Some(super::wait::gpu_wait_timeout()),
+        }));
         let waker = {
             let mut state = wait_state.lock();
             state.result = Some(result);
@@ -172,7 +184,7 @@ impl SubmissionTracker {
         &self,
         device: &wgpu::Device,
         submission: wgpu::SubmissionIndex,
-    ) {
+    ) -> Result<(), GpuError> {
         {
             let mut in_flight = self.in_flight.lock();
             in_flight.push_back(submission.clone());
@@ -215,6 +227,8 @@ impl SubmissionTracker {
                     );
                     self.in_flight.lock().pop_front();
                 }
+                // A timed-out wait fails the dispatch (the caller marks the context lost).
+                Err(error) if super::wait::is_timeout(&error) => return Err(error),
                 Err(error) => {
                     tracing::warn!(
                         target: "daedalus_gpu::dispatch",
@@ -226,6 +240,7 @@ impl SubmissionTracker {
                 }
             }
         }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -536,3 +551,20 @@ mod tests {
 #[cfg(test)]
 #[path = "dispatch_tests.rs"]
 mod no_context_tests;
+
+#[cfg(all(test, feature = "gpu-async"))]
+mod async_wait_tests {
+    use super::*;
+
+    #[test]
+    fn a_timed_out_submission_wait_is_the_bounded_wait_error() {
+        let timed_out = submission_wait_result(Err(wgpu::PollError::Timeout));
+        let Err(error) = timed_out else {
+            panic!("a timed-out wait must fail");
+        };
+        assert!(super::super::wait::is_timeout(&error), "{error}");
+        assert!(submission_wait_result(Ok(wgpu::PollStatus::WaitSucceeded)).is_ok());
+        let wrong = submission_wait_result(Err(wgpu::PollError::WrongSubmissionIndex(1, 2)));
+        assert!(matches!(wrong, Err(GpuError::Internal(ref m)) if !m.contains("timed out")));
+    }
+}
