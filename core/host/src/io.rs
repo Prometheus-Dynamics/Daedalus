@@ -1,0 +1,229 @@
+//! Feed, step and take. A host owns one loaded graph and one port table for it.
+
+use core::fmt;
+
+use daedalus_runner::{RunError, Runner, TickReport};
+use daedalus_types::{TypeIndex, TypeKey};
+use daedalus_value::Value;
+
+use crate::label::Label;
+use crate::ports::{Dir, Ports};
+
+/// What a feed did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FeedOutcome {
+    /// How many consumer steps were woken. A feed never runs a tick.
+    pub woke: u32,
+}
+
+/// Why a host call was refused. Every variant that involves a port names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostError {
+    UnknownPort {
+        port: Label,
+    },
+    NotAnInput {
+        port: Label,
+    },
+    NotAnOutput {
+        port: Label,
+    },
+    /// The value's type is not the port's. Both keys are named; `found` is empty when the host has
+    /// no key for the index it was given.
+    TypeMismatch {
+        port: Label,
+        expected: Label,
+        found_index: u32,
+        found: Label,
+    },
+    /// The value is not a typed payload, so it can't come out as a Rust type.
+    NotTyped {
+        port: Label,
+    },
+    /// The payload is typed, but not as the Rust type the caller asked for.
+    WrongRustType {
+        port: Label,
+    },
+    /// The input's queue is full.
+    Full {
+        port: Label,
+    },
+    /// A typed payload was fed as a plain value. Feed it with the typed feed.
+    Untyped {
+        port: Label,
+    },
+    /// The graph refused the tick.
+    Run(RunError),
+}
+
+impl fmt::Display for HostError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HostError::UnknownPort { port } => write!(f, "no port named {port}"),
+            HostError::NotAnInput { port } => write!(f, "port {port} is an output, not an input"),
+            HostError::NotAnOutput { port } => write!(f, "port {port} is an input, not an output"),
+            HostError::TypeMismatch {
+                port,
+                expected,
+                found_index,
+                found,
+            } => write!(
+                f,
+                "port {port} expects type {expected}, got type {found} (index {found_index})"
+            ),
+            HostError::NotTyped { port } => write!(f, "port {port} holds no typed payload"),
+            HostError::WrongRustType { port } => {
+                write!(f, "port {port} holds a payload of another Rust type")
+            }
+            HostError::Full { port } => write!(f, "port {port} is full"),
+            HostError::Untyped { port } => write!(f, "port {port} needs the typed feed"),
+            HostError::Run(error) => write!(f, "the run was refused: {error:?}"),
+        }
+    }
+}
+
+/// One loaded graph, its ports, and the key of each type index.
+pub struct Host<'a> {
+    runner: Runner<'a>,
+    ports: Ports<'a>,
+    types: &'a [TypeKey],
+}
+
+impl<'a> Host<'a> {
+    /// A host over `runner`. `types[i]` is the key of type index `i`, for error messages.
+    pub fn new(runner: Runner<'a>, ports: Ports<'a>, types: &'a [TypeKey]) -> Host<'a> {
+        Host {
+            runner,
+            ports,
+            types,
+        }
+    }
+
+    /// The label for a type index, or an empty label when the host has no key for it.
+    fn key_label(&self, index: TypeIndex) -> Label {
+        self.types
+            .get(index.0 as usize)
+            .map_or(Label::new(""), |key| Label::new(key.as_str()))
+    }
+
+    fn mismatch(&self, port: &str, expected: TypeIndex, found: TypeIndex) -> HostError {
+        HostError::TypeMismatch {
+            port: Label::new(port),
+            expected: self.key_label(expected),
+            found_index: found.0,
+            found: self.key_label(found),
+        }
+    }
+
+    fn input(&self, name: &str) -> Result<&'a crate::ports::PortSpec<'a>, HostError> {
+        let spec = self.ports.find(name).ok_or(HostError::UnknownPort {
+            port: Label::new(name),
+        })?;
+        match spec.dir {
+            Dir::Input => Ok(spec),
+            Dir::Output => Err(HostError::NotAnInput {
+                port: Label::new(name),
+            }),
+        }
+    }
+
+    fn output(&self, name: &str) -> Result<&'a crate::ports::PortSpec<'a>, HostError> {
+        let spec = self.ports.find(name).ok_or(HostError::UnknownPort {
+            port: Label::new(name),
+        })?;
+        match spec.dir {
+            Dir::Output => Ok(spec),
+            Dir::Input => Err(HostError::NotAnOutput {
+                port: Label::new(name),
+            }),
+        }
+    }
+
+    fn wake_consumers(&mut self, wake: &[u32]) -> u32 {
+        for &step in wake {
+            self.runner.wake(step);
+        }
+        wake.len() as u32
+    }
+
+    /// Stores `value` in the input port `name`, and wakes its consumers. It never runs a tick.
+    pub fn feed(&mut self, name: &str, value: Value) -> Result<FeedOutcome, HostError> {
+        let spec = self.input(name)?;
+        if value.ty != spec.ty {
+            return Err(self.mismatch(name, spec.ty, value.ty));
+        }
+        self.runner
+            .feed_value(spec.slot, value)
+            .map_err(|error| self.feed_error(name, error))?;
+        Ok(FeedOutcome {
+            woke: self.wake_consumers(spec.wake),
+        })
+    }
+
+    /// Stores a typed payload in the input port `name`, and wakes its consumers.
+    pub fn feed_typed<T: Send + Sync + 'static>(
+        &mut self,
+        name: &str,
+        value: std::sync::Arc<T>,
+    ) -> Result<FeedOutcome, HostError> {
+        let spec = self.input(name)?;
+        self.runner
+            .feed_typed(spec.slot, spec.ty, spec.space, value)
+            .map_err(|error| self.feed_error(name, error))?;
+        Ok(FeedOutcome {
+            woke: self.wake_consumers(spec.wake),
+        })
+    }
+
+    /// Several feeds in order. Stops at the first refused one; the ones before it stay fed.
+    pub fn feed_all<'n>(
+        &mut self,
+        items: impl IntoIterator<Item = (&'n str, Value)>,
+    ) -> Result<(), HostError> {
+        for (name, value) in items {
+            self.feed(name, value)?;
+        }
+        Ok(())
+    }
+
+    fn feed_error(&self, name: &str, error: RunError) -> HostError {
+        match error {
+            RunError::Overflow { .. } => HostError::Full {
+                port: Label::new(name),
+            },
+            RunError::Untyped { .. } => HostError::Untyped {
+                port: Label::new(name),
+            },
+            other => HostError::Run(other),
+        }
+    }
+
+    /// Runs one tick.
+    pub fn step(&mut self) -> Result<TickReport, HostError> {
+        self.runner.tick().map_err(HostError::Run)
+    }
+
+    /// Takes the oldest value out of the output port `name`, if there is one.
+    pub fn take_value(&mut self, name: &str) -> Result<Option<Value>, HostError> {
+        let spec = self.output(name)?;
+        match self.runner.peek_type(spec.slot) {
+            None => Ok(None),
+            Some(found) if found != spec.ty => Err(self.mismatch(name, spec.ty, found)),
+            Some(_) => Ok(self.runner.take_value(spec.slot)),
+        }
+    }
+
+    /// Takes every value out of the output port `name`, oldest first.
+    pub fn drain_value(&mut self, name: &str) -> Result<std::vec::Vec<Value>, HostError> {
+        let mut values = std::vec::Vec::new();
+        while let Some(value) = self.take_value(name)? {
+            values.push(value);
+        }
+        Ok(values)
+    }
+
+    /// The graph's runner, for hosts that need more than the port calls.
+    pub fn runner(&mut self) -> &mut Runner<'a> {
+        &mut self.runner
+    }
+}

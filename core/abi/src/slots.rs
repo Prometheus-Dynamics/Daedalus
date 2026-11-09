@@ -44,8 +44,8 @@ impl Slot {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Slots {
-    pub cells: *mut Slot,
-    pub len: u32,
+    pub(crate) cells: *mut Slot,
+    pub(crate) len: u32,
     pub reserved: u32,
 }
 
@@ -58,5 +58,25 @@ impl Slots {
             len: cells.len() as u32,
             reserved: 0,
         }
+    }
+
+    /// How many cells this view holds.
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// The cell at `index`, or `None` past the end. Only `of` builds a `Slots`, so every view
+    /// points at cells that stay valid for as long as the view is used.
+    pub fn cell(&mut self, index: usize) -> Option<&mut Slot> {
+        if index >= self.len() {
+            return None;
+        }
+        // SAFETY: `cells` came from `of`, which borrowed `len` valid cells for as long as this view
+        // is used, and `index` was checked against `len` above.
+        Some(unsafe { &mut *self.cells.add(index) })
     }
 }

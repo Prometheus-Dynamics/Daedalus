@@ -7,18 +7,30 @@
 
 #![no_std]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 mod bits;
 mod error;
 mod fence;
+mod owned;
 mod step;
 mod tick;
+mod values;
 
 use daedalus_abi::{Fence, Slot, Step, StepCx};
 use daedalus_plan::Span;
+use daedalus_value::OwnerKind;
 
 pub use error::{LoadError, MaskError, RunError};
+pub use owned::{INLINE_BYTES, InlineCell, Untyped};
+#[cfg(feature = "alloc")]
+pub use owned::{TypedOps, typed_ops, typed_raw};
 pub use step::{Queue, SlotKind, SlotSpec, StepMeta};
 pub use tick::TickReport;
+pub use values::{put_inline, put_static};
+#[cfg(feature = "alloc")]
+pub use values::{put_shared, put_typed};
 
 use bits::words_for;
 
@@ -66,6 +78,9 @@ pub struct Memory<'a> {
     pub pending: &'a mut [Pending],
     /// The activity mask, in `words_for(steps)` words. Only used once a host sets a mask.
     pub activity: &'a mut [u32],
+    /// One inline buffer per queue entry, so an inline value's bytes sit beside its entry. Its
+    /// length is at least `storage.len()`.
+    pub inline: &'a mut [InlineCell],
 }
 
 /// A loaded graph ready to tick.
@@ -83,6 +98,7 @@ pub struct Runner<'a> {
     pending: &'a mut [Pending],
     pending_len: usize,
     activity: &'a mut [u32],
+    inline: &'a mut [InlineCell],
     masked: bool,
     cx: StepCx,
     tick: u32,
@@ -106,6 +122,7 @@ impl<'a> Runner<'a> {
             always,
             pending,
             activity,
+            inline,
         } = memory;
         let count = steps.len();
         let words = words_for(count);
@@ -133,7 +150,7 @@ impl<'a> Runner<'a> {
             };
             total = total.checked_add(spec.cap).ok_or(LoadError::Capacity)?;
         }
-        if storage.len() < total as usize {
+        if storage.len() < total as usize || inline.len() < storage.len() {
             return Err(LoadError::Length);
         }
         dirty[..words].fill(0);
@@ -182,6 +199,7 @@ impl<'a> Runner<'a> {
             pending,
             pending_len: 0,
             activity,
+            inline,
             masked: false,
             cx: StepCx::new(),
             tick: 0,
@@ -190,10 +208,20 @@ impl<'a> Runner<'a> {
 
     /// Stores a raw value at the back of `slot`'s queue. It does not wake consumers: a host feed
     /// calls [`Runner::wake`] for each consumer, as a body write does.
+    ///
+    /// Only values that own nothing can be pushed raw: static bytes, a slot reference, or a host
+    /// handle. Owning values go in through `feed_value` or `feed_typed`.
     pub fn push(&mut self, slot: u32, value: Slot) -> Result<(), RunError> {
         let index = slot as usize;
         if index >= self.slots {
             return Err(RunError::NoSlot { slot });
+        }
+        let owner = value.owner;
+        if owner != OwnerKind::Static as u32
+            && owner != OwnerKind::Slot as u32
+            && owner != OwnerKind::Host as u32
+        {
+            return Err(RunError::NotRaw { slot });
         }
         if self.queues[index].is_full() {
             return Err(RunError::Overflow { slot });
@@ -254,4 +282,22 @@ fn span(table: &[u32], range: Span) -> Result<&[u32], LoadError> {
         .checked_add(range.len as usize)
         .ok_or(LoadError::Span)?;
     table.get(start..end).ok_or(LoadError::Span)
+}
+
+impl Drop for Runner<'_> {
+    /// Releases every value still queued, once each. Cells hold only views and outputs that were
+    /// already moved into queues, so they own nothing here.
+    fn drop(&mut self) {
+        for index in 0..self.slots {
+            let queue = self.queues[index];
+            for offset in 0..queue.len {
+                let at = queue.base + (queue.head + offset) % queue.cap;
+                // SAFETY: each queued entry owns its reference, and the queue forgets it here.
+                unsafe { owned::release(&self.storage[at as usize]) };
+            }
+            self.queues[index].head = 0;
+            self.queues[index].len = 0;
+            self.queues[index].unconsumed = 0;
+        }
+    }
 }

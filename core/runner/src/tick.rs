@@ -4,7 +4,8 @@ use daedalus_abi::{Slot, SlotState, Slots, StepEnd};
 
 use crate::bits::{self, words_for};
 use crate::error::RunError;
-use crate::step::StepMeta;
+use crate::owned;
+use crate::step::{SlotKind, StepMeta};
 use crate::{Pending, Runner, spanned};
 
 /// What one tick did.
@@ -96,7 +97,10 @@ impl Runner<'_> {
                     self.wake(to);
                 }
             }
-            StepEnd::Skipped => self.commit_inputs(meta),
+            StepEnd::Skipped => {
+                self.commit_inputs(meta);
+                self.discard_outputs(meta);
+            }
             StepEnd::Pending(fence) => {
                 // The outputs are stored now. Consumers wait for the fence to be Ready.
                 self.commit_inputs(meta);
@@ -109,30 +113,68 @@ impl Runner<'_> {
                     return Err(RunError::PendingFull { step: index as u32 });
                 }
             }
-            StepEnd::Fault => report.faults += 1,
+            StepEnd::Fault => {
+                self.discard_outputs(meta);
+                report.faults += 1;
+            }
         }
         Ok(())
     }
 
+    /// Removes what the step consumed. A consumed entry that the step didn't move out is released
+    /// here, once. A moved entry's reference went to an output, so it is only forgotten.
     fn commit_inputs(&mut self, meta: StepMeta) {
         for &slot in spanned(self.table, meta.inputs) {
-            self.queues[slot as usize].commit();
+            let slot = slot as usize;
+            let queue = self.queues[slot];
+            let moved = self.cells[slot].state == SlotState::Moved as u32;
+            if queue.kind == Some(SlotKind::Fifo) && queue.len > 0 && !moved {
+                // SAFETY: the queue owns its head entry, and the queue forgets it on the commit
+                // below, so the reference is released exactly once.
+                unsafe { owned::release(&self.storage[queue.head_index()]) };
+            }
+            self.queues[slot].commit();
         }
     }
 
-    /// Stores every output the body wrote. A cell the body left empty stores nothing.
+    /// Stores every output the body wrote, moving each one's reference into its queue. A cell the
+    /// body left empty stores nothing. On overflow, the rest of the outputs are released.
     fn publish(&mut self, meta: StepMeta) -> Result<(), RunError> {
+        let mut overflow = None;
         for &slot in spanned(self.table, meta.outputs) {
             let slot = slot as usize;
-            if self.cells[slot].state != SlotState::Full as u32 {
+            let cell = self.cells[slot];
+            if cell.state != SlotState::Full as u32 {
                 continue;
             }
-            let queue = &mut self.queues[slot];
-            if queue.is_full() {
-                return Err(RunError::Overflow { slot: slot as u32 });
+            self.cells[slot] = Slot::EMPTY;
+            if overflow.is_some() || self.queues[slot].is_full() {
+                // SAFETY: the cell is Full and this step wrote it, so the reference is still the
+                // cell's, and it is released once here.
+                unsafe { owned::release(&cell) };
+                overflow.get_or_insert(slot as u32);
+                continue;
             }
-            queue.push(&mut *self.storage, self.cells[slot]);
+            let at = self.queues[slot].tail_index();
+            let raw = owned::place(cell, &mut self.inline[at]);
+            self.queues[slot].push(&mut *self.storage, raw);
         }
-        Ok(())
+        match overflow {
+            Some(slot) => Err(RunError::Overflow { slot }),
+            None => Ok(()),
+        }
+    }
+
+    /// Releases the outputs a skipped or failed step wrote but did not publish.
+    fn discard_outputs(&mut self, meta: StepMeta) {
+        for &slot in spanned(self.table, meta.outputs) {
+            let slot = slot as usize;
+            let cell = self.cells[slot];
+            if cell.state == SlotState::Full as u32 {
+                // SAFETY: the cell is Full and this step wrote it, so it owns the reference.
+                unsafe { owned::release(&cell) };
+            }
+            self.cells[slot] = Slot::EMPTY;
+        }
     }
 }

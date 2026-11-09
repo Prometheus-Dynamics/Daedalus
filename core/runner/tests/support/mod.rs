@@ -59,6 +59,7 @@ pub struct Fixture {
     pub always: Vec<u32>,
     pub pending: Vec<Pending>,
     pub activity: Vec<u32>,
+    pub inline: Vec<[u8; 16]>,
 }
 
 impl Fixture {
@@ -75,6 +76,7 @@ impl Fixture {
             always: vec![0; words],
             pending: vec![Pending::EMPTY; may_pend],
             activity: vec![0; words],
+            inline: vec![[0; 16]; storage_len as usize],
             steps,
             wiring,
             specs,
@@ -98,6 +100,7 @@ impl Fixture {
                 always: &mut self.always,
                 pending: &mut self.pending,
                 activity: &mut self.activity,
+                inline: &mut self.inline,
             },
         )
     }
@@ -114,10 +117,7 @@ pub fn tagged(len: usize) -> Slot {
 
 /// The cell at `index`, which a body reads or writes.
 pub fn cell(slots: &mut Slots, index: usize) -> &mut Slot {
-    assert!(index < slots.len as usize, "slot {index} is out of range");
-    // SAFETY: the runner passes `slots` over its own cells, which hold `len` valid cells and
-    // stay exclusively this call's to use. `index` was checked above.
-    unsafe { &mut *slots.cells.add(index) }
+    slots.cell(index).expect("slot in range")
 }
 
 /// Reads input `word & 0xffff` and, when `word >> 16` is not zero, writes that output slot.

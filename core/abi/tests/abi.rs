@@ -149,11 +149,7 @@ fn call(step: &Step, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
 }
 
 fn no_slots() -> Slots {
-    Slots {
-        cells: core::ptr::null_mut(),
-        len: 0,
-        reserved: 0,
-    }
+    Slots::of(&mut [])
 }
 
 #[test]

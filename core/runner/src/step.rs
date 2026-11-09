@@ -66,6 +66,15 @@ impl Queue {
         self.len == self.cap
     }
 
+    /// Drops the oldest value from the queue without releasing it, as a take does.
+    pub(crate) fn pop_head(&mut self) {
+        if self.len > 0 {
+            self.head = (self.head + 1) % self.cap;
+            self.len -= 1;
+            self.unconsumed = self.unconsumed.min(self.len);
+        }
+    }
+
     /// Appends `value`, which must not be full. Stamps it with the next version.
     pub(crate) fn push(&mut self, storage: &mut [Slot], mut value: Slot) {
         self.version = self.version.wrapping_add(1);

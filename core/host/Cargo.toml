@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-host"
+description = "The host around one loaded graph: feed, step, take and drain typed ports."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-runner = { path = "../runner" }
+daedalus-types = { path = "../types" }
+daedalus-value = { path = "../value" }
+
+[dev-dependencies]
+daedalus-abi = { path = "../abi", features = ["count-alloc"] }
+daedalus-plan = { path = "../plan" }
+
+[lints]
+workspace = true
