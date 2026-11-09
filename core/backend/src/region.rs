@@ -2,7 +2,8 @@
 
 use std::any::Any;
 
-use daedalus_types::{BackendIndex, Literal, NodeIndex, PortIndex, TypeExpr};
+use daedalus_graph::Lit;
+use daedalus_types::{BackendIndex, NodeIndex, PortIndex, TypeExpr};
 
 use crate::{BodyIndex, MemorySpace};
 
@@ -43,7 +44,7 @@ pub struct Region<'a> {
 pub struct ConstOf<'a> {
     pub node: NodeIndex,
     pub port: &'a str,
-    pub value: Literal,
+    pub value: &'a Lit,
 }
 
 /// The code a node's author wrote for this backend.

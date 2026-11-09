@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 daedalus-abi = { path = "../abi" }
+daedalus-graph = { path = "../graph" }
 daedalus-types = { path = "../types" }
 daedalus-value = { path = "../value" }
 

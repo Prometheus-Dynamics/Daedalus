@@ -75,6 +75,17 @@ unsafe extern "C" fn run_owned<D: OwnedStep>(
     guard_or(StepEnd::Fault, || body.run(slots, cx))
 }
 
+impl Step {
+    /// Frees the step without running it, as a planner does with a discarded compile.
+    pub fn discard(self) {
+        if let Some(release) = self.release {
+            // SAFETY: `release` is called once, on the `data` it was stored with, and `self` is
+            // consumed so it can't be called again.
+            unsafe { release(self.data) }
+        }
+    }
+}
+
 #[cfg(feature = "alloc")]
 // SAFETY: must be called once, with the `data` from `Step::boxed`.
 unsafe extern "C" fn release_owned<D: OwnedStep>(data: *mut ()) {

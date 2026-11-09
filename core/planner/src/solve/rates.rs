@@ -162,6 +162,7 @@ pub fn run(work: &mut Work<'_>) {
             .edges
             .iter()
             .filter(|edge| edge.to.node == index)
+            .filter(|_| work.graph.nodes[index as usize].doc.kind != NodeKindDoc::HostBridge)
             .map(|edge| {
                 let source = &work.graph.nodes[edge.from.node as usize];
                 (edge.to.port.as_str(), source.rate_out)

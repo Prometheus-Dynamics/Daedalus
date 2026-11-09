@@ -180,6 +180,20 @@ fn alignment_policy_recorded_not_applied() {
 }
 
 #[test]
+fn one_host_bridge_can_feed_and_read_a_chain() {
+    let mut host = node("host");
+    host.kind = daedalus_graph::NodeKindDoc::HostBridge;
+    host.port_types.insert("in".to_string(), "u8".to_string());
+    host.port_types.insert("out".to_string(), "u8".to_string());
+    let graph = run(
+        vec![host, node("t.pass")],
+        vec![edge(0, "out", 1, "in"), edge(1, "out", 0, "in")],
+    )
+    .unwrap();
+    assert_eq!(graph.order, [0, 1]);
+}
+
+#[test]
 fn a_zero_rate_is_rejected() {
     let errors = run(vec![ratio(0, 2)], Vec::new()).unwrap_err();
     assert!(matches!(
