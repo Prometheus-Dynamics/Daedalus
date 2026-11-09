@@ -1,6 +1,6 @@
 //! Turning a signature and the attribute into ports.
 
-use proc_macro2::{Group, Span, TokenStream, TokenTree};
+use proc_macro2::{Group, Literal, Span, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
     Error, Expr, FnArg, GenericArgument, Lit, LitStr, Pat, PathArguments, Result, ReturnType,
@@ -82,6 +82,12 @@ pub(crate) struct Shape {
     /// The parameters, with the instance's type filled in.
     pub params: TokenStream,
     pub ret: TokenStream,
+    /// One `role position "port" name: Type,` per parameter, for a backend that binds them.
+    pub bind: TokenStream,
+    /// `plain | fallible, pattern, [value | option position name: Type, ..]`.
+    pub returns: TokenStream,
+    /// How many inputs aren't fan-in. Fan-in ports come after them.
+    pub fixed: usize,
     /// A `Result` return's error type, which has to be `Display`.
     pub error: Option<Type>,
     pub modifies: bool,
@@ -123,7 +129,30 @@ fn access(name: &str) -> TokenStream {
     quote!(::daedalus_registry::__private::Access::#name)
 }
 
-fn input_port(name: String, span: Span, ty: &Type, arg: PortArg) -> (Port, bool) {
+/// The parameter `&Ctx`, which the runner fills. Recognized by name, like `FanIn`.
+fn is_ctx(ty: &Type) -> bool {
+    let Type::Reference(reference) = ty else {
+        return false;
+    };
+    let Type::Path(path) = &*reference.elem else {
+        return false;
+    };
+    reference.mutability.is_none() && path.path.segments.last().is_some_and(|s| s.ident == "Ctx")
+}
+
+fn role_of(mode: &str, optional: bool) -> syn::Ident {
+    let role = match (mode, optional) {
+        ("Modify", false) => "modify",
+        ("Modify", true) => "opt_modify",
+        ("Read", false) => "read",
+        ("Read", true) => "opt_read",
+        (_, false) => "take",
+        (_, true) => "opt_take",
+    };
+    syn::Ident::new(role, Span::call_site())
+}
+
+fn input_port(name: String, span: Span, ty: &Type, arg: PortArg) -> (Port, bool, syn::Ident) {
     let inner = generic_of(ty, "Option").and_then(|args| args.first().copied());
     let optional = inner.is_some();
     let value = inner.unwrap_or(ty);
@@ -134,6 +163,7 @@ fn input_port(name: String, span: Span, ty: &Type, arg: PortArg) -> (Port, bool)
     };
     let type_ref = declared_type(&arg).unwrap_or_else(|| key_of(unref(value)));
     let span = arg.name.as_ref().map_or(span, LitStr::span);
+    let role = role_of(mode, optional);
     let port = Port {
         name,
         span,
@@ -143,7 +173,7 @@ fn input_port(name: String, span: Span, ty: &Type, arg: PortArg) -> (Port, bool)
         conditional: false,
         arg,
     };
-    (port, modifies)
+    (port, modifies, role)
 }
 
 fn take_arg(ports: &mut Option<std::vec::IntoIter<PortArg>>) -> PortArg {
@@ -180,6 +210,9 @@ pub(crate) fn shape(
         fanin: Vec::new(),
         params: TokenStream::new(),
         ret: quote!(()),
+        bind: TokenStream::new(),
+        returns: quote!(plain, (), []),
+        fixed: 0,
         error: None,
         modifies: false,
     };
@@ -201,12 +234,26 @@ pub(crate) fn shape(
                 .state
                 .as_ref()
                 .is_some_and(|state| same(unref(&ty), state));
-        if is_state
-            || args
-                .config
-                .as_ref()
-                .is_some_and(|config| same(unref(&ty), config))
+        let zero = Literal::usize_unsuffixed(0);
+        let value = unref(&ty).clone();
+        if is_state {
+            shape.bind.extend(quote!(state #zero "" #ident: #value,));
+            continue;
+        }
+        if args
+            .config
+            .as_ref()
+            .is_some_and(|config| same(unref(&ty), config))
         {
+            let role = match &ty {
+                Type::Reference(_) => quote!(config_ref),
+                _ => quote!(config_val),
+            };
+            shape.bind.extend(quote!(#role #zero "" #ident: #value,));
+            continue;
+        }
+        if is_ctx(&ty) {
+            shape.bind.extend(quote!(ctx #zero "" #ident: #value,));
             continue;
         }
         if let Some(element) = generic_of(&ty, "FanIn").and_then(|a| a.first().copied()) {
@@ -216,6 +263,7 @@ pub(crate) fn shape(
                 .as_ref()
                 .map_or(ident.to_string(), |name| name.value());
             let type_ref = declared_type(&arg).unwrap_or_else(|| key_of(element));
+            shape.bind.extend(quote!(fanin #zero "" #ident: #element,));
             shape.fanin.push(FanIn { prefix, type_ref });
             continue;
         }
@@ -224,7 +272,14 @@ pub(crate) fn shape(
             .name
             .as_ref()
             .map_or(ident.to_string(), |name| name.value());
-        let (port, modifies) = input_port(name, ident.span(), &ty, arg);
+        let at = Literal::usize_unsuffixed(shape.inputs.len());
+        let port_name = name.clone();
+        let inner = generic_of(&ty, "Option").and_then(|a| a.first().copied());
+        let value = unref(inner.unwrap_or(&ty)).clone();
+        let (port, modifies, role) = input_port(name, ident.span(), &ty, arg);
+        shape
+            .bind
+            .extend(quote!(#role #at #port_name #ident: #value,));
         shape.modifies |= modifies;
         shape.inputs.push(port);
     }
@@ -237,6 +292,7 @@ pub(crate) fn shape(
             ));
         }
     }
+    shape.fixed = shape.inputs.len();
     let ReturnType::Type(_, returned) = &signature.output else {
         if outputs.as_ref().is_some_and(|names| !names.is_empty()) {
             return Err(Error::new_spanned(
@@ -249,11 +305,13 @@ pub(crate) fn shape(
     let returned = fill_type(returned)?;
     shape.ret = returned.to_token_stream();
     let mut value = &returned;
+    let fallible = generic_of(&returned, "Result").is_some();
     if let Some(parts) = generic_of(&returned, "Result") {
         value = parts.first().copied().unwrap_or(value);
         shape.error = parts.get(1).map(|error| (*error).clone());
     }
     let types = output_types(value);
+    let is_tuple = matches!(value, Type::Tuple(_));
     if let Some(names) = &outputs
         && names.len() != types.len()
     {
@@ -268,6 +326,8 @@ pub(crate) fn shape(
     }
     let single = types.len() == 1;
     let mut names = outputs.map(Vec::into_iter);
+    let mut written = TokenStream::new();
+    let mut bound = Vec::new();
     for (index, ty) in types.into_iter().enumerate() {
         let arg = take_arg(&mut names);
         let fallback = if single {
@@ -279,6 +339,16 @@ pub(crate) fn shape(
         let inner = generic_of(ty, "Option").and_then(|args| args.first().copied());
         let type_ref = declared_type(&arg).unwrap_or_else(|| key_of(inner.unwrap_or(ty)));
         let conditional = inner.is_some();
+        let (kind, held) = match inner {
+            Some(inner) => (quote!(option), inner),
+            None => (quote!(value), ty),
+        };
+        let (at, out) = (
+            Literal::usize_unsuffixed(index),
+            syn::Ident::new(&format!("__out{index}"), Span::call_site()),
+        );
+        written.extend(quote!(#kind #at #out: #held,));
+        bound.push(out);
         shape.outputs.push(Port {
             name,
             span: arg
@@ -292,6 +362,17 @@ pub(crate) fn shape(
             arg,
         });
     }
+    let pattern = match (is_tuple, bound.as_slice()) {
+        (false, [only]) => quote!(#only),
+        (_, [only]) => quote!((#only,)),
+        (_, many) => quote!((#(#many),*)),
+    };
+    let flow = if fallible {
+        quote!(fallible)
+    } else {
+        quote!(plain)
+    };
+    shape.returns = quote!(#flow, #pattern, [#written]);
     Ok(shape)
 }
 

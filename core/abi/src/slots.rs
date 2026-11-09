@@ -74,6 +74,13 @@ impl Slots {
         self.len == 0
     }
 
+    /// Every cell, for a body that binds them once each.
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [Slot] {
+        // SAFETY: `of` built this from a live, exclusive slice of `len` cells.
+        unsafe { core::slice::from_raw_parts_mut(self.cells, self.len as usize) }
+    }
+
     /// The cell at `index`, or `None` past the end. Only `of` builds a `Slots`, so every view
     /// points at cells that stay valid for as long as the view is used.
     pub fn cell(&mut self, index: usize) -> Option<&mut Slot> {

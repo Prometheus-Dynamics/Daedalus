@@ -6,6 +6,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::{Error, Expr, FnArg, Ident, ItemFn, Pat, Result, ReturnType, Token, Type};
 
+use crate::args::NodeArgs;
 use crate::args::{BackendArg, parse_backend, value};
 use crate::emit::error_check;
 use crate::ports::{checked_key, generic_of};
@@ -127,6 +128,8 @@ pub(crate) fn expand(args: TransferArgs, item: ItemFn) -> Result<TokenStream> {
         None => (quote!(::daedalus_cpu_author), TokenStream::new()),
     };
     let ret = returned;
+    let bound = crate::ports::shape(&NodeArgs::default(), None, None, &item.sig, None)?;
+    let bind = crate::emit::bind_tokens(None, None, &bound);
     Ok(quote! {
         #item
         #result_check
@@ -147,6 +150,7 @@ pub(crate) fn expand(args: TransferArgs, item: ItemFn) -> Result<TokenStream> {
                 args = (#backend_args),
                 params = (#params),
                 ret = #ret,
+                bind = #bind,
                 decl = #record
             ),
         };

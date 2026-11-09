@@ -275,14 +275,24 @@ fn add_fanin(node: &mut Node, entry: &Entry, port: &str) -> bool {
         return false;
     };
     if !node.inputs.iter().any(|known| known.name == port) {
-        node.inputs.push(Port {
-            name: port.to_string(),
-            ty: fanin.ty.clone(),
-            access: Access::default(),
-            optional: false,
-            default: None,
-            generic: generic_var(&fanin.ty).is_some(),
-        });
+        // Fan-in ports stay in number order, whatever order their edges were written in.
+        let number = |name: &str| name.strip_prefix(fanin.prefix)?.parse::<u32>().ok();
+        let at = node
+            .inputs
+            .iter()
+            .position(|known| number(&known.name) > number(port))
+            .unwrap_or(node.inputs.len());
+        node.inputs.insert(
+            at,
+            Port {
+                name: port.to_string(),
+                ty: fanin.ty.clone(),
+                access: Access::default(),
+                optional: false,
+                default: None,
+                generic: generic_var(&fanin.ty).is_some(),
+            },
+        );
     }
     true
 }

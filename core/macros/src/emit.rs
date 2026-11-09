@@ -230,6 +230,7 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
         None => (quote!(::daedalus_cpu_author), TokenStream::new()),
     };
     let (params, ret) = (&shape.params, &shape.ret);
+    let bind = bind_tokens(args.state.as_ref(), args.config.as_ref(), &shape);
     let decl = format_ident!("{upper}_DECL");
     let node = format_ident!("{upper}_NODE");
     Ok(quote! {
@@ -265,12 +266,33 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
                     args = (#backend_args),
                     params = (#params),
                     ret = #ret,
+                    bind = #bind,
                     decl = #decl
                 );
                 __DAEDALUS_BODY.with_node(#state, &[#(#memory),*])
             },
         };
     })
+}
+
+/// What a backend needs to wire a function up: which parameter is which, and what it returns.
+pub(crate) fn bind_tokens(
+    state: Option<&Type>,
+    config: Option<&Type>,
+    shape: &Shape,
+) -> TokenStream {
+    let (state, config) = (state.into_iter(), config.into_iter());
+    let (params, returns, fixed) = (&shape.bind, &shape.returns, shape.fixed);
+    let fixed = proc_macro2::Literal::usize_unsuffixed(fixed);
+    quote! {
+        (
+            state = (#(#state)*),
+            config = (#(#config)*),
+            fixed = #fixed,
+            params = (#params),
+            returns = (#returns)
+        )
+    }
 }
 
 fn clone_ports(ports: &Option<Vec<PortArg>>) -> Option<Vec<PortArg>> {
@@ -417,6 +439,9 @@ fn expand_const(args: NodeArgs, item: ItemConst) -> Result<TokenStream> {
         fanin: Vec::new(),
         params: TokenStream::new(),
         ret: quote!(()),
+        bind: TokenStream::new(),
+        returns: quote!(plain, (), []),
+        fixed: 0,
         error: None,
         modifies: false,
     };

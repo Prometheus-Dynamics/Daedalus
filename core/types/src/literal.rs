@@ -65,6 +65,16 @@ impl FromLiteral for f32 {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl FromLiteral for alloc::string::String {
+    fn from_literal(value: &Literal) -> Result<Self, Error> {
+        match value {
+            Literal::Str(value) => Ok((*value).into()),
+            _ => Err(wrong_kind("str")),
+        }
+    }
+}
+
 impl FromLiteral for bool {
     fn from_literal(value: &Literal) -> Result<Self, Error> {
         match value {

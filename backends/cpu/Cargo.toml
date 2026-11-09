@@ -1,0 +1,43 @@
+[package]
+name = "daedalus-cpu"
+description = "The CPU backend: typed Rust functions as steps."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+# A region's nodes as direct calls (D2).
+merge = []
+# Blob form and its small runner (D3).
+blob = []
+receive = []
+# Generated Rust for a solved region (D4).
+source = []
+tunable = []
+# Bare-metal chips (D5).
+chip = []
+chip-params = []
+f64 = []
+defmt = []
+
+[dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["alloc"] }
+daedalus-backend = { path = "../../core/backend" }
+daedalus-graph = { path = "../../core/graph" }
+daedalus-runner = { path = "../../core/runner" }
+daedalus-types = { path = "../../core/types", features = ["alloc"] }
+daedalus-value = { path = "../../core/value" }
+
+[dev-dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["test-run", "count-alloc"] }
+daedalus-cpu-author = { path = "../cpu-author" }
+daedalus-macros = { path = "../../core/macros" }
+daedalus-planner = { path = "../../core/planner" }
+daedalus-registry = { path = "../../core/registry" }
+
+[lints]
+workspace = true

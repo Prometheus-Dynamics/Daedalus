@@ -41,7 +41,7 @@ pub const SHAPES: &[u64] = &shape! {
     Fence { poll, data }
     Slot { state, space, type_index, owner, version, reserved, data, len, cap }
     Slots { cells, len, reserved }
-    StepCx { at, reason_len, reason, cancel, progress, flags, reserved, now_ns }
+    StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns }
     StepEnd { }
     Step { run, data, release }
     AbiVersion { struct_size, major, minor, layout }

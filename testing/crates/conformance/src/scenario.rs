@@ -90,6 +90,8 @@ impl Scenario {
             .map(|node| NodeBody {
                 node: *node,
                 body: BodyIndex(0),
+                inputs: 0,
+                outputs: 0,
                 code: self.code,
                 text: self.text,
             })

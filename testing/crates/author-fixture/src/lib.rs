@@ -24,6 +24,7 @@ macro_rules! __daedalus_body {
         args = ($($port:ident : $ty:ty),* $(,)?),
         params = (),
         ret = (),
+        bind = $bind:tt,
         decl = $decl:ident
     ) => {
         $crate::registry::BodyRecord {
@@ -46,6 +47,7 @@ macro_rules! __daedalus_body {
         args = ($($args:tt)*),
         params = ($($params:tt)*),
         ret = $ret:ty,
+        bind = $bind:tt,
         decl = $decl:ident
     ) => {
         $crate::registry::BodyRecord {
@@ -65,6 +67,7 @@ macro_rules! __daedalus_body {
         args = ($($args:tt)*),
         params = ($($params:tt)*),
         ret = $ret:ty,
+        bind = $bind:tt,
         decl = $decl:ident
     ) => {
         $crate::registry::BodyRecord {
