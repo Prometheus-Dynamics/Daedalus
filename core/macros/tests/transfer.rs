@@ -60,7 +60,11 @@ fn the_record_has_what_the_attribute_said() {
     assert_eq!(record.key, Scalar::U8.key());
     assert_eq!(record.output, Scalar::U8.key());
     assert!(
-        record.at.0.starts_with("core/macros/tests/transfer.rs:"),
+        record
+            .at
+            .0
+            .replace('\\', "/")
+            .starts_with("core/macros/tests/transfer.rs:"),
         "{}",
         record.at.0
     );
