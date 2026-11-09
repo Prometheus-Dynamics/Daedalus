@@ -2,6 +2,7 @@
 //! CRC of the concatenation. A path the process cannot run (`run` returns `None` on an empty
 //! input) is skipped.
 
+use daedalus_accel::{Backend, Evidence, Ext, conform_with};
 use daedalus_kernels_sys as k;
 use daedalus_kernels_sys::Isa;
 use daedalus_kernels_sys::reference as r;
@@ -35,21 +36,37 @@ fn ieee_check_value() {
     assert_eq!(k::crc32(b"123456789"), 0xCBF4_3926);
 }
 
+/// The inventory column and the extension each path needs (`None` for the base build).
+fn column(isa: Isa) -> (Backend, &'static [Ext]) {
+    match isa {
+        Isa::Scalar => (Backend::Scalar, &[]),
+        Isa::X86Sse2 => (Backend::X86Sse2, &[Ext::Pclmulqdq]),
+        Isa::Neon64 => (Backend::Neon64, &[Ext::Crc32]),
+        Isa::Neon32 => (Backend::Neon32, &[]),
+        Isa::Rvv => (Backend::Rvv, &[Ext::Zvbc]),
+        _ => (Backend::Scalar, &[]),
+    }
+}
+
 #[test]
 fn every_runnable_path_agrees_with_the_reference() {
     for isa in ISAS {
-        if k::crc32::run(isa, &[]).is_none() {
-            continue;
-        }
-        for len in LENGTHS {
-            let data = bytes(len, 14);
-            let want = r::crc32(&data);
-            assert_eq!(
-                k::crc32::run(isa, &data),
-                Some(want),
-                "{isa:?} at {len} bytes"
-            );
-        }
+        let (backend, exts) = column(isa);
+        conform_with(
+            Evidence::new("daedalus.codec.crc32", backend).extensions(exts),
+            || {
+                for len in LENGTHS {
+                    let data = bytes(len, 14);
+                    let want = r::crc32(&data);
+                    match k::crc32::run(isa, &data) {
+                        Some(got) if got == want => {}
+                        Some(got) => return Err(format!("{len} bytes: {got:#x} != {want:#x}")),
+                        None => return Err("not runnable".into()),
+                    }
+                }
+                Ok(())
+            },
+        );
     }
 }
 
