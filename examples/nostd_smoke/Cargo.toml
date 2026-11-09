@@ -1,0 +1,25 @@
+[package]
+name = "daedalus-nostd-smoke"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "A host and its serial runner, with no standard library and no operating system clock."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+daedalus-abi = { path = "../../core/abi", default-features = false, features = ["alloc"] }
+daedalus-host = { path = "../../core/host", default-features = false }
+daedalus-plan = { path = "../../core/plan", default-features = false }
+daedalus-runner = { path = "../../core/runner" }
+daedalus-types = { path = "../../core/types", default-features = false }
+daedalus-value = { path = "../../core/value", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["count-alloc"] }

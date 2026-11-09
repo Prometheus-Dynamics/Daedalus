@@ -1,10 +1,14 @@
 //! The host around one loaded graph. A host feeds values into input ports, runs ticks, and takes
 //! values out of output ports. It holds no `unsafe`: the runner's safe value API does the work.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 // Errors carry their port and type names inline, so a refused call allocates nothing. That makes
 // the error type large on purpose.
 #![allow(clippy::result_large_err)]
+
+#[cfg(not(feature = "std"))]
+extern crate alloc as std;
 
 #[cfg(feature = "alloc-probe")]
 pub mod alloc_probe;

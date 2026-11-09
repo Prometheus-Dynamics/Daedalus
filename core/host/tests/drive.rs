@@ -1,5 +1,7 @@
 //! The drive loops and the waits, on a one-step graph.
 
+#![cfg(unix)]
+
 use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;

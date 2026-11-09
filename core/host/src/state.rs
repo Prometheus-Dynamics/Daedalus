@@ -6,9 +6,12 @@
 //! apart. An entry is either plain state or a managed resource. A value is dropped once, when it
 //! is replaced, removed, or the store is dropped.
 
+use std::boxed::Box;
+use std::string::String;
+use std::vec::Vec;
 mod resources;
 
-use std::any::{Any, TypeId};
+use core::any::{Any, TypeId};
 
 use daedalus_types::NodeId;
 

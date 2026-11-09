@@ -84,7 +84,7 @@ The first backend, merging, the Blob and Source forms, chips, the kernels, wasm 
 - [x] [D7](docs/prs/D7.md) Chip blink example: compiled, tunable, loaded and fan-in (wave 18; needs D3, D5, D6)
 - [ ] [D8](docs/prs/D8.md) Kernels library: float, copy and codec kernels (wave 2; needs A1)
 - [x] [D9](docs/prs/D9.md) WebAssembly: embedded preset smoke modules and Node runs (wave 15; needs C10, D1)
-- [ ] [D10](docs/prs/D10.md) No-heap tier, cross-target CPU runs and Windows (wave 15; needs C1, C10, D1)
+- [x] [D10](docs/prs/D10.md) No-heap tier, cross-target CPU runs and Windows (wave 15; needs C1, C10, D1)
 - [ ] [D11](docs/prs/D11.md) Acceleration inventory engine (wave 2; needs A1)
 - [ ] [D12](docs/prs/D12.md) Chip board example: Raspberry Pi Pico (RP2040) (wave 19; needs D7; board run)
 - [x] [D13](docs/prs/D13.md) Shared nodes: one #[node] for the host and the chip (wave 17; needs C14, D3, D4, D5)

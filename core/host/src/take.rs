@@ -52,7 +52,9 @@ impl Host<'_> {
         let Some(value) = self.take_value(name)? else {
             return Ok(None);
         };
-        if let Some(typed) = value.typed::<T>() {
+        if let Owner::Typed(payload) = &value.owner
+            && let Some(typed) = payload.downcast_ref::<T>()
+        {
             return Ok(Some(*typed));
         }
         let bytes = value.bytes().ok_or_else(wrong)?;
