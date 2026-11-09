@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::mem;
 use std::string::String;
+use std::sync::OnceLock;
+use std::time::Instant;
 use std::vec;
 use std::vec::Vec;
 
@@ -17,6 +19,7 @@ use daedalus_plan::Span;
 use daedalus_planner::Planned;
 use daedalus_planner::stitch::Item;
 use daedalus_planner::stitch::{HostPort, Stitched};
+use daedalus_runner::ClockFn;
 use daedalus_runner::owned_run;
 use daedalus_runner::{Fire, Recovery, SlotKind, SlotSpec, StepMeta};
 use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey};
@@ -25,6 +28,7 @@ use daedalus_value::{Overflow, Pressure};
 use crate::fault::FaultRing;
 use crate::intern::{intern, intern_key, intern_keys, intern_names, intern_ports, intern_wake};
 use crate::patch::ConstTable;
+use crate::tick_overhead::{TickOverheadReport, TickOverheadWindow};
 use crate::unmerged::Planner;
 use crate::{Dir, Host, PortSpec, Ports, StateStore};
 
@@ -35,6 +39,8 @@ pub struct LoadOptions {
     pub fifo_capacity: u32,
     /// How many failure reports the host keeps.
     pub fault_reports: usize,
+    /// How many ticks of overhead to keep. Zero leaves the probe off.
+    pub overhead_window: usize,
 }
 
 impl Default for LoadOptions {
@@ -42,6 +48,7 @@ impl Default for LoadOptions {
         LoadOptions {
             fifo_capacity: 64,
             fault_reports: 32,
+            overhead_window: 0,
         }
     }
 }
@@ -453,7 +460,7 @@ fn port_table(
 
 /// A key for a type. Named types use their own, and a composite one gets a readable name, since
 /// these keys only name a type in messages and inspection.
-fn type_text(expr: &TypeExpr) -> String {
+pub(crate) fn type_text(expr: &TypeExpr) -> String {
     match expr {
         TypeExpr::Scalar(scalar) => String::from(scalar.key().as_str()),
         TypeExpr::Opaque(key) => String::from(key.as_str()),
@@ -463,6 +470,11 @@ fn type_text(expr: &TypeExpr) -> String {
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
             .collect(),
     }
+}
+
+fn monotonic_ns() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_nanos() as u64
 }
 
 fn type_keys(planned: &Planned) -> &'static [TypeKey] {
@@ -485,6 +497,7 @@ pub struct LoadedHost {
     pub(crate) unmerged: bool,
     pub(crate) consts: ConstTable,
     pub(crate) off_nodes: BTreeSet<String>,
+    pub(crate) overhead: Option<TickOverheadWindow>,
 }
 
 /// Everything one version of the graph brings.
@@ -523,6 +536,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         .collect();
     let ports = port_table(planned, &meta, &table)?;
     let types = type_keys(planned);
+    let clock = (options.overhead_window > 0).then_some(monotonic_ns as ClockFn);
     let host_inputs: Vec<u32> = planned
         .stitched
         .host_inputs
@@ -530,7 +544,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         .map(|p| p.slot)
         .collect();
     let (mut runner, buffers) =
-        owned_run::build(steps, meta, table, slots, &host_inputs).map_err(LoadError::Run)?;
+        owned_run::build(steps, meta, table, slots, &host_inputs, clock).map_err(LoadError::Run)?;
     for (slot, pressure) in edges {
         // A slot a kept rule can't apply to stays on the default.
         let _ = runner.set_pressure(slot, pressure);
@@ -569,6 +583,8 @@ impl LoadedHost {
             unmerged: false,
             consts,
             off_nodes: BTreeSet::new(),
+            overhead: (options.overhead_window > 0)
+                .then(|| TickOverheadWindow::new(options.overhead_window)),
             host: parts.host,
             nodes: parts.nodes,
             bridges: parts.bridges,
@@ -582,8 +598,19 @@ impl LoadedHost {
         self.consts.set_ticking(true);
         let report = self.host.step();
         self.consts.set_ticking(false);
+        if let (Some(window), Some(probe)) = (
+            self.overhead.as_mut(),
+            self.host.owned.as_ref().and_then(|owned| owned.probe()),
+        ) {
+            window.record(probe);
+        }
         self.collect_faults();
         report
+    }
+
+    /// The tick overhead over the recent window, when the probe is on.
+    pub fn tick_overhead(&self) -> Option<TickOverheadReport> {
+        self.overhead.as_ref().map(TickOverheadWindow::report)
     }
 
     pub fn host(&mut self) -> &mut Host<'static> {

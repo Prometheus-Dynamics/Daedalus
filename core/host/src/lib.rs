@@ -14,6 +14,8 @@ mod control;
 #[cfg(feature = "std")]
 mod diagnostics;
 #[cfg(feature = "std")]
+pub mod domain;
+#[cfg(feature = "std")]
 mod drive;
 #[cfg(feature = "std")]
 mod fault;

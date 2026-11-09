@@ -15,6 +15,7 @@ use crate::cancel::CancelWord;
 use crate::error::LoadError;
 use crate::fault_log::StepFault;
 use crate::owned::InlineCell;
+use crate::probe::{ClockFn, TickProbe};
 use crate::reuse::{InputVersion, ReuseEntry, ReuseMemory};
 use crate::step::{Queue, SlotSpec, StepMeta};
 use crate::{Memory, Pending, Plan, Runner, StepHealth};
@@ -82,12 +83,18 @@ pub struct RunBuffers {
     _reuse_inputs: Raw<InputVersion>,
     cancel: Raw<CancelWord>,
     _faults: Raw<StepFault>,
+    probe: Option<Raw<TickProbe<'static>>>,
 }
 
 impl RunBuffers {
     /// The cancel word of this runner.
     pub fn cancel(&self) -> &CancelWord {
         &self.cancel.shared()[0]
+    }
+
+    /// The tick probe, when the runner was built with one.
+    pub fn probe(&self) -> Option<&TickProbe<'static>> {
+        self.probe.as_ref().map(|probe| &probe.shared()[0])
     }
 }
 
@@ -102,6 +109,7 @@ pub fn build(
     table: Vec<u32>,
     slots: Vec<SlotSpec>,
     host_inputs: &[u32],
+    clock: Option<ClockFn>,
 ) -> Result<(Runner<'static>, RunBuffers), LoadError> {
     let count = steps.len();
     let words = words_for(count);
@@ -133,6 +141,7 @@ pub fn build(
         _reuse_inputs: Raw::new(vec![InputVersion::default(); nslots]),
         cancel: Raw::new(vec![CancelWord::new()]),
         _faults: Raw::new(vec![StepFault::EMPTY; count]),
+        probe: clock.map(|clock| Raw::new(vec![TickProbe::new(clock)])),
     };
     // SAFETY: each buffer is borrowed exactly once here, and `RunBuffers` keeps them alive until
     // the runner is gone, as the function's documentation requires of the caller.
@@ -177,5 +186,8 @@ pub fn build(
     runner.set_cancel(word);
     // SAFETY: as above; this table is borrowed only here.
     runner.set_fault_log(unsafe { buffers._faults.borrow() })?;
+    if let Some(probe) = &buffers.probe {
+        runner.set_probe(&probe.shared()[0]);
+    }
     Ok((runner, buffers))
 }
