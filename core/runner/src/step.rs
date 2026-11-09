@@ -57,6 +57,10 @@ pub struct Queue {
     /// Goes up on every push, so a step can tell whether an input changed.
     pub version: u32,
     pub kind: Option<SlotKind>,
+    /// What a push does at capacity. A loaded edge's policy; the default buffers up to `cap`.
+    pub pressure: daedalus_value::Pressure,
+    /// When the value in a coalescing window was stored.
+    pub opened_ns: u64,
 }
 
 impl Queue {

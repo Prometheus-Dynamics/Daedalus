@@ -198,3 +198,39 @@ fn output_that_has_no_room_is_an_overflow() {
     runner.wake(0);
     assert_eq!(runner.tick(), Err(RunError::Overflow { slot: 1 }));
 }
+
+#[test]
+fn an_edge_pressure_policy_drops_instead_of_failing_the_tick() {
+    use daedalus_value::{Overflow, Pressure};
+    let mut wiring = Wiring::default();
+    wiring.step(&[], &[0], &[1]);
+    let specs = vec![
+        SlotSpec {
+            cap: 4,
+            kind: SlotKind::Fifo,
+        },
+        SlotSpec {
+            cap: 1,
+            kind: SlotKind::Fifo,
+        },
+    ];
+    let steps = vec![Step::of::<Link>(link_word(0, Some(1)))];
+    let mut fixture = Fixture::new(steps, wiring, specs);
+    let mut runner = fixture.load().unwrap();
+    runner
+        .set_pressure(
+            1,
+            Pressure::Bounded {
+                cap: 1,
+                overflow: Overflow::DropOldest,
+            },
+        )
+        .unwrap();
+    for round in 0..3 {
+        runner.push(0, tagged(round)).unwrap();
+        runner.wake(0);
+        runner.tick().unwrap();
+    }
+    assert_eq!(runner.queue(1).unwrap().len, 1);
+    assert_eq!(runner.counters().dropped, 2);
+}

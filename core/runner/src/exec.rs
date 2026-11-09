@@ -2,6 +2,7 @@
 //! [`Env`], so both run the same logic and cannot drift apart.
 
 use daedalus_abi::{Progress, Slot, SlotState, Slots, StepCx, StepEnd};
+use daedalus_value::Decision;
 
 use crate::error::RunError;
 use crate::failure::{FailurePolicy, StepHealth};
@@ -17,6 +18,14 @@ use crate::{Pending, Runner, spanned};
 
 /// A step's entry point.
 pub(crate) type RunFn = unsafe extern "C" fn(*mut (), *mut Slots, *mut StepCx) -> StepEnd;
+
+/// What a publish did with a value. A drop under the slot's policy is not a failure.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stored {
+    Kept,
+    Dropped,
+    Full,
+}
 
 /// The queue storage and inline buffers of a runner. The caller of each method holds exclusive
 /// access to the slot's own range of these buffers.
@@ -62,17 +71,43 @@ impl SlotParts {
     ///
     /// # Safety
     /// The caller has exclusive access to this queue's storage and inline range.
-    unsafe fn publish(self, queue: &mut Queue, cell: Slot) -> bool {
-        if queue.is_full() {
-            return false;
+    unsafe fn publish(self, queue: &mut Queue, cell: Slot, now_ns: u64) -> Stored {
+        let decision = queue
+            .pressure
+            .decide(queue.len, queue.cap, queue.opened_ns, now_ns);
+        match decision {
+            Decision::Store => {
+                if queue.len == 0 {
+                    queue.opened_ns = now_ns;
+                }
+            }
+            Decision::Refuse => return Stored::Full,
+            Decision::Discard(_) => {
+                // SAFETY: the caller's cell owns its reference, and it is given up here.
+                unsafe { owned::release(&cell) };
+                return Stored::Dropped;
+            }
+            Decision::Evict(_) => {
+                // SAFETY: the queue owns its head entry, and the pop below forgets it.
+                unsafe { owned::release(&*self.storage.add(queue.head_index())) };
+                queue.pop_head();
+                queue.opened_ns = now_ns;
+                self.place(queue, cell);
+                return Stored::Dropped;
+            }
         }
+        self.place(queue, cell);
+        Stored::Kept
+    }
+
+    /// Writes `cell` at the back of `queue`, which has room.
+    fn place(self, queue: &mut Queue, cell: Slot) {
         let at = queue.tail_index();
         // SAFETY: `at` is inside this queue's inline range, which the caller holds exclusively.
         let raw = owned::place(cell, unsafe { &mut *self.inline.add(at) });
         let raw = queue.stamp(raw);
         // SAFETY: `at` is inside this queue's storage range, which the caller holds exclusively.
         unsafe { self.storage.add(at).write(raw) };
-        true
     }
 
     /// Releases and removes every queued value.
@@ -288,10 +323,18 @@ fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<(), RunError> 
         if cell.state != SlotState::Full as u32 {
             continue;
         }
-        let stored = overflow.is_none()
+        let now = env.parts().1.now_ns;
+        let stored = match overflow {
             // SAFETY: `with_queue` holds what protects this queue, and this step is its producer.
-            && env.with_queue(slot, |queue, parts| unsafe { parts.publish(queue, cell) });
-        if !stored {
+            None => env.with_queue(slot, |queue, parts| unsafe {
+                parts.publish(queue, cell, now)
+            }),
+            Some(_) => Stored::Full,
+        };
+        if stored == Stored::Dropped {
+            env.counters().dropped += 1;
+        }
+        if stored == Stored::Full {
             // SAFETY: the cell is Full and this step wrote it, so the reference is still the
             // cell's, and it is released once here.
             unsafe { owned::release(&cell) };

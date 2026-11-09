@@ -66,6 +66,29 @@ impl Runner<'_> {
         Some(value)
     }
 
+    /// Removes and releases the oldest value in `slot`, for a policy that gives it up.
+    pub fn drop_oldest(&mut self, slot: u32) -> Result<(), RunError> {
+        let index = self.queue_index(slot)?;
+        let queue = self.queues[index];
+        if queue.len > 0 {
+            // SAFETY: the queue owns this entry, and the pop below forgets it.
+            unsafe { owned::release(&self.storage[queue.head_index()]) };
+            self.queues[index].pop_head();
+        }
+        Ok(())
+    }
+
+    /// Sets what pushes to `slot` do at capacity. A loader calls this with the edge's policy.
+    pub fn set_pressure(
+        &mut self,
+        slot: u32,
+        pressure: daedalus_value::Pressure,
+    ) -> Result<(), RunError> {
+        let index = self.queue_index(slot)?;
+        self.queues[index].pressure = pressure;
+        Ok(())
+    }
+
     /// The type of the oldest value in `slot`, without taking it.
     pub fn peek_type(&self, slot: u32) -> Option<TypeIndex> {
         let index = self.queue_index(slot).ok()?;
