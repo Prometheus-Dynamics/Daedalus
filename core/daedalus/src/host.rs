@@ -1,14 +1,14 @@
 //! The host around one loaded graph.
 
 pub use daedalus_host::{
-    Dir, FeedOutcome, Host, HostError, HostValue, PortSpec, Ports, PortsError, StateStore,
-    TickOverheadReport, TickReport, ValueSerializers,
+    Dir, FeedOutcome, Host, HostError, HostValue, PortInfo, PortSpec, Ports, PortsError,
+    StateStore, TickOverheadReport, TickReport, ValueSerializers,
 };
 
 #[cfg(feature = "std")]
 pub use daedalus_host::stream::{StreamGraph, StreamHost};
 #[cfg(feature = "std")]
 pub use daedalus_host::{
-    FaultReport, LoadError, LoadOptions, LoadedHost, ReloadError, ReloadReport, StopHandle,
-    UnmergedError,
+    ConstTable, ConstValue, ControlError, FaultReport, LoadError, LoadOptions, LoadedHost,
+    PatchError, PatchOutcome, ReloadError, ReloadReport, StopHandle, UnmergedError,
 };

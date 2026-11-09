@@ -3,7 +3,7 @@
 
 #![cfg(feature = "std")]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::mem;
 use std::string::String;
@@ -24,6 +24,7 @@ use daedalus_value::{Overflow, Pressure};
 
 use crate::fault::FaultRing;
 use crate::intern::{intern, intern_key, intern_keys, intern_names, intern_ports, intern_wake};
+use crate::patch::ConstTable;
 use crate::unmerged::Planner;
 use crate::{Dir, Host, PortSpec, Ports, StateStore};
 
@@ -482,6 +483,8 @@ pub struct LoadedHost {
     pub(crate) faults: FaultRing,
     pub(crate) planner: Option<Planner>,
     pub(crate) unmerged: bool,
+    pub(crate) consts: ConstTable,
+    pub(crate) off_nodes: BTreeSet<String>,
 }
 
 /// Everything one version of the graph brings.
@@ -545,8 +548,18 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
 
 impl LoadedHost {
     /// Loads a finished plan. Slots, pools, fences and telemetry arrays are sized once, here.
-    pub fn load(mut planned: Planned, options: LoadOptions) -> Result<LoadedHost, LoadError> {
+    pub fn load(planned: Planned, options: LoadOptions) -> Result<LoadedHost, LoadError> {
+        LoadedHost::load_with_consts(planned, options, ConstTable::new())
+    }
+
+    /// As [`load`](LoadedHost::load), with a const table the plan's step bodies already hold.
+    pub fn load_with_consts(
+        mut planned: Planned,
+        options: LoadOptions,
+        consts: ConstTable,
+    ) -> Result<LoadedHost, LoadError> {
         let parts = build_host(&mut planned, options)?;
+        consts.seed(&planned);
         Ok(LoadedHost {
             state: StateStore::new(),
             fault_seen: vec![0; parts.covers.len()],
@@ -554,6 +567,8 @@ impl LoadedHost {
             options,
             planner: None,
             unmerged: false,
+            consts,
+            off_nodes: BTreeSet::new(),
             host: parts.host,
             nodes: parts.nodes,
             bridges: parts.bridges,
@@ -564,7 +579,9 @@ impl LoadedHost {
 
     /// Runs one tick and records what failed in it.
     pub fn step(&mut self) -> Result<daedalus_runner::TickReport, crate::HostError> {
+        self.consts.set_ticking(true);
         let report = self.host.step();
+        self.consts.set_ticking(false);
         self.collect_faults();
         report
     }

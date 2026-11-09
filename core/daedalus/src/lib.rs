@@ -17,6 +17,8 @@ pub mod runner {
 
 /// The crates under the facade, for explicit imports.
 pub mod layers {
+    #[cfg(feature = "std")]
+    pub use daedalus_graph as graph;
     pub use daedalus_host as host;
     #[cfg(feature = "std")]
     pub use daedalus_planner as planner;
