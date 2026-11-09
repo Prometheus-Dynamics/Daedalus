@@ -8,10 +8,10 @@ UNSAFE_ALLOWED = ("core/abi", "core/capi", "core/loader", "core/runner")
 HEAP_FREE_TARGETS = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"]
 PRODUCT_NAMES = re.compile(r"\b(lemnos|eidos|ariadne|gaia|orion|helios)\b", re.I)
 HEAP_TOKENS = re.compile(r"\b(alloc::|std::|Vec<|Box<|extern\s+crate\s+alloc)|\bString::|(?<!:):\s*String\b|->\s*String\b|[<&(]\s*String\b")
-FEATURE_GATE = re.compile(r'#\[cfg\((?:test|(?:any\()?feature\s*=\s*"(?:alloc|std)")')
+FEATURE_GATE = re.compile(r'#\[cfg\((?:test|(?:any\()?feature\s*=\s*"(?:alloc|std|count-alloc|schema)")')
 
 ITEM_KEYWORD = re.compile(r"\b(fn|impl|mod|struct|enum|trait|use|const|static|type)\b")
-GATED_FILE = re.compile(r'#!\[cfg\(feature\s*=\s*"(?:alloc|std)"\)\]')
+GATED_FILE = re.compile(r'#!\[cfg\(feature\s*=\s*"(?:alloc|std|count-alloc|schema)"\)\]')
 
 violations = []
 
