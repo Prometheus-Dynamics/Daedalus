@@ -1,0 +1,39 @@
+[package]
+name = "daedalus-chip-board"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "The blink graph on a Raspberry Pi Pico: ADC in, LED out, measuring tick time and stack in each mode."
+
+# The firmware needs an unsafe attribute for the boot sector, and the stack probe reads raw memory.
+[lints.rust]
+unsafe_code = "allow"
+
+# The `Board` trait and the measuring loop, tested on the host with a mock board.
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+# Raspberry Pi Pico firmware. An empty `main` elsewhere.
+[[bin]]
+name = "daedalus-chip-pico"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+daedalus-chip-blink = { path = "../chip_blink" }
+daedalus-cpu = { path = "../../backends/cpu", default-features = false, features = ["blob", "chip-params"] }
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = { workspace = true }
+cortex-m-rt = { workspace = true }
+
+[target.thumbv6m-none-eabi.dependencies]
+defmt = { workspace = true }
+defmt-rtt = { workspace = true }
+embedded-hal = { workspace = true }
+panic-halt = { workspace = true }
+rp2040-boot2 = { workspace = true }
+rp2040-hal = { workspace = true, features = ["rt"] }

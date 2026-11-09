@@ -12,6 +12,8 @@ UNSAFE_ALLOWED = (
     # A WebAssembly export needs `no_mangle`, one function in each.
     "examples/wasm_smoke",
     "examples/wasm_bindgen_host",
+    # The RP2040 boot sector and the stack probe.
+    "examples/chip_board",
 )
 HEAP_FREE_TARGETS = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"]
 PRODUCT_NAMES = re.compile(r"\b(lemnos|eidos|ariadne|gaia|orion|helios)\b", re.I)

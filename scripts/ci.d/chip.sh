@@ -13,6 +13,8 @@ readonly TUNABLE_MAX_RAM=512
 # Above the 12 KiB the D7 brief asks for. docs/chips.md says what the space is.
 readonly LOADED_MAX_FLASH=17920
 readonly LOADED_MAX_RAM=584
+readonly PICO_MAX_FLASH=20480
+readonly PICO_MAX_RAM=2048
 readonly TARGETS=(
   "thumbv7em-none-eabihf:2120:112"
   "thumbv6m-none-eabi:2664:112"
@@ -61,6 +63,10 @@ for entry in "${TARGETS[@]}"; do
     status=1
   fi
 done
+
+# The Raspberry Pi Pico firmware: all three modes, the HAL and defmt.
+cargo build -q --target thumbv6m-none-eabi --profile chip -p daedalus-chip-board
+check_budget thumbv6m-none-eabi daedalus-chip-pico "$PICO_MAX_FLASH" "$PICO_MAX_RAM"
 
 # One set of nodes for a host and a chip. A chip build must not pull the facade, and the full
 # host has to give the same outputs.

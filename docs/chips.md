@@ -55,6 +55,10 @@ A `#[node]` needs nothing to run on both. `examples/chip_shared` declares its no
 - A module holds one connected graph. Planning refuses a graph with separate parts.
 - Two host ports whose names become the same Rust identifier are refused by name.
 
+## On a board
+
+`examples/chip_board` runs the blink graph on a Raspberry Pi Pico in all three modes, reading ADC0 and driving the LED, and reports tick times and stack depth over defmt-RTT. `tests/host.rs` runs the same loop with a mock board. It hasn't run on a real board yet: `testing/board-runs/D12.md` has the procedure.
+
 ## Measurements
 
 Five-node blink graph, profile `chip`, measured by `scripts/ci.d/chip.sh`:
@@ -79,3 +83,5 @@ plan, 2.4 KiB runs one, 1.5 KiB is `memcpy` and its relatives, 1.4 KiB is the se
 1124 the two stored plans and 600 the library's table. The runner's RAM is zeroed memory, so it
 takes no flash. The plans need 505 and 418 of the 512 arena bytes on a 32-bit chip, and the fan-in
 plans 644 and 561, so a firmware that loads those needs a larger arena.
+
+The Pico firmware, with all three modes, the HAL and defmt, is 18836 B flash and 1928 B RAM (1 KiB of that is the defmt-RTT buffer). Budget: 20 KiB, 2 KiB.
