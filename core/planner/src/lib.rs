@@ -10,6 +10,7 @@ pub mod edit;
 pub mod form;
 pub mod pipeline;
 pub mod regions;
+pub mod share;
 pub mod solve;
 pub mod stitch;
 
