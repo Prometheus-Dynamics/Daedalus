@@ -357,6 +357,12 @@
         "id": {
           "type": "string"
         },
+        "inputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "kind": {
           "enum": [
             "node",
@@ -373,6 +379,12 @@
             "$ref": "#/$defs/lit"
           },
           "type": "object"
+        },
+        "outputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "port_types": {
           "additionalProperties": {
