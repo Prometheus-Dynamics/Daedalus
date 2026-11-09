@@ -15,6 +15,7 @@ mod access;
 pub mod foreign;
 mod inline;
 mod owner;
+mod policy;
 mod pool;
 #[cfg(feature = "alloc")]
 mod recycle;
@@ -24,6 +25,7 @@ mod value;
 pub use access::Access;
 pub use inline::InlineBytes;
 pub use owner::{Owner, OwnerKind};
+pub use policy::*;
 pub use pool::FixedPool;
 #[cfg(feature = "alloc")]
 pub use recycle::{PayloadSlot, RecyclePool, Reusable};

@@ -7,7 +7,9 @@
 #![allow(clippy::result_large_err)]
 
 mod config_cache;
+mod freshness;
 mod held;
+mod inbound;
 mod io;
 mod label;
 mod ports;
@@ -20,6 +22,7 @@ mod telemetry;
 pub use daedalus_runner::TickReport;
 
 pub use config_cache::ConfigCache;
+pub use inbound::{Drops, PortPolicy};
 pub use io::{FeedOutcome, Host, HostError};
 pub use label::{LABEL_BYTES, Label};
 pub use ports::{Dir, PortSpec, Ports, PortsError};

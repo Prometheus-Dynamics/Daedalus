@@ -4,7 +4,7 @@ use core::fmt;
 
 use daedalus_runner::{RunError, Runner, TickReport};
 use daedalus_types::{TypeIndex, TypeKey};
-use daedalus_value::Value;
+use daedalus_value::{DropReason, Value};
 
 use crate::label::Label;
 use crate::ports::{Dir, Ports};
@@ -14,6 +14,8 @@ use crate::ports::{Dir, Ports};
 pub struct FeedOutcome {
     /// How many consumer steps were woken. A feed never runs a tick.
     pub woke: u32,
+    /// Why a value was given up under the port's policy, if one was.
+    pub dropped: Option<DropReason>,
 }
 
 /// Why a host call was refused. Every variant that involves a port names it.
@@ -85,8 +87,11 @@ impl fmt::Display for HostError {
 /// One loaded graph, its ports, and the key of each type index.
 pub struct Host<'a> {
     pub(crate) runner: Runner<'a>,
-    ports: Ports<'a>,
+    pub(crate) ports: Ports<'a>,
     types: &'a [TypeKey],
+    /// One per port once a host sets a policy. Empty means every port takes every value.
+    pub(crate) inbound: std::vec::Vec<crate::inbound::Inbound>,
+    pub(crate) now_ns: u64,
 }
 
 impl<'a> Host<'a> {
@@ -96,6 +101,8 @@ impl<'a> Host<'a> {
             runner,
             ports,
             types,
+            inbound: std::vec::Vec::new(),
+            now_ns: 0,
         }
     }
 
@@ -155,11 +162,22 @@ impl<'a> Host<'a> {
         if self.runner.is_held(spec.slot) {
             return self.replace_held(name, spec.slot, value);
         }
+        let dropped = match self.admit(name, spec.slot)? {
+            crate::inbound::Admit::Store(reason) => reason,
+            crate::inbound::Admit::Discard(reason) => {
+                return Ok(FeedOutcome {
+                    woke: 0,
+                    dropped: Some(reason),
+                });
+            }
+        };
         self.runner
             .feed_value(spec.slot, value)
             .map_err(|error| self.feed_error(name, error))?;
+        self.note_arrival(name);
         Ok(FeedOutcome {
             woke: self.wake_consumers(spec.wake),
+            dropped,
         })
     }
 
@@ -178,10 +196,14 @@ impl<'a> Host<'a> {
             .feed_typed(spec.slot, spec.ty, spec.space, value)
             .map_err(|error| self.feed_error(name, error))?;
         if held {
-            return Ok(FeedOutcome { woke: 0 });
+            return Ok(FeedOutcome {
+                woke: 0,
+                dropped: None,
+            });
         }
         Ok(FeedOutcome {
             woke: self.wake_consumers(spec.wake),
+            dropped: None,
         })
     }
 
@@ -223,7 +245,14 @@ impl<'a> Host<'a> {
 
     /// Runs one tick.
     pub fn step(&mut self) -> Result<TickReport, HostError> {
+        self.expire_stale();
         self.runner.tick().map_err(HostError::Run)
+    }
+
+    /// Sets the host's clock, in nanoseconds: what freshness rules and backoff measure against.
+    pub fn set_clock(&mut self, now_ns: u64) {
+        self.now_ns = now_ns;
+        self.runner.set_clock(now_ns);
     }
 
     /// Takes the oldest value out of the output port `name`, if there is one.

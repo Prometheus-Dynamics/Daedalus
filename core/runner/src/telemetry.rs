@@ -29,6 +29,8 @@ pub struct Counters {
     pub reuse_checks: u64,
     /// Compared steps that replayed their stored outputs instead of running.
     pub reuse_replays: u64,
+    /// Outputs given up under their slot's pressure policy.
+    pub dropped: u64,
 }
 
 impl Counters {

@@ -449,6 +449,7 @@ impl Runner<'_> {
             self.counters.pending += counters.pending;
             self.counters.reuse_checks += counters.reuse_checks;
             self.counters.reuse_replays += counters.reuse_replays;
+            self.counters.dropped += counters.dropped;
             if let Some((step, failure)) = worker.error.take()
                 && error.is_none_or(|(first, _)| step < first)
             {

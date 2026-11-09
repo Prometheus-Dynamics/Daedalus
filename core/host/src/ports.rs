@@ -51,6 +51,25 @@ impl<'a> Ports<'a> {
         Ok(Ports { specs })
     }
 
+    /// The position of the port `name` in the sorted table.
+    pub fn index_of(&self, name: &str) -> Option<usize> {
+        self.specs.binary_search_by(|spec| spec.name.cmp(name)).ok()
+    }
+
+    /// The port at position `index` in the sorted table.
+    pub fn at(&self, index: usize) -> Option<&'a PortSpec<'a>> {
+        self.specs.get(index)
+    }
+
+    /// How many ports there are.
+    pub fn len(&self) -> usize {
+        self.specs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.specs.is_empty()
+    }
+
     pub fn find(&self, name: &str) -> Option<&'a PortSpec<'a>> {
         self.specs
             .binary_search_by(|spec| spec.name.cmp(name))

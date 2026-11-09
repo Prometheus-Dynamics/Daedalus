@@ -29,6 +29,9 @@ impl Host<'_> {
         self.runner
             .feed_value(slot, value)
             .map_err(|error| self.feed_error(name, error))?;
-        Ok(FeedOutcome { woke: 0 })
+        Ok(FeedOutcome {
+            woke: 0,
+            dropped: None,
+        })
     }
 }
