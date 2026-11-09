@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-cpu-author"
+description = "What #[node] expands to for a CPU body."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-cpu = { path = "../cpu" }
+daedalus-registry = { path = "../../core/registry" }
+
+[dev-dependencies]
+daedalus-macros = { path = "../../core/macros" }
+daedalus-types = { path = "../../core/types" }
+trybuild = { workspace = true }
+
+[lints]
+workspace = true

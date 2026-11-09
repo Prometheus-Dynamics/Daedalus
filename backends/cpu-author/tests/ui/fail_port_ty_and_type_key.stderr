@@ -1,0 +1,5 @@
+error: a port takes `ty` or `type_key`, not both
+ --> tests/ui/fail_port_ty_and_type_key.rs:5:38
+  |
+5 |     inputs(port(name = "value", ty = i32, type_key = "ui:b")),
+  |                                      ^^^

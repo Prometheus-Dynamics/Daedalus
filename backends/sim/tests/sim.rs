@@ -28,6 +28,8 @@ fn compile(
         .map(|(node, text)| NodeBody {
             node: *node,
             body: BodyIndex(0),
+            inputs: 0,
+            outputs: 0,
             code: &(),
             text,
         })

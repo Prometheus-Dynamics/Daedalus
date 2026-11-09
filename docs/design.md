@@ -391,7 +391,7 @@ Runs outlive their connection. A value whose type has no wire codec is refused.
 build on them.
 
 - A body macro is `<path>::__daedalus_body!(kind = fn | const | transfer, name = (<expression>),
-  args = (<the backend's own tokens>), params = (<name: Type,>...), ret = <type>, decl = <ident>)`
+  args = (<the backend's own tokens>), params = (<name: Type,>...), ret = <type>, bind = (<see "The planner as built">), decl = <ident>)`
   and expands to a const-evaluable `BodyRecord`. `name` is in parentheses so that a generic instance
   can be `name::<u32>`. The core macro adds `state` and `memory` itself with `BodyRecord::with_node`.
   An authoring crate implements all three kinds; `testing/crates/author-fixture` is the example.
@@ -459,5 +459,14 @@ documents the patch and refresh JSON.
   port on an edge inside the region gets a slot in the region's memory, which is how per-node steps
   in one region pass values to each other. A merged unit names only the boundary and takes no slots
   for what it absorbed.
+- A body macro also gets `bind = (state = (..), config = (..), fixed = N, params = (..), returns = (..))`
+  from `#[node]`. Each parameter is `role position "port" name: Type,`, so a backend's expansion needs
+  no parsing of its own. The roles are `read`, `take`, `modify`, each with an `opt_` form, and `state`,
+  `config_ref`, `config_val`, `ctx`, `fanin`.
+- A CPU value at most 16 bytes long and `Copy` travels inline, in a buffer the step owns until it's
+  published. Anything else is an `Arc` written at plan-time-known cost. A body's error is a `FixedError`
+  (a code and at most 64 bytes of reason), which is why a `String` error doesn't compile on this path.
+- A config's text and lists become `'static` once per plan, because `Literal` holds them that way.
+  Replanning a graph with string constants keeps that memory.
 - A step can't know plan-wide type and space numbers either. A wrapper writes placeholders and the
   runner stamps each output at publish from `Runner::set_stamps`.

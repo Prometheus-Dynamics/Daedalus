@@ -31,6 +31,48 @@ impl Default for Progress {
     }
 }
 
+/// Longest reason a [`FixedError`] may give, in bytes. A longer one is cut.
+pub const ERROR_REASON_CAPACITY: usize = 64;
+
+/// A body's error: a code and a short reason, with nothing formatted or allocated.
+pub trait FixedError {
+    fn code(&self) -> u32;
+    fn reason(&self) -> &str;
+}
+
+impl FixedError for &'static str {
+    fn code(&self) -> u32 {
+        1
+    }
+
+    fn reason(&self) -> &str {
+        self
+    }
+}
+
+/// The plain [`FixedError`]: a code and a fixed message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fault {
+    pub code: u32,
+    pub reason: &'static str,
+}
+
+impl FixedError for Fault {
+    fn code(&self) -> u32 {
+        self.code
+    }
+
+    fn reason(&self) -> &str {
+        self.reason
+    }
+}
+
+impl core::fmt::Display for Fault {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} ({})", self.reason, self.code)
+    }
+}
+
 #[repr(C)]
 pub struct StepCx {
     pub at: u32,
@@ -41,7 +83,8 @@ pub struct StepCx {
     /// This step's progress cells. Null means nobody is reading.
     pub progress: *const Progress,
     pub flags: u32,
-    pub reserved: u32,
+    /// The code of the error that caused the fault, zero when there was none.
+    pub code: u32,
     /// The host's clock, in nanoseconds. The runner never reads a clock itself.
     pub now_ns: u64,
 }
@@ -59,7 +102,7 @@ impl StepCx {
             cancel: core::ptr::null(),
             progress: core::ptr::null(),
             flags: 0,
-            reserved: 0,
+            code: 0,
             now_ns: 0,
         }
     }
@@ -73,6 +116,17 @@ impl StepCx {
         }
         self.reason[..end].copy_from_slice(&reason.as_bytes()[..end]);
         self.reason_len = end as u32;
+    }
+
+    /// Records a body's error: its code, and at most [`ERROR_REASON_CAPACITY`] bytes of its reason.
+    pub fn fail(&mut self, at: u32, error: &impl FixedError) {
+        let reason = error.reason();
+        let mut end = reason.len().min(ERROR_REASON_CAPACITY);
+        while !reason.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.fault(Some(at), &reason[..end]);
+        self.code = error.code();
     }
 
     pub fn reason(&self) -> &str {

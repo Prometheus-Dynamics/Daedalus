@@ -109,6 +109,12 @@ fn parse_port_body(input: ParseStream<'_>) -> Result<PortArg> {
     if port.name.is_none() {
         return Err(input.error("a port needs a name"));
     }
+    if let (Some(ty), Some(_)) = (&port.ty, &port.type_key) {
+        return Err(Error::new_spanned(
+            ty,
+            "a port takes `ty` or `type_key`, not both",
+        ));
+    }
     Ok(port)
 }
 

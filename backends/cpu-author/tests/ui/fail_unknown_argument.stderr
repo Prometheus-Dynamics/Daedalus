@@ -1,0 +1,5 @@
+error: unsupported #[node] argument
+ --> tests/ui/fail_unknown_argument.rs:3:27
+  |
+3 | #[node(id = "ui.unknown", bundle = "starter")]
+  |                           ^^^^^^

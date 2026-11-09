@@ -49,6 +49,8 @@ pub(super) fn compile_region(
             bodies.push(NodeBody {
                 node: NodeIndex(node),
                 body,
+                inputs: solved.inputs.len() as u16,
+                outputs: solved.outputs.len() as u16,
                 code: record.code,
                 text: record.text,
             });

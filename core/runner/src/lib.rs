@@ -12,6 +12,8 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+#[cfg(feature = "alloc")]
+mod access;
 #[cfg(feature = "std")]
 mod async_step;
 mod bits;
@@ -46,6 +48,8 @@ use daedalus_abi::{Fence, NO_SLOT, Progress, Slot, Step, StepCx};
 use daedalus_plan::Span;
 use daedalus_value::OwnerKind;
 
+#[cfg(feature = "alloc")]
+pub use access::{Held, UNSTAMPED, read_inline, take_typed, write_inline};
 #[cfg(feature = "std")]
 pub use async_step::FutureFence;
 pub use cancel::{CANCEL_REASON, CancelWord, skip_cancelled};

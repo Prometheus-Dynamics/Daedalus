@@ -1,0 +1,20 @@
+error[E0308]: mismatched types
+ --> tests/ui/fail_id_not_string.rs:3:13
+  |
+3 | #[node(id = 5, inputs(value), outputs(out))]
+  | ------------^-------------------------------
+  | |           |
+  | |           expected `&str`, found integer
+  | arguments to this function are incorrect
+  |
+note: associated function defined here
+ --> $WORKSPACE/core/types/src/key.rs
+  |
+  |     pub const fn new(text: &'static str) -> TypeKey {
+  |                  ^^^
+
+error[E0308]: mismatched types
+ --> tests/ui/fail_id_not_string.rs:3:13
+  |
+3 | #[node(id = 5, inputs(value), outputs(out))]
+  |             ^ expected `&str`, found integer

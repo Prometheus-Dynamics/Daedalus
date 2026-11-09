@@ -52,6 +52,9 @@ pub struct ConstOf<'a> {
 pub struct NodeBody<'a> {
     pub node: NodeIndex,
     pub body: BodyIndex,
+    /// How many inputs and outputs this node has in this graph, counting fan-in ports.
+    pub inputs: u16,
+    pub outputs: u16,
     /// The backend's own payload: a function pointer or a generated stub.
     pub code: &'a (dyn Any + Send + Sync),
     /// Source, for bodies written as text.
