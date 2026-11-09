@@ -156,6 +156,26 @@ pub struct NodeDoc {
     pub metadata: BTreeMap<String, Lit>,
 }
 
+impl NodeDoc {
+    /// A node with every optional field empty.
+    pub fn new(id: impl Into<String>) -> NodeDoc {
+        NodeDoc {
+            id: id.into(),
+            kind: NodeKindDoc::Node,
+            label: None,
+            backend: None,
+            consts: BTreeMap::new(),
+            fire: None,
+            reusable: None,
+            rate: None,
+            shareable: false,
+            ui_id: None,
+            port_types: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PortRefDoc {
