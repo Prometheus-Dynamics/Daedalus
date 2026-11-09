@@ -19,9 +19,17 @@ mod inbound;
 #[cfg(all(feature = "std", target_os = "linux"))]
 pub mod inbound_fd;
 mod inspect;
+#[cfg(feature = "std")]
+mod intern;
 mod io;
 mod label;
+#[cfg(feature = "std")]
+mod load;
 mod ports;
+#[cfg(feature = "std")]
+mod reload;
+#[cfg(feature = "std")]
+mod report;
 mod serializers;
 #[cfg(feature = "std")]
 mod snapshot;
@@ -46,7 +54,13 @@ pub use inbound::{Drops, PortPolicy};
 pub use inspect::{PayloadInspection, PayloadSummary};
 pub use io::{FeedOutcome, Host, HostError};
 pub use label::{LABEL_BYTES, Label};
+#[cfg(feature = "std")]
+pub use load::{LoadError, LoadOptions, LoadedHost};
 pub use ports::{Dir, PortSpec, Ports, PortsError};
+#[cfg(feature = "std")]
+pub use reload::ReloadError;
+#[cfg(feature = "std")]
+pub use report::ReloadReport;
 pub use serializers::{SerializerEntry, ValueDeserializer, ValueSerializer, ValueSerializers};
 pub use state::{Codec, StateCodec, StateStore};
 #[cfg(feature = "std")]

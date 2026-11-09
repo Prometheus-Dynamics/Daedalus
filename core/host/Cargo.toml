@@ -9,12 +9,17 @@ repository.workspace = true
 [features]
 default = ["std"]
 # Snapshots of the state store, which need std.
-std = ["daedalus-runner/std", "dep:serde", "dep:serde_json"]
+std = ["daedalus-runner/std", "dep:serde", "dep:serde_json", "dep:daedalus-planner", "dep:daedalus-backend", "dep:daedalus-graph", "dep:daedalus-abi", "dep:daedalus-plan", "dep:daedalus-registry"]
 # Allocation attribution through the counting allocator. Feature only.
 alloc-probe = ["std", "dep:daedalus-abi", "daedalus-abi/count-alloc"]
 
 [dependencies]
 daedalus-abi = { path = "../abi", optional = true }
+daedalus-backend = { path = "../backend", optional = true }
+daedalus-graph = { path = "../graph", optional = true }
+daedalus-plan = { path = "../plan", optional = true }
+daedalus-planner = { path = "../planner", optional = true }
+daedalus-registry = { path = "../registry", optional = true }
 daedalus-runner = { path = "../runner" }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

@@ -30,6 +30,8 @@ mod lanes;
 #[cfg(feature = "alloc")]
 mod nested;
 mod owned;
+#[cfg(feature = "std")]
+pub mod owned_run;
 mod policy;
 mod probe;
 mod progress;

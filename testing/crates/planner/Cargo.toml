@@ -13,6 +13,7 @@ daedalus-plan = { path = "../../../core/plan" }
 daedalus-sim = { path = "../../../backends/sim" }
 daedalus-backend = { path = "../../../core/backend" }
 daedalus-graph = { path = "../../../core/graph" }
+daedalus-host = { path = "../../../core/host" }
 daedalus-planner = { path = "../../../core/planner" }
 daedalus-runner = { path = "../../../core/runner" }
 daedalus-registry = { path = "../../../core/registry" }
