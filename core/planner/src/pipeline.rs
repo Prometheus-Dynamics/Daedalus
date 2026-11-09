@@ -7,7 +7,9 @@ use daedalus_registry::Registry;
 
 use crate::solve::catalog::Catalog;
 use crate::solve::consts::{self, ConstError};
+use crate::solve::convert::{self, ConvertError};
 use crate::solve::defaults::{self, DefaultsError};
+use crate::solve::exclusive::{self, ExclusiveError};
 use crate::solve::expand::{self, ExpandError};
 use crate::solve::hydrate::{self, HydrateError};
 use crate::solve::ports::{self, PortError};
@@ -30,6 +32,8 @@ pub enum SolveError {
     Ports(PortError),
     Types(TypeCheckError),
     Consts(ConstError),
+    Convert(ConvertError),
+    Exclusive(ExclusiveError),
 }
 
 impl fmt::Display for SolveError {
@@ -41,6 +45,8 @@ impl fmt::Display for SolveError {
             SolveError::Ports(error) => error.fmt(f),
             SolveError::Types(error) => error.fmt(f),
             SolveError::Consts(error) => error.fmt(f),
+            SolveError::Convert(error) => error.fmt(f),
+            SolveError::Exclusive(error) => error.fmt(f),
         }
     }
 }
@@ -67,6 +73,8 @@ pub fn solve(
     ports::run(&mut work);
     typecheck::run(&mut work);
     consts::run(&mut work);
+    convert::run(&mut work);
+    exclusive::run(&mut work);
     if work.errors.is_empty() {
         Ok(work.graph)
     } else {

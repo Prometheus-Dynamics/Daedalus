@@ -1,6 +1,6 @@
 //! The registry, as a planning run sees it: lookups and nothing else.
 
-use daedalus_registry::{Entry, NodeDecl, Registry};
+use daedalus_registry::{ConversionEntry, Entry, NodeDecl, Registry};
 
 #[derive(Clone, Copy)]
 pub struct Catalog<'a> {
@@ -18,6 +18,10 @@ impl<'a> Catalog<'a> {
 
     pub fn decl(&self, id: &str) -> Option<&'static NodeDecl> {
         self.entry(id).map(|entry| entry.decl)
+    }
+
+    pub fn conversions(&self) -> Vec<ConversionEntry> {
+        self.registry.conversions()
     }
 
     /// Sorted.

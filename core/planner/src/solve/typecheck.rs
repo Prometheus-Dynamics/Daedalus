@@ -82,6 +82,8 @@ impl Sets {
 }
 
 type PortKey = (u32, bool, String);
+/// The set a port is in, and whether the port is generic.
+type PortSlot = (usize, bool);
 
 fn add_ports(
     sets: &mut Sets,
@@ -89,7 +91,7 @@ fn add_ports(
     is_input: bool,
     ports: &[Port],
     named: &mut BTreeMap<(u32, String), usize>,
-    out: &mut BTreeMap<PortKey, usize>,
+    out: &mut BTreeMap<PortKey, PortSlot>,
 ) {
     for port in ports {
         let set = match generic_var(&port.ty) {
@@ -99,7 +101,7 @@ fn add_ports(
             Some(None) => sets.add(None),
             None => sets.add(Some(port.ty.clone())),
         };
-        out.insert((index, is_input, port.name.clone()), set);
+        out.insert((index, is_input, port.name.clone()), (set, port.generic));
     }
 }
 
@@ -128,9 +130,12 @@ pub fn run(work: &mut Work<'_>) {
     for edge in &work.graph.edges {
         let from = slots.get(&(edge.from.node, false, edge.from.port.clone()));
         let to = slots.get(&(edge.to.node, true, edge.to.port.clone()));
-        let (Some(&from), Some(&to)) = (from, to) else {
+        let (Some(&(from, from_generic)), Some(&(to, to_generic))) = (from, to) else {
             continue; // The port stage already reported it.
         };
+        if !from_generic && !to_generic {
+            continue; // Two declared types: a conversion's business.
+        }
         if let Err((from_type, to_type)) = sets.union(from, to) {
             let name = |index: u32| work.graph.nodes[index as usize].doc.id.clone();
             work.errors
@@ -148,7 +153,7 @@ pub fn run(work: &mut Work<'_>) {
         for (is_input, ports) in [(true, &mut node.inputs), (false, &mut node.outputs)] {
             for port in ports.iter_mut() {
                 let key = (index as u32, is_input, port.name.clone());
-                if let Some(&set) = slots.get(&key) {
+                if let Some(&(set, _)) = slots.get(&key) {
                     let root = sets.find(set);
                     if let Some(bound) = &sets.bound[root] {
                         port.ty = bound.clone();

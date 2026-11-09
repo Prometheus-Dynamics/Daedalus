@@ -102,6 +102,7 @@ fn matches_fanin(fanin: &FanInDecl, port: &str) -> bool {
 
 fn solved(entry: &Entry, port: &PortDecl, doc: &NodeDoc, errors: &mut Vec<PortError>) -> Port {
     let mut ty = entry.port_type(port);
+    let declared_generic = generic_var(&ty).is_some();
     if generic_var(&ty).is_some() {
         match instance_type(doc, port.name) {
             Ok(Some(instance)) => ty = instance,
@@ -113,12 +114,14 @@ fn solved(entry: &Entry, port: &PortDecl, doc: &NodeDoc, errors: &mut Vec<PortEr
             }),
         }
     }
+    let generic = declared_generic && generic_var(&ty).is_some();
     Port {
         name: port.name.to_string(),
         ty,
         access: port.access,
         optional: port.optional,
         default: port.default,
+        generic,
     }
 }
 
@@ -174,6 +177,7 @@ fn bridge_port(name: &str, text: &str, doc: &NodeDoc, errors: &mut Vec<PortError
             access: Access::default(),
             optional: false,
             default: None,
+            generic: false,
         }),
         _ => {
             errors.push(PortError::TypeInvalid {
@@ -216,7 +220,7 @@ fn fill_bridge(graph: &mut Graph, index: usize, errors: &mut Vec<PortError>) {
     node.outputs = outputs;
 }
 
-fn fill_node(node: &mut Node, entry: &Entry, strict: bool, errors: &mut Vec<PortError>) {
+pub(super) fn fill_node(node: &mut Node, entry: &Entry, strict: bool, errors: &mut Vec<PortError>) {
     let doc = node.doc.clone();
     node.inputs = entry
         .decl
@@ -277,6 +281,7 @@ fn add_fanin(node: &mut Node, entry: &Entry, port: &str) -> bool {
             access: Access::default(),
             optional: false,
             default: None,
+            generic: generic_var(&fanin.ty).is_some(),
         });
     }
     true

@@ -152,6 +152,9 @@ pub struct NodeDoc {
     pub ui_id: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub port_types: BTreeMap<String, String>,
+    /// How a host bridge's inputs behave, by port. A port not named here is consumed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub host_inputs: BTreeMap<String, HostInputPolicy>,
     /// The input ports a stored graph lists. Empty means none are listed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<String>,
@@ -177,11 +180,25 @@ impl NodeDoc {
             shareable: false,
             ui_id: None,
             port_types: BTreeMap::new(),
+            host_inputs: BTreeMap::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
             metadata: BTreeMap::new(),
         }
     }
+}
+
+/// What the host's value does once a node has read it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostInputPolicy {
+    /// Read once.
+    #[default]
+    Consume,
+    /// Stays until the host replaces it, and is read every tick.
+    Held,
+    /// Stays, and other graphs read the same value.
+    Shared,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
