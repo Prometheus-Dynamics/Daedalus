@@ -50,6 +50,17 @@ struct Consume;
 impl StepWord for Consume {
     fn run(word: usize, _: &mut Slots, _: &mut StepCx) -> StepEnd {
         RUNS[word].fetch_add(1, Ordering::Relaxed);
+        StepEnd::Done
+    }
+}
+
+/// A consumer that also logs its word to `ORDER`. Only the ordering test uses it, so no other
+/// test writes to `ORDER` while that test runs.
+struct Ordered;
+
+impl StepWord for Ordered {
+    fn run(word: usize, _: &mut Slots, _: &mut StepCx) -> StepEnd {
+        RUNS[word].fetch_add(1, Ordering::Relaxed);
         ORDER
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -135,7 +146,18 @@ fn ready_fences_wake_in_index_order() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clear();
-    let mut fixture = two_producers(2, 3);
+    let mut wiring = Wiring::default();
+    wiring.pending_step(&[2], &[], &[]);
+    wiring.pending_step(&[3], &[], &[]);
+    wiring.step(&[], &[], &[]);
+    wiring.step(&[], &[], &[]);
+    let steps = vec![
+        Step::of::<Start>(2),
+        Step::of::<Start>(3),
+        Step::of::<Ordered>(2),
+        Step::of::<Ordered>(3),
+    ];
+    let mut fixture = Fixture::new(steps, wiring, Vec::new());
     let mut runner = fixture.load().unwrap();
     runner.wake(0);
     runner.wake(1);
