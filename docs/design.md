@@ -51,12 +51,13 @@ Planning allocates. Running does not. Everything needed to run a solved graph wo
 ## Repository layout
 
 ```text
-core/        abi, types, value, graph, backend, registry, plan, planner, runner, macros, host,
-             wire, client, loader, capi, daedalus (the facade)
+core/        abi, types, value, graph, backend, registry, plan, planner, runner, macros, derive,
+             host, wire, client, loader, capi, daedalus (the facade)
 backends/    cpu, cpu-author, wgpu, wgpu-author, dmabuf, process, sim, and *-sys crates
 languages/   python, node, java, cpp, rust: SDKs for writing nodes run by the process backend
 service/     daedalusd, daedalus-ctl
-testing/     crates/* (conformance suite, benches, budgets), board-runs/, fixtures
+testing/     crates/* (conformance suite, benches, budgets), board-runs/, fixtures/ (outside the
+             workspace globs)
 examples/    each directory directly inside is a crate
 ```
 
@@ -216,7 +217,7 @@ impl ImportExternal for Image {
 Writing a handler by hand is one function, for types that need more:
 
 ```rust
-#[transfer(from = dmabuf, to = wgpu, cost = import)]
+#[transfer(from = "dmabuf.block", to = "wgpu.buffer", cost = import, backend = daedalus_wgpu_author)]
 fn to_gpu(image: &Image, gpu: &GpuCx) -> Texture { gpu.import_external(&image.describe()) }
 ```
 
