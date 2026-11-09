@@ -1,4 +1,4 @@
-//! Numbers the slots: a value takes the lowest free one, and gives it back after its last reader.
+//! Numbers the slots: a value takes the lowest free one, and may give it back after its last reader.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,8 +14,9 @@ pub(super) struct Numbered {
 }
 
 /// Walks the draft once. `at_start` are written before anything runs, and `at_end` are read after
-/// everything has.
-pub(super) fn number(draft: &[Draft], at_start: &[Live], at_end: &[Live]) -> Numbered {
+/// everything has. With `share`, a slot goes back after its last reader. Steps must not share: a
+/// slot is a queue there, and a value that waited for the next tick is still in it.
+pub(super) fn number(draft: &[Draft], at_start: &[Live], at_end: &[Live], share: bool) -> Numbered {
     let mut last = BTreeMap::new();
     let mut readers: BTreeMap<Live, u32> = BTreeMap::new();
     for (at, item) in draft.iter().enumerate() {
@@ -47,7 +48,8 @@ pub(super) fn number(draft: &[Draft], at_start: &[Live], at_end: &[Live]) -> Num
             take(live, &mut of, &mut free);
         }
         for live in item.reads().into_iter().chain(item.writes()) {
-            if last.get(&live).copied().unwrap_or(at) == at
+            if share
+                && last.get(&live).copied().unwrap_or(at) == at
                 && let Some(&slot) = of.get(&live)
             {
                 free.insert(slot);

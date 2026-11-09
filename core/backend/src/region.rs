@@ -55,10 +55,21 @@ pub struct NodeBody<'a> {
     /// How many inputs and outputs this node has in this graph, counting fan-in ports.
     pub inputs: u16,
     pub outputs: u16,
+    /// False when the graph asks that this node never be merged with its neighbours.
+    pub merges: bool,
     /// The backend's own payload: a function pointer or a generated stub.
     pub code: &'a (dyn Any + Send + Sync),
     /// Source, for bodies written as text.
     pub text: &'a str,
+}
+
+/// An edge with both ends in the region being compiled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InnerEdge {
+    pub from: PortRef,
+    pub to: PortRef,
+    /// The edge's policy needs a real queue between its ends.
+    pub queued: bool,
 }
 
 /// Only what a backend needs. It never sees the planner or the registry.
@@ -69,5 +80,7 @@ pub struct CompileCx<'a> {
     pub consts: &'a [ConstOf<'a>],
     pub spaces: &'a [MemorySpace],
     pub bodies: &'a [NodeBody<'a>],
+    /// The edges with both ends in this region.
+    pub edges: &'a [InnerEdge],
     pub merge_allowed: bool,
 }

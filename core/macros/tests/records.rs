@@ -49,7 +49,7 @@ fn every_attribute_reaches_the_record() {
     let gain = &decl.inputs[0];
     assert_eq!((gain.name, gain.ty.clone()), ("gain", U32));
     assert!(gain.optional && gain.advanced);
-    assert_eq!(gain.access, Access::Move);
+    assert_eq!(gain.access, Access::Read, "a Copy value is only read");
     assert_eq!(gain.default, Some(daedalus_types::Literal::Int(-2)));
     assert_eq!((gain.label, gain.unit, gain.group), ("Gain", "dB", "g"));
     assert_eq!(decl.inputs[1].access, Access::Modify);

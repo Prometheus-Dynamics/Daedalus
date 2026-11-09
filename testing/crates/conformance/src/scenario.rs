@@ -92,6 +92,7 @@ impl Scenario {
                 body: BodyIndex(0),
                 inputs: 0,
                 outputs: 0,
+                merges: true,
                 code: self.code,
                 text: self.text,
             })
@@ -101,6 +102,7 @@ impl Scenario {
             consts: &CONSTS,
             spaces: &spaces,
             bodies: &bodies,
+            edges: &[],
             merge_allowed: true,
         };
         body(&region, &cx)

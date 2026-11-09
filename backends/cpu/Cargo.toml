@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["std"]
+default = ["std", "merge"]
 std = ["alloc"]
 alloc = []
 # A region's nodes as direct calls (D2).
@@ -36,6 +36,7 @@ daedalus-value = { path = "../../core/value" }
 daedalus-abi = { path = "../../core/abi", features = ["test-run", "count-alloc"] }
 daedalus-cpu-author = { path = "../cpu-author" }
 daedalus-macros = { path = "../../core/macros" }
+daedalus-host = { path = "../../core/host" }
 daedalus-planner = { path = "../../core/planner" }
 daedalus-registry = { path = "../../core/registry" }
 

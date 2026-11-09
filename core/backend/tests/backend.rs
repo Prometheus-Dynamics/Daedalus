@@ -69,6 +69,7 @@ fn cx<'a>() -> CompileCx<'a> {
         consts: &[],
         spaces: &[],
         bodies: &[],
+        edges: &[],
         merge_allowed: true,
     }
 }

@@ -468,5 +468,18 @@ documents the patch and refresh JSON.
   (a code and at most 64 bytes of reason), which is why a `String` error doesn't compile on this path.
 - A config's text and lists become `'static` once per plan, because `Literal` holds them that way.
   Replanning a graph with string constants keeps that memory.
+- A slot number is reused only when no region is in the steps form. In the steps form a slot is a
+  queue that persists across ticks, so a value that waited would collide with the next writer. D3
+  must decide this for blobs from how its runner treats a slot.
+- A region lists its nodes producers first, and that's the order its steps run in.
+- A CPU node joins the node before it only when that node is its only wired input, through an edge
+  with one reader and no `Bounded` policy, and neither end sets `daedalus.node.fusion` to false, so
+  merged and unmerged runs are the same call for call. A node waiting on two inputs starts a new step,
+  and so does the node after one with a second output in use, because a fault drops everything its
+  step wrote. Inside a merged step each node wakes the next as separate steps would: a node that
+  finishes with nothing to send still runs an optional input after it, and a skip ends the step as
+  `Skipped`. Repeated faults back off the merged step as a whole.
+- A by-value `Copy` parameter declares `Access::Read`, since it can't take the original away, so
+  fan-out of plain numbers needs no copy node.
 - A step can't know plan-wide type and space numbers either. A wrapper writes placeholders and the
   runner stamps each output at publish from `Runner::set_stamps`.

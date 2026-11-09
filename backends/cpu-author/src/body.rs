@@ -132,6 +132,7 @@ macro_rules! __kind {
             read: $crate::__cpu::CopyOf::<$ty>::READ,
             write: $crate::__cpu::CopyOf::<$ty>::WRITE,
             clone: $crate::__cpu::CloneOf::<$ty>::CLONE,
+            copy: $crate::__cpu::CopyOf::<$ty>::IS,
             decode: $crate::__cpu::LitOf::<$ty>::DECODE,
         }
     }};

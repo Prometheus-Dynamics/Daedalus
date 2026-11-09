@@ -112,6 +112,8 @@ pub struct Kind<T: 'static> {
     pub read: Option<fn(&Slot) -> Option<T>>,
     pub write: Option<fn(&T, &mut InlineCell, &mut Slot)>,
     pub clone: Option<fn(&T) -> T>,
+    /// The type is `Copy`, so taking it leaves the original for any other consumer.
+    pub copy: bool,
     pub decode: Option<fn(&Lit) -> Option<T>>,
 }
 
@@ -127,6 +129,7 @@ impl<T> Copy for Kind<T> {}
 pub struct CopyOf<T>(PhantomData<T>);
 
 impl<T: Copy + 'static> CopyOf<T> {
+    pub const IS: bool = true;
     pub const READ: Option<fn(&Slot) -> Option<T>> = if size_of::<T>() <= INLINE_BYTES {
         Some(read_inline::<T>)
     } else {
@@ -142,6 +145,7 @@ impl<T: Copy + 'static> CopyOf<T> {
 
 /// The answer for a `T` that isn't `Copy`.
 pub trait NotCopy<T> {
+    const IS: bool = false;
     const READ: Option<fn(&Slot) -> Option<T>> = None;
     const WRITE: Option<fn(&T, &mut InlineCell, &mut Slot)> = None;
 }
