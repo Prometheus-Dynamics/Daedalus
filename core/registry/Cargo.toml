@@ -1,0 +1,16 @@
+[package]
+name = "daedalus-registry"
+description = "Node records joined by id: one declaration, several bodies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-backend = { path = "../backend" }
+daedalus-graph = { path = "../graph", default-features = false }
+daedalus-types = { path = "../types" }
+daedalus-value = { path = "../value" }
+
+[lints]
+workspace = true
