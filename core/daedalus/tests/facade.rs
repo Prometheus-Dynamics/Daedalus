@@ -65,7 +65,7 @@ fn examples_use_only_the_facade() {
     for path in files {
         let exempt = path.components().any(|part| {
             let part = part.as_os_str().to_str().unwrap_or("");
-            part == "08_ffi" || part.starts_with("nostd") || part.starts_with("mcu_")
+            part == "08_ffi" || part.starts_with("nostd") || part.starts_with("chip_")
         });
         if exempt {
             continue;

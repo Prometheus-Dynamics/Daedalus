@@ -24,6 +24,7 @@ pub struct ParamShape {
     pub port: &'static str,
     /// The value's type, without any reference or `Option`.
     pub ty: fn() -> &'static str,
+    pub copy: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -31,6 +32,7 @@ pub struct OutputShape {
     /// Returned as an `Option`, and `None` sends nothing.
     pub optional: bool,
     pub ty: fn() -> &'static str,
+    pub copy: bool,
 }
 
 /// The function behind a body.

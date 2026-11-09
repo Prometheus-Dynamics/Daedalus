@@ -219,6 +219,33 @@ pub fn fallback(a: Option<&u32>, by: u32) -> Reading {
     }
 }
 
+#[node(id = "mix.text", inputs(a), outputs(out))]
+pub fn text(a: u32) -> String {
+    a.to_string()
+}
+
+#[node(id = "mix.len", inputs(s), outputs(out))]
+pub fn length(s: String) -> u32 {
+    s.len() as u32
+}
+
+/// A value that can't live in a fixed queue.
+pub fn heap_port() -> GraphBody {
+    GraphBody {
+        nodes: vec![
+            bridge(&[("a", "u32"), ("low", "u32")]),
+            with("mix.text", &[]),
+            with("mix.len", &[]),
+        ],
+        edges: vec![
+            wire(0, "a", 1, "a", EdgePolicyDoc::default()),
+            wire(1, "out", 2, "s", EdgePolicyDoc::default()),
+            wire(2, "out", 0, "low", EdgePolicyDoc::default()),
+        ],
+        groups: Vec::new(),
+    }
+}
+
 /// Two graphs with nothing between them, which can't share one module.
 pub fn disconnected() -> GraphBody {
     GraphBody {
@@ -295,6 +322,8 @@ pub fn generate_with(graph: &GraphBody, fifo_capacity: u32) -> Result<String, Pl
             &CHECK_NODE,
             &SPLIT_NODE,
             &FALLBACK_NODE,
+            &TEXT_NODE,
+            &LENGTH_NODE,
         ])
         .unwrap();
     let backend = SourceBackend {

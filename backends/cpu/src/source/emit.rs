@@ -145,10 +145,26 @@ fn literal(kind: ScalarKind, value: &Lit) -> Option<String> {
 }
 
 fn shape_of(body: &NodeBody<'_>) -> Result<BodyShape, Refusal> {
-    body.code
+    let shape = body
+        .code
         .downcast_ref::<CpuBody>()
         .map(|cpu| cpu.shape)
-        .ok_or_else(|| Refusal::new(vec![body.node], "this body isn't a CPU function"))
+        .ok_or_else(|| Refusal::new(vec![body.node], "this body isn't a CPU function"))?;
+    let port = |p: &ParamShape| has_port(p.role) || p.role == Role::FanIn;
+    let held = shape
+        .params
+        .iter()
+        .filter(|p| port(p) && !p.copy)
+        .map(|p| p.ty);
+    let sent = shape.outputs.iter().filter(|o| !o.copy).map(|o| o.ty);
+    if let Some(ty) = held.chain(sent).next() {
+        let why = format!(
+            "generated code keeps values in fixed queues, and `{}` isn't Copy",
+            ty()
+        );
+        return Err(Refusal::new(vec![body.node], &why));
+    }
+    Ok(shape)
 }
 
 /// A port's value type as it appears in the module.

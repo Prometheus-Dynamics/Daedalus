@@ -1,31 +1,13 @@
 //! What generated firmware runs on. No heap.
 
-use daedalus_abi::FixedError;
+mod clock;
+mod errors;
 
-pub use daedalus_runner::{FixedQueue as Queue, Overflow};
+use daedalus_abi::{FixedError, StepCx};
 
-/// Why a tick or a port call stopped. Small enough to return from anywhere.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ChipError {
-    /// A queue with the error policy was full.
-    QueueFull {
-        edge: u16,
-    },
-    /// A node failed. `code` is the code of its error.
-    Node {
-        node: u16,
-        code: u32,
-    },
-    Port {
-        port: u16,
-    },
-}
-
-/// Where a graph reads the time from.
-pub trait Clock {
-    fn now_ns(&self) -> u64;
-}
+pub use clock::Clock;
+pub use daedalus_runner::{FixedQueue as Queue, Overflow, QueueFull};
+pub use errors::ChipError;
 
 /// Pushes to edge `edge`.
 #[inline]
@@ -49,10 +31,10 @@ pub fn node_error<E: FixedError>(node: u16, error: &E) -> ChipError {
     }
 }
 
-/// A time for nodes that take one.
+/// The context of a tick at time `now_ns`.
 #[inline]
-pub fn context(now_ns: u64) -> daedalus_abi::StepCx {
-    let mut cx = daedalus_abi::StepCx::new();
+pub fn context(now_ns: u64) -> StepCx {
+    let mut cx = StepCx::new();
     cx.now_ns = now_ns;
     cx
 }

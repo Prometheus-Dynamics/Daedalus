@@ -1,16 +1,25 @@
 //! Reading a parameter out of its cell and writing a result into one.
 
-use alloc::sync::Arc;
 use core::ops::Deref;
 
+#[cfg(feature = "alloc")]
+use alloc::sync::Arc;
 use daedalus_abi::{Slot, SlotState};
-use daedalus_runner::{InlineCell, UNSTAMPED, put_typed, take_typed, typed_view};
+use daedalus_runner::InlineCell;
+#[cfg(feature = "alloc")]
+use daedalus_runner::{UNSTAMPED, put_typed, take_typed, typed_view};
 
 use daedalus_value::OwnerKind;
 
 use super::{ConstTable, Kind};
 
 const INLINE: u32 = OwnerKind::Inline as u32;
+
+/// A value held behind a reference. There are none without an allocator.
+#[cfg(not(feature = "alloc"))]
+fn typed_view<T: 'static>(_: &Slot) -> Option<&T> {
+    None
+}
 
 #[inline]
 fn is_full(slot: &Slot) -> bool {
@@ -65,10 +74,20 @@ pub fn take<T: 'static, C: ConstTable>(
     if kind.copy {
         return typed_view::<T>(cell).and_then(|value| kind.clone.map(|clone| clone(value)));
     }
+    take_shared(cell, kind)
+}
+
+#[cfg(feature = "alloc")]
+fn take_shared<T: 'static>(cell: &mut Slot, kind: Kind<T>) -> Option<T> {
     match Arc::try_unwrap(take_typed::<T>(cell)?) {
         Ok(value) => Some(value),
         Err(shared) => kind.clone.map(|clone| clone(&shared)),
     }
+}
+
+#[cfg(not(feature = "alloc"))]
+fn take_shared<T: 'static>(_: &mut Slot, _: Kind<T>) -> Option<T> {
+    None
 }
 
 /// Stores `value` in `slot`: in `buf` if it's small, otherwise behind a reference.
@@ -81,9 +100,18 @@ pub fn encode<T: Send + Sync + 'static>(
 ) {
     match kind.write {
         Some(write) => write(&value, buf, slot),
-        None => put_typed(slot, UNSTAMPED.0, UNSTAMPED.1, Arc::new(value)),
+        None => put_shared_value(value, slot),
     }
 }
+
+#[cfg(feature = "alloc")]
+fn put_shared_value<T: Send + Sync + 'static>(value: T, slot: &mut Slot) {
+    put_typed(slot, UNSTAMPED.0, UNSTAMPED.1, Arc::new(value));
+}
+
+/// Never reached: a node whose values need the heap has no arena body in this build.
+#[cfg(not(feature = "alloc"))]
+fn put_shared_value<T>(_: T, _: &mut Slot) {}
 
 /// Records why a step's input was there but unusable.
 #[cold]

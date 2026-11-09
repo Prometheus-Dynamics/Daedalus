@@ -30,7 +30,7 @@ tunable = []
 chip = []
 chip-params = []
 f64 = []
-defmt = []
+defmt = ["dep:defmt"]
 
 [dependencies]
 daedalus-abi = { path = "../../core/abi", default-features = false }
@@ -41,6 +41,7 @@ daedalus-registry = { path = "../../core/registry", default-features = false }
 daedalus-runner = { path = "../../core/runner", default-features = false }
 daedalus-types = { path = "../../core/types", default-features = false }
 daedalus-value = { path = "../../core/value", default-features = false }
+defmt = { workspace = true, optional = true }
 
 [dev-dependencies]
 daedalus-abi = { path = "../../core/abi", features = ["test-run", "count-alloc"] }

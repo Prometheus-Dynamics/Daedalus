@@ -6,11 +6,17 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["std"]
+# Off for firmware: `#[node]` then needs no allocator.
+std = ["daedalus-cpu/default", "daedalus-registry/std"]
+
 [dependencies]
-daedalus-cpu = { path = "../cpu" }
-daedalus-registry = { path = "../../core/registry" }
+daedalus-cpu = { path = "../cpu", default-features = false }
+daedalus-registry = { path = "../../core/registry", default-features = false }
 
 [dev-dependencies]
+daedalus-cpu = { path = "../cpu", features = ["chip"] }
 daedalus-macros = { path = "../../core/macros" }
 daedalus-types = { path = "../../core/types" }
 trybuild = { workspace = true }
