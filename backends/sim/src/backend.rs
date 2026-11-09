@@ -32,6 +32,8 @@ pub struct SimConfig {
     pub absorb: bool,
     /// Offer no way between the two spaces.
     pub no_transfers: bool,
+    /// Report every unit as able to return `Pending`.
+    pub pending: bool,
     /// Break the contract: forget one boundary output.
     pub drop_output: bool,
     /// Break the contract: report no covered nodes.
@@ -47,6 +49,7 @@ impl Default for SimConfig {
             faults: &[],
             absorb: true,
             no_transfers: false,
+            pending: false,
             drop_output: false,
             omit_covers: false,
         }
@@ -94,6 +97,7 @@ impl SimBackend {
             reads: touching(region.inputs),
             writes: touching(region.outputs),
             absorbed,
+            may_pend: self.config.pending,
         }
     }
 

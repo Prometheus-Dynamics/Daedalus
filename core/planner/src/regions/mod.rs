@@ -16,6 +16,8 @@ use crate::assign::error::AssignError;
 use crate::solve::Graph;
 use crate::solve::Rate;
 use crate::solve::type_table::TypeTable;
+use crate::stitch::StitchError;
+use crate::stitch::transfers::Routing;
 pub use refusal::build;
 use rules::Rule;
 
@@ -43,6 +45,7 @@ pub struct Regions {
     pub rates: Vec<(Rate, Rate)>,
     /// How many rounds of assign and compile it took.
     pub rounds: u32,
+    pub routing: Routing,
 }
 
 pub struct Input<'a> {
@@ -59,6 +62,7 @@ pub struct Input<'a> {
 #[non_exhaustive]
 pub enum RegionError {
     Assign(Vec<AssignError>),
+    Stitch(StitchError),
     /// A forced node's backend refused it. There's nowhere else for it to go.
     ForcedRefused {
         node: String,
@@ -86,6 +90,7 @@ impl fmt::Display for RegionError {
                 let text: Vec<String> = errors.iter().map(ToString::to_string).collect();
                 f.write_str(&text.join("; "))
             }
+            RegionError::Stitch(error) => error.fmt(f),
             RegionError::ForcedRefused {
                 node,
                 backend,

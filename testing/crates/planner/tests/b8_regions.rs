@@ -1,5 +1,5 @@
 use daedalus_backend::Backend;
-use daedalus_graph::{EdgeDoc, NodeDoc, RateDoc};
+use daedalus_graph::{EdgeDoc, NodeDoc, NodeKindDoc, RateDoc};
 use daedalus_planner::assign::ASSIGN_BUDGET;
 use daedalus_planner::regions::rules::{Rule, check};
 use daedalus_planner::regions::{Input, RegionError, Regions, build};
@@ -123,9 +123,16 @@ fn mixed_rate_fails_r3() {
 }
 
 fn sim(config: SimConfig) -> Result<Regions, RegionError> {
-    let (nodes, edges) = chain(&["t.s", "t.a"]);
+    let mut host = node("host");
+    host.kind = NodeKindDoc::HostBridge;
+    host.port_types.insert("in".to_string(), "u8".to_string());
     let backend = SimBackend::new(config);
-    build_with(&registry(), nodes, edges, &[&backend, &CPU])
+    build_with(
+        &registry(),
+        vec![node("t.s"), host],
+        vec![edge(0, "out", 1, "in")],
+        &[&backend],
+    )
 }
 
 #[test]

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use daedalus_backend::{
-    Backend, CompileCx, Compiled, ConstOf, NodeBody, PortRef, Refusal, Region, UnitInfo,
+    Backend, CompileCx, Compiled, ConstOf, Incoming, NodeBody, PortRef, Refusal, Region, UnitInfo,
 };
 use daedalus_registry::Registry;
 use daedalus_types::NodeIndex;
@@ -27,6 +27,7 @@ pub(super) fn compile_region(
     cx: &Compiling<'_>,
     formed: &Formed,
     backend: &dyn Backend,
+    incoming: &[Incoming<'_>],
 ) -> Result<Compiled, Refusal> {
     let nodes: Vec<NodeIndex> = formed.nodes.iter().map(|&node| NodeIndex(node)).collect();
     let mut consts = Vec::new();
@@ -59,7 +60,7 @@ pub(super) fn compile_region(
         nodes: &nodes,
         inputs: &formed.inputs,
         outputs: &formed.outputs,
-        incoming: &[],
+        incoming,
         rate: formed.rate,
     };
     backend.compile(

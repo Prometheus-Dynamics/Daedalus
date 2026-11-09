@@ -2,11 +2,18 @@
 
 #![forbid(unsafe_code)]
 
+use std::borrow::Cow;
+
+use daedalus_abi::{Slots, Step, StepCx, StepEnd, StepWord};
 use daedalus_backend::{
-    Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, Transfer, UnitInfo,
+    Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, SpaceKind,
+    Transfer, TransferCost, UnitInfo,
 };
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, NodeDoc, PortRefDoc};
+use daedalus_planner::assign::ASSIGN_BUDGET;
+use daedalus_planner::regions::{Input, RegionError, Regions, build};
 use daedalus_planner::solve::type_table::TypeTable;
+use daedalus_planner::stitch::{Stitched, stitch};
 use daedalus_registry::{
     BodyRecord, ConfigDecl, Conversion, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, Registry,
     SourceAt, TypeRef,
@@ -213,7 +220,11 @@ impl Backend for Named {
     }
 
     fn memory(&self) -> Vec<MemorySpace> {
-        Vec::new()
+        vec![MemorySpace {
+            id: Cow::Borrowed("t.shared"),
+            kind: SpaceKind::Shared,
+            readable: true,
+        }]
     }
 
     fn transfers(&self) -> Vec<Transfer> {
@@ -246,6 +257,7 @@ fn blob(region: &Region<'_>) -> Compiled {
             reads: region.inputs.to_vec(),
             writes: region.outputs.to_vec(),
             absorbed: Vec::new(),
+            may_pend: false,
         }],
     }
 }
@@ -264,7 +276,11 @@ impl Backend for Refuser {
     }
 
     fn memory(&self) -> Vec<MemorySpace> {
-        Vec::new()
+        vec![MemorySpace {
+            id: Cow::Borrowed("t.shared"),
+            kind: SpaceKind::Shared,
+            readable: true,
+        }]
     }
 
     fn transfers(&self) -> Vec<Transfer> {
@@ -319,4 +335,98 @@ pub fn solved(
         }
     }
     (graph, types)
+}
+
+/// Runs regions and stitching, with the highest priority backend first.
+pub fn stitched(
+    registry: &Registry,
+    nodes: Vec<NodeDoc>,
+    edges: Vec<EdgeDoc>,
+    backends: &[&dyn Backend],
+) -> Result<(Regions, Stitched), RegionError> {
+    let (graph, types) = solved(registry, nodes, edges);
+    let regions = build(&Input {
+        graph: &graph,
+        registry,
+        backends,
+        types: &types,
+        budget: ASSIGN_BUDGET,
+        merge_allowed: true,
+    })?;
+    let stitched = stitch(&regions, &types);
+    Ok((regions, stitched))
+}
+
+/// A step that does nothing.
+struct Nop;
+
+impl StepWord for Nop {
+    fn run(_: usize, _: &mut Slots, _: &mut StepCx) -> StepEnd {
+        StepEnd::Done
+    }
+}
+
+fn make_nop(_: &CompileCx<'_>) -> Result<Step, Refusal> {
+    Ok(Step::of::<Nop>(0))
+}
+
+/// A backend whose memory and transfers a test spells out.
+#[derive(Default)]
+pub struct Mem {
+    pub id: &'static str,
+    /// (id, kind, readable), home first.
+    pub spaces: Vec<(&'static str, SpaceKind, bool)>,
+    /// (id, from, to, cost).
+    pub moves: Vec<(&'static str, &'static str, &'static str, TransferCost)>,
+    pub may_pend: bool,
+}
+
+impl Backend for Mem {
+    fn id(&self) -> &str {
+        self.id
+    }
+
+    fn memory(&self) -> Vec<MemorySpace> {
+        self.spaces
+            .iter()
+            .map(|&(id, kind, readable)| MemorySpace {
+                id: Cow::Borrowed(id),
+                kind,
+                readable,
+            })
+            .collect()
+    }
+
+    fn transfers(&self) -> Vec<Transfer> {
+        self.moves
+            .iter()
+            .map(|&(id, from, to, cost)| Transfer {
+                id,
+                key: None,
+                from: Cow::Borrowed(from),
+                to: Cow::Borrowed(to),
+                cost,
+                make: make_nop,
+            })
+            .collect()
+    }
+
+    fn can_take(&self, offer: &Offer<'_>) -> Vec<NodeRef> {
+        offer
+            .nodes
+            .iter()
+            .map(|node| NodeRef {
+                node: node.node,
+                body: node.body,
+            })
+            .collect()
+    }
+
+    fn compile(&self, region: &Region<'_>, _: &CompileCx<'_>) -> Result<Compiled, Refusal> {
+        let mut compiled = blob(region);
+        if let Compiled::Blob { units, .. } = &mut compiled {
+            units[0].may_pend = self.may_pend;
+        }
+        Ok(compiled)
+    }
 }
