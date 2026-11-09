@@ -32,6 +32,7 @@ static TEXT: Table<str> = Table::new();
 static KEY: Table<TypeKey> = Table::new();
 static KEYS: Table<[TypeKey]> = Table::new();
 static WAKE: Table<[u32]> = Table::new();
+static NAMES: Table<[&'static str]> = Table::new();
 static PORTS: Table<[PortSpec<'static>]> = Table::new();
 
 pub(crate) fn intern(text: &str) -> &'static str {
@@ -56,6 +57,10 @@ pub(crate) fn intern_keys(texts: &[String]) -> &'static [TypeKey] {
 
 pub(crate) fn intern_wake(steps: &[u32]) -> &'static [u32] {
     WAKE.get(format!("{steps:?}"), || steps.to_vec().leak())
+}
+
+pub(crate) fn intern_names(names: &[&'static str]) -> &'static [&'static str] {
+    NAMES.get(names.join("\n"), || names.to_vec().leak())
 }
 
 pub(crate) fn intern_ports(specs: Vec<PortSpec<'static>>) -> &'static [PortSpec<'static>] {

@@ -22,7 +22,9 @@ use daedalus_runner::{Fire, Recovery, SlotKind, SlotSpec, StepMeta};
 use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey};
 use daedalus_value::{Overflow, Pressure};
 
-use crate::intern::{intern, intern_key, intern_keys, intern_ports, intern_wake};
+use crate::fault::FaultRing;
+use crate::intern::{intern, intern_key, intern_keys, intern_names, intern_ports, intern_wake};
+use crate::unmerged::Planner;
 use crate::{Dir, Host, PortSpec, Ports, StateStore};
 
 /// What can be set when a plan loads.
@@ -30,11 +32,16 @@ use crate::{Dir, Host, PortSpec, Ports, StateStore};
 pub struct LoadOptions {
     /// The capacity of a FIFO edge that declares none.
     pub fifo_capacity: u32,
+    /// How many failure reports the host keeps.
+    pub fault_reports: usize,
 }
 
 impl Default for LoadOptions {
     fn default() -> Self {
-        LoadOptions { fifo_capacity: 64 }
+        LoadOptions {
+            fifo_capacity: 64,
+            fault_reports: 32,
+        }
     }
 }
 
@@ -143,6 +150,7 @@ struct Built {
     table: Vec<u32>,
     slots: Vec<SlotSpec>,
     edges: EdgeRules,
+    covers: Vec<Vec<u32>>,
 }
 
 /// The pressure each edge declared, by the slot it lands on.
@@ -175,6 +183,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
     let stitched = &planned.stitched;
     let mut steps = Vec::new();
     let mut drafts = Vec::new();
+    let mut step_covers = Vec::new();
     let mut edges = EdgeRules::new();
     let host_spaces = host_spaces(stitched);
     for item in &stitched.layout {
@@ -192,6 +201,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                     return Err(LoadError::NotSteps);
                 };
                 steps.push(step);
+                step_covers.push(covers.clone());
                 let connected = connected_reads(planned, &info, reads);
                 let (fire, required) = join_for(planned, covers, &connected);
                 for (slot, edge) in &connected {
@@ -222,6 +232,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                     return Err(LoadError::TransferUnbound { id });
                 };
                 steps.push(step);
+                step_covers.push(Vec::new());
                 drafts.push(Draft {
                     reads: vec![*from_slot],
                     writes: vec![*to_slot],
@@ -246,6 +257,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
         table,
         slots,
         edges,
+        covers: step_covers,
     })
 }
 
@@ -464,14 +476,26 @@ pub struct LoadedHost {
     pub(crate) nodes: Vec<NodeEntry>,
     pub(crate) bridges: Vec<String>,
     pub(crate) options: LoadOptions,
+    pub(crate) covers: Vec<&'static [&'static str]>,
+    pub(crate) node_names: Vec<&'static str>,
+    pub(crate) fault_seen: Vec<u32>,
+    pub(crate) faults: FaultRing,
+    pub(crate) planner: Option<Planner>,
+    pub(crate) unmerged: bool,
+}
+
+/// Everything one version of the graph brings.
+pub(crate) struct Parts {
+    pub(crate) host: Host<'static>,
+    pub(crate) nodes: Vec<NodeEntry>,
+    pub(crate) bridges: Vec<String>,
+    pub(crate) covers: Vec<&'static [&'static str]>,
+    pub(crate) node_names: Vec<&'static str>,
 }
 
 /// Builds the host for a plan. Nothing else is touched, so a failure leaves any running graph as
 /// it was.
-pub(crate) fn build_host(
-    planned: &mut Planned,
-    options: LoadOptions,
-) -> Result<(Host<'static>, Vec<NodeEntry>, Vec<String>), LoadError> {
+pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<Parts, LoadError> {
     let nodes = node_entries(planned);
     let bridges = bridge_keys(planned);
     let built = lay_out(planned, options)?;
@@ -481,7 +505,19 @@ pub(crate) fn build_host(
         table,
         slots,
         edges,
+        covers,
     } = built;
+    let node_names: Vec<&'static str> = nodes.iter().map(|node| intern(&node.key)).collect();
+    let covers = covers
+        .iter()
+        .map(|covers| {
+            let names: Vec<&'static str> = covers
+                .iter()
+                .map(|&node| node_names[node as usize])
+                .collect();
+            intern_names(&names)
+        })
+        .collect();
     let ports = port_table(planned, &meta, &table)?;
     let types = type_keys(planned);
     let host_inputs: Vec<u32> = planned
@@ -498,20 +534,39 @@ pub(crate) fn build_host(
     }
     let mut host = Host::new(runner, ports, types);
     host.owned = Some(buffers);
-    Ok((host, nodes, bridges))
+    Ok(Parts {
+        host,
+        nodes,
+        bridges,
+        covers,
+        node_names,
+    })
 }
 
 impl LoadedHost {
     /// Loads a finished plan. Slots, pools, fences and telemetry arrays are sized once, here.
     pub fn load(mut planned: Planned, options: LoadOptions) -> Result<LoadedHost, LoadError> {
-        let (host, nodes, bridges) = build_host(&mut planned, options)?;
+        let parts = build_host(&mut planned, options)?;
         Ok(LoadedHost {
-            host,
             state: StateStore::new(),
-            nodes,
-            bridges,
+            fault_seen: vec![0; parts.covers.len()],
+            faults: FaultRing::new(options.fault_reports),
             options,
+            planner: None,
+            unmerged: false,
+            host: parts.host,
+            nodes: parts.nodes,
+            bridges: parts.bridges,
+            covers: parts.covers,
+            node_names: parts.node_names,
         })
+    }
+
+    /// Runs one tick and records what failed in it.
+    pub fn step(&mut self) -> Result<daedalus_runner::TickReport, crate::HostError> {
+        let report = self.host.step();
+        self.collect_faults();
+        report
     }
 
     pub fn host(&mut self) -> &mut Host<'static> {
@@ -561,7 +616,7 @@ impl crate::stream::StreamHost for LoadedHost {
         self.host.feed(port, value)
     }
     fn step(&mut self) -> Result<daedalus_runner::TickReport, crate::HostError> {
-        self.host.step()
+        LoadedHost::step(self)
     }
     fn take_value(
         &mut self,

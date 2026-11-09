@@ -248,7 +248,7 @@ pub fn plan(
         backends: &backends,
         types: &types,
         budget: config.assignment_budget,
-        merge_allowed: true,
+        merge_allowed: config.merge,
     })
     .map_err(PlanError::Regions)?;
     let stitched = stitch(&regions, &types);

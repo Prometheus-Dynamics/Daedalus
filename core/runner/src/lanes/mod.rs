@@ -26,6 +26,7 @@ use crate::bits::{self, words_for};
 use crate::error::RunError;
 use crate::exec::{Env, RunFn, SlotParts, step_once};
 use crate::failure::{FailurePolicy, StepHealth};
+use crate::fault_log::FaultLog;
 use crate::fence::insert_pending;
 use crate::reuse::ReuseParts;
 use crate::step::{Queue, SlotKind, SlotStamp, StepMeta};
@@ -208,6 +209,8 @@ struct View<'t> {
     pending_cap: usize,
     pending_len: *mut usize,
     progress: &'t [Progress],
+    fault_log: FaultLog,
+    tick: u32,
     reuse: Option<ReuseParts>,
     probe: Option<&'t crate::probe::TickProbe<'t>>,
 }
@@ -242,6 +245,9 @@ impl<'t> Env<'t> for Lane<'t> {
     fn health(&mut self, index: usize) -> &mut StepHealth {
         // SAFETY: `index` is the step this worker is running, and no other worker touches it.
         unsafe { &mut *self.view.health.add(index) }
+    }
+    fn fault_log(&self) -> (FaultLog, u32) {
+        (self.view.fault_log, self.view.tick)
     }
     fn progress(&self, index: usize) -> *const Progress {
         crate::progress::cell(self.view.progress, index)
@@ -396,6 +402,8 @@ impl Runner<'_> {
                 pending_cap: self.pending.len(),
                 pending_len: &mut self.pending_len,
                 progress: self.progress,
+                fault_log: self.fault_log,
+                tick: self.tick,
                 reuse: self.reuse.as_mut().map(|table| table.parts()),
                 probe: self.probe,
             };
