@@ -33,6 +33,8 @@ pub(crate) struct ExecutorInit {
     pub(crate) parallel_workers: usize,
     #[cfg(feature = "gpu")]
     pub(crate) data_edges: Arc<HashSet<usize>>,
+    /// The output-reuse table of the plan's reusable nodes; `None` when none opts in.
+    pub(crate) reuse: Option<Arc<super::reuse::ReuseTable>>,
 }
 
 pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, ExecutorBuildError> {
@@ -60,7 +62,7 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
             *direct &= !queued;
         }
     }
-    let host_bridges = nodes.iter().map(is_host_bridge_node).collect();
+    let host_bridges: Arc<[bool]> = nodes.iter().map(is_host_bridge_node).collect();
     let direct_slots = direct_slots(&plan.edges);
     let schedule = Arc::new(build_compiled_schedule(
         ScheduleSource {
@@ -74,6 +76,7 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         true,
     ));
     let parallel_workers = resolve_parallel_workers(None, schedule.segments.len());
+    let reuse = super::reuse::ReuseTable::new(&nodes, &host_bridges)?;
     #[cfg(feature = "gpu")]
     let data_edges = Arc::new(collect_data_edges(&nodes, &plan.edges));
 
@@ -93,6 +96,7 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         parallel_workers,
         #[cfg(feature = "gpu")]
         data_edges,
+        reuse,
     })
 }
 

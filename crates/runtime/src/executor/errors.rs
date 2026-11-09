@@ -110,6 +110,9 @@ pub enum ExecutorBuildError {
         current: String,
         stable_id: u128,
     },
+    /// A node marked `reusable` (`#[node(reusable)]`, `NODE_REUSABLE_META_KEY`) cannot be reused.
+    #[error("node '{node}' is marked reusable, but {reason}")]
+    ReusableNode { node: String, reason: &'static str },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

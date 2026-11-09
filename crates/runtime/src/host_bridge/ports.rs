@@ -46,6 +46,9 @@ pub(super) struct PortState {
     /// The key of the type the graph declares for an inbound port, set when the bridge attaches
     /// to a graph (see `HostBridgeHandle::declare_input_key`); `push_value` converts through it.
     pub(super) type_key: Option<TypeKey>,
+    /// The host's version stamp for the values this port delivers (`set_input_version`), read
+    /// by each tick that takes them.
+    pub(super) version: Option<u64>,
 }
 
 impl PortState {
@@ -62,6 +65,7 @@ impl PortState {
             held_fresh: false,
             stats: HostPortStats::default(),
             type_key: None,
+            version: None,
         }
     }
 

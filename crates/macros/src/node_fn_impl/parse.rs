@@ -93,6 +93,9 @@ pub(super) struct NodeArgs {
     pub(super) same_payload_attr: bool,
     /// `shareable`: deterministic and side-effect free (`NODE_SHAREABLE_META_KEY`).
     pub(super) shareable_attr: bool,
+    /// `reusable`: a pure node whose last result is replayed while its inputs are unchanged
+    /// (`NODE_REUSABLE_META_KEY`).
+    pub(super) reusable_attr: bool,
 }
 
 struct BindingShorthand {
@@ -156,6 +159,7 @@ pub(super) fn parse_node_args(
     let mut fire_attr: Option<LitStr> = None;
     let mut same_payload_attr = false;
     let mut shareable_attr = false;
+    let mut reusable_attr = false;
 
     for arg in args {
         match arg {
@@ -232,6 +236,9 @@ pub(super) fn parse_node_args(
             }
             NestedMeta::Meta(Meta::Path(path)) if path.is_ident("shareable") => {
                 shareable_attr = true;
+            }
+            NestedMeta::Meta(Meta::Path(path)) if path.is_ident("reusable") => {
+                reusable_attr = true;
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("inputs") => {
                 parse_inputs_list(&list, &mut inputs, &mut config_types, data_crate)?;
@@ -310,6 +317,7 @@ pub(super) fn parse_node_args(
         fire_attr,
         same_payload_attr,
         shareable_attr,
+        reusable_attr,
     })
 }
 

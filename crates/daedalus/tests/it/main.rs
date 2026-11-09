@@ -21,6 +21,8 @@ mod host_graph_introspection;
 mod host_push_value;
 mod input_dropped;
 mod node_groups;
+mod node_reuse_attr;
+mod node_reuse_host;
 mod numeric_keys;
 mod optional_inputs;
 mod port_metadata;

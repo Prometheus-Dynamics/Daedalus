@@ -59,6 +59,10 @@ pub struct ExecutionTelemetry {
     #[serde(default)]
     pub gpu_accesses: u64,
     pub nodes_executed: usize,
+    /// Node runs that replayed their last outputs instead of running (`#[node(reusable)]`): they
+    /// are among `nodes_executed` too, since their outputs were published.
+    #[serde(default)]
+    pub nodes_reused: usize,
     pub cpu_segments: usize,
     pub gpu_segments: usize,
     pub gpu_fallbacks: usize,
@@ -310,6 +314,7 @@ impl ExecutionTelemetry {
 
     pub fn reset_for_reuse(&mut self, level: MetricsLevel) {
         self.nodes_executed = 0;
+        self.nodes_reused = 0;
         self.cpu_segments = 0;
         self.gpu_segments = 0;
         self.gpu_fallbacks = 0;
@@ -371,6 +376,7 @@ impl ExecutionTelemetry {
 
     pub fn merge(&mut self, other: ExecutionTelemetry) {
         self.nodes_executed += other.nodes_executed;
+        self.nodes_reused += other.nodes_reused;
         self.cpu_segments += other.cpu_segments;
         self.gpu_segments += other.gpu_segments;
         self.gpu_fallbacks += other.gpu_fallbacks;
@@ -520,6 +526,7 @@ impl ExecutionTelemetry {
     #[cfg(feature = "threads")]
     pub(crate) fn absorb(&mut self, other: &mut ExecutionTelemetry) {
         self.nodes_executed += core::mem::take(&mut other.nodes_executed);
+        self.nodes_reused += core::mem::take(&mut other.nodes_reused);
         self.cpu_segments += core::mem::take(&mut other.cpu_segments);
         self.gpu_segments += core::mem::take(&mut other.gpu_segments);
         self.gpu_fallbacks += core::mem::take(&mut other.gpu_fallbacks);

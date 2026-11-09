@@ -85,6 +85,9 @@ pub(crate) struct ExecutorCore {
     pub(crate) node_groups: Arc<[Option<Arc<str>>]>,
     /// Each node's failure backoff, shared with the worker snapshots of a parallel run.
     pub(crate) node_health: Arc<super::node_health::NodeHealthTable>,
+    /// The reusable nodes' last results (`executor::reuse`); `None` when no node opts in, so the
+    /// serial loop skips every reuse step. Shared with the worker snapshots.
+    pub(crate) reuse: Option<Arc<super::reuse::ReuseTable>>,
     /// Per node, the incoming edges into its required inputs (see `ExecutorInit`).
     pub(crate) required_inputs: Arc<[super::init::RequiredInputs]>,
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
@@ -147,6 +150,7 @@ impl ExecutorCore {
                 })
                 .collect(),
             node_health: super::node_health::NodeHealthTable::new(init.nodes.len()),
+            reuse: init.reuse.clone(),
             required_inputs: init.required_inputs.clone(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
             clock: Clock::default(),
@@ -262,6 +266,7 @@ impl ExecutorCore {
             node_ids: self.node_ids.clone(),
             node_groups: self.node_groups.clone(),
             node_health: self.node_health.clone(),
+            reuse: self.reuse.clone(),
             required_inputs: self.required_inputs.clone(),
             capabilities: self.capabilities.clone(),
             clock: self.clock.clone(),

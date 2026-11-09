@@ -334,3 +334,25 @@ payload slot, no zero-fill in `take_bytes`). `after` adds `-batch` arms: ports r
   `SharedBytes`). The wrapper allocates nothing.
 - `static` and `static-stable` run the same code in both builds (identical instructions); their
   0.1-0.5 µs differences between builds are run-to-run noise under this load.
+
+## Output reuse (x86_64, pinned, perf stat)
+
+Idle tick: `frame-bench` example `idle_tick`, a 16-stage `daedalus:frame` host graph ticked with no
+input pushed. Instructions per tick are `(count at 200 000 ticks - count at 0 ticks) / 200 000`,
+three runs each, pinned to one CPU with `perf stat -e instructions:u`. The base build is the
+commit before the reuse change; the after build has the reuse code and no reusable node.
+
+| build | instructions per idle tick, three runs | median |
+|---|---|---|
+| base (f09fe84) | 27 019, 27 167, 27 064 | 27 064 |
+| after (no node opts in) | 27 119, 27 000, 27 151 | 27 119 |
+
+The difference (about 55 instructions, 0.2%) is inside the spread of either build.
+
+Time saved: `frame-bench` example `reuse_saving`, `src -> heavy -> sink`, `heavy` doing 2 000 000
+loop steps per call, 2 000 ticks.
+
+| source | no reuse | `heavy` reusable |
+|---|---|---|
+| unchanged input (held payload) | 224.9 us/tick, 2 010 calls | 1.0 us/tick, 1 call, 2 000 replayed ticks |
+| new value every tick | 231.3 us/tick | 228.3 us/tick, no replays |

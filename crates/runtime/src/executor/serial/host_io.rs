@@ -102,9 +102,20 @@ fn inject(v: &mut SerialView<'_>) -> Result<(), ExecuteError> {
                     continue;
                 }
                 let mut result: Result<(), NodeError> = Ok(());
+                // A host version stamps the values this port delivers; only reuse reads it.
+                let version = if v.core.reuse.is_some() {
+                    inbound.version(port.as_str())
+                } else {
+                    None
+                };
                 let taken = inbound.take(port.as_str(), |payload| {
                     if result.is_ok() {
-                        result = fan_out(v, group, routes, CorrelatedPayload::from_edge(payload));
+                        result = fan_out(
+                            v,
+                            group,
+                            routes,
+                            CorrelatedPayload::from_edge(payload).with_version(version),
+                        );
                     }
                 });
                 result?;
@@ -119,7 +130,12 @@ fn inject(v: &mut SerialView<'_>) -> Result<(), ExecuteError> {
                         if let Some(probe) = &v.core.run_config.frame_probe {
                             probe.add_count(ProbeCount::SharedClones, 1);
                         }
-                        fan_out(v, group, routes, CorrelatedPayload::from_edge(payload))?;
+                        fan_out(
+                            v,
+                            group,
+                            routes,
+                            CorrelatedPayload::from_edge(payload).with_version(version),
+                        )?;
                     }
                 }
             }

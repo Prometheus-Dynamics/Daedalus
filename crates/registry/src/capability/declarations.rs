@@ -445,6 +445,11 @@ pub const NODE_FIRE_META_KEY: &str = "daedalus.node.fire";
 /// one instance of it (structural sharing). Set on a declaration (`#[node(shareable)]`) or on a
 /// graph node; nodes without it are never shared.
 pub const NODE_SHAREABLE_META_KEY: &str = "daedalus.node.shareable";
+/// Node metadata opting a node into output reuse (`true`): a pure node whose last result is kept
+/// and replayed while its inputs and constants are unchanged (see the runtime's `executor::reuse`
+/// and `docs/node-authoring.md`). Set on a declaration (`#[node(reusable)]`) or on a graph node;
+/// nodes without it run every tick, as before.
+pub const NODE_REUSABLE_META_KEY: &str = "daedalus.node.reusable";
 
 /// When a node with [required inputs](NODE_REQUIRED_INPUTS_META_KEY) fires.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

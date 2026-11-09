@@ -14,6 +14,7 @@ pub(super) struct MetadataInputs<'a> {
     pub(super) device_from_attr: Option<&'a LitStr>,
     pub(super) fire_attr: Option<&'a LitStr>,
     pub(super) shareable: bool,
+    pub(super) reusable: bool,
     /// Per output: an `Option` return, recorded as `outputs.<port>.conditional`.
     pub(super) conditional_outputs: &'a [bool],
     pub(super) config_types: &'a [syn::Type],
@@ -32,6 +33,7 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
         device_from_attr,
         fire_attr,
         shareable,
+        reusable,
         conditional_outputs,
         config_types,
         data_crate,
@@ -108,6 +110,14 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
         entries.push(Entry::Raw(quote! {
             __meta.insert(
                 ::std::string::String::from(#runtime_crate::NODE_SHAREABLE_META_KEY),
+                #data_crate::model::Value::Bool(true),
+            );
+        }));
+    }
+    if reusable {
+        entries.push(Entry::Raw(quote! {
+            __meta.insert(
+                ::std::string::String::from(#runtime_crate::NODE_REUSABLE_META_KEY),
                 #data_crate::model::Value::Bool(true),
             );
         }));

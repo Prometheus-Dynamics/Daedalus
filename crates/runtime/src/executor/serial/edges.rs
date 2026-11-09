@@ -171,6 +171,7 @@ pub(super) fn adapt_edge_payload(
         correlation_id,
         inner,
         enqueued_at,
+        version,
     } = payload;
 
     let mut request = AdaptRequest::new(
@@ -272,6 +273,7 @@ pub(super) fn adapt_edge_payload(
                 correlation_id,
                 inner: adapted,
                 enqueued_at,
+                version,
             })
         }
         Err(error) => {

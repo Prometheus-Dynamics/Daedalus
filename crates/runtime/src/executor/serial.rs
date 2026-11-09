@@ -296,6 +296,19 @@ fn run_order_timed<H: NodeHandler>(
             .then(|| resilience::retry_inputs(recovery, &v.core.port_pool, &inputs))
             .flatten();
         let mut io = v.core.node_io(node_idx, inputs, consts.as_ref());
+        // Output reuse (`reuse`): a reusable node whose inputs are unchanged replays its last
+        // outputs instead of running. Without a reuse table this is one `None` check.
+        let reuse = v.core.reuse.clone();
+        let slot = reuse.as_deref().and_then(|table| table.slot(node_idx));
+        let mut stamp = None;
+        let replayed = match slot {
+            Some(slot) if slot.replay(&mut io) => true,
+            Some(slot) => {
+                stamp = Some(slot.stamp(&io));
+                false
+            }
+            None => false,
+        };
         let ctx = &contexts[node_idx];
         if collect_basic_metrics {
             v.core.state.clear_node_custom_metrics(&ctx.node_id);
@@ -308,7 +321,9 @@ fn run_order_timed<H: NodeHandler>(
             node_index = node_idx,
             node_id = %node.id,
         );
-        let run_result = {
+        let run_result = if replayed {
+            Ok(())
+        } else {
             let _handler_span = handler_span.enter();
             let _scope = super::node_alloc_scope();
             if !recovering {
@@ -358,16 +373,31 @@ fn run_order_timed<H: NodeHandler>(
         let outputs = io.take_outputs();
 
         if let Err(error) = run_result {
+            if let Some(slot) = slot {
+                slot.forget();
+            }
             resilience::handle_failure(&mut v, node_idx, &node.id, error, recovery)?;
         } else if let Some(error) = flush_result {
+            if let Some(slot) = slot {
+                slot.forget();
+            }
             let recovery = resilience::after_delivery(recovery);
             resilience::handle_failure(&mut v, node_idx, &node.id, error, recovery)?;
         } else {
+            if let (Some(slot), Some(stamp)) = (slot, stamp.take()) {
+                slot.store(stamp, outputs.clone());
+            }
+            if replayed {
+                v.core.telemetry.nodes_reused = v.core.telemetry.nodes_reused.saturating_add(1);
+            }
             let fused = FusedOutputs::of(&v, fusion.as_deref(), node_idx, order, pos, &mut carry);
             match publish_outputs(&mut v, node_idx, outputs, fused) {
                 Ok(()) if probing => v.core.node_health.on_success(node_idx),
                 Ok(()) => {}
                 Err(error) => {
+                    if let Some(slot) = slot {
+                        slot.forget();
+                    }
                     let recovery = resilience::after_delivery(recovery);
                     resilience::handle_failure(&mut v, node_idx, &node.id, error, recovery)?;
                 }

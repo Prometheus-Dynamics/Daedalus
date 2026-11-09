@@ -16,6 +16,7 @@ mod graph_document_requirements;
 mod manual_off;
 mod node_error;
 mod node_io_ports;
+mod node_reuse;
 mod order_property;
 mod parallel_invariants;
 #[cfg(all(feature = "metrics", feature = "threads"))]

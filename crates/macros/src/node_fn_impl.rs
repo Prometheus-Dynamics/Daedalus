@@ -57,6 +57,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         fire_attr,
         same_payload_attr,
         shareable_attr,
+        reusable_attr,
     } = match parse::parse_node_args(args, &data_crate, &gpu_crate) {
         Ok(args) => args,
         Err(err) => return TokenStream::from(err),
@@ -147,6 +148,20 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
     {
         return TokenStream::from(compile_error(
             "GraphCtx parameter must be passed as &mut GraphCtx".into(),
+        ));
+    }
+
+    if reusable_attr
+        && (state_ty_attr.is_some()
+            || shader_path.is_some()
+            || !shader_paths.is_empty()
+            || !shader_specs.is_empty()
+            || !shader_bindings.is_empty())
+    {
+        return TokenStream::from(compile_error(
+            "a reusable node cannot use state(...) or GPU shaders: its outputs must depend only on \
+             its inputs and constants"
+                .into(),
         ));
     }
 
@@ -399,6 +414,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             device_from_attr: device_from_attr.as_ref(),
             fire_attr: fire_attr.as_ref(),
             shareable: shareable_attr,
+            reusable: reusable_attr,
             conditional_outputs: &conditional_outputs(&input.sig.output, outputs_vec.len()),
             config_types: &config_types,
             data_crate: &data_crate,

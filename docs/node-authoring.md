@@ -745,6 +745,75 @@ among equals). It does not change serial order, which follows the schedule, and 
 segment before its inputs are ready. Give priority to the latency-critical branch of a fan-out
 (the pose estimate a controller waits on) over preview or logging branches.
 
+## Output Reuse For Pure Nodes
+
+A node that is a pure function of its inputs and constants can opt in to output reuse. The runtime
+keeps its last successful outputs with a stamp of the inputs they came from, and while the stamp
+still matches the handler does not run: the stored outputs are emitted again as an ordinary
+emission, and the consumers see the same values they would have seen from a run. Incremental
+evaluation falls out of this: a change to an input makes the nodes that read it dirty, and a clean
+node replays. Nodes that do not opt in run every tick, as before.
+
+Declare it on the node:
+
+```rust
+#[node(id = "classify", inputs("x"), outputs("y"), reusable)]
+fn classify(x: &Frame) -> Result<Label, NodeError> { /* pure in x and its constants */ }
+```
+
+The attribute sets the metadata key `daedalus.node.reusable` (`NODE_REUSABLE_META_KEY`) to `true`.
+A dynamic or FFI node sets the same key on its node declaration (`metadata`), and a graph node can
+set it on its node instance. `#[node(reusable)]` is a compile error together with `state(...)` or
+GPU shaders. Other declarations are checked when the executor is built: a reusable node that asks
+for a GPU, is a host-bridge node, or has a non-boolean marker is rejected with
+`ExecutorBuildError::ReusableNode`.
+
+What "unchanged" means. Nothing is hashed. An input is stamped by:
+
+- its host version, when the host declared one for its port with
+  `HostBridgeHandle::set_input_version(port, Some(v))`. The host bumps the version when the data
+  changes, and an unchanged version lets the node replay. Without a version the next rule applies.
+- otherwise the payload's identity (its lineage correlation id). A clone keeps the identity, so
+  re-pushing the same `Payload`, a held host port, or a value passed along unchanged all keep their
+  stamp. A new payload is a new identity, even when its value is equal.
+
+Constants are stamped the same way, so a constant that is patched (`apply_patch`) or changed by a
+reload invalidates the node. The stamp covers every input port in order, and an absent optional
+input is part of it, so an optional input arriving or leaving invalidates too.
+
+A reused node replays its outputs through the normal publish path. Its FIFO and Latest edges
+receive the stored payloads in the same way a run's outputs would arrive, and a fused consumer
+sees them as it would any output. Its replay is a success for backoff: it clears the node's
+failure count the way a run does. A reusable node downstream of another reusable node replays
+through the stored payloads' identity, so a clean upstream keeps a whole chain clean.
+
+Retention. Each reusable node keeps only its last successful result, so memory is bounded by one
+result per reusable node. A failed run (handler, flush or publish) drops that result and stores
+nothing, and the failure takes the normal path: contained, counted, backed off or auto-switched
+off as any other node. Manual and auto-off keep the stored result, since the stamps still decide
+whether it applies. A reload compiles a new executor, which starts empty. To drop results without
+reloading, call `clear_reuse()` on the executor. `reset()` is per run and keeps them.
+
+Observing it. `ExecutionTelemetry::nodes_reused` counts the node runs that replayed. Those runs are
+also in `nodes_executed`, since their outputs were published.
+
+Zero cost. With no reusable node in the plan the executor builds no reuse table, and the serial
+loop skips the reuse steps on one `None` check per node. Measured on the idle tick of a 16-stage
+host graph, the cost is within run-to-run noise (see `docs/benchmarks-log.md`).
+
+When not to use it:
+
+- the handler reads or writes state (`state(...)`, a `ctx` resource, a counter, a random source,
+  the clock, a file or a socket): its outputs are not a function of its inputs, so a replay is wrong;
+- it uses GPU device state: rejected at build time;
+- its inputs change on almost every tick (a camera frame, a sensor sample): every tick misses, and
+  the node pays a stamp check per run for nothing;
+- it is cheap relative to a stamp check, or its outputs are large and the consumers mutate them in
+  place: a stored result shares its payloads, so a consumer that takes one by ownership copies it
+  instead of moving it;
+- its output must differ from run to run even for the same input (a timestamp, an id, a fresh
+  sample of noise). The declaration is a promise; the runtime cannot check it.
+
 ## Nodes And Profiling
 
 Prefer several small nodes (or an embedded graph/node-group) over a single "mega node" that

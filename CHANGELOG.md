@@ -8,8 +8,6 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
-### Added
-
 - `daedalus-ffi-rust`: a Rust SDK for out-of-process plugins. `Worker::from_plugin` serves a
   `declare_plugin!` plugin as a persistent worker over the worker protocol: hello, ack, invoke,
   response, typed errors, events, clean exit on end of input. Node handlers, const coercers and
@@ -20,7 +18,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   worker. Limit: a stateful node with config ports does not export its state yet.
 - `examples/08_ffi/rust_worker`: an example plugin served by the `rust_worker` binary, and an
   end-to-end test that installs it through `FfiHost` and runs a graph of invokes.
-
+- Output reuse for pure nodes: `#[node(reusable)]` (metadata `daedalus.node.reusable`,
+  `NODE_REUSABLE_META_KEY`) keeps a node's last successful outputs and replays them while its inputs
+  and constants are unchanged, so only what depends on a changed input runs. Inputs are stamped by
+  payload identity, or by a host version set with `HostBridgeHandle::set_input_version`; nothing is
+  hashed. Failed runs store nothing; reload starts empty; `Executor::clear_reuse`,
+  `ExecutionTelemetry::nodes_reused`, `ExecutorBuildError::ReusableNode`. Zero cost without an
+  opt-in. Documented in `docs/node-authoring.md` (Output Reuse For Pure Nodes).
 - `scripts/board.sh` profiles for the ROCK 5C, ZERO 3E, Cubie A7A/A7S/A7Z and Luckfox Aura; written,
   untested on board.
 

@@ -24,6 +24,7 @@ mod parallel;
 mod patching;
 mod payload;
 pub mod queue;
+mod reuse;
 mod schedule_compile;
 mod serial;
 mod serial_direct_slot;
@@ -381,6 +382,14 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             &self.outgoing_edges,
         );
         self
+    }
+
+    /// Drop every reusable node's stored result, so its next run calls its handler (see
+    /// `executor::reuse`). A no-op when no node of the plan opts in.
+    pub fn clear_reuse(&mut self) {
+        if let Some(reuse) = &self.core.reuse {
+            reuse.clear();
+        }
     }
 
     /// Reset per-run state (queues, telemetry, warnings) so this executor can be reused.

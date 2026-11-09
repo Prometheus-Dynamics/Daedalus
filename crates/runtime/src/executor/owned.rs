@@ -209,6 +209,15 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
+    /// Drop every reusable node's stored result, so its next run calls its handler (see
+    /// `executor::reuse`). A no-op when no node of the plan opts in. Reset does not do this: a
+    /// reset is per run, and reuse spans runs.
+    pub fn clear_reuse(&mut self) {
+        if let Some(reuse) = &self.core.reuse {
+            reuse.clear();
+        }
+    }
+
     pub fn reset(&mut self) {
         let metrics_level = self.core.run_config.metrics_level;
         self.core.telemetry.reset_for_reuse(metrics_level);

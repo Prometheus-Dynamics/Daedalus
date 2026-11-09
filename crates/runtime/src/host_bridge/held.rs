@@ -47,6 +47,17 @@ impl HostBridgeHandle {
         }
     }
 
+    /// Declare the version of the values inbound `port` delivers, or clear it (`None`). A tick that
+    /// takes a value from the port stamps it with the version in force then, and a reusable node
+    /// (`#[node(reusable)]`) compares that stamp instead of the value's identity: the host bumps
+    /// the version when the data changes, and an unchanged version lets the node replay its last
+    /// result without any hashing. Without a version a value is stamped by its identity, so a
+    /// host that re-pushes the same `Payload` clone (or a held port) gets the same reuse.
+    pub fn set_input_version(&self, port: impl Into<PortId>, version: Option<u64>) {
+        let mut guard = self.shared.buffers.lock();
+        guard.inbound.port(port.into()).version = version;
+    }
+
     /// Make inbound `port` held (see [`Self::set_held_input`]) and also a tick trigger: a push
     /// replaces the value and leaves the port pending (waking waiters and the inbound fd) until a
     /// tick takes it, so a burst of pushes triggers one tick that sees the newest value. The value
@@ -111,6 +122,11 @@ pub(crate) enum InboundTake {
 }
 
 impl InboundPorts<'_> {
+    /// The version stamp of inbound `port` ([`HostBridgeHandle::set_input_version`]), if any.
+    pub(crate) fn version(&self, port: &str) -> Option<u64> {
+        self.ports.get(port).and_then(|state| state.version)
+    }
+
     /// Hand every queued payload of `port` (oldest first) to `sink`, or for a held port return a
     /// clone of its value without calling `sink`.
     pub(crate) fn take(&mut self, port: &str, mut sink: impl FnMut(Payload)) -> InboundTake {
