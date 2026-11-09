@@ -2,7 +2,7 @@
 
 use daedalus_abi::{Slot, SlotState, Slots, StepEnd};
 
-use crate::bits::words_for;
+use crate::bits::{self, words_for};
 use crate::error::RunError;
 use crate::step::StepMeta;
 use crate::{Pending, Runner, spanned};
@@ -65,6 +65,9 @@ impl Runner<'_> {
 
     /// Calls step `index` once and applies what it returned.
     fn step_once(&mut self, index: usize, report: &mut TickReport) -> Result<(), RunError> {
+        if self.masked && !bits::get(self.activity, index) {
+            return Ok(());
+        }
         let meta: StepMeta = self.meta[index];
         let table = self.table;
         for &slot in spanned(table, meta.inputs) {
