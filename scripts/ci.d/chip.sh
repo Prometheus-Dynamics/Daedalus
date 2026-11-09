@@ -62,7 +62,9 @@ for entry in "${TARGETS[@]}"; do
   fi
 done
 
-# One set of nodes for a host and a chip. A chip build must not pull the facade.
+# One set of nodes for a host and a chip. A chip build must not pull the facade, and the full
+# host has to give the same outputs.
+cargo test -q -p daedalus-chip-shared --features host
 cargo build -q --target thumbv7em-none-eabihf -p daedalus-chip-shared
 if cargo tree -p daedalus-chip-shared --target thumbv7em-none-eabihf -e normal --prefix none |
   grep -qE '^daedalus v'; then
