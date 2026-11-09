@@ -100,6 +100,9 @@ pub struct Host<'a> {
     /// One per port once a host sets a policy. Empty means every port takes every value.
     pub(crate) inbound: std::vec::Vec<crate::inbound::Inbound>,
     pub(crate) now_ns: u64,
+    /// The buffers of a runner this host owns. Declared last, so it is dropped after `runner`.
+    #[cfg(feature = "std")]
+    pub(crate) owned: Option<daedalus_runner::owned_run::RunBuffers>,
 }
 
 impl<'a> Host<'a> {
@@ -111,6 +114,8 @@ impl<'a> Host<'a> {
             types,
             inbound: std::vec::Vec::new(),
             now_ns: 0,
+            #[cfg(feature = "std")]
+            owned: None,
         }
     }
 
@@ -142,7 +147,7 @@ impl<'a> Host<'a> {
         }
     }
 
-    fn output(&self, name: &str) -> Result<&'a crate::ports::PortSpec<'a>, HostError> {
+    pub(crate) fn output(&self, name: &str) -> Result<&'a crate::ports::PortSpec<'a>, HostError> {
         let spec = self.ports.find(name).ok_or(HostError::UnknownPort {
             port: Label::new(name),
         })?;
