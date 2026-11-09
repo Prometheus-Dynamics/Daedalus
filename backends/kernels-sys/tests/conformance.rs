@@ -1,9 +1,24 @@
-//! Every kernel on every CPU ISA this process can run, against the scalar references. An ISA the
-//! process cannot run (its `run` returns `None` on an empty input) is skipped.
+//! Every kernel on every CPU ISA this process can run, against the scalar references. Each check
+//! goes through `conform`, which records CI evidence when `ACCEL_RESULTS_DIR` is set and skips an
+//! ISA the process cannot run.
 
+use daedalus_accel::{Backend, Evidence, Ext, conform, conform_with};
 use daedalus_kernels_sys as k;
 use daedalus_kernels_sys::Isa;
 use daedalus_kernels_sys::reference as r;
+
+/// The inventory's backend for an ISA.
+fn backend(isa: Isa) -> Backend {
+    match isa {
+        Isa::Scalar => Backend::Scalar,
+        Isa::X86Sse2 => Backend::X86Sse2,
+        Isa::X86Avx2 => Backend::X86Avx2,
+        Isa::Neon64 => Backend::Neon64,
+        Isa::Neon32 => Backend::Neon32,
+        Isa::Rvv => Backend::Rvv,
+        Isa::PortableSimd => Backend::PortableSimd,
+    }
+}
 
 const ISAS: [Isa; 5] = [
     Isa::X86Sse2,
@@ -43,6 +58,17 @@ fn scalar_references_match_known_answers() {
     assert_eq!(r::base64_encode(b"Ma"), *b"TWE=");
     assert_eq!(r::base64_decode(b"TWE=").as_deref(), Some(&b"Ma"[..]));
     assert!(r::base64_decode(b"TWF=").is_none());
+    for op in [
+        "daedalus.float.f32_from_le",
+        "daedalus.float.f16_to_f32",
+        "daedalus.float.f32_to_unorm8",
+        "daedalus.copy.bytes",
+        "daedalus.codec.hex_lower",
+        "daedalus.codec.base64_encode",
+        "daedalus.codec.base64_decode",
+    ] {
+        conform(op, Backend::Scalar, || true);
+    }
 }
 
 /// A test input of a given length and the reference output.
@@ -57,20 +83,13 @@ fn check<T: PartialEq + Copy + Default + std::fmt::Debug>(
     kernel: Run<'_, T>,
 ) {
     for isa in ISAS {
-        let (empty_in, empty_want) = want(0);
-        let mut empty_out = vec![T::default(); empty_want.len()];
-        if kernel(isa, &empty_in, &mut empty_out).is_none() {
-            continue;
-        }
-        for len in LENGTHS {
-            let (input, expected) = want(len);
-            let mut out = vec![T::default(); expected.len()];
-            assert!(
-                kernel(isa, &input, &mut out).is_some(),
-                "{op} on {isa:?} at {len}"
-            );
-            assert!(out == expected, "{op} on {isa:?} at {len} bytes");
-        }
+        conform(op, backend(isa), || {
+            LENGTHS.iter().all(|&len| {
+                let (input, expected) = want(len);
+                let mut out = vec![T::default(); expected.len()];
+                kernel(isa, &input, &mut out).is_some() && out == expected
+            })
+        });
     }
 }
 
@@ -226,20 +245,24 @@ fn copies_and_codecs() {
 #[test]
 fn f16_to_f32_with_f16c() {
     let all: Vec<u8> = (0..=u16::MAX).flat_map(u16::to_le_bytes).collect();
-    for input in [all, bytes(2 * 1001, 15), bytes(14, 16)] {
-        let want = r::f16_to_f32(&input);
-        let mut got = vec![0f32; want.len()];
-        if k::f16_to_f32_with_f16c(&input, &mut got).is_none() {
-            return;
-        }
-        assert!(
-            got.iter()
-                .zip(&want)
-                .all(|(a, b)| a.to_bits() == b.to_bits()),
-            "{} halves differ",
-            input.len() / 2
-        );
-    }
+    conform_with(
+        Evidence::new("daedalus.float.f16_to_f32", Backend::X86Avx2).extensions(&[Ext::F16c]),
+        || {
+            for input in [all.clone(), bytes(2 * 1001, 15), bytes(14, 16)] {
+                let want = r::f16_to_f32(&input);
+                let mut got = vec![0f32; want.len()];
+                k::f16_to_f32_with_f16c(&input, &mut got).ok_or("no F16C")?;
+                if got
+                    .iter()
+                    .zip(&want)
+                    .any(|(a, b)| a.to_bits() != b.to_bits())
+                {
+                    return Err(format!("{} halves differ", input.len() / 2));
+                }
+            }
+            Ok(())
+        },
+    );
 }
 
 /// The public entry points (dispatching) agree with the references, including errors.
@@ -280,6 +303,7 @@ fn public_entry_points() {
 #[test]
 fn portable_simd_kernels() {
     use daedalus_kernels_sys::portable as p;
+    let pb = Backend::PortableSimd;
     let all_lengths = |want: &dyn Fn(usize) -> (Vec<u8>, Vec<u8>),
                        run: &dyn Fn(&[u8], &mut [u8])| {
         LENGTHS.iter().all(|&n| {
@@ -289,67 +313,77 @@ fn portable_simd_kernels() {
             out == expected
         })
     };
-    assert!(all_lengths(
-        &|n| {
-            let i = bytes(n, 7);
-            (i.clone(), i)
-        },
-        &p::copy_bytes,
-    ));
-    assert!(all_lengths(
-        &|n| {
-            let i = bytes(n * 4, 5);
-            (i.clone(), i)
-        },
-        &p::copy_bytes,
-    ));
-    assert!(all_lengths(
-        &|n| {
-            let i = bytes(n, 8);
-            let w = r::hex_lower(&i);
-            (i, w)
-        },
-        &p::hex_lower,
-    ));
-    assert!(all_lengths(
-        &|n| {
-            let i = bytes(n, 9);
-            let w = r::base64_encode(&i);
-            (i, w)
-        },
-        &|s, d| {
-            let full = s.len() / 3;
-            p::base64_encode_groups(&s[..full * 3], &mut d[..full * 4]);
-            d[full * 4..].copy_from_slice(k::base64_encode(&s[full * 3..]).as_bytes());
-        },
-    ));
-    assert!(LENGTHS.iter().all(|&n| {
-        let raw = bytes(n, 10);
-        let enc = r::base64_encode(&raw);
-        let body = (enc.len() / 4).saturating_sub(1);
-        let mut out = vec![0u8; raw.len()];
-        let ok = p::base64_decode_groups(&enc[..body * 4], &mut out[..body * 3]);
-        let tail = k::base64_decode(&enc[body * 4..]).unwrap();
-        out[body * 3..].copy_from_slice(&tail);
-        let mut bad = enc[..body * 4].to_vec();
-        let caught = match bad.first_mut() {
-            None => true,
-            Some(c) => {
-                *c = b'*';
-                !p::base64_decode_groups(&bad, &mut vec![0u8; body * 3])
-            }
-        };
-        ok && out == raw && caught
-    }));
+    conform("daedalus.copy.bytes", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n, 7);
+                (i.clone(), i)
+            },
+            &p::copy_bytes,
+        )
+    });
+    conform("daedalus.float.f32_from_le", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n * 4, 5);
+                (i.clone(), i)
+            },
+            &p::copy_bytes,
+        )
+    });
+    conform("daedalus.codec.hex_lower", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n, 8);
+                let w = r::hex_lower(&i);
+                (i, w)
+            },
+            &p::hex_lower,
+        )
+    });
+    conform("daedalus.codec.base64_encode", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n, 9);
+                let w = r::base64_encode(&i);
+                (i, w)
+            },
+            &|s, d| {
+                let full = s.len() / 3;
+                p::base64_encode_groups(&s[..full * 3], &mut d[..full * 4]);
+                d[full * 4..].copy_from_slice(k::base64_encode(&s[full * 3..]).as_bytes());
+            },
+        )
+    });
+    conform("daedalus.codec.base64_decode", pb, || {
+        LENGTHS.iter().all(|&n| {
+            let raw = bytes(n, 10);
+            let enc = r::base64_encode(&raw);
+            let body = (enc.len() / 4).saturating_sub(1);
+            let mut out = vec![0u8; raw.len()];
+            let ok = p::base64_decode_groups(&enc[..body * 4], &mut out[..body * 3]);
+            let tail = k::base64_decode(&enc[body * 4..]).unwrap();
+            out[body * 3..].copy_from_slice(&tail);
+            let mut bad = enc[..body * 4].to_vec();
+            let caught = match bad.first_mut() {
+                None => true,
+                Some(c) => {
+                    *c = b'*';
+                    !p::base64_decode_groups(&bad, &mut vec![0u8; body * 3])
+                }
+            };
+            ok && out == raw && caught
+        })
+    });
     let halves: Vec<u8> = (0..=u16::MAX).flat_map(u16::to_le_bytes).collect();
     let want = r::f16_to_f32(&halves);
     let mut got = vec![0f32; want.len()];
     p::f16_to_f32(&halves, &mut got);
-    assert!(
+    conform("daedalus.float.f16_to_f32", pb, || {
         got.iter()
             .zip(&want)
             .all(|(a, b)| a.to_bits() == b.to_bits())
-    );
+    });
     let mut values: Vec<f32> = (0..=300_000)
         .map(|i| -0.25 + i as f32 * (1.5 / 300_000.0))
         .collect();
@@ -358,5 +392,5 @@ fn portable_simd_kernels() {
     let want = r::f32_to_unorm8(&values);
     let mut got = vec![0u8; values.len()];
     p::f32_to_unorm8(&values, &mut got);
-    assert!(got == want);
+    conform("daedalus.float.f32_to_unorm8", pb, || got == want);
 }

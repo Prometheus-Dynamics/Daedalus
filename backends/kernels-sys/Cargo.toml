@@ -31,3 +31,7 @@ std = []
 crc = []
 
 [dependencies]
+
+# The conformance tests record evidence through the inventory's `conform` (no normal dependency).
+[dev-dependencies]
+daedalus-accel = { path = "../../testing/crates/accel", features = ["std"] }
