@@ -9,16 +9,15 @@ use support::{Fixture, Link, Wiring, cell, chain, link_word, tagged};
 /// Records the tag of its input, and copies it to an output when it has one.
 struct Log {
     seen: Arc<Mutex<Vec<usize>>>,
-    input: usize,
-    output: Option<usize>,
+    output: bool,
 }
 
 impl OwnedStep for Log {
     fn run(&mut self, slots: &mut Slots, _: &mut StepCx) -> StepEnd {
-        let value = *cell(slots, self.input);
+        let value = *cell(slots, 0);
         self.seen.lock().unwrap().push(value.len);
-        if let Some(output) = self.output {
-            *cell(slots, output) = value;
+        if self.output {
+            *cell(slots, 1) = value;
         }
         StepEnd::Done
     }
@@ -27,8 +26,6 @@ impl OwnedStep for Log {
 /// Fails `remaining` times, then copies its input to its output.
 struct Flaky {
     remaining: usize,
-    input: usize,
-    output: usize,
 }
 
 impl OwnedStep for Flaky {
@@ -38,7 +35,7 @@ impl OwnedStep for Flaky {
             cx.fault(None, "flaky");
             return StepEnd::Fault;
         }
-        *cell(slots, self.output) = *cell(slots, self.input);
+        *cell(slots, 1) = *cell(slots, 0);
         StepEnd::Done
     }
 }
@@ -50,10 +47,9 @@ fn fifo(cap: u32) -> SlotSpec {
     }
 }
 
-fn log_step(seen: &Arc<Mutex<Vec<usize>>>, input: usize, output: Option<usize>) -> Step {
+fn log_step(seen: &Arc<Mutex<Vec<usize>>>, output: bool) -> Step {
     Step::boxed(Log {
         seen: seen.clone(),
-        input,
         output,
     })
 }
@@ -63,7 +59,7 @@ fn fifo_values_come_out_in_order_over_three_ticks() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let mut wiring = Wiring::default();
     wiring.step(&[], &[0], &[]);
-    let mut fixture = Fixture::new(vec![log_step(&seen, 0, None)], wiring, vec![fifo(4)]);
+    let mut fixture = Fixture::new(vec![log_step(&seen, false)], wiring, vec![fifo(4)]);
     let mut runner = fixture.load().unwrap();
     for len in 1..=3 {
         runner.push(0, tagged(len)).unwrap();
@@ -85,7 +81,7 @@ fn latest_slot_keeps_its_last_value() {
         cap: 1,
         kind: SlotKind::Latest,
     }];
-    let mut fixture = Fixture::new(vec![log_step(&seen, 0, None)], wiring, specs);
+    let mut fixture = Fixture::new(vec![log_step(&seen, false)], wiring, specs);
     let mut runner = fixture.load().unwrap();
     runner.push(0, tagged(7)).unwrap();
     for _ in 0..2 {
@@ -104,7 +100,7 @@ fn idle_tick_calls_no_steps() {
     for index in 0..16u32 {
         wiring.step(&[], &[index], &[]);
     }
-    let steps = (0..16).map(|i| log_step(&seen, i, None)).collect();
+    let steps = (0..16).map(|_| log_step(&seen, false)).collect();
     let specs = (0..16).map(|_| fifo(1)).collect();
     let mut fixture = Fixture::new(steps, wiring, specs);
     let mut runner = fixture.load().unwrap();
@@ -138,14 +134,7 @@ fn fault_drops_its_tick_and_wakes_nothing() {
     let mut wiring = Wiring::default();
     wiring.step(&[1], &[0], &[1]);
     wiring.step(&[], &[1], &[]);
-    let steps = vec![
-        Step::boxed(Flaky {
-            remaining: 1,
-            input: 0,
-            output: 1,
-        }),
-        log_step(&seen, 1, None),
-    ];
+    let steps = vec![Step::boxed(Flaky { remaining: 1 }), log_step(&seen, false)];
     let specs = vec![fifo(2), fifo(2)];
     let mut fixture = Fixture::new(steps, wiring, specs);
     let mut runner = fixture.load().unwrap();
@@ -175,7 +164,7 @@ fn back_edge_is_rejected_at_load() {
     let mut wiring = Wiring::default();
     wiring.step(&[1], &[0], &[]);
     wiring.step(&[0], &[1], &[]);
-    let steps = vec![log_step(&seen, 0, None), log_step(&seen, 1, None)];
+    let steps = vec![log_step(&seen, false), log_step(&seen, false)];
     let mut fixture = Fixture::new(steps, wiring, vec![fifo(1), fifo(1)]);
     assert!(matches!(
         fixture.load(),
@@ -187,7 +176,7 @@ fn back_edge_is_rejected_at_load() {
 fn output_that_has_no_room_is_an_overflow() {
     let mut wiring = Wiring::default();
     wiring.step(&[], &[0], &[1]);
-    let steps = vec![Step::of::<Link>(link_word(0, Some(1)))];
+    let steps = vec![Step::of::<Link>(link_word(true))];
     let mut fixture = Fixture::new(steps, wiring, vec![fifo(2), fifo(1)]);
     let mut runner = fixture.load().unwrap();
     runner.push(0, tagged(1)).unwrap();
@@ -214,7 +203,7 @@ fn an_edge_pressure_policy_drops_instead_of_failing_the_tick() {
             kind: SlotKind::Fifo,
         },
     ];
-    let steps = vec![Step::of::<Link>(link_word(0, Some(1)))];
+    let steps = vec![Step::of::<Link>(link_word(true))];
     let mut fixture = Fixture::new(steps, wiring, specs);
     let mut runner = fixture.load().unwrap();
     runner

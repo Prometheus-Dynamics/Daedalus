@@ -15,6 +15,14 @@ pub enum SlotKind {
     Held = 2,
 }
 
+/// What every value written to one slot is. A step doesn't know these numbers when it's compiled,
+/// so the runner writes them as it publishes the value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotStamp {
+    pub ty: daedalus_types::TypeIndex,
+    pub space: daedalus_types::SpaceIndex,
+}
+
 /// One slot as the plan declares it: how many values it holds and how consumers take them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlotSpec {
@@ -27,9 +35,9 @@ pub struct SlotSpec {
 pub struct StepMeta {
     /// Consumer step indexes, woken when this step is `Done`.
     pub wake: Span,
-    /// Slot indexes this step reads.
+    /// Slot indexes this step reads, in frame order. `NO_SLOT` marks a port with no edge.
     pub inputs: Span,
-    /// Slot indexes this step writes.
+    /// Slot indexes this step writes, in frame order after the inputs.
     pub outputs: Span,
     /// Dirty on every tick.
     pub always: bool,

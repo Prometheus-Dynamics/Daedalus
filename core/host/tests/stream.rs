@@ -35,7 +35,7 @@ impl OwnedStep for Echo {
         }
         self.calls.fetch_add(1, Ordering::Relaxed);
         let value = *slots.cell(0).unwrap();
-        *slots.cell(2).unwrap() = value;
+        *slots.cell(1).unwrap() = value;
         slots.cell(0).unwrap().state = daedalus_abi::SlotState::Moved as u32;
         StepEnd::Done
     }

@@ -8,6 +8,8 @@ use daedalus_plan::{PlanData, Span, StepKind, StepRecord};
 use super::fences::Fences;
 use super::slots::{Live, number};
 use super::transfers::{Reader, Routing, Source};
+use daedalus_abi::NO_SLOT;
+
 use super::{HostPort, Item, SlotInfo, Stitched, TransferUse, UnitId};
 use crate::regions::CompiledRegion;
 use crate::regions::Regions;
@@ -18,8 +20,8 @@ pub(super) enum Draft {
     Run {
         unit: UnitId,
         covers: Vec<u32>,
-        reads: Vec<Live>,
-        writes: Vec<Live>,
+        reads: Vec<Option<Live>>,
+        writes: Vec<Option<Live>>,
     },
     Move {
         from: Live,
@@ -35,7 +37,7 @@ pub(super) enum Draft {
 impl Draft {
     pub fn reads(&self) -> Vec<Live> {
         match self {
-            Draft::Run { reads, .. } => reads.clone(),
+            Draft::Run { reads, .. } => reads.iter().flatten().copied().collect(),
             Draft::Move { from, .. } => vec![*from],
             Draft::Wait { .. } => Vec::new(),
         }
@@ -43,7 +45,7 @@ impl Draft {
 
     pub fn writes(&self) -> Vec<Live> {
         match self {
-            Draft::Run { writes, .. } => writes.clone(),
+            Draft::Run { writes, .. } => writes.iter().flatten().copied().collect(),
             Draft::Move { to, .. } => vec![*to],
             Draft::Wait { .. } => Vec::new(),
         }
@@ -150,25 +152,29 @@ fn walk_region(walk: &mut Walk<'_>, at: usize, region: &CompiledRegion) {
         let covers = info.covers.first().map_or(0, |node| node.0);
         for input in &info.reads {
             let Some(reader) = routing.readers.get(input) else {
+                reads.push(None);
                 continue;
             };
             if let Some(producer) = walk.fences.wait_for(reader.value, at as u32) {
                 walk.draft.push(Draft::Wait { unit: producer });
             }
             if absorbed.contains(input) {
-                reads.push((reader.value, routing.values[reader.value as usize].home));
+                reads.push(Some((
+                    reader.value,
+                    routing.values[reader.value as usize].home,
+                )));
             } else {
                 walk.moves(reader, covers);
-                reads.push((reader.value, reader.space));
+                reads.push(Some((reader.value, reader.space)));
             }
         }
         let mut writes = Vec::new();
         for output in &info.writes {
-            for value in value_of_output(routing, output) {
-                writes.push((value, routing.values[value as usize].home));
-                if info.may_pend {
-                    walk.fences.record_write(value, unit);
-                }
+            // Each output has one place in the frame, and at most one value.
+            let value = value_of_output(routing, output).first().copied();
+            writes.push(value.map(|value| (value, routing.values[value as usize].home)));
+            if let Some(value) = value.filter(|_| info.may_pend) {
+                walk.fences.record_write(value, unit);
             }
         }
         walk.draft.push(Draft::Run {
@@ -241,6 +247,7 @@ pub(super) fn lay_out(regions: &Regions, types: &TypeTable) -> Stitched {
     let draft = walk.draft;
     let numbered = number(&draft, &at_start, &at_end);
     let slot_of = |live: &Live| numbered.of[live];
+    let slot_or_none = |live: &Option<Live>| live.as_ref().map_or(NO_SLOT, slot_of);
     let mut uses: Vec<TransferUse> = Vec::new();
     let mut layout = Vec::with_capacity(draft.len());
     let mut encoder = Encoder {
@@ -255,8 +262,8 @@ pub(super) fn lay_out(regions: &Regions, types: &TypeTable) -> Stitched {
                 writes,
             } => {
                 let (reads, writes): (Vec<u32>, Vec<u32>) = (
-                    reads.iter().map(slot_of).collect(),
-                    writes.iter().map(slot_of).collect(),
+                    reads.iter().map(slot_or_none).collect(),
+                    writes.iter().map(slot_or_none).collect(),
                 );
                 let record = StepRecord {
                     kind: StepKind::Call,

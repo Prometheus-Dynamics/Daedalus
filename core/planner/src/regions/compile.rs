@@ -112,7 +112,7 @@ pub(super) fn check_contract(
         ));
     }
     let reads: BTreeSet<PortRef> = units.iter().flat_map(|u| u.reads.iter().copied()).collect();
-    if reads != set_of(&formed.inputs) {
+    if !extends(&reads, &formed.inputs, &wanted) {
         return Err(fail(
             "R4",
             format!("reads {reads:?}, boundary inputs {:?}", formed.inputs),
@@ -122,11 +122,18 @@ pub(super) fn check_contract(
         .iter()
         .flat_map(|u| u.writes.iter().copied())
         .collect();
-    if writes != set_of(&formed.outputs) {
+    if !extends(&writes, &formed.outputs, &wanted) {
         return Err(fail(
             "R4",
             format!("writes {writes:?}, boundary outputs {:?}", formed.outputs),
         ));
     }
     Ok(())
+}
+
+/// A unit must name every boundary port. It may also name ports inside its region, which is how
+/// it asks for a slot on an internal edge or a place for a port with no edge.
+fn extends(named: &BTreeSet<PortRef>, boundary: &[PortRef], nodes: &BTreeSet<u32>) -> bool {
+    let boundary = set_of(boundary);
+    boundary.is_subset(named) && named.iter().all(|port| nodes.contains(&port.node.0))
 }

@@ -52,10 +52,10 @@ fn a_selected_branch_runs_and_the_other_does_not() {
     wiring.step(&[3], &[2], &[]);
     wiring.step(&[], &[3], &[]);
     let steps = vec![
-        Step::of::<Link>(link_word(0, None)),
-        Step::of::<Link>(link_word(1, None)),
-        Step::of::<Link>(link_word(2, None)),
-        Step::of::<Link>(link_word(3, None)),
+        Step::of::<Link>(link_word(false)),
+        Step::of::<Link>(link_word(false)),
+        Step::of::<Link>(link_word(false)),
+        Step::of::<Link>(link_word(false)),
     ];
     let mut fixture = Fixture::new(steps, wiring, fifo_specs(4));
     let mut runner = fixture.load().unwrap();

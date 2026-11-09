@@ -450,6 +450,14 @@ documents the patch and refresh JSON.
   control backend shares the first host memory space any backend declares.
 - `for_each` reads and writes `daedalus_runner::SlotList`, a list of cells of any one type. A
   wrapper for a node that makes or takes a list builds on it (D1).
-- A step doesn't know its slot numbers when it's compiled, since stitching comes after compiling.
-  The control backend binds them after stitching. The general answer for node wrappers is still
-  open, and D1 has to settle it.
+- A step's `Slots` is its own: the cells for `UnitInfo.reads` in order, then `UnitInfo.writes` in
+  order, so index 0 is the first input. A compiled step holds no slot numbers, and the plan's slot
+  lists connect those positions to the graph. A port with no edge is `NO_SLOT` in those lists: an
+  empty cell for an input, thrown away and released for an output. The cell buffer is scratch sized
+  to the step with the most ports.
+- A unit must name every boundary port of its region, and may also name ports inside it. A named
+  port on an edge inside the region gets a slot in the region's memory, which is how per-node steps
+  in one region pass values to each other. A merged unit names only the boundary and takes no slots
+  for what it absorbed.
+- A step can't know plan-wide type and space numbers either. A wrapper writes placeholders and the
+  runner stamps each output at publish from `Runner::set_stamps`.

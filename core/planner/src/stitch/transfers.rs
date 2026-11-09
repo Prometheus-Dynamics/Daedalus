@@ -7,7 +7,7 @@ use daedalus_backend::{
 };
 use daedalus_graph::NodeKindDoc;
 use daedalus_registry::{Registry, TransferClass, TransferRecord};
-use daedalus_types::TypeKey;
+use daedalus_types::{NodeIndex, PortIndex, TypeKey};
 
 use super::StitchError;
 use crate::regions::Formed;
@@ -331,6 +331,49 @@ impl Router<'_> {
         Ok(spaces)
     }
 
+    /// Gives an edge inside a region a value in the region's own memory. It only takes a slot if
+    /// the backend's units name its ports, as they do when a region runs as separate steps.
+    fn inside_regions(&mut self) -> Result<(), StitchError> {
+        let graph = self.graph;
+        for edge in &graph.edges {
+            let (from, to) = (edge.from.node as usize, edge.to.node as usize);
+            let (Some(region), true) = (
+                self.region_of[to],
+                self.region_of[to] == self.region_of[from],
+            ) else {
+                continue;
+            };
+            let (producer, consumer) = (&graph.nodes[from], &graph.nodes[to]);
+            let (Some(out), Some(input)) = (
+                port_of(&producer.outputs, &edge.from.port),
+                port_of(&consumer.inputs, &edge.to.port),
+            ) else {
+                continue;
+            };
+            let Some(home) = self.memory_of(region)?.home() else {
+                continue;
+            };
+            let source = Source::Node {
+                node: edge.from.node,
+                port: out,
+            };
+            let value = self.value(source, &producer.outputs[out as usize], home);
+            let port = PortRef {
+                node: NodeIndex(edge.to.node),
+                port: PortIndex(input),
+            };
+            self.routing.readers.insert(
+                port,
+                Reader {
+                    value,
+                    space: home,
+                    path: Vec::new(),
+                },
+            );
+        }
+        Ok(())
+    }
+
     fn region_input(&mut self, region: usize, input: PortRef) -> Result<(), StitchError> {
         let graph = self.graph;
         let node = &graph.nodes[input.node.0 as usize];
@@ -462,6 +505,7 @@ pub fn route(
             router.region_input(region, *input)?;
         }
     }
+    router.inside_regions()?;
     for (region, one) in formed.iter().enumerate() {
         for output in &one.outputs {
             router.host_output(region, *output)?;

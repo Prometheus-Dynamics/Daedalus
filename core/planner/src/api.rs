@@ -254,7 +254,7 @@ pub fn plan(
     let stitched = stitch(&regions, &types);
     let nested = control
         .as_ref()
-        .map(|control| control.bind(&solved, &regions, &stitched))
+        .map(ControlBackend::records)
         .unwrap_or_default();
     let mut planned = Planned {
         graph: solved,

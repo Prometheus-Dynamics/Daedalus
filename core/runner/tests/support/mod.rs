@@ -91,8 +91,14 @@ impl Fixture {
         let words = steps.len().div_ceil(32);
         let storage_len: u32 = specs.iter().map(|spec| spec.cap).sum();
         let may_pend = wiring.meta.iter().filter(|meta| meta.may_pend).count();
+        let widest = wiring
+            .meta
+            .iter()
+            .map(|meta| (meta.inputs.len + meta.outputs.len) as usize)
+            .max()
+            .unwrap_or(0);
         Fixture {
-            cells: vec![Slot::EMPTY; specs.len()],
+            cells: vec![Slot::EMPTY; widest],
             queues: vec![Queue::default(); specs.len()],
             storage: vec![Slot::EMPTY; storage_len as usize],
             dirty: vec![0; words],
@@ -141,29 +147,27 @@ pub fn tagged(len: usize) -> Slot {
     }
 }
 
-/// The cell at `index`, which a body reads or writes.
+/// The cell at `index` of the step's frame: its inputs, then its outputs.
 pub fn cell(slots: &mut Slots, index: usize) -> &mut Slot {
     slots.cell(index).expect("slot in range")
 }
 
-/// Reads input `word & 0xffff` and, when `word >> 16` is not zero, writes that output slot.
+/// Reads the step's one input and, when `word` is not zero, writes its one output.
 pub struct Link;
 
 impl StepWord for Link {
     fn run(word: usize, slots: &mut Slots, _: &mut StepCx) -> StepEnd {
-        let input = word & 0xffff;
-        let output = word >> 16;
-        let value = *cell(slots, input);
-        if output != 0 {
-            *cell(slots, output) = value;
+        let value = *cell(slots, 0);
+        if word != 0 {
+            *cell(slots, 1) = value;
         }
         StepEnd::Done
     }
 }
 
-/// The word that makes [`Link`] read `input` and write `output`, if there is one.
-pub fn link_word(input: usize, output: Option<usize>) -> usize {
-    input | (output.unwrap_or(0) << 16)
+/// The word that makes [`Link`] write its output.
+pub fn link_word(writes: bool) -> usize {
+    usize::from(writes)
 }
 
 /// Adds a chain of `len` steps: step `i` reads slot `i` and writes slot `i + 1`, and the last
@@ -177,7 +181,7 @@ pub fn chain(len: usize) -> (Wiring, Vec<usize>) {
         let output: Option<usize> = if last { None } else { Some(index + 1) };
         let outputs: Vec<u32> = output.map(|o| vec![o as u32]).unwrap_or_default();
         wiring.step(&wake, &[index as u32], &outputs);
-        words.push(link_word(index, output));
+        words.push(link_word(output.is_some()));
     }
     (wiring, words)
 }

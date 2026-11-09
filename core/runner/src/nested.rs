@@ -9,7 +9,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::any::TypeId;
 
-use daedalus_abi::{Slot, SlotState, Slots, Step, StepCx, StepEnd};
+use daedalus_abi::{NO_SLOT, Slot, SlotState, Slots, Step, StepCx, StepEnd};
 use daedalus_value::OwnerKind;
 
 use crate::owned::{self, INLINE_BYTES, InlineCell};
@@ -106,12 +106,21 @@ impl Drop for SlotList {
     }
 }
 
+/// One step of a [`Nested`] list and the cells its frame maps to.
+#[derive(Debug)]
+pub struct NestedStep {
+    pub step: Step,
+    pub reads: Vec<u32>,
+    pub writes: Vec<u32>,
+}
+
 /// A step list with cells of its own.
 #[derive(Debug)]
 pub struct Nested {
-    steps: Vec<Step>,
+    steps: Vec<NestedStep>,
     cells: Vec<Slot>,
     inline: Vec<InlineCell>,
+    scratch: Vec<Slot>,
     /// Which cells hold views, in the order `run` takes them.
     views: Vec<u32>,
 }
@@ -120,11 +129,17 @@ pub struct Nested {
 unsafe impl Send for Nested {}
 
 impl Nested {
-    pub fn new(steps: Vec<Step>, cells: usize, views: Vec<u32>) -> Nested {
+    pub fn new(steps: Vec<NestedStep>, cells: usize, views: Vec<u32>) -> Nested {
+        let scratch = steps
+            .iter()
+            .map(|s| s.reads.len() + s.writes.len())
+            .max()
+            .unwrap_or(0);
         Nested {
             steps,
             cells: vec![Slot::EMPTY; cells],
             inline: vec![[0; INLINE_BYTES]; cells],
+            scratch: vec![Slot::EMPTY; scratch],
             views,
         }
     }
@@ -133,10 +148,49 @@ impl Nested {
         self.views.contains(&(cell as u32))
     }
 
-    fn settle(&mut self) {
-        for at in 0..self.cells.len() {
-            if !self.is_view(at) && is_full(&self.cells[at]) {
-                self.cells[at] = owned::place(self.cells[at], &mut self.inline[at]);
+    fn run_one(&mut self, at: usize, cx: &mut StepCx) -> StepEnd {
+        let inputs = self.steps[at].reads.len();
+        for (to, &read) in self.steps[at].reads.iter().enumerate() {
+            self.scratch[to] = if read == NO_SLOT {
+                Slot::EMPTY
+            } else {
+                self.cells[read as usize]
+            };
+        }
+        let used = inputs + self.steps[at].writes.len();
+        self.scratch[inputs..used].fill(Slot::EMPTY);
+        let mut slots = Slots::of(&mut self.scratch[..used]);
+        let step = &self.steps[at].step;
+        // SAFETY: `slots` and `cx` are valid and exclusive for this call, and a `Step`'s `run` and
+        // `data` belong together, as they do for every step the runner calls.
+        let end = unsafe { (step.run)(step.data, &mut slots, cx) };
+        if matches!(end, StepEnd::Done) {
+            self.publish(at, inputs);
+        } else {
+            self.scratch[inputs..used]
+                .iter()
+                .copied()
+                .for_each(drop_owned);
+        }
+        end
+    }
+
+    fn publish(&mut self, at: usize, inputs: usize) {
+        for (from, &read) in self.steps[at].reads.iter().enumerate() {
+            let consumed = self.scratch[from].state == SlotState::Moved as u32;
+            if consumed && read != NO_SLOT && !self.is_view(read as usize) {
+                // The reference went to one of this step's outputs, so it's only forgotten.
+                self.cells[read as usize] = Slot::EMPTY;
+            }
+        }
+        for from in 0..self.steps[at].writes.len() {
+            let (write, value) = (self.steps[at].writes[from], self.scratch[inputs + from]);
+            if write == NO_SLOT {
+                drop_owned(value);
+            } else if is_full(&value) {
+                let cell = write as usize;
+                drop_owned(self.cells[cell]);
+                self.cells[cell] = owned::place(value, &mut self.inline[cell]);
             }
         }
     }
@@ -148,16 +202,11 @@ impl Nested {
         for (&cell, input) in self.views.iter().zip(inputs) {
             self.cells[cell as usize] = *input;
         }
-        let mut slots = Slots::of(&mut self.cells);
         for at in 0..self.steps.len() {
-            let step = &self.steps[at];
-            // SAFETY: `slots` and `cx` are valid and exclusive for this call, and a `Step`'s `run`
-            // and `data` belong together, as they do for every step the runner calls.
-            match unsafe { (step.run)(step.data, &mut slots, cx) } {
+            match self.run_one(at, cx) {
                 StepEnd::Done | StepEnd::Skipped => {}
                 end => return end,
             }
-            self.settle();
         }
         StepEnd::Done
     }
@@ -187,6 +236,8 @@ impl Nested {
 impl Drop for Nested {
     fn drop(&mut self) {
         self.reset();
-        self.steps.drain(..).for_each(Step::discard);
+        self.steps
+            .drain(..)
+            .for_each(|nested| nested.step.discard());
     }
 }

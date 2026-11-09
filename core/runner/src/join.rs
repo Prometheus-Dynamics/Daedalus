@@ -36,6 +36,9 @@ pub(crate) fn join_ready<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> bool {
     }
     if !ready && meta.fire == Fire::Any {
         for &slot in spanned(env.table(), meta.inputs) {
+            if slot == daedalus_abi::NO_SLOT {
+                continue;
+            }
             env.with_queue(slot as usize, |queue, parts: SlotParts| {
                 if queue.unconsumed > 0 {
                     // SAFETY: `with_queue` holds what protects this queue, and this step consumes
