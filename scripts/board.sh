@@ -12,6 +12,11 @@
 #   k230d     riscv64gc-unknown-linux-musl, +v: the same on real RVV (records the board's VLEN).
 #   rockchip  aarch64-unknown-linux-gnu: the CPU set, plus the GPU crate's tests (Mali through
 #             Vulkan) and gpu_probe, gpu_bench.
+#   rock5c    rockchip on the ROCK 5C (RK3588S, Mali-G610).
+#   zero3e    rockchip on the ZERO 3E (RK3566, Mali-G52).
+#   cubie-a7  aarch64-unknown-linux-gnu: as rockchip, on the Cubie A7A, A7S and A7Z (Allwinner
+#             A733, PowerVR BXM-4-64).
+#   aura      aarch64-unknown-linux-gnu: the CPU set only, on the Luckfox Aura (RV1126B, no 3D GPU).
 #   raze      aarch64-unknown-linux-gnu: the CPU set and the GPU set.
 #
 # The RGA and VGLite fixed-function tests are Lemnos's (lemnos-drivers-rga and
@@ -20,7 +25,8 @@
 # Output goes to $CARGO_TARGET_DIR/board/RUNNER_NAME/ (logs) and, for the matrix,
 # docs/accel-evidence/RUNNER_NAME-DATE.jsonl. GPU runs take /run/lock/raze-gpu.lock when the
 # board has it. Cross linkers: zig wrappers in $ZIGCC_DIR (aarch64-cc, armv7-cc, riscv64-cc;
-# see docs/testing.md). Written, untested on the flame, k230d and rockchip boards.
+# see docs/testing.md). Written, untested on every board but the raze. The K230D AI-CAM uses the
+# k230d profile.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -41,7 +47,8 @@ gpu=0
 case $profile in
   flame) target=armv7-unknown-linux-musleabihf cc=armv7-cc flags="-C target-feature=+neon" ;;
   k230d) target=riscv64gc-unknown-linux-musl cc=riscv64-cc flags="-C target-feature=+v" ;;
-  rockchip) target=aarch64-unknown-linux-gnu cc=aarch64-cc flags="" gpu=1 ;;
+  rockchip | rock5c | zero3e | cubie-a7) target=aarch64-unknown-linux-gnu cc=aarch64-cc flags="" gpu=1 ;;
+  aura) target=aarch64-unknown-linux-gnu cc=aarch64-cc flags="" ;;
   raze) target=aarch64-unknown-linux-gnu cc=aarch64-cc flags="" gpu=1 ;;
   *) usage ;;
 esac

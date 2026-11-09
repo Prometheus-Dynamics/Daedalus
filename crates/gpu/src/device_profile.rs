@@ -1,10 +1,10 @@
 //! What kind of GPU an adapter is, for choices the limits do not show: tile-based or
 //! immediate-mode, the execution width, a default workgroup size.
 //!
-//! Classified from the adapter's PCI vendor id and name. The Mali entries (RK3588S / RK3576
-//! G610 and G52, RK3566 G52) follow ARM's published architecture (Bifrost: 4- or 8-wide warps,
-//! Valhall: 16-wide), written before board runs: `docs/testing.md` lists what each board run
-//! must confirm.
+//! Classified from the adapter's PCI vendor id and name. The Mali entries (RK3588S G610, RK3576
+//! and RK3566 G52) follow ARM's published architecture (Bifrost: 4- or 8-wide warps, Valhall:
+//! 16-wide), and the PowerVR entry (Allwinner A733, BXM-4-64) is an assumed width. All are written
+//! before board runs: `docs/testing.md` lists what each board run must confirm.
 
 use crate::{GpuAdapterInfo, GpuContextHandle};
 
@@ -227,6 +227,27 @@ mod tests {
                 Some(4),
             ),
             (Some(0x13B5), "Mali-T860", GpuFamily::MaliOther, true, None),
+            (
+                Some(0x13B5),
+                "Mali-G52 2EE",
+                GpuFamily::MaliBifrost,
+                true,
+                Some(8),
+            ),
+            (
+                Some(0x1010),
+                "PowerVR B-Series BXM-4-64 MC1",
+                GpuFamily::PowerVr,
+                true,
+                Some(32),
+            ),
+            (
+                None,
+                "Imagination PowerVR BXM-4-64",
+                GpuFamily::PowerVr,
+                true,
+                Some(32),
+            ),
             (
                 Some(0x14E4),
                 "V3D 7.1.10.2",

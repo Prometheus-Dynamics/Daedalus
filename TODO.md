@@ -144,7 +144,7 @@ order:
       (no `libmmz`: contiguous frames come through Lemnos's heap API).
       **Measured:** qemu only: 91 + 5 + 2 tests in `ci.sh cross` at 03f55c5; `+v` kernels at VLEN
       128, 256 and 512, plus a run without Zvbc.
-- [ ] **[board] What:** RK3588S (Mali-G610): `gpu_probe`, the `ci.sh pi` hardware tests, `gpu_bench`
+- [ ] **[board] What:** RK3588S (Mali-G610, ROCK 5C): `gpu_probe`, the `ci.sh pi` hardware tests, `gpu_bench`
       and the `GpuKernels` evidence on the shipped driver (libmali or PanVK). Written, untested on
       board: `GpuDeviceProfile` (Mali Valhall, warp 16; b095018), the GPU kernels and fragment
       passes, the AFBC modifier helpers, the checklist in `docs/testing.md`.
@@ -155,7 +155,17 @@ order:
       **Blocked by:** a board (the PCB dev board) and Gaia's driver choice. Both are as recorded on
       2026-10-30; neither can be checked from this repo.
       **Measured:** nothing on Mali. The same code runs on lavapipe, desktop GPUs and V3D.
-- [ ] **[board] What:** RK3576, RK3566 and RK3562 (Mali-G52): the same reports, or a confirmed
+- [ ] **[board] What:** Allwinner A733 (Cubie A7A, A7S, A7Z; PowerVR BXM-4-64): `scripts/board.sh
+      cubie-a7`, or a confirmed clean CPU fallback where the image has no usable Vulkan driver.
+      Written, untested on board: `GpuFamily::PowerVr`, warp 32 assumed.
+      **Why:** the board list relayed on 2026-11-08.
+      **Done when:** the reports are in `docs/testing.md` and the warp is confirmed or corrected.
+      **Blocked by:** a board and its driver choice. **Measured:** nothing on PowerVR.
+- [ ] **[board] What:** Luckfox Aura (RV1126B, no 3D GPU): `scripts/board.sh aura`. Written,
+      untested on board.
+      **Why:** as above. **Done when:** its evidence is committed.
+      **Blocked by:** a board. **Measured:** nothing on this chip.
+- [ ] **[board] What:** RK3576, RK3566 (ZERO 3E) and RK3562 (Mali-G52): the same reports, or a confirmed
       clean CPU fallback where the driver has no usable Vulkan compute. Written, untested on board
       (Mali Bifrost, warp 8 on G52).
       **Why:** as above.

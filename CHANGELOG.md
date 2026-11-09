@@ -8,6 +8,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- `scripts/board.sh` profiles for the ROCK 5C, ZERO 3E, Cubie A7A/A7S/A7Z and Luckfox Aura; written,
+  untested on board.
+
 - The GPU caps cache location is settable: `EngineConfig::with_gpu_caps_dir` (`CacheSection::gpu_caps_dir`)
   or the environment variable `DAEDALUS_GPU_CAPS_CACHE` (the config wins). Any failed read or write of the
   cache, including a missing or read-only directory or a corrupt file, is no cache: nothing is surfaced to

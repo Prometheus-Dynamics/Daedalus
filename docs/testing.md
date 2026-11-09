@@ -229,14 +229,17 @@ board run confirms it. `scripts/board.sh PROFILE USER@HOST [RUNNER_NAME]` does e
 command: it cross-builds the binaries here, runs them from the board's `/tmp` over ssh (GPU runs
 under `/run/lock/raze-gpu.lock` where the board has it), brings back the logs and writes the
 matrix evidence to `docs/accel-evidence/RUNNER_NAME-DATE.jsonl`, then cleans the board. Profiles:
-`flame` (armv7 `+neon`, run on the Luckfox Pico Pro), `k230d` (riscv64 `+v`), `rockchip` (aarch64:
-the CPU set, the GPU tests, `gpu_probe` and `gpu_bench`) and `raze`. The RGA and VGLite tests are
+`flame` (armv7 `+neon`, run on the Luckfox Pico Pro), `k230d` (riscv64 `+v`, also the K230D
+AI-CAM), `rockchip` (aarch64: the CPU set, the GPU tests, `gpu_probe` and `gpu_bench`), its board
+names `rock5c` and `zero3e`, `cubie-a7` (the same set on the A733 boards), `aura` (aarch64, the CPU
+set) and `raze`. The RGA and VGLite tests are
 Lemnos's (`lemnos-drivers-rga`, `lemnos-drivers-vglite`), not built by these profiles. Only the
 `raze` profile has run (2026-11-02, the Raze: graph tests 90 + 5 + 2, kernel conformance 8 and
 the CRC-32 throughput, the GPU crate's 91 tests, `gpu_probe` and `gpu_bench`, all ok); the
-other three are written, untested on board.
+others are written, untested on board.
 
-- **Rockchip (RK3588S / RK3576 G610, RK3566 G52), Mali through wgpu/Vulkan (libmali or panvk):**
+- **Rockchip (RK3588S G610 on the ROCK 5C; RK3576 and RK3566 G52, the RK3566 on the ZERO 3E), Mali
+  through wgpu/Vulkan (libmali or panvk):**
   - `cargo test -p daedalus-gpu --features gpu-wgpu --lib` covers the GPU kernels (bit-exact
     and measured), fragment passes, storage-to-texture, and `device_profile`. The profile
     should report `MaliValhall` with warp 16 on G610, and `MaliBifrost` with warp 8 on G52.
@@ -244,9 +247,17 @@ other three are written, untested on board.
   - An AFBC frame from the VOP2/RGA (`drm_format_mod_arm_afbc`) imports only where the driver
     lists the modifier.
   - Run `scripts/accel.sh` on the board so the matrix records the Mali adapter.
-- **K230D (riscv64, C908, RVV 1.0):** the `+v` build is proven under qemu at VLEN 128, 256 and
-  512. On the board, run the conformance test binary (`--target riscv64gc-unknown-linux-musl`,
-  `+v`) to record a real-hardware VLEN.
+- **Allwinner A733 (Cubie A7A, A7S, A7Z; PowerVR BXM-4-64 MC1), through wgpu/Vulkan:** the same
+  GPU set as Rockchip, if the shipped image has a Vulkan driver; otherwise confirm the clean CPU
+  fallback. The profile should report `PowerVr`; its warp of 32 is assumed, so `gpu_probe` and
+  `gpu_bench` have to confirm it and `prefer_fragment_passes`.
+- **Luckfox Aura (RV1126B, Cortex-A53, no 3D GPU):** the CPU set and the NEON kernels; GPU nodes
+  fall back to their CPU path.
+- **K230D (riscv64, C908, RVV 1.0; also the K230D AI-CAM):** the `+v` build is proven under qemu at
+  VLEN 128, 256 and 512. On the board, run the conformance test binary
+  (`--target riscv64gc-unknown-linux-musl`, `+v`) to record a real-hardware VLEN. Only the 1.6 GHz
+  core has RVV: confirm first, from the `isa` line the run prints, that Linux is on that core. On
+  the other core the `+v` binaries cannot run.
 - **Flame RV1106G2 (armv7 Cortex-A7, NEON):** the `+neon` build is proven under qemu
   cortex-a7. On the board, run the same binary and the CPU graph tests (`ci.sh cross`).
 
