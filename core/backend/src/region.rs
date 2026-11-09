@@ -59,6 +59,8 @@ pub struct NodeBody<'a> {
     pub outputs: u16,
     /// False when the graph asks that this node never be merged with its neighbours.
     pub merges: bool,
+    /// Runs only when every input has a value, rather than when any has.
+    pub fire_all: bool,
     /// The backend's own payload: a function pointer or a generated stub.
     pub code: &'a (dyn Any + Send + Sync),
     /// Source, for bodies written as text.

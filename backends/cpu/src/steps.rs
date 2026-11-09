@@ -28,6 +28,7 @@ pub const fn total(counts: &[usize]) -> usize {
 }
 
 pub use crate::body::CpuBody;
+pub use crate::shape::{BodyShape, OutputShape, ParamShape, Role};
 pub use daedalus_runner::{ArenaBody, Fresh};
 
 /// What one node in one graph needs from the plan.

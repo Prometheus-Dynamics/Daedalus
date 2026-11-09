@@ -28,11 +28,4 @@ const CONST_BIT: u32 = 1 << 31;
 const PORT_SHIFT: u32 = 24;
 const EDGE_MASK: u32 = (1 << PORT_SHIFT) - 1;
 
-/// What a full queue does with a new value.
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Overflow {
-    DropOldest = 0,
-    DropNewest = 1,
-    Error = 2,
-}
+pub use daedalus_runner::Overflow;

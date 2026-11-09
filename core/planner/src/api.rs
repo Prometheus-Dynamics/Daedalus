@@ -117,8 +117,12 @@ impl Planned {
     }
 
     /// The generated Rust of every region, in region order.
+    ///
+    /// Regions that name one file can't be joined, so a graph with separate parts fails here
+    /// when its backend writes a single module.
     pub fn source(&self) -> Result<String, PlanError> {
         let mut text = String::new();
+        let mut files = std::collections::BTreeSet::new();
         for region in &self.regions.regions {
             let Compiled::Source { code, .. } = &region.compiled else {
                 return Err(PlanError::FormUnavailable {
@@ -126,6 +130,12 @@ impl Planned {
                     backend: self.backend_ids[usize::from(region.formed.backend.0)].clone(),
                 });
             };
+            if !files.insert(code.file.as_str()) {
+                return Err(PlanError::FormUnavailable {
+                    form: Form::Source,
+                    backend: self.backend_ids[usize::from(region.formed.backend.0)].clone(),
+                });
+            }
             text.push_str(&code.text);
         }
         Ok(text)

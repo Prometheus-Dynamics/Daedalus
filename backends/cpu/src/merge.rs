@@ -63,10 +63,10 @@ fn merged_edge(
 }
 
 /// A run of nodes that merge, and the output each node after the first takes its value from.
-type Group = (Range<usize>, Vec<PortRef>);
+pub(crate) type Group = (Range<usize>, Vec<PortRef>);
 
 /// The region's nodes as runs that merge.
-fn groups(region: &Region<'_>, cx: &CompileCx<'_>) -> Result<Vec<Group>, Refusal> {
+pub(crate) fn groups(region: &Region<'_>, cx: &CompileCx<'_>) -> Result<Vec<Group>, Refusal> {
     let mut groups = Vec::new();
     let mut start = 0;
     let mut links = Vec::new();
