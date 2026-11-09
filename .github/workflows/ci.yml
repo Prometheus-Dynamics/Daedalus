@@ -25,5 +25,8 @@ jobs:
       # rust-toolchain.toml selects the toolchain and its components.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: rustup target add thumbv7em-none-eabihf thumbv6m-none-eabi riscv32imac-unknown-none-elf
+      - run: rustup target add thumbv7em-none-eabihf thumbv6m-none-eabi riscv32imac-unknown-none-elf wasm32-unknown-unknown wasm32-wasip1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.129
       - run: ./scripts/gate.sh

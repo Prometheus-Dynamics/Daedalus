@@ -1,0 +1,23 @@
+[package]
+name = "daedalus-wasm-bindgen-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "A host driven from JavaScript through wasm-bindgen, on the page's clock."
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+daedalus = { path = "../../core/daedalus", features = ["std"] }
+daedalus-cpu = { path = "../../backends/cpu" }
+daedalus-cpu-author = { path = "../../backends/cpu-author" }
+daedalus-graph = { path = "../../core/graph" }
+daedalus-macros = { path = "../../core/macros" }
+daedalus-registry = { path = "../../core/registry" }
+wasm-bindgen = { workspace = true }

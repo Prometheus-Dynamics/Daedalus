@@ -4,7 +4,15 @@ import argparse, glob, json, os, re, subprocess, sys
 
 GLOB_FOLDERS = ["core", "backends", "languages", "service", "testing/crates", "examples"]
 HARDWARE_WORDS = {"gpu", "wgpu", "shader", "texture", "npu", "frame", "image", "pixel", "camera", "mcu"}
-UNSAFE_ALLOWED = ("core/abi", "core/capi", "core/loader", "core/runner")
+UNSAFE_ALLOWED = (
+    "core/abi",
+    "core/capi",
+    "core/loader",
+    "core/runner",
+    # A WebAssembly export needs `no_mangle`, one function in each.
+    "examples/wasm_smoke",
+    "examples/wasm_bindgen_host",
+)
 HEAP_FREE_TARGETS = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"]
 PRODUCT_NAMES = re.compile(r"\b(lemnos|eidos|ariadne|gaia|orion|helios)\b", re.I)
 HEAP_TOKENS = re.compile(r"\b(alloc::|std::|Vec<|Box<|extern\s+crate\s+alloc)|\bString::|(?<!:):\s*String\b|->\s*String\b|[<&(]\s*String\b")

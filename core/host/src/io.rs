@@ -100,6 +100,9 @@ pub struct Host<'a> {
     /// One per port once a host sets a policy. Empty means every port takes every value.
     pub(crate) inbound: std::vec::Vec<crate::inbound::Inbound>,
     pub(crate) now_ns: u64,
+    /// Whether a feed to a held slot wakes its readers. A plan holds any slot with several
+    /// readers, and those are ordinary inputs.
+    pub(crate) held_feeds_wake: bool,
     /// The buffers of a runner this host owns. Declared last, so it is dropped after `runner`.
     #[cfg(feature = "std")]
     pub(crate) owned: Option<daedalus_runner::owned_run::RunBuffers>,
@@ -114,6 +117,7 @@ impl<'a> Host<'a> {
             types,
             inbound: std::vec::Vec::new(),
             now_ns: 0,
+            held_feeds_wake: false,
             #[cfg(feature = "std")]
             owned: None,
         }
@@ -159,7 +163,7 @@ impl<'a> Host<'a> {
         }
     }
 
-    fn wake_consumers(&mut self, wake: &[u32]) -> u32 {
+    pub(crate) fn wake_consumers(&mut self, wake: &[u32]) -> u32 {
         for &step in wake {
             self.runner.wake(step);
         }
@@ -173,7 +177,7 @@ impl<'a> Host<'a> {
             return Err(self.mismatch(name, spec.ty, value.ty));
         }
         if self.runner.is_held(spec.slot) {
-            return self.replace_held(name, spec.slot, value);
+            return self.replace_held(name, spec.slot, spec.wake, value);
         }
         let dropped = match self.admit(name, spec.slot)? {
             crate::inbound::Admit::Store(reason) => reason,
@@ -208,7 +212,7 @@ impl<'a> Host<'a> {
         self.runner
             .feed_typed(spec.slot, spec.ty, spec.space, value)
             .map_err(|error| self.feed_error(name, error))?;
-        if held {
+        if held && !self.held_feeds_wake {
             return Ok(FeedOutcome {
                 woke: 0,
                 dropped: None,
