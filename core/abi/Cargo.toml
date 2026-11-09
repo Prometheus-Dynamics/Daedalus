@@ -1,0 +1,28 @@
+[package]
+name = "daedalus-abi"
+description = "The types that cross a plugin boundary: steps, slots, fences, status and the handshake."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+alloc = []
+std = ["alloc"]
+
+[package.metadata.daedalus]
+heap_free = true
+
+# This crate may use unsafe (see AGENTS.md), so it carries its own lint table.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "deny"
+unused_attributes = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"
