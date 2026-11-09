@@ -10,6 +10,8 @@
 pub mod alloc_probe;
 mod config_cache;
 #[cfg(feature = "std")]
+mod control;
+#[cfg(feature = "std")]
 mod diagnostics;
 #[cfg(feature = "std")]
 mod drive;
@@ -23,10 +25,13 @@ pub mod inbound_fd;
 mod inspect;
 #[cfg(feature = "std")]
 mod intern;
+mod introspect;
 mod io;
 mod label;
 #[cfg(feature = "std")]
 mod load;
+#[cfg(feature = "std")]
+mod patch;
 mod ports;
 #[cfg(feature = "std")]
 mod reload;
@@ -51,6 +56,8 @@ pub use daedalus_runner::TickReport;
 
 pub use config_cache::ConfigCache;
 #[cfg(feature = "std")]
+pub use control::ControlError;
+#[cfg(feature = "std")]
 pub use diagnostics::{PlanReport, StepReport, render_error};
 #[cfg(feature = "std")]
 pub use drive::StopHandle;
@@ -58,10 +65,13 @@ pub use drive::StopHandle;
 pub use fault::FaultReport;
 pub use inbound::{Drops, PortPolicy};
 pub use inspect::{PayloadInspection, PayloadSummary};
+pub use introspect::PortInfo;
 pub use io::{FeedOutcome, Host, HostError};
 pub use label::{LABEL_BYTES, Label};
 #[cfg(feature = "std")]
 pub use load::{LoadError, LoadOptions, LoadedHost};
+#[cfg(feature = "std")]
+pub use patch::{ConstTable, ConstValue, PatchError, PatchOutcome};
 pub use ports::{Dir, PortSpec, Ports, PortsError};
 #[cfg(feature = "std")]
 pub use reload::ReloadError;
