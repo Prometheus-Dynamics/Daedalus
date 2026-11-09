@@ -1,0 +1,18 @@
+[package]
+name = "daedalus-planner-tests"
+description = "The planner's tests, the only place it meets a backend."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-graph = { path = "../../../core/graph" }
+daedalus-planner = { path = "../../../core/planner" }
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-types = { path = "../../../core/types" }
+daedalus-value = { path = "../../../core/value" }
+
+[lints]
+workspace = true

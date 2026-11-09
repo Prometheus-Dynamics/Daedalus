@@ -1,0 +1,15 @@
+[package]
+name = "daedalus-planner"
+description = "Turns a graph into a proven, runnable plan."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-graph = { path = "../graph" }
+daedalus-registry = { path = "../registry" }
+daedalus-types = { path = "../types" }
+
+[lints]
+workspace = true
