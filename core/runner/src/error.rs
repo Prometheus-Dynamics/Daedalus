@@ -37,4 +37,8 @@ pub enum RunError {
     PendingFull { step: u32 },
     /// A value was pushed to a slot that the plan does not have.
     NoSlot { slot: u32 },
+    /// A value that owns its payload was pushed raw. Use the owning feed instead.
+    NotRaw { slot: u32 },
+    /// A typed payload was fed as a plain value. Its concrete type is needed: use `feed_typed`.
+    Untyped { slot: u32 },
 }
