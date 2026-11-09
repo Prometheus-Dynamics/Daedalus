@@ -1,0 +1,3 @@
+[workspace]
+members = ["core/abi"]
+resolver = "3"
