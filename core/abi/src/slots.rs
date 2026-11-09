@@ -9,8 +9,9 @@ pub enum SlotState {
     Moved = 2,
 }
 
-/// One value cell. `space`, `type_index` and `owner` are indexes the planner assigned. `version`
-/// goes up on each write, so a step can tell whether an input changed.
+/// One value cell. `space` and `type_index` are indexes the planner assigned. `owner` is an
+/// `OwnerKind` from `daedalus-value`, and `data`, `len` and `cap` hold that owner's payload.
+/// `version` goes up on each write, so a step can tell whether an input changed.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Slot {
