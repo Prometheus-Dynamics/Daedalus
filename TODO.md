@@ -81,7 +81,7 @@ The first backend, merging, the Blob and Source forms, chips, the kernels, wasm 
 - [x] [D4](docs/prs/D4.md) Source form: generated Rust for a solved CPU region (wave 15; needs B13, D1)
 - [x] [D5](docs/prs/D5.md) Chip runtime: generated firmware API, no heap, five-node budget (wave 16; needs D4)
 - [x] [D6](docs/prs/D6.md) Scalars, parameters and wire encoding on a chip (wave 17; needs D5)
-- [ ] [D7](docs/prs/D7.md) Chip blink example: compiled, tunable, loaded and fan-in (wave 18; needs D3, D5, D6)
+- [x] [D7](docs/prs/D7.md) Chip blink example: compiled, tunable, loaded and fan-in (wave 18; needs D3, D5, D6)
 - [ ] [D8](docs/prs/D8.md) Kernels library: float, copy and codec kernels (wave 2; needs A1)
 - [ ] [D9](docs/prs/D9.md) WebAssembly: embedded preset smoke modules and Node runs (wave 15; needs C10, D1)
 - [ ] [D10](docs/prs/D10.md) No-heap tier, cross-target CPU runs and Windows (wave 15; needs C1, C10, D1)

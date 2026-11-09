@@ -97,42 +97,40 @@ impl ScalarKind {
     /// Whether `bits` is a value of this kind. NaN isn't in any range, so it isn't one for a
     /// parameter either.
     pub fn in_order(self, low: u64, value: u64, high: u64) -> bool {
+        match (self.rank(low), self.rank(value), self.rank(high)) {
+            (Some(low), Some(value), Some(high)) => low <= value && value <= high,
+            _ => false,
+        }
+    }
+
+    /// A number that sorts as `bits` does as a value of this kind. `None` for NaN.
+    fn rank(self, bits: u64) -> Option<u64> {
         match self {
-            ScalarKind::F32 => {
-                let [low, value, high] = [low, value, high].map(|bits| f32::from_bits(bits as u32));
-                low <= value && value <= high
-            }
-            ScalarKind::F64 => {
-                let [low, value, high] = [low, value, high].map(f64::from_bits);
-                f64_le(low, value) && f64_le(value, high)
-            }
+            ScalarKind::F32 => float_rank(bits & 0xffff_ffff, 1 << 31, 0x7f80_0000),
+            ScalarKind::F64 => float_rank(bits, 1 << 63, 0x7ff0_0000_0000_0000),
             ScalarKind::I8 | ScalarKind::I16 | ScalarKind::I32 | ScalarKind::I64 => {
                 let shift = 64 - u32::from(self.size()) * 8;
-                let [low, value, high] =
-                    [low, value, high].map(|bits| ((bits << shift) as i64) >> shift);
-                low <= value && value <= high
+                Some((((bits << shift) as i64) >> shift) as u64 ^ (1 << 63))
             }
-            _ => low <= value && value <= high,
+            _ => Some(bits),
         }
+    }
+}
+
+/// With no floating-point arithmetic, so a chip needs no support for it. The two zeros are equal.
+fn float_rank(bits: u64, sign: u64, infinity: u64) -> Option<u64> {
+    let size = bits & !sign;
+    if size > infinity {
+        None
+    } else if bits & sign != 0 {
+        Some(sign - size)
+    } else {
+        Some(sign + size)
     }
 }
 
 /// `a <= b`, with no floating-point arithmetic, so a chip needs no `f64` support for it.
 /// `false` if either is NaN. The two zeros are equal.
 pub fn f64_le(a: f64, b: f64) -> bool {
-    const SIGN: u64 = 1 << 63;
-    const INFINITY: u64 = 0x7ff0_0000_0000_0000;
-    let (a, b) = (a.to_bits(), b.to_bits());
-    if a & !SIGN > INFINITY || b & !SIGN > INFINITY {
-        return false;
-    }
-    let order = |bits: u64| {
-        let size = bits & !SIGN;
-        if bits & SIGN != 0 {
-            SIGN - size
-        } else {
-            SIGN + size
-        }
-    };
-    order(a) <= order(b)
+    ScalarKind::F64.in_order(a.to_bits(), a.to_bits(), b.to_bits())
 }

@@ -21,15 +21,31 @@ path = "src/main.rs"
 test = false
 bench = false
 
+# The compiled graph with parameters that change while it runs.
+[[bin]]
+name = "daedalus-chip-blink-tunable"
+path = "src/bin/tunable.rs"
+test = false
+bench = false
+
+# Stored plans, swapped while running.
+[[bin]]
+name = "daedalus-chip-blink-loaded"
+path = "src/bin/loaded.rs"
+test = false
+bench = false
+
 [dependencies]
 daedalus-chip-blink-nodes = { path = "nodes" }
-daedalus-cpu = { path = "../../backends/cpu", default-features = false, features = ["chip"] }
+daedalus-cpu = { path = "../../backends/cpu", default-features = false, features = ["blob", "chip-params"] }
 
 # The freshness test. Nothing here is part of the firmware.
 [dev-dependencies]
 daedalus-cpu = { path = "../../backends/cpu", features = ["source"] }
 daedalus-graph = { path = "../../core/graph" }
+daedalus-plan = { path = "../../core/plan" }
 daedalus-planner = { path = "../../core/planner" }
+daedalus-abi = { path = "../../core/abi", features = ["count-alloc"] }
 daedalus-registry = { path = "../../core/registry" }
 
 [target.'cfg(target_os = "none")'.dependencies]

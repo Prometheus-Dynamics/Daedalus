@@ -2,6 +2,7 @@
 
 use daedalus_runner::ArenaBody;
 
+#[cfg(feature = "alloc")]
 use crate::shape::BodyShape;
 
 #[cfg(feature = "alloc")]
@@ -19,6 +20,6 @@ pub struct CpuBody {
     /// ports have to be small `Copy` values, and the state must have nothing to drop.
     pub arena: Option<ArenaBody>,
     /// How the function is called, for code generated around it.
-    #[cfg_attr(not(feature = "alloc"), allow(dead_code))]
+    #[cfg(feature = "alloc")]
     pub shape: BodyShape,
 }

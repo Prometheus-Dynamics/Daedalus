@@ -54,8 +54,8 @@ fn a_blob_received_in_chunks_loads_and_runs() {
         Ok(Progress::Partial { received: 32, len })
     );
 
-    let mut running = Box::new(Interpreter::<1024>::new(&LIBRARY));
-    running.load(&buffer[..blob.len()]).unwrap();
+    let mut running = Box::new(Interpreter::<1024>::new());
+    running.load(&LIBRARY, &buffer[..blob.len()]).unwrap();
     let (input, output) = (running.input("in").unwrap(), running.output("out").unwrap());
     running.push(input, 2_u32).unwrap();
     running.tick().unwrap();

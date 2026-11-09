@@ -30,6 +30,13 @@ pub struct Words<'a> {
     bytes: &'a [u8],
 }
 
+impl Words<'_> {
+    /// The word at `index`, without walking to it.
+    pub fn at(&self, index: usize) -> Option<u32> {
+        word(self.bytes, index.checked_mul(WORD_LEN)?)
+    }
+}
+
 impl Iterator for Words<'_> {
     type Item = u32;
 

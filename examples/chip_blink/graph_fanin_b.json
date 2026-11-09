@@ -1,0 +1,173 @@
+{
+  "format": "daedalus.graph",
+  "schema_version": 1,
+  "graph": {
+    "nodes": [
+      {
+        "id": "host",
+        "kind": "host_bridge",
+        "port_types": {
+          "led": "bool",
+          "level": "f32",
+          "rises": "u32",
+          "sample": "u16"
+        }
+      },
+      {
+        "id": "blink.scale",
+        "label": "scale",
+        "consts": {
+          "volts_per_count": {
+            "type": "float",
+            "value": 0.0008
+          }
+        }
+      },
+      {
+        "id": "blink.lowpass",
+        "label": "lowpass",
+        "consts": {
+          "alpha": {
+            "type": "float",
+            "value": 0.25
+          }
+        }
+      },
+      {
+        "id": "blink.threshold",
+        "label": "threshold",
+        "consts": {
+          "on": {
+            "type": "float",
+            "value": 2.0
+          },
+          "off": {
+            "type": "float",
+            "value": 1.0
+          }
+        }
+      },
+      {
+        "id": "blink.latest",
+        "label": "latest"
+      },
+      {
+        "id": "blink.rising",
+        "label": "rising"
+      },
+      {
+        "id": "blink.blink",
+        "label": "blink",
+        "consts": {
+          "period": {
+            "type": "int",
+            "value": 2
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "node": 0,
+          "port": "sample"
+        },
+        "to": {
+          "node": 1,
+          "port": "raw"
+        },
+        "policy": {
+          "kind": "latest_only"
+        }
+      },
+      {
+        "from": {
+          "node": 1,
+          "port": "volts"
+        },
+        "to": {
+          "node": 2,
+          "port": "x"
+        }
+      },
+      {
+        "from": {
+          "node": 2,
+          "port": "y"
+        },
+        "to": {
+          "node": 3,
+          "port": "level"
+        }
+      },
+      {
+        "from": {
+          "node": 2,
+          "port": "y"
+        },
+        "to": {
+          "node": 0,
+          "port": "level"
+        },
+        "policy": {
+          "kind": "latest_only"
+        }
+      },
+      {
+        "from": {
+          "node": 3,
+          "port": "active"
+        },
+        "to": {
+          "node": 4,
+          "port": "items0"
+        }
+      },
+      {
+        "from": {
+          "node": 4,
+          "port": "out"
+        },
+        "to": {
+          "node": 5,
+          "port": "active"
+        }
+      },
+      {
+        "from": {
+          "node": 4,
+          "port": "out"
+        },
+        "to": {
+          "node": 6,
+          "port": "active"
+        }
+      },
+      {
+        "from": {
+          "node": 5,
+          "port": "count"
+        },
+        "to": {
+          "node": 0,
+          "port": "rises"
+        },
+        "policy": {
+          "kind": "bounded",
+          "capacity": 8,
+          "overflow": "drop_oldest"
+        }
+      },
+      {
+        "from": {
+          "node": 6,
+          "port": "led"
+        },
+        "to": {
+          "node": 0,
+          "port": "led"
+        }
+      }
+    ]
+  }
+}

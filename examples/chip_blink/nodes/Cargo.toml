@@ -14,6 +14,7 @@ path = "src/lib.rs"
 doctest = false
 
 [dependencies]
+daedalus-cpu = { path = "../../../backends/cpu", default-features = false, features = ["blob"] }
 daedalus-cpu-author = { path = "../../../backends/cpu-author", default-features = false }
 daedalus-macros = { path = "../../../core/macros" }
 daedalus-registry = { path = "../../../core/registry", default-features = false }

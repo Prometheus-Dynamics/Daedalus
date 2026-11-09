@@ -16,8 +16,8 @@ type Small = Interpreter<1024>;
 
 fn loading(plan: &PlanDesc) -> Result<(), LoadError> {
     let bytes = encode(plan).unwrap();
-    let mut running = Box::new(Small::new(&LIBRARY));
-    running.load(&bytes)
+    let mut running = Box::new(Small::new());
+    running.load(&LIBRARY, &bytes)
 }
 
 #[test]
@@ -36,10 +36,10 @@ fn the_same_description_gives_the_same_bytes_and_names_its_library() {
 
 #[test]
 fn a_library_hash_depends_on_interfaces_and_their_order() {
-    const FIRST: &[&NodeRecord] = &[&GAIN_NODE, &SUM_NODE];
-    const SWAPPED: &[&NodeRecord] = &[&SUM_NODE, &GAIN_NODE];
-    const OTHER: &[&NodeRecord] = &[&GAIN_NODE, &BAD_NODE];
-    let hash = |nodes| Library::new(nodes).hash;
+    const FIRST: &[&NodeRecord; 2] = &[&GAIN_NODE, &SUM_NODE];
+    const SWAPPED: &[&NodeRecord; 2] = &[&SUM_NODE, &GAIN_NODE];
+    const OTHER: &[&NodeRecord; 2] = &[&GAIN_NODE, &BAD_NODE];
+    let hash = |nodes: &'static [&'static NodeRecord; 2]| Library::new(nodes).hash;
     assert_eq!(hash(FIRST), hash(FIRST));
     assert_ne!(hash(FIRST), hash(SWAPPED));
     assert_ne!(hash(FIRST), hash(OTHER));
@@ -47,17 +47,17 @@ fn a_library_hash_depends_on_interfaces_and_their_order() {
 
 #[test]
 fn not_a_plan_is_malformed() {
-    let mut boxed = Box::new(Small::new(&LIBRARY));
-    assert_eq!(boxed.load(b"nonsense"), Err(LoadError::Malformed));
-    assert_eq!(boxed.load(b""), Err(LoadError::Malformed));
+    let mut boxed = Box::new(Small::new());
+    assert_eq!(boxed.load(&LIBRARY, b"nonsense"), Err(LoadError::Malformed));
+    assert_eq!(boxed.load(&LIBRARY, b""), Err(LoadError::Malformed));
 }
 
 #[test]
 fn a_cut_off_plan_is_refused() {
     let bytes = encode(&plan()).unwrap();
-    let mut boxed = Box::new(Small::new(&LIBRARY));
+    let mut boxed = Box::new(Small::new());
     assert!(matches!(
-        boxed.load(&bytes[..bytes.len() - 9]),
+        boxed.load(&LIBRARY, &bytes[..bytes.len() - 9]),
         Err(LoadError::Checksum { .. })
     ));
 }
@@ -66,8 +66,11 @@ fn a_cut_off_plan_is_refused() {
 fn another_format_is_refused_whatever_its_checksum() {
     let mut bytes = encode(&plan()).unwrap();
     bytes[8] = 0xee;
-    let mut boxed = Box::new(Small::new(&LIBRARY));
-    assert!(matches!(boxed.load(&bytes), Err(LoadError::Version { .. })));
+    let mut boxed = Box::new(Small::new());
+    assert!(matches!(
+        boxed.load(&LIBRARY, &bytes),
+        Err(LoadError::Version { .. })
+    ));
 }
 
 #[test]
@@ -75,9 +78,9 @@ fn a_flipped_bit_fails_the_checksum() {
     let mut bytes = encode(&plan()).unwrap();
     let at = bytes.len() / 2;
     bytes[at] ^= 1;
-    let mut boxed = Box::new(Small::new(&LIBRARY));
+    let mut boxed = Box::new(Small::new());
     assert!(matches!(
-        boxed.load(&bytes),
+        boxed.load(&LIBRARY, &bytes),
         Err(LoadError::Checksum { .. })
     ));
 }
@@ -236,9 +239,9 @@ fn host_ports_must_match_their_edges() {
 fn a_plan_too_big_for_the_arena_says_how_much_it_needs() {
     let bytes = encode(&plan()).unwrap();
     let needed = Interpreter::<16>::required(&LIBRARY, &bytes).unwrap();
-    let mut tiny = Box::new(Interpreter::<16>::new(&LIBRARY));
+    let mut tiny = Box::new(Interpreter::<16>::new());
     assert_eq!(
-        tiny.load(&bytes),
+        tiny.load(&LIBRARY, &bytes),
         Err(LoadError::Arena {
             needed: needed as u32
         })

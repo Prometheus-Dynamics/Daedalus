@@ -7,14 +7,15 @@
         "id": "host",
         "kind": "host_bridge",
         "port_types": {
-          "sample": "u16",
-          "level": "f32",
           "led": "bool",
-          "rises": "u32"
+          "level": "f32",
+          "rises": "u32",
+          "sample": "u16"
         }
       },
       {
         "id": "blink.scale",
+        "label": "scale",
         "consts": {
           "volts_per_count": {
             "type": "float",
@@ -24,6 +25,7 @@
       },
       {
         "id": "blink.lowpass",
+        "label": "lowpass",
         "consts": {
           "alpha": {
             "type": "float",
@@ -33,6 +35,7 @@
       },
       {
         "id": "blink.threshold",
+        "label": "threshold",
         "consts": {
           "on": {
             "type": "float",
@@ -45,10 +48,12 @@
         }
       },
       {
-        "id": "blink.rising"
+        "id": "blink.rising",
+        "label": "rising"
       },
       {
         "id": "blink.blink",
+        "label": "blink",
         "consts": {
           "period": {
             "type": "int",

@@ -58,6 +58,20 @@ Five-node blink graph, profile `chip`, measured by `scripts/ci.d/chip.sh`:
 | Target | Flash | RAM |
 | --- | --- | --- |
 | `thumbv7em-none-eabihf` | 2120 B | 112 B |
-| `thumbv6m-none-eabi` | 2652 B | 112 B |
+| `thumbv6m-none-eabi` | 2664 B | 112 B |
 
 Budget: 12 KiB flash, 584 B RAM. The figures are pinned exactly, so a change that moves them has to say so in the same commit.
+
+The blink graph in its three modes, in bytes, from `scripts/ci.d/chip.sh`:
+
+| Mode (binary) | `thumbv7em-none-eabihf` flash | `thumbv6m-none-eabi` flash | RAM | Budget |
+| --- | --- | --- | --- | --- |
+| Compiled (`daedalus-chip-blink`) | 2120 | 2664 | 112 | 12 KiB, 584 B, pinned exactly |
+| Tunable, 4 parameters (`-tunable`) | 4360 | 5568 | 128 | 6 KiB, 512 B |
+| Stored plans, a 7-node library and two plans (`-loaded`) | 15976 | 17456 | 576 | 17.5 KiB, 584 B |
+
+Of the stored-plan flash on the M4: 1024 is the vector table, about 6 KiB checks and lays out a
+plan, 2.4 KiB runs one, 1.5 KiB is `memcpy` and its relatives, 1.4 KiB is the seven node bodies,
+1124 the two stored plans and 600 the library's table. The runner's RAM is zeroed memory, so it
+takes no flash. The plans need 505 and 418 of the 512 arena bytes on a 32-bit chip, and the fan-in
+plans 644 and 561, so a firmware that loads those needs a larger arena.
