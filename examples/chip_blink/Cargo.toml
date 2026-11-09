@@ -1,0 +1,38 @@
+[package]
+name = "daedalus-chip-blink"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "A five-node graph planned on a host and run with no heap on a chip."
+
+[lints]
+workspace = true
+
+# The generated graph, as a library so host tests can run it.
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+# Firmware for Cortex-M. An empty `main` elsewhere.
+[[bin]]
+name = "daedalus-chip-blink"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+daedalus-chip-blink-nodes = { path = "nodes" }
+daedalus-cpu = { path = "../../backends/cpu", default-features = false, features = ["chip"] }
+
+# The freshness test. Nothing here is part of the firmware.
+[dev-dependencies]
+daedalus-cpu = { path = "../../backends/cpu", features = ["source"] }
+daedalus-graph = { path = "../../core/graph" }
+daedalus-planner = { path = "../../core/planner" }
+daedalus-registry = { path = "../../core/registry" }
+
+[target.'cfg(target_os = "none")'.dependencies]
+cortex-m = { workspace = true }
+cortex-m-rt = { workspace = true }
+panic-halt = { workspace = true }

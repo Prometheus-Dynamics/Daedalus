@@ -32,6 +32,7 @@ mod fence;
 mod fixed_queue;
 #[cfg(feature = "alloc")]
 mod forward;
+mod inline;
 mod join;
 #[cfg(feature = "threads")]
 mod lanes;
@@ -54,7 +55,7 @@ use daedalus_plan::Span;
 use daedalus_value::OwnerKind;
 
 #[cfg(feature = "alloc")]
-pub use access::{Held, UNSTAMPED, read_inline, take_typed, write_inline};
+pub use access::{Held, UNSTAMPED, take_typed};
 pub use arena::{
     ArenaBody, ArenaFull, Fresh, StepArena, align_up, bytes_of, copy_inline, fill_inline,
     steps_end, value_of,
@@ -68,9 +69,10 @@ pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
 #[cfg(feature = "alloc")]
 pub use fanin::fanin_order;
 pub use fault_log::StepFault;
-pub use fixed_queue::{FixedQueue, Overflow, QueueFull};
+pub use fixed_queue::{FixedQueue, Overflow, QueueFull, Ring};
 #[cfg(feature = "alloc")]
 pub use forward::Forward;
+pub use inline::{read_inline, write_inline};
 pub use join::Fire;
 #[cfg(feature = "threads")]
 pub use lanes::{LaneError, Lanes, Pool};

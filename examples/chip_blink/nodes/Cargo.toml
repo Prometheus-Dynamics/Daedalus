@@ -1,0 +1,26 @@
+[package]
+name = "daedalus-chip-blink-nodes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "The nodes of the chip blink example, with no heap."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+daedalus-cpu-author = { path = "../../../backends/cpu-author", default-features = false }
+daedalus-macros = { path = "../../../core/macros" }
+daedalus-registry = { path = "../../../core/registry", default-features = false }
+
+# The generator. Nothing here is part of the firmware.
+[dev-dependencies]
+daedalus-cpu = { path = "../../../backends/cpu", features = ["source"] }
+daedalus-graph = { path = "../../../core/graph" }
+daedalus-planner = { path = "../../../core/planner" }
+daedalus-registry = { path = "../../../core/registry" }

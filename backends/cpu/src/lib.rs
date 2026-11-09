@@ -9,12 +9,10 @@ extern crate alloc;
 
 #[cfg(feature = "alloc")]
 mod backend;
-#[cfg(any(feature = "alloc", feature = "blob"))]
 mod body;
 #[cfg(all(feature = "alloc", any(feature = "blob", feature = "source")))]
 mod queue_shape;
 pub mod shape;
-#[cfg(feature = "alloc")]
 pub mod steps;
 
 #[cfg(feature = "blob")]
@@ -28,7 +26,5 @@ pub mod source;
 
 #[cfg(feature = "alloc")]
 pub use backend::{BACKEND_ID, CpuBackend, HOST_SPACE};
-#[cfg(feature = "alloc")]
 pub use daedalus_abi::{Fault, FixedError, StepCx as Ctx};
-#[cfg(feature = "alloc")]
 pub use steps::ports::{FanIn, FanItem};

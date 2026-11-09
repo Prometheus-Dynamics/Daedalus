@@ -11,15 +11,82 @@ pub enum Overflow {
     Error = 2,
 }
 
+impl Overflow {
+    /// From the byte a stored plan holds. An unknown byte drops the oldest.
+    pub const fn from_byte(byte: u8) -> Overflow {
+        match byte {
+            1 => Overflow::DropNewest,
+            2 => Overflow::Error,
+            _ => Overflow::DropOldest,
+        }
+    }
+}
+
 /// A full queue refused a value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QueueFull;
 
+/// Where a queue's values are: the index arithmetic, with no storage of its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Ring {
+    pub head: u16,
+    pub len: u16,
+}
+
+/// `index` wrapped once. There's no division, for chips that have none.
+#[inline]
+fn wrap(index: usize, capacity: usize) -> usize {
+    if index >= capacity {
+        index - capacity
+    } else {
+        index
+    }
+}
+
+impl Ring {
+    pub const fn new() -> Ring {
+        Ring { head: 0, len: 0 }
+    }
+
+    /// Makes room for a value and says where it goes. `None` means the value is dropped.
+    #[inline]
+    pub fn push(
+        &mut self,
+        capacity: usize,
+        overflow: Overflow,
+    ) -> Result<Option<usize>, QueueFull> {
+        if usize::from(self.len) == capacity {
+            match overflow {
+                Overflow::DropNewest => return Ok(None),
+                Overflow::Error => return Err(QueueFull),
+                Overflow::DropOldest => {
+                    self.head = wrap(usize::from(self.head) + 1, capacity) as u16;
+                    self.len -= 1;
+                }
+            }
+        }
+        let at = wrap(usize::from(self.head) + usize::from(self.len), capacity);
+        self.len += 1;
+        Ok(Some(at))
+    }
+
+    /// Takes the oldest value's position.
+    #[inline]
+    pub fn pop(&mut self, capacity: usize) -> Option<usize> {
+        if self.len == 0 {
+            return None;
+        }
+        let at = usize::from(self.head);
+        self.head = wrap(at + 1, capacity) as u16;
+        self.len -= 1;
+        Some(at)
+    }
+}
+
 /// Up to `N` values of `T`, oldest first. Usable in a `static`.
 pub struct FixedQueue<T: Copy, const N: usize> {
     values: [MaybeUninit<T>; N],
-    head: u16,
-    len: u16,
+    ring: Ring,
 }
 
 impl<T: Copy, const N: usize> Default for FixedQueue<T, N> {
@@ -38,58 +105,36 @@ impl<T: Copy, const N: usize> FixedQueue<T, N> {
         let () = Self::FITS;
         FixedQueue {
             values: [const { MaybeUninit::uninit() }; N],
-            head: 0,
-            len: 0,
+            ring: Ring::new(),
         }
     }
 
     pub const fn len(&self) -> usize {
-        self.len as usize
+        self.ring.len as usize
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.len == 0
+        self.ring.len == 0
     }
 
     pub fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    /// `index` wrapped once. There's no division, for chips that have none.
-    #[inline]
-    fn wrap(index: usize) -> usize {
-        if index >= N { index - N } else { index }
+        self.ring.len = 0;
     }
 
     /// Adds `value`, following `overflow` if the queue is full.
     #[inline]
     pub fn push(&mut self, value: T, overflow: Overflow) -> Result<(), QueueFull> {
-        if usize::from(self.len) == N {
-            match overflow {
-                Overflow::DropNewest => return Ok(()),
-                Overflow::Error => return Err(QueueFull),
-                Overflow::DropOldest => {
-                    self.head = Self::wrap(usize::from(self.head) + 1) as u16;
-                    self.len -= 1;
-                }
-            }
+        if let Some(at) = self.ring.push(N, overflow)? {
+            self.values[at] = MaybeUninit::new(value);
         }
-        let at = Self::wrap(usize::from(self.head) + usize::from(self.len));
-        self.values[at] = MaybeUninit::new(value);
-        self.len += 1;
         Ok(())
     }
 
     /// Takes the oldest value.
     #[inline]
     pub fn pop(&mut self) -> Option<T> {
-        if self.len == 0 {
-            return None;
-        }
-        let at = usize::from(self.head);
-        self.head = Self::wrap(at + 1) as u16;
-        self.len -= 1;
-        // SAFETY: `len` was above zero, so `head` is a slot `push` wrote and nothing has taken.
+        let at = self.ring.pop(N)?;
+        // SAFETY: `ring.pop` only returns a position `push` wrote and nothing has taken since.
         Some(unsafe { self.values[at].assume_init() })
     }
 }

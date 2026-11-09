@@ -79,7 +79,7 @@ The first backend, merging, the Blob and Source forms, chips, the kernels, wasm 
 - [x] [D2](docs/prs/D2.md) CPU merging: a region's nodes run as direct calls (wave 15; needs B8, D1; board run)
 - [x] [D3](docs/prs/D3.md) Blob form and its small runner (wave 15; needs A10, D1)
 - [x] [D4](docs/prs/D4.md) Source form: generated Rust for a solved CPU region (wave 15; needs B13, D1)
-- [ ] [D5](docs/prs/D5.md) Chip runtime: generated firmware API, no heap, five-node budget (wave 16; needs D4)
+- [x] [D5](docs/prs/D5.md) Chip runtime: generated firmware API, no heap, five-node budget (wave 16; needs D4)
 - [ ] [D6](docs/prs/D6.md) Scalars, parameters and wire encoding on a chip (wave 17; needs D5)
 - [ ] [D7](docs/prs/D7.md) Chip blink example: compiled, tunable, loaded and fan-in (wave 18; needs D3, D5, D6)
 - [ ] [D8](docs/prs/D8.md) Kernels library: float, copy and codec kernels (wave 2; needs A1)

@@ -209,3 +209,14 @@ fn separate_graphs_cant_share_a_module() {
     let error = nodes::generate(&nodes::disconnected()).unwrap_err();
     assert!(error.to_string().contains("Source"), "{error}");
 }
+
+#[test]
+fn a_port_that_needs_the_heap_is_refused_by_name() {
+    let error = nodes::generate(&nodes::heap_port())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("String") && error.contains("Copy"),
+        "{error}"
+    );
+}

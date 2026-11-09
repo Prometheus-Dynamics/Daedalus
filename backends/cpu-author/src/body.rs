@@ -69,6 +69,7 @@ macro_rules! __daedalus_body {
             }
         }
 
+        $crate::__cpu::__if_alloc! {
         fn __make(
             __setup: &$crate::__cpu::Setup<'_>,
         ) -> ::core::result::Result<$crate::__cpu::Step, $crate::__cpu::StepString> {
@@ -83,6 +84,7 @@ macro_rules! __daedalus_body {
                 outs: [[0; 16]; __OUTPUTS],
             }))
         }
+        }
 
         $crate::__registry::BodyRecord {
             backend: "cpu",
@@ -95,29 +97,31 @@ macro_rules! __daedalus_body {
             state: ::core::option::Option::None,
             ports: &[],
             memory: &[],
-            code: &$crate::__cpu::CpuBody {
-                make: __make,
-                shape: $crate::__cpu::BodyShape {
+            code: &$crate::__cpu::__cpu_body!(
+                __make,
+                $crate::__cpu::BodyShape {
                     path: ::core::concat!(::core::module_path!(), "::", ::core::stringify!($($name)*)),
                     params: &[$($crate::__cpu::ParamShape {
                         role: $crate::__role!($role),
                         at: $at,
                         port: $port,
                         ty: ::core::any::type_name::<$ty>,
+                        copy: $crate::__is_copy!($ty),
                     },)*],
                     outputs: &[$($crate::__cpu::OutputShape {
                         optional: $crate::__optional!($okind),
                         ty: ::core::any::type_name::<$oty>,
+                        copy: $crate::__is_copy!($oty),
                     },)*],
                     fallible: $crate::__fallible!($flow),
                 },
-                arena: $crate::__arena!(
+                $crate::__arena!(
                     config = ($($config)?),
                     fixed = $fixed,
                     params = ($($role $at: $ty,)*),
                     outputs = ($($oat: $oty,)*)
-                ),
-            },
+                )
+            ),
             text: "",
         }
     }};
@@ -320,6 +324,16 @@ macro_rules! __kind {
             copy: $crate::__cpu::CopyOf::<$ty>::IS,
             decode: $crate::__cpu::LitOf::<$ty>::DECODE,
         }
+    }};
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __is_copy {
+    ($ty:ty) => {{
+        #[allow(unused_imports)]
+        use $crate::__cpu::NotCopy as _;
+        $crate::__cpu::CopyOf::<$ty>::IS
     }};
 }
 

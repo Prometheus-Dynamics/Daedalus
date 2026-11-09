@@ -1,7 +1,7 @@
 //! Runs a loaded plan: one queue per edge, a fixed block of memory, and nothing allocated.
 
 use daedalus_abi::{Slot, Slots, StepCx, StepEnd};
-use daedalus_runner::{InlineCell, StepArena, bytes_of, copy_inline, fill_inline, value_of};
+use daedalus_runner::{InlineCell, Ring, StepArena, bytes_of, copy_inline, fill_inline, value_of};
 use daedalus_types::Typed;
 
 use super::library::{Library, name_hash};
@@ -257,51 +257,43 @@ fn ring_len(data: &[u8], layout: &Layout, edge: u16) -> u16 {
     get_u16(data, edge_at(layout, edge) + 2)
 }
 
-/// `index` wrapped once. There's no division, for chips that have none.
-fn wrap(index: usize, capacity: usize) -> usize {
-    if index >= capacity {
-        index - capacity
-    } else {
-        index
+fn ring_at(data: &[u8], at: usize) -> Ring {
+    Ring {
+        head: get_u16(data, at),
+        len: get_u16(data, at + 2),
     }
+}
+
+fn store_ring(data: &mut [u8], at: usize, ring: Ring) {
+    put_u16(data, at, ring.head);
+    put_u16(data, at + 2, ring.len);
 }
 
 fn ring_push(data: &mut [u8], layout: &Layout, edge: u16, value: &[u8]) -> Result<(), RunError> {
     let at = edge_at(layout, edge);
-    let (mut head, mut len) = (
-        usize::from(get_u16(data, at)),
-        usize::from(get_u16(data, at + 2)),
-    );
     let capacity = usize::from(get_u16(data, at + 4));
     let stride = usize::from(data[at + 6]);
-    if len == capacity {
-        if data[at + 7] == Overflow::DropNewest as u8 {
-            return Ok(());
-        }
-        if data[at + 7] == Overflow::Error as u8 {
-            return Err(RunError::QueueFull { edge });
-        }
-        head = wrap(head + 1, capacity);
-        len -= 1;
-    }
-    let base = usize::from(get_u16(data, at + 8)) + wrap(head + len, capacity) * stride;
+    let mut ring = ring_at(data, at);
+    let Some(slot) = ring
+        .push(capacity, Overflow::from_byte(data[at + 7]))
+        .map_err(|_| RunError::QueueFull { edge })?
+    else {
+        return Ok(());
+    };
+    let base = usize::from(get_u16(data, at + 8)) + slot * stride;
     data[base..base + value.len().min(stride)].copy_from_slice(&value[..value.len().min(stride)]);
-    put_u16(data, at, head as u16);
-    put_u16(data, at + 2, (len + 1) as u16);
+    store_ring(data, at, ring);
     Ok(())
 }
 
 fn ring_pop(data: &mut [u8], layout: &Layout, edge: u16, out: &mut InlineCell) -> Option<usize> {
     let at = edge_at(layout, edge);
-    let (head, len) = (usize::from(get_u16(data, at)), get_u16(data, at + 2));
-    if len == 0 {
-        return None;
-    }
     let capacity = usize::from(get_u16(data, at + 4));
     let stride = usize::from(data[at + 6]);
-    let base = usize::from(get_u16(data, at + 8)) + head * stride;
+    let mut ring = ring_at(data, at);
+    let slot = ring.pop(capacity)?;
+    let base = usize::from(get_u16(data, at + 8)) + slot * stride;
     out[..stride].copy_from_slice(&data[base..base + stride]);
-    put_u16(data, at, wrap(head + 1, capacity) as u16);
-    put_u16(data, at + 2, len - 1);
+    store_ring(data, at, ring);
     Some(stride)
 }
