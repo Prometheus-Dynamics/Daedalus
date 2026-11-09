@@ -19,6 +19,8 @@ pub struct UnitInfo {
     pub writes: Vec<PortRef>,
     /// Indexes into `Region::incoming` of the transfers this unit does as part of its own work.
     pub absorbed: Vec<u32>,
+    /// Whether this unit can return `Pending`. A reader in another region then waits for it.
+    pub may_pend: bool,
 }
 
 #[derive(Debug)]

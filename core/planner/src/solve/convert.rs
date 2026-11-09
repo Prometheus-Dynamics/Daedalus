@@ -55,7 +55,7 @@ impl fmt::Display for ConvertError {
 
 impl std::error::Error for ConvertError {}
 
-pub(super) fn key_of(ty: &TypeRef) -> Option<TypeKey> {
+pub(crate) fn key_of(ty: &TypeRef) -> Option<TypeKey> {
     match ty {
         TypeRef::Key(key) | TypeRef::Expr(TypeExpr::Opaque(key)) => Some(key.clone()),
         TypeRef::Expr(TypeExpr::Scalar(scalar)) => Some(scalar.key()),

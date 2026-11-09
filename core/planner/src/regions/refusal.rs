@@ -7,6 +7,7 @@ use super::compile::{Compiling, check_contract, compile_region};
 use super::form::{form, rank};
 use super::{CompiledRegion, Formed, Input, RegionError, Regions, rules};
 use crate::assign::{self, Removed};
+use crate::stitch::transfers::route;
 
 fn discard(compiled: Compiled) {
     if let Compiled::Steps(steps) = compiled {
@@ -76,6 +77,7 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
                 });
             }
         }
+        let routing = route(graph, &formed, backends, registry).map_err(RegionError::Stitch)?;
         let cx = Compiling {
             graph,
             registry,
@@ -88,7 +90,7 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
         let mut failure = None;
         for (region, one) in formed.iter().enumerate() {
             let backend = backends[rank(one.backend)];
-            match compile_region(&cx, one, backend) {
+            match compile_region(&cx, one, backend, &routing.incoming_of(region)) {
                 Ok(compiled) => {
                     if let Err(error) = check_contract(one, region as u32, backend.id(), &compiled)
                     {
@@ -114,6 +116,7 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
                 regions,
                 rates,
                 rounds,
+                routing,
             });
         }
         discard_all(done);
