@@ -1,0 +1,25 @@
+[package]
+name = "daedalus-value"
+description = "A value's owner and memory space, the slots that hold values, and recycling."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+alloc = ["daedalus-abi/alloc", "daedalus-types/alloc"]
+std = ["alloc", "daedalus-abi/std"]
+
+[package.metadata.daedalus]
+heap_free = true
+
+[dependencies]
+daedalus-abi = { path = "../abi", default-features = false }
+daedalus-types = { path = "../types", default-features = false }
+
+[dev-dependencies]
+daedalus-abi = { path = "../abi", features = ["count-alloc"] }
+
+[lints]
+workspace = true

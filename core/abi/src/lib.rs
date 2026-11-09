@@ -12,6 +12,8 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "count-alloc")]
+pub mod counting;
 mod features;
 mod fence;
 mod guard;
