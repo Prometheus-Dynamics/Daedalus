@@ -41,4 +41,9 @@ pub enum RunError {
     NotRaw { slot: u32 },
     /// A typed payload was fed as a plain value. Its concrete type is needed: use `feed_typed`.
     Untyped { slot: u32 },
+    /// A step faulted under a policy that stops the run (`fail_fast`). The tick's other steps keep
+    /// their dirty bits, and the faulted step's tick was dropped.
+    Fault { step: u32 },
+    /// A host named a step the plan does not have.
+    NoStep { step: u32 },
 }

@@ -4,7 +4,9 @@
 
 use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd, StepWord};
 use daedalus_plan::Span;
-use daedalus_runner::{Memory, Pending, Plan, Queue, Runner, SlotSpec, StepMeta};
+use daedalus_runner::{
+    Memory, Pending, Plan, Queue, Recovery, Runner, SlotSpec, StepHealth, StepMeta,
+};
 
 /// Builds the flat table and the per-step records.
 #[derive(Default)]
@@ -32,6 +34,11 @@ impl Wiring {
         self.record(wake, inputs, outputs, true);
     }
 
+    /// Sets what a fault of `step` does.
+    pub fn set_recovery(&mut self, step: usize, recovery: Recovery) {
+        self.meta[step].recovery = recovery;
+    }
+
     fn record(&mut self, wake: &[u32], inputs: &[u32], outputs: &[u32], may_pend: bool) {
         let wake = self.span(wake);
         let inputs = self.span(inputs);
@@ -42,6 +49,7 @@ impl Wiring {
             outputs,
             always: false,
             may_pend,
+            recovery: Recovery::Fail,
         });
     }
 }
@@ -58,6 +66,7 @@ pub struct Fixture {
     pub carry: Vec<u32>,
     pub always: Vec<u32>,
     pub pending: Vec<Pending>,
+    pub health: Vec<StepHealth>,
     pub activity: Vec<u32>,
     pub inline: Vec<[u8; 16]>,
 }
@@ -75,6 +84,7 @@ impl Fixture {
             carry: vec![0; words],
             always: vec![0; words],
             pending: vec![Pending::EMPTY; may_pend],
+            health: vec![StepHealth::default(); steps.len()],
             activity: vec![0; words],
             inline: vec![[0; 16]; storage_len as usize],
             steps,
@@ -99,6 +109,7 @@ impl Fixture {
                 carry: &mut self.carry,
                 always: &mut self.always,
                 pending: &mut self.pending,
+                health: &mut self.health,
                 activity: &mut self.activity,
                 inline: &mut self.inline,
             },

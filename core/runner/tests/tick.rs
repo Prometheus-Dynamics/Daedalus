@@ -133,7 +133,7 @@ fn chain_of_sixteen_fed_once_calls_sixteen_steps_and_drains() {
 }
 
 #[test]
-fn fault_keeps_its_inputs_and_wakes_nothing() {
+fn fault_drops_its_tick_and_wakes_nothing() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let mut wiring = Wiring::default();
     wiring.step(&[1], &[0], &[1]);
@@ -153,14 +153,19 @@ fn fault_keeps_its_inputs_and_wakes_nothing() {
     runner.wake(0);
     let first = runner.tick().unwrap();
     assert_eq!(first.faults, 1);
-    assert_eq!(runner.queue(0).unwrap().len, 1, "input kept after a fault");
+    assert_eq!(
+        runner.queue(0).unwrap().len,
+        0,
+        "the faulted tick's input is consumed"
+    );
     assert!(
         seen.lock().unwrap().is_empty(),
         "the consumer was not woken"
     );
+    runner.push(0, tagged(6)).unwrap();
     runner.wake(0);
     runner.tick().unwrap();
-    assert_eq!(*seen.lock().unwrap(), vec![5]);
+    assert_eq!(*seen.lock().unwrap(), vec![6]);
     assert_eq!(runner.queue(0).unwrap().len, 0);
 }
 
