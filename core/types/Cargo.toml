@@ -1,0 +1,20 @@
+[package]
+name = "daedalus-types"
+description = "Type keys, type expressions, ids and errors."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["alloc"]
+alloc = []
+
+[package.metadata.daedalus]
+heap_free = true
+
+[dev-dependencies]
+trybuild.workspace = true
+
+[lints]
+workspace = true

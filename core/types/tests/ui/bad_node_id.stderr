@@ -1,0 +1,16 @@
+error[E0080]: evaluation panicked: invalid node id
+ --> tests/ui/bad_node_id.rs:3:19
+  |
+3 | const K: NodeId = NodeId::new("Bad.Name");
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `K` failed inside this call
+  |
+note: inside `NodeId::new`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/id.rs
+  |
+  |         assert!(valid_text(text), "invalid node id");
+  |         -------------------------------------------- in this macro invocation

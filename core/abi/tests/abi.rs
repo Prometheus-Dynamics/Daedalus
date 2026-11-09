@@ -1,15 +1,18 @@
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use daedalus_abi::*;
 
 struct Counting;
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
 
 // SAFETY: forwards every call to `System` unchanged and only adds a counter.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        let _ = ALLOCATIONS.try_with(|count| count.set(count.get() + 1));
         // SAFETY: the caller's contract is passed straight through.
         unsafe { System.alloc(layout) }
     }
@@ -102,10 +105,10 @@ fn write_out_is_all_or_nothing() {
 #[test]
 fn stepcx_fault_truncates_on_char_boundary() {
     let long = "é".repeat(100);
-    let before = ALLOCATIONS.load(Ordering::Relaxed);
+    let before = ALLOCATIONS.with(Cell::get);
     let mut cx = StepCx::new();
     cx.fault(Some(4), &long);
-    let after = ALLOCATIONS.load(Ordering::Relaxed);
+    let after = ALLOCATIONS.with(Cell::get);
     assert_eq!(cx.at, 4);
     assert_eq!(cx.reason().len(), 120);
     assert!(cx.reason().chars().all(|c| c == 'é'));
