@@ -14,9 +14,11 @@ mod held;
 mod inbound;
 #[cfg(all(feature = "std", target_os = "linux"))]
 pub mod inbound_fd;
+mod inspect;
 mod io;
 mod label;
 mod ports;
+mod serializers;
 #[cfg(feature = "std")]
 mod snapshot;
 mod state;
@@ -24,6 +26,7 @@ mod state;
 pub mod stream;
 mod take;
 mod telemetry;
+mod value;
 #[cfg(feature = "std")]
 mod wait;
 
@@ -33,12 +36,15 @@ pub use config_cache::ConfigCache;
 #[cfg(feature = "std")]
 pub use drive::StopHandle;
 pub use inbound::{Drops, PortPolicy};
+pub use inspect::{PayloadInspection, PayloadSummary};
 pub use io::{FeedOutcome, Host, HostError};
 pub use label::{LABEL_BYTES, Label};
 pub use ports::{Dir, PortSpec, Ports, PortsError};
+pub use serializers::{SerializerEntry, ValueDeserializer, ValueSerializer, ValueSerializers};
 pub use state::{Codec, StateCodec, StateStore};
 #[cfg(feature = "std")]
 pub use state::{SnapshotError, restore_json, snapshot_json};
 pub use telemetry::{Event, EventLog, ExecutionReport, Level, NodeRow, Telemetry};
+pub use value::HostValue;
 #[cfg(feature = "std")]
 pub use wait::{InboundSignal, InboundWait, InboundWaiter};
