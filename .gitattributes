@@ -1,0 +1,4 @@
+# Auto detect text files and perform LF normalization. Checkouts keep LF on every platform
+# (Windows included): checked-in generated files and the shared source copies are compared
+# byte for byte.
+* text=auto eol=lf
