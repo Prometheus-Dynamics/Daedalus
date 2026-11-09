@@ -1,5 +1,7 @@
 //! Named types. One key has one structure.
 
+#![cfg(feature = "std")]
+
 use std::collections::BTreeMap;
 
 use daedalus_types::{TypeExpr, TypeKey};

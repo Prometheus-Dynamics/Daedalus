@@ -16,6 +16,7 @@ const fn decl(
         id: "demo.blur",
         at: SourceAt(at),
         summary: "",
+        description: "",
         inputs,
         outputs,
         config: &[],

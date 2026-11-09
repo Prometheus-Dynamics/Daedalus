@@ -1,5 +1,7 @@
 //! What can go wrong joining records. Every error names the id and both places.
 
+#![cfg(feature = "std")]
+
 use std::fmt;
 
 use daedalus_types::TypeKey;

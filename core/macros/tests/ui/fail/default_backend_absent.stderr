@@ -1,0 +1,7 @@
+error[E0433]: cannot find `daedalus_cpu_author` in the list of imported crates
+ --> tests/ui/fail/default_backend_absent.rs:6:1
+  |
+6 | #[node(id = "ui.d")]
+  | ^^^^^^^^^^^^^^^^^^^^ could not find `daedalus_cpu_author` in the list of imported crates
+  |
+  = note: this error originates in the attribute macro `node` (in Nightly builds, run with -Z macro-backtrace for more info)

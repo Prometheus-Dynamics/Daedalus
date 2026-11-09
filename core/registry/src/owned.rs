@@ -2,6 +2,8 @@
 //! owned declaration is promoted once. A host registers each worker's nodes when the worker
 //! starts, so this grows with the number of node kinds and not with time.
 
+#![cfg(feature = "std")]
+
 use crate::{
     BodyRecord, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, RegError, Registry, SourceAt, TypeRef,
 };
@@ -52,6 +54,7 @@ impl Registry {
             id: leak(decl.id),
             at,
             summary: "",
+            description: "",
             inputs: ports(decl.inputs),
             outputs: ports(decl.outputs),
             config: &[],

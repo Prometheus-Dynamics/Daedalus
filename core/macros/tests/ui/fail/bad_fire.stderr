@@ -1,0 +1,5 @@
+error: fire must be "any" or "all"
+ --> tests/ui/fail/bad_fire.rs:6:28
+  |
+6 | #[node(id = "ui.d", fire = "sometimes", backend = fixture)]
+  |                            ^^^^^^^^^^^

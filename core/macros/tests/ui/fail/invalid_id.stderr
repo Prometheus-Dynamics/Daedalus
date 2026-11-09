@@ -1,0 +1,16 @@
+error[E0080]: evaluation panicked: invalid type key
+ --> tests/ui/fail/invalid_id.rs:6:1
+  |
+6 | #[node(id = "Not Valid", backend = fixture)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed inside this call
+  |
+note: inside `TypeKey::new`
+ --> $RUST/core/src/panic.rs
+  |
+  |         $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: $WORKSPACE/core/types/src/key.rs
+  |
+  |         assert!(valid_text(text), "invalid type key");
+  |         --------------------------------------------- in this macro invocation

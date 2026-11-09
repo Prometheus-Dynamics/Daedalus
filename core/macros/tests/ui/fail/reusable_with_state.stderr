@@ -1,0 +1,7 @@
+error: a reusable node must be pure: no state and no `&mut` inputs
+ --> tests/ui/fail/reusable_with_state.rs:9:1
+  |
+9 | #[node(id = "ui.d", reusable, state(S), backend = fixture)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `node` (in Nightly builds, run with -Z macro-backtrace for more info)

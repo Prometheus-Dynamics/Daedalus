@@ -1,0 +1,5 @@
+error[E0433]: cannot find module or crate `nowhere` in this scope
+ --> tests/ui/fail/missing_backend_path.rs:6:31
+  |
+6 | #[node(id = "ui.d", backend = nowhere::at_all)]
+  |                               ^^^^^^^ use of unresolved module or unlinked crate `nowhere`
