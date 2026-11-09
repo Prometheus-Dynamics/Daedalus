@@ -16,3 +16,7 @@ pub use daedalus_host::{
 /// Several graphs ticked on one thread.
 #[cfg(feature = "std")]
 pub use daedalus_host::domain;
+
+/// Fusing several timestamped inputs.
+#[cfg(feature = "std")]
+pub use daedalus_host::sync_group;

@@ -45,6 +45,8 @@ mod snapshot;
 mod state;
 #[cfg(feature = "std")]
 pub mod stream;
+#[cfg(feature = "std")]
+pub mod sync_group;
 mod take;
 mod telemetry;
 mod tick_overhead;
