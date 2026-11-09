@@ -73,6 +73,16 @@ pub fn json_schema() -> Value {
                 "ui_id": text,
                 "port_types": { "type": "object", "additionalProperties": text },
                 "host_inputs": { "type": "object", "additionalProperties": { "enum": ["consume", "held", "shared"] } },
+                "sync_groups": { "type": "array", "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name", "ports"],
+                    "properties": {
+                        "name": text,
+                        "policy": { "enum": ["all_ready", "latest", "zip_by_tag"] },
+                        "ports": { "type": "array", "items": text }
+                    }
+                } },
                 "inputs": { "type": "array", "items": text },
                 "outputs": { "type": "array", "items": text },
                 "metadata": lits,

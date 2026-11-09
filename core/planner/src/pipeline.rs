@@ -13,7 +13,9 @@ use crate::solve::defaults::{self, DefaultsError};
 use crate::solve::exclusive::{self, ExclusiveError};
 use crate::solve::expand::{self, ExpandError};
 use crate::solve::hydrate::{self, HydrateError};
+use crate::solve::order::{self, OrderError};
 use crate::solve::ports::{self, PortError};
+use crate::solve::rates::{self, RateError};
 use crate::solve::rewrite::{self, Rewrite, RewriteError};
 use crate::solve::typecheck::{self, TypeCheckError};
 use crate::solve::{Graph, Work};
@@ -39,6 +41,8 @@ pub enum SolveError {
     Convert(ConvertError),
     Exclusive(ExclusiveError),
     Rewrite(RewriteError),
+    Order(OrderError),
+    Rates(RateError),
 }
 
 impl fmt::Display for SolveError {
@@ -53,6 +57,8 @@ impl fmt::Display for SolveError {
             SolveError::Convert(error) => error.fmt(f),
             SolveError::Exclusive(error) => error.fmt(f),
             SolveError::Rewrite(error) => error.fmt(f),
+            SolveError::Order(error) => error.fmt(f),
+            SolveError::Rates(error) => error.fmt(f),
         }
     }
 }
@@ -81,6 +87,8 @@ pub fn solve(
     consts::run(&mut work);
     convert::run(&mut work);
     exclusive::run(&mut work);
+    order::run(&mut work);
+    rates::run(&mut work);
     if work.errors.is_empty() {
         Ok(work.graph)
     } else {

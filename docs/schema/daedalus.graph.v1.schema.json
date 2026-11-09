@@ -424,6 +424,35 @@
         "shareable": {
           "type": "boolean"
         },
+        "sync_groups": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "policy": {
+                "enum": [
+                  "all_ready",
+                  "latest",
+                  "zip_by_tag"
+                ]
+              },
+              "ports": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "name",
+              "ports"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
         "ui_id": {
           "type": "string"
         }
