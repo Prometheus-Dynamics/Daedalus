@@ -18,6 +18,8 @@
 mod conform;
 #[cfg(feature = "std")]
 mod dump;
+#[cfg(feature = "generator")]
+pub mod matrix;
 
 #[cfg(feature = "std")]
 pub use conform::{

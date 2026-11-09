@@ -21,6 +21,11 @@ default = []
 # Runtime backend detection, `conform` (records evidence) and `dump`.
 std = []
 # The `accel-matrix` generator and gate.
-generator = ["std"]
+generator = ["std", "dep:serde_json"]
 
 [dependencies]
+serde_json = { workspace = true, optional = true, features = ["std"] }
+
+[[bin]]
+name = "accel-matrix"
+required-features = ["generator"]
