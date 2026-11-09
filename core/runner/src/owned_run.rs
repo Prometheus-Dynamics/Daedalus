@@ -13,6 +13,7 @@ use daedalus_abi::{Slot, Step};
 use crate::bits::words_for;
 use crate::cancel::CancelWord;
 use crate::error::LoadError;
+use crate::fault_log::StepFault;
 use crate::owned::InlineCell;
 use crate::reuse::{InputVersion, ReuseEntry, ReuseMemory};
 use crate::step::{Queue, SlotSpec, StepMeta};
@@ -80,6 +81,7 @@ pub struct RunBuffers {
     _reuse_inline: Raw<InlineCell>,
     _reuse_inputs: Raw<InputVersion>,
     cancel: Raw<CancelWord>,
+    _faults: Raw<StepFault>,
 }
 
 impl RunBuffers {
@@ -130,6 +132,7 @@ pub fn build(
         _reuse_inline: Raw::new(vec![[0; crate::owned::INLINE_BYTES]; stored]),
         _reuse_inputs: Raw::new(vec![InputVersion::default(); nslots]),
         cancel: Raw::new(vec![CancelWord::new()]),
+        _faults: Raw::new(vec![StepFault::EMPTY; count]),
     };
     // SAFETY: each buffer is borrowed exactly once here, and `RunBuffers` keeps them alive until
     // the runner is gone, as the function's documentation requires of the caller.
@@ -172,5 +175,7 @@ pub fn build(
     }
     let word: &'static CancelWord = &buffers.cancel.shared()[0];
     runner.set_cancel(word);
+    // SAFETY: as above; this table is borrowed only here.
+    runner.set_fault_log(unsafe { buffers._faults.borrow() })?;
     Ok((runner, buffers))
 }

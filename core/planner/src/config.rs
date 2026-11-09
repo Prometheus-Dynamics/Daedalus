@@ -19,6 +19,8 @@ pub struct Config {
     /// Search steps allowed per coupled component.
     pub assignment_budget: u64,
     pub form: Form,
+    /// Let backends merge nodes. Off for finding which node in a merged region fails.
+    pub merge: bool,
 }
 
 impl Default for Config {
@@ -30,6 +32,7 @@ impl Default for Config {
             rewrites: Vec::new(),
             assignment_budget: ASSIGN_BUDGET,
             form: Form::default(),
+            merge: true,
         }
     }
 }

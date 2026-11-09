@@ -273,9 +273,13 @@ impl Canon {
             rewrites,
             assignment_budget,
             form,
+            merge,
         } = config;
         self.flag(*strict_ports);
         self.word(*assignment_budget);
+        if !merge {
+            self.byte(0xff);
+        }
         self.byte(match form {
             Form::Steps => 0,
             Form::Blob => 1,

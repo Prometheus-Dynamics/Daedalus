@@ -1,11 +1,12 @@
 //! One step's run, written once for the serial tick and the parallel lanes. Each supplies an
 //! [`Env`], so both run the same logic and cannot drift apart.
 
-use daedalus_abi::{NO_SLOT, Progress, Slot, SlotState, Slots, StepCx, StepEnd};
+use daedalus_abi::{NO_NODE, NO_SLOT, Progress, Slot, SlotState, Slots, StepCx, StepEnd};
 use daedalus_value::Decision;
 
 use crate::error::RunError;
 use crate::failure::{FailurePolicy, StepHealth};
+use crate::fault_log::FaultLog;
 use crate::fence::insert_pending;
 use crate::join::join_ready;
 use crate::owned::{self, InlineCell};
@@ -152,6 +153,8 @@ pub(crate) trait Env<'t> {
     /// The reuse table, if the plan has one.
     fn reuse(&mut self) -> Option<ReuseParts>;
     fn failure(&self) -> FailurePolicy;
+    /// Where a failure goes, and the tick it happened in.
+    fn fault_log(&self) -> (FaultLog, u32);
     /// What an output written to `slot` is stamped with, if the plan says.
     fn stamp(&self, slot: usize) -> Option<SlotStamp>;
     fn counters(&mut self) -> &mut Counters;
@@ -208,6 +211,9 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         let (cells, cx) = env.parts();
         cx.flags = flags;
         cx.progress = progress;
+        // A body that fails without saying why mustn't inherit the last one's reason.
+        cx.reason_len = 0;
+        cx.at = NO_NODE;
         let mut slots = Slots::of(&mut cells[..port_count(meta)]);
         report.step_calls += 1;
         // SAFETY: `run` and `data` come from one `Step`, so the body was built to take that data.
@@ -279,6 +285,9 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
             let now = env.parts().1.now_ns;
             let policy = env.failure();
             env.health(index).on_failure(policy, now, meta.recovery);
+            let (log, tick) = env.fault_log();
+            let health = *env.health(index);
+            log.record(index, tick, env.parts().1, &health);
             if meta.recovery != Recovery::SkipTick && policy.fail_fast() {
                 return Err(RunError::Fault { step: index as u32 });
             }
@@ -412,6 +421,10 @@ impl<'a> Env<'a> for Runner<'a> {
     #[inline]
     fn health(&mut self, index: usize) -> &mut StepHealth {
         &mut self.health[index]
+    }
+    #[inline]
+    fn fault_log(&self) -> (FaultLog, u32) {
+        (self.fault_log, self.tick)
     }
     #[inline]
     fn progress(&self, index: usize) -> *const Progress {

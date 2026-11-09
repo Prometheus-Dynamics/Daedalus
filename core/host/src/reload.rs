@@ -55,8 +55,10 @@ impl LoadedHost {
                 offered,
             });
         }
-        let (host, nodes, bridges) =
-            build_host(&mut planned, self.options).map_err(ReloadError::Load)?;
+        let parts = build_host(&mut planned, self.options).map_err(ReloadError::Load)?;
+        self.collect_faults();
+        let nodes = parts.nodes;
+        let host = parts.host;
         let mut report = ReloadReport::default();
         let before: HashMap<&str, &str> = self
             .nodes
@@ -92,7 +94,11 @@ impl LoadedHost {
         }
         self.host = host;
         self.nodes = nodes;
-        self.bridges = bridges;
+        self.bridges = parts.bridges;
+        self.fault_seen.clear();
+        self.fault_seen.resize(parts.covers.len(), 0);
+        self.covers = parts.covers;
+        self.node_names = parts.node_names;
         Ok(report)
     }
 }

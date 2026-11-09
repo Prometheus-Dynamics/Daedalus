@@ -23,6 +23,7 @@ mod exec;
 mod failure;
 #[cfg(feature = "alloc")]
 mod fanin;
+mod fault_log;
 mod fence;
 mod join;
 #[cfg(feature = "threads")]
@@ -52,6 +53,7 @@ pub use error::{LoadError, MaskError, RunError};
 pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
 #[cfg(feature = "alloc")]
 pub use fanin::fanin_order;
+pub use fault_log::StepFault;
 pub use join::Fire;
 #[cfg(feature = "threads")]
 pub use lanes::{LaneError, Lanes, Pool};
@@ -153,6 +155,7 @@ pub struct Runner<'a> {
     tick: u32,
     /// One `(done, total)` pair per step, once a host attaches them.
     progress: &'a [Progress],
+    fault_log: fault_log::FaultLog,
     /// The reuse table, for a plan with a reusable step.
     reuse: Option<reuse::Table<'a>>,
     /// Timing, when a host attached a probe.
@@ -280,6 +283,7 @@ impl<'a> Runner<'a> {
             cx: StepCx::new(),
             tick: 0,
             progress: &[],
+            fault_log: fault_log::FaultLog::NONE,
             reuse: None,
             probe: None,
         })

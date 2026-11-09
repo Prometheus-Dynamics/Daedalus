@@ -13,6 +13,8 @@ mod config_cache;
 mod diagnostics;
 #[cfg(feature = "std")]
 mod drive;
+#[cfg(feature = "std")]
+mod fault;
 mod freshness;
 mod held;
 mod inbound;
@@ -39,6 +41,8 @@ pub mod stream;
 mod take;
 mod telemetry;
 mod tick_overhead;
+#[cfg(feature = "std")]
+mod unmerged;
 mod value;
 #[cfg(feature = "std")]
 mod wait;
@@ -50,6 +54,8 @@ pub use config_cache::ConfigCache;
 pub use diagnostics::{PlanReport, StepReport, render_error};
 #[cfg(feature = "std")]
 pub use drive::StopHandle;
+#[cfg(feature = "std")]
+pub use fault::FaultReport;
 pub use inbound::{Drops, PortPolicy};
 pub use inspect::{PayloadInspection, PayloadSummary};
 pub use io::{FeedOutcome, Host, HostError};
@@ -67,6 +73,8 @@ pub use state::{Codec, StateCodec, StateStore};
 pub use state::{SnapshotError, restore_json, snapshot_json};
 pub use telemetry::{Event, EventLog, ExecutionReport, Level, NodeRow, Telemetry};
 pub use tick_overhead::{TickOverheadReport, TickOverheadWindow};
+#[cfg(feature = "std")]
+pub use unmerged::UnmergedError;
 pub use value::HostValue;
 #[cfg(feature = "std")]
 pub use wait::{InboundSignal, InboundWait, InboundWaiter};
