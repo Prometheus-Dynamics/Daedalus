@@ -2,5 +2,7 @@
 
 mod emit;
 mod graph_struct;
+#[cfg(feature = "tunable")]
+mod tunable;
 
 pub use emit::SourceBackend;

@@ -27,6 +27,8 @@ pub struct Config {
     /// The capacity of a FIFO edge that declares none, in the forms that lay out their own queues.
     /// A loader of the steps form has its own setting.
     pub fifo_capacity: u32,
+    /// Treat every constant as fixed, even one the graph marks as changeable.
+    pub freeze_params: bool,
 }
 
 impl Default for Config {
@@ -40,6 +42,7 @@ impl Default for Config {
             form: Form::default(),
             merge: true,
             fifo_capacity: DEFAULT_FIFO_CAPACITY,
+            freeze_params: false,
         }
     }
 }

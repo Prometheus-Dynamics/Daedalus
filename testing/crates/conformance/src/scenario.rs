@@ -95,6 +95,8 @@ impl Scenario {
                 id: "test",
                 merges: true,
                 fire_all: false,
+                label: None,
+                metadata: &daedalus_backend::NO_METADATA,
                 code: self.code,
                 text: self.text,
             })
@@ -109,6 +111,7 @@ impl Scenario {
             host_outputs: &[],
             fifo_capacity: 4,
             merge_allowed: true,
+            freeze_params: false,
         };
         body(&region, &cx)
     }

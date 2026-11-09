@@ -359,6 +359,7 @@ pub fn stitched(
         types: &types,
         budget: ASSIGN_BUDGET,
         merge_allowed: true,
+        freeze_params: false,
         fifo_capacity: 4,
     })?;
     let stitched = stitch(&regions, &types);

@@ -2,12 +2,24 @@
 
 mod clock;
 mod errors;
+#[cfg(feature = "chip-params")]
+mod param;
+#[cfg(feature = "chip-params")]
+mod scalar;
+#[cfg(feature = "chip-params")]
+pub mod wire;
 
 use daedalus_abi::{FixedError, StepCx};
 
+#[cfg(feature = "chip-params")]
+pub use crate::scalar_kind::ScalarKind;
 pub use clock::Clock;
 pub use daedalus_runner::{FixedQueue as Queue, Overflow, QueueFull};
 pub use errors::ChipError;
+#[cfg(feature = "chip-params")]
+pub use param::{ParamError, ParamSpec, ParamUpdate, Tunable, checked};
+#[cfg(feature = "chip-params")]
+pub use scalar::{Scalar, ScalarType};
 
 /// Pushes to edge `edge`.
 #[inline]

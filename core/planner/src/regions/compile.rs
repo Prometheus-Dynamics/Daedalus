@@ -22,6 +22,7 @@ pub(super) struct Compiling<'a> {
     pub types: &'a TypeTable,
     pub assignment: &'a Assignment,
     pub merge_allowed: bool,
+    pub freeze_params: bool,
     pub fifo_capacity: u32,
 }
 
@@ -57,6 +58,8 @@ pub(super) fn compile_region(
                 outputs: solved.outputs.len() as u16,
                 merges: !opted_out(&solved.doc),
                 fire_all: matches!(solved.fire, daedalus_registry::Fire::All),
+                label: solved.doc.label.as_deref(),
+                metadata: &solved.doc.metadata,
                 code: record.code,
                 text: record.text,
             });
@@ -85,6 +88,7 @@ pub(super) fn compile_region(
             host_outputs: &host_outputs,
             fifo_capacity: cx.fifo_capacity,
             merge_allowed: cx.merge_allowed,
+            freeze_params: cx.freeze_params,
         },
     )
 }

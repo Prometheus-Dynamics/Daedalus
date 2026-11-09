@@ -21,14 +21,14 @@ alloc = [
 # A region's nodes as direct calls (D2).
 merge = []
 # Blob form and its small runner (D3).
-blob = []
+blob = ["chip-params"]
 receive = ["blob"]
 # Generated Rust for a solved region (D4).
-source = ["std", "merge", "blob", "chip"]
-tunable = []
+source = ["std", "merge", "blob", "tunable"]
+tunable = ["chip-params"]
 # Bare-metal chips (D5).
 chip = []
-chip-params = []
+chip-params = ["chip"]
 f64 = []
 defmt = ["dep:defmt"]
 

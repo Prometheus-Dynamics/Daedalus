@@ -231,6 +231,7 @@ fn transfer_steps(
         host_outputs: &[],
         fifo_capacity: 0,
         merge_allowed: false,
+        freeze_params: false,
     };
     let mut steps: Vec<Option<Step>> = Vec::with_capacity(stitched.transfers.len());
     for used in &stitched.transfers {
@@ -283,6 +284,7 @@ pub fn plan(
         types: &types,
         budget: config.assignment_budget,
         merge_allowed: config.merge,
+        freeze_params: config.freeze_params,
         fifo_capacity: config.fifo_capacity,
     })
     .map_err(PlanError::Regions)?;

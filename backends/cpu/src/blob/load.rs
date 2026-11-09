@@ -6,8 +6,9 @@ use daedalus_plan::{MAGIC, PlanView, StepKind, StepRecord, VERSION, crc32};
 use daedalus_registry::{Fire, NodeDecl};
 use daedalus_runner::{ArenaBody, StepArena, steps_end};
 
-use super::library::{Library, ScalarKind, name_hash, type_hash};
+use super::library::{Library, name_hash, type_hash};
 use super::{CONST_BIT, EDGE_MASK, MAX_NODES, MAX_PORTS, Overflow, PORT_SHIFT};
+use crate::scalar_kind::ScalarKind;
 
 /// Why a plan wasn't loaded. The running plan, if there is one, stays.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +63,8 @@ pub(super) const EDGE_LEN: usize = 10;
 pub(super) const STEP_LEN: usize = 6;
 pub(super) const LINK_LEN: usize = 2;
 pub(super) const CONST_LEN: usize = 9;
+/// A parameter in the arena: its kind, its constant's index, and its lowest and highest bits.
+pub(super) const PARAM_LEN: usize = 19;
 pub(super) const HOST_LEN: usize = 12;
 
 /// A read with nothing wired.
@@ -82,6 +85,8 @@ pub(super) struct Layout {
     pub links_at: u16,
     pub edges_at: u16,
     pub consts_at: u16,
+    pub params: u16,
+    pub params_at: u16,
     pub inputs: u16,
     pub inputs_at: u16,
     pub outputs: u16,
@@ -449,6 +454,7 @@ pub(super) fn check(library: &Library, blob: &[u8]) -> Result<Layout, LoadError>
     let steps_at = table(steps * STEP_LEN);
     let links_at = table(links * LINK_LEN);
     let consts_at = table(stored.consts * CONST_LEN);
+    let params_at = table(stored.params * PARAM_LEN);
     let values = table(rings);
     let size = start + values + rings;
     if size > usize::from(u16::MAX) {
@@ -464,6 +470,8 @@ pub(super) fn check(library: &Library, blob: &[u8]) -> Result<Layout, LoadError>
         links_at: links_at as u16,
         edges_at: edges_at as u16,
         consts_at: consts_at as u16,
+        params: stored.params as u16,
+        params_at: params_at as u16,
         inputs: stored.inputs as u16,
         inputs_at: inputs_at as u16,
         outputs: stored.outputs as u16,
@@ -506,7 +514,7 @@ pub(super) fn lay_out<const N: usize>(
             .map_err(|_| needed)?;
     }
     let data = arena.data();
-    let mut value = usize::from(layout.consts_at) + stored.consts * CONST_LEN;
+    let mut value = usize::from(layout.params_at) + stored.params * PARAM_LEN;
     for edge in 0..stored.edges {
         let (capacity, overflow, size) = stored.edge(edge)?;
         let at = usize::from(layout.edges_at) + edge * EDGE_LEN;
@@ -522,6 +530,16 @@ pub(super) fn lay_out<const N: usize>(
         let at = usize::from(layout.consts_at) + index * CONST_LEN;
         data[at] = kind.size() as u8;
         data[at + 1..at + 9].copy_from_slice(&bits.to_le_bytes());
+    }
+    for param in 0..stored.params {
+        let word = stored.params_at + param * 5;
+        let index = stored.word(word)? as usize;
+        let (kind, _) = stored.constant(index)?;
+        let at = usize::from(layout.params_at) + param * PARAM_LEN;
+        data[at] = kind as u8;
+        put_u16(data, at + 1, index as u16);
+        data[at + 3..at + 11].copy_from_slice(&stored.pair(word + 1)?.to_le_bytes());
+        data[at + 11..at + 19].copy_from_slice(&stored.pair(word + 3)?.to_le_bytes());
     }
     let mut link = usize::from(layout.links_at);
     for (index, step) in stored.view.steps().enumerate() {

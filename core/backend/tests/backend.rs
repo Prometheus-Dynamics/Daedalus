@@ -74,6 +74,7 @@ fn cx<'a>() -> CompileCx<'a> {
         host_outputs: &[],
         fifo_capacity: 4,
         merge_allowed: true,
+        freeze_params: false,
     }
 }
 

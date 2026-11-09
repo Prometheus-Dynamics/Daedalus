@@ -17,10 +17,12 @@ use daedalus_registry::{NodeDecl, TypeRef};
 use daedalus_runner::ArenaBody;
 use daedalus_types::NodeIndex;
 
-use super::library::{Library, ScalarKind, name_hash, type_hash};
+use super::library::{Library, name_hash, type_hash};
 use super::{CONST_BIT, Overflow, PORT_SHIFT};
-use crate::backend::{BACKEND_ID, CpuBackend};
+use crate::backend::{BACKEND_ID, CpuBackend, body_of};
+use crate::param_mark::{checked_spec, marks};
 use crate::queue_shape::queue_shape;
+use crate::scalar_kind::ScalarKind;
 
 /// Where an input gets its value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -405,6 +407,8 @@ fn step_of(
     cx: &CompileCx<'_>,
 ) -> Result<StepDesc, Refusal> {
     let refuse = |why: String| Refusal::new(vec![member.node], &why);
+    let marked = marks(body_of(member.node, cx)?, cx)?;
+    let params_before = plan.params.len();
     let mut inputs = Vec::with_capacity(usize::from(member.inputs));
     for port in 0..member.inputs {
         let at = PortRef {
@@ -436,10 +440,25 @@ fn step_of(
                     ))
                 })?;
                 plan.consts.push(ConstDesc { kind, bits });
-                Source::Const(plan.consts.len() as u32 - 1)
+                let index = plan.consts.len() as u32 - 1;
+                if let Some(mark) = marked.iter().find(|mark| mark.port == one.port) {
+                    let body = body_of(member.node, cx)?;
+                    let spec = checked_spec(body, mark, kind, one.value)?;
+                    plan.params.push(ParamDesc {
+                        value: index,
+                        min: spec.min.bits(),
+                        max: spec.max.bits(),
+                    });
+                }
+                Source::Const(index)
             }
             (None, None) => Source::Absent,
         });
+    }
+    if plan.params.len() - params_before != marked.len() {
+        return Err(refuse(String::from(
+            "every marked parameter must be an input with a scalar constant",
+        )));
     }
     let mut outputs = Vec::new();
     for port in 0..member.decl.outputs.len() {

@@ -275,6 +275,7 @@ impl Canon {
             form,
             merge,
             fifo_capacity,
+            freeze_params,
         } = config;
         self.flag(*strict_ports);
         self.word(*assignment_budget);
@@ -283,6 +284,9 @@ impl Canon {
         }
         if !merge {
             self.byte(0xff);
+        }
+        if *freeze_params {
+            self.byte(0xfe);
         }
         self.byte(match form {
             Form::Steps => 0,
