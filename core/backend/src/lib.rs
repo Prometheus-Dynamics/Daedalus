@@ -19,6 +19,12 @@ pub use region::{CompileCx, ConstOf, Incoming, NodeBody, PortRef, RateId, Region
 pub trait Backend: Send + Sync {
     fn id(&self) -> &str;
 
+    /// Changes whenever what this backend takes or compiles may change, on this machine. A cached
+    /// plan is only reused under the same version.
+    fn version(&self) -> u64 {
+        0
+    }
+
     /// The memory this backend has. The first entry is where its outputs live.
     fn memory(&self) -> Vec<MemorySpace>;
 

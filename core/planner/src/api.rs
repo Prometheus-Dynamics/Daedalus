@@ -126,7 +126,10 @@ impl Drop for Planned {
     }
 }
 
-fn by_priority<'a>(backends: &[&'a dyn Backend], priority: &[String]) -> Vec<&'a dyn Backend> {
+pub(crate) fn by_priority<'a>(
+    backends: &[&'a dyn Backend],
+    priority: &[String],
+) -> Vec<&'a dyn Backend> {
     let rank = |backend: &&dyn Backend| {
         priority
             .iter()

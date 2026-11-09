@@ -5,9 +5,11 @@
 
 pub mod api;
 pub mod assign;
+pub mod cache;
 pub mod config;
 pub mod edit;
 pub mod form;
+pub mod hash;
 pub mod pipeline;
 pub mod regions;
 pub mod share;
