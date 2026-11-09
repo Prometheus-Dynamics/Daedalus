@@ -27,7 +27,7 @@ jobs:
       - run: rustup target add aarch64-unknown-linux-gnu armv7-unknown-linux-musleabihf riscv64gc-unknown-linux-gnu riscv64gc-unknown-linux-musl
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.14.1
+          version: 0.15.2
       - run: sudo apt-get update && sudo apt-get install -y qemu-user libc6-riscv64-cross
       - run: ./scripts/cross.sh
 
