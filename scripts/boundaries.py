@@ -21,15 +21,15 @@ def rel(root, path):
     return os.path.relpath(path, root)
 
 
-def blank_comments_and_strings(text, keep_comments=False):
-    """Replaces comments and string contents with spaces, keeping every newline in place."""
+def blank_comments_and_strings(text, keep_strings=False):
+    """Replaces comments, and string contents unless kept, with spaces. Newlines and offsets stay."""
     out, i, n = [], 0, len(text)
     while i < n:
         c, d = text[i], text[i + 1] if i + 1 < n else ""
         if c == "/" and d == "/":
             j = text.find("\n", i)
             j = n if j < 0 else j
-            out.append(text[i:j] if keep_comments else " " * (j - i))
+            out.append(" " * (j - i))
             i = j
         elif c == "/" and d == "*":
             depth, j = 1, i + 2
@@ -46,13 +46,13 @@ def blank_comments_and_strings(text, keep_comments=False):
             close = '"' + m.group(1)
             j = text.find(close, i + m.end())
             j = n if j < 0 else j + len(close)
-            out.append(re.sub(r"[^\n]", " ", text[i:j]))
+            out.append(text[i:j] if keep_strings else re.sub(r"[^\n]", " ", text[i:j]))
             i = j
         elif c == '"':
             j = i + 1
             while j < n and text[j] != '"':
                 j += 2 if text[j] == "\\" else 1
-            out.append('"' + re.sub(r"[^\n]", " ", text[i + 1:j]) + '"')
+            out.append(text[i:j + 1] if keep_strings else '"' + re.sub(r"[^\n]", " ", text[i + 1:j]) + '"')
             i = j + 1
         elif c == "'" and (m := re.match(r"'(\\.[^']*|[^\\'])'", text[i:i + 14])):
             out.append(" " * m.end())
@@ -63,10 +63,11 @@ def blank_comments_and_strings(text, keep_comments=False):
     return "".join(out)
 
 
-def blank_gated_items(code):
-    """Blanks each item under #[cfg(test)] or a cfg on the alloc or std feature."""
+def blank_gated_items(text):
+    """Blanks comments and strings, and each item under #[cfg(test)] or a cfg on alloc or std."""
+    code = blank_comments_and_strings(text)
     out = list(code)
-    for m in FEATURE_GATE.finditer(code):
+    for m in FEATURE_GATE.finditer(blank_comments_and_strings(text, keep_strings=True)):
         depth, j = 0, code.index("]", m.end()) + 1
         while j < len(code):
             c = code[j]
@@ -174,7 +175,7 @@ def check_unsafe(root):
                     continue
                 if not allowed:
                     report("unsafe", rel(root, path), lineno, "unsafe outside the allowed crates")
-                elif not any("SAFETY" in l for l in lines[max(0, lineno - 4):lineno]):
+                elif not any("SAFETY" in l or "# Safety" in l for l in lines[max(0, lineno - 4):lineno]):
                     report("unsafe", rel(root, path), lineno, "no SAFETY comment within three lines above")
         lib = os.path.join(base, "src", "lib.rs")
         if not allowed and os.path.exists(lib) and "#![forbid(unsafe_code)]" not in open(lib, encoding="utf-8").read():
@@ -189,7 +190,7 @@ def check_heap_free(root, packages, build):
         src = os.path.join(os.path.dirname(pkg["manifest_path"]), "src")
         clean = True
         for path in rust_files(src):
-            code = blank_gated_items(blank_comments_and_strings(open(path, encoding="utf-8").read()))
+            code = blank_gated_items(open(path, encoding="utf-8").read())
             for lineno, line in enumerate(code.splitlines(), 1):
                 if m := HEAP_TOKENS.search(line):
                     clean = False

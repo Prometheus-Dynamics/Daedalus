@@ -1,0 +1,61 @@
+//! The numbered value cells a step reads and writes. `daedalus-value` gives the fields meaning.
+
+/// What a slot holds right now.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotState {
+    Empty = 0,
+    Full = 1,
+    Moved = 2,
+}
+
+/// One value cell. `space`, `type_index` and `owner` are indexes the planner assigned. `version`
+/// goes up on each write, so a step can tell whether an input changed.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Slot {
+    pub state: u32,
+    pub space: u32,
+    pub type_index: u32,
+    pub owner: u32,
+    pub version: u32,
+    pub reserved: u32,
+    pub data: *mut u8,
+    pub len: usize,
+    pub cap: usize,
+}
+
+impl Slot {
+    pub const EMPTY: Slot = Slot {
+        state: SlotState::Empty as u32,
+        space: 0,
+        type_index: 0,
+        owner: 0,
+        version: 0,
+        reserved: 0,
+        data: core::ptr::null_mut(),
+        len: 0,
+        cap: 0,
+    };
+}
+
+/// The cells of a running graph.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Slots {
+    pub cells: *mut Slot,
+    pub len: u32,
+    pub reserved: u32,
+}
+
+impl Slots {
+    /// A view of `cells`. The borrow ends when this function returns: keeping the `Slots` longer
+    /// is fine, and using it needs `unsafe` at the point that dereferences it.
+    pub fn of(cells: &mut [Slot]) -> Slots {
+        Slots {
+            cells: cells.as_mut_ptr(),
+            len: cells.len() as u32,
+            reserved: 0,
+        }
+    }
+}
