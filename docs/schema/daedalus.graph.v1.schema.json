@@ -1,0 +1,491 @@
+{
+  "$defs": {
+    "edge": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/port_ref"
+        },
+        "policy": {
+          "$ref": "#/$defs/edge_policy"
+        },
+        "to": {
+          "$ref": "#/$defs/port_ref"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "edge_policy": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "fifo"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "latest_only"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "capacity": {
+              "type": "integer"
+            },
+            "kind": {
+              "const": "bounded"
+            },
+            "overflow": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "capacity",
+            "overflow"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "graph": {
+      "additionalProperties": false,
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/edge"
+          },
+          "type": "array"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/group"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/node"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodes"
+      ],
+      "type": "object"
+    },
+    "group": {
+      "additionalProperties": false,
+      "properties": {
+        "connects": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/stage_port"
+              },
+              {
+                "$ref": "#/$defs/stage_port"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "consts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "$ref": "#/$defs/stage_port"
+              },
+              "value": {
+                "$ref": "#/$defs/lit"
+              }
+            },
+            "required": [
+              "at",
+              "value"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/stage_port"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "outputs": {
+          "additionalProperties": {
+            "$ref": "#/$defs/stage_port"
+          },
+          "type": "object"
+        },
+        "stages": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "stages"
+      ],
+      "type": "object"
+    },
+    "lit": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "unit"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "bool"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "int"
+            },
+            "value": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "float"
+            },
+            "value": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "str"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "bytes"
+            },
+            "value": {
+              "pattern": "^([0-9a-fA-F]{2})*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "list"
+            },
+            "value": {
+              "items": {
+                "$ref": "#/$defs/lit"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "struct"
+            },
+            "value": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/lit"
+                  }
+                },
+                "required": [
+                  "name",
+                  "value"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "enum"
+            },
+            "value": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "payload": {
+                  "$ref": "#/$defs/lit"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "node": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string"
+        },
+        "consts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/lit"
+          },
+          "type": "object"
+        },
+        "fire": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "node",
+            "group",
+            "host_bridge",
+            "control"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/lit"
+          },
+          "type": "object"
+        },
+        "port_types": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "rate": {
+          "additionalProperties": false,
+          "properties": {
+            "den": {
+              "type": "integer"
+            },
+            "num": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "num",
+            "den"
+          ],
+          "type": "object"
+        },
+        "reusable": {
+          "type": "boolean"
+        },
+        "shareable": {
+          "type": "boolean"
+        },
+        "ui_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "port_ref": {
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "type": "integer"
+        },
+        "port": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "port"
+      ],
+      "type": "object"
+    },
+    "requirement": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "stage_port": {
+      "additionalProperties": false,
+      "properties": {
+        "port": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "port"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "daedalus.graph"
+    },
+    "graph": {
+      "$ref": "#/$defs/graph"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "requires": {
+      "items": {
+        "$ref": "#/$defs/requirement"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "format",
+    "schema_version",
+    "graph"
+  ],
+  "title": "Daedalus graph document v1",
+  "type": "object"
+}

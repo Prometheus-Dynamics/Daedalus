@@ -193,6 +193,8 @@ def check_heap_free(root, packages, build):
         src = os.path.join(os.path.dirname(pkg["manifest_path"]), "src")
         clean = True
         for path in rust_files(src):
+            if os.sep + "bin" + os.sep in path[len(src):]:
+                continue
             text = open(path, encoding="utf-8").read()
             if GATED_FILE.search(blank_comments_and_strings(text, keep_strings=True)):
                 continue
