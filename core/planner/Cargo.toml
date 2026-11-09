@@ -14,6 +14,7 @@ daedalus-plan = { path = "../plan" }
 daedalus-registry = { path = "../registry" }
 daedalus-types = { path = "../types" }
 daedalus-value = { path = "../value" }
+serde = { workspace = true }
 
 [lints]
 workspace = true

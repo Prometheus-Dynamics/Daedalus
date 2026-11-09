@@ -6,6 +6,7 @@
 pub mod api;
 pub mod assign;
 pub mod config;
+pub mod edit;
 pub mod form;
 pub mod pipeline;
 pub mod regions;
