@@ -10,8 +10,10 @@ pub mod exclusive;
 pub mod expand;
 pub mod host_inputs;
 pub mod hydrate;
+pub mod order;
 pub mod port_types;
 pub mod ports;
+pub mod rates;
 pub mod rewrite;
 mod suggest;
 pub mod typecheck;
@@ -25,6 +27,7 @@ use daedalus_value::Access;
 
 use crate::pipeline::{Config, SolveError};
 use catalog::Catalog;
+pub use rates::Rate;
 
 /// A port of a solved node.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,6 +56,8 @@ pub struct Node {
     pub outputs: Vec<Port>,
     /// The value of each port that has one, from the graph or its declared default.
     pub consts: BTreeMap<String, Lit>,
+    pub rate_in: Rate,
+    pub rate_out: Rate,
 }
 
 impl Node {
@@ -67,6 +72,8 @@ impl Node {
             inputs: Vec::new(),
             outputs: Vec::new(),
             consts: BTreeMap::new(),
+            rate_in: Rate::ONE,
+            rate_out: Rate::ONE,
         }
     }
 }
@@ -78,6 +85,10 @@ pub struct Graph {
     pub edges: Vec<EdgeDoc>,
     /// The rewrites that ran, in order.
     pub applied: Vec<rewrite::Applied>,
+    /// Every node, producers before consumers.
+    pub order: Vec<u32>,
+    /// The rate each edge carries, in edge order.
+    pub edge_rates: Vec<Rate>,
 }
 
 impl Work<'_> {

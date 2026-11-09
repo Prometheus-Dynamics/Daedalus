@@ -155,6 +155,9 @@ pub struct NodeDoc {
     /// How a host bridge's inputs behave, by port. A port not named here is consumed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub host_inputs: BTreeMap<String, HostInputPolicy>,
+    /// Input ports that must arrive together, and how.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sync_groups: Vec<SyncGroupDoc>,
     /// The input ports a stored graph lists. Empty means none are listed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<String>,
@@ -181,11 +184,32 @@ impl NodeDoc {
             ui_id: None,
             port_types: BTreeMap::new(),
             host_inputs: BTreeMap::new(),
+            sync_groups: Vec::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
             metadata: BTreeMap::new(),
         }
     }
+}
+
+/// How the runner lines up a sync group's inputs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncPolicy {
+    #[default]
+    AllReady,
+    Latest,
+    ZipByTag,
+}
+
+/// Input ports that must arrive together.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncGroupDoc {
+    pub name: String,
+    #[serde(default)]
+    pub policy: SyncPolicy,
+    pub ports: Vec<String>,
 }
 
 /// What the host's value does once a node has read it.
