@@ -5,7 +5,7 @@
 use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd, StepWord};
 use daedalus_plan::Span;
 use daedalus_runner::{
-    Memory, Pending, Plan, Queue, Recovery, Runner, SlotSpec, StepHealth, StepMeta,
+    Fire, Memory, Pending, Plan, Queue, Recovery, Runner, SlotSpec, StepHealth, StepMeta,
 };
 
 /// Builds the flat table and the per-step records.
@@ -34,6 +34,12 @@ impl Wiring {
         self.record(wake, inputs, outputs, true);
     }
 
+    /// Sets how `step` fires, and the input slots it cannot run without.
+    pub fn set_join(&mut self, step: usize, fire: Fire, required: &[u32]) {
+        self.meta[step].required = self.span(required);
+        self.meta[step].fire = fire;
+    }
+
     /// Sets what a fault of `step` does.
     pub fn set_recovery(&mut self, step: usize, recovery: Recovery) {
         self.meta[step].recovery = recovery;
@@ -43,6 +49,7 @@ impl Wiring {
         let wake = self.span(wake);
         let inputs = self.span(inputs);
         let outputs = self.span(outputs);
+        let required = self.span(&[]);
         self.meta.push(StepMeta {
             wake,
             inputs,
@@ -50,6 +57,8 @@ impl Wiring {
             always: false,
             may_pend,
             recovery: Recovery::Fail,
+            fire: Fire::Any,
+            required,
         });
     }
 }

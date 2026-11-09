@@ -6,6 +6,7 @@ use daedalus_abi::{Progress, Slot, SlotState, Slots, StepCx, StepEnd};
 use crate::error::RunError;
 use crate::failure::{FailurePolicy, StepHealth};
 use crate::fence::insert_pending;
+use crate::join::join_ready;
 use crate::owned::{self, InlineCell};
 use crate::policy::Recovery;
 use crate::step::{Queue, SlotKind, StepMeta};
@@ -60,7 +61,7 @@ impl SlotParts {
     ///
     /// # Safety
     /// The caller has exclusive access to this queue's storage range.
-    unsafe fn drop_all(self, queue: &mut Queue) {
+    pub(crate) unsafe fn drop_all(self, queue: &mut Queue) {
         while queue.len > 0 {
             // SAFETY: the queue owns its head entry, and the pop below forgets it, so the
             // reference is released exactly once.
@@ -74,7 +75,7 @@ impl SlotParts {
     ///
     /// # Safety
     /// The caller has exclusive access to this queue's storage range.
-    unsafe fn commit(self, queue: &mut Queue, moved: bool) {
+    pub(crate) unsafe fn commit(self, queue: &mut Queue, moved: bool) {
         if queue.kind == Some(SlotKind::Fifo) && queue.len > 0 && !moved {
             // SAFETY: the queue owns its head entry and forgets it on the commit below.
             unsafe { owned::release(&*self.storage.add(queue.head_index())) };
@@ -130,6 +131,9 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
             return Ok(());
         }
         env.health(index).backing_off = false;
+    }
+    if meta.required.len != 0 && !join_ready(env, meta) {
+        return Ok(());
     }
     let (run, data) = env.step_fn(index);
     let mut attempt = 0;

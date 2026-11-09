@@ -37,6 +37,10 @@ pub struct StepMeta {
     pub may_pend: bool,
     /// What a fault of this step does to its tick.
     pub recovery: crate::policy::Recovery,
+    /// How a missing required input is handled.
+    pub fire: crate::join::Fire,
+    /// Slot indexes the step cannot run without. Empty means the join check is skipped.
+    pub required: Span,
 }
 
 /// One slot's queue: a ring over its part of the shared queue storage.
