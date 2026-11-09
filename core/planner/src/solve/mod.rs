@@ -32,6 +32,15 @@ use catalog::Catalog;
 pub use rates::Rate;
 
 /// A port of a solved node.
+/// Why a solved node exists, when no graph asked for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Inserted {
+    No,
+    Conversion,
+    /// A copy, so an exclusive reader doesn't take a value others also read.
+    Copy,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Port {
     pub name: String,
@@ -54,6 +63,8 @@ pub struct Node {
     pub required: Vec<String>,
     pub reusable: bool,
     pub shareable: bool,
+    /// Whether the planner put this node here itself.
+    pub inserted: Inserted,
     pub inputs: Vec<Port>,
     pub outputs: Vec<Port>,
     /// The value of each port that has one, from the graph or its declared default.
@@ -71,6 +82,7 @@ impl Node {
             required: Vec::new(),
             reusable: false,
             shareable: false,
+            inserted: Inserted::No,
             inputs: Vec::new(),
             outputs: Vec::new(),
             consts: BTreeMap::new(),
@@ -100,6 +112,7 @@ impl Work<'_> {
         let mut node = Node::new(NodeDoc::new(id), None);
         defaults::apply_declared(&mut node, entry.decl);
         ports::fill_node(&mut node, entry, false, &mut Vec::new());
+        node.inserted = Inserted::Conversion;
         self.graph.nodes.push(node);
         Some(self.graph.nodes.len() as u32 - 1)
     }

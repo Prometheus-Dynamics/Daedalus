@@ -124,6 +124,13 @@ impl Decl {
         self
     }
 
+    pub fn conditional_output(mut self, name: &str, ty: TypeRef) -> Decl {
+        let mut port = PortDecl::new(leak_str(name), ty);
+        port.conditional = true;
+        self.outputs.push(port);
+        self
+    }
+
     pub fn fire(mut self, fire: Fire) -> Decl {
         self.fire = fire;
         self

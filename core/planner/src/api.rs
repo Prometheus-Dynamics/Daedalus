@@ -10,7 +10,9 @@ use daedalus_plan::encode;
 use daedalus_registry::Registry;
 
 use crate::config::Config;
+use crate::diagnostic::Diagnostic;
 use crate::form::Form;
+use crate::lint::lint;
 use crate::pipeline::{SolveError, solve};
 use crate::regions::{self, RegionError, Regions};
 use crate::solve::Graph;
@@ -69,7 +71,9 @@ pub struct Planned {
     pub form: Form,
     /// One per `stitched.transfers`. `None` where the loader binds it, or outside the steps form.
     pub transfer_steps: Vec<Option<Step>>,
-    backend_ids: Vec<String>,
+    /// What the lints found. Empty unless the config turned them on.
+    pub warnings: Vec<Diagnostic>,
+    pub(crate) backend_ids: Vec<String>,
 }
 
 impl Planned {
@@ -214,6 +218,11 @@ pub fn plan(
     config: &Config,
 ) -> Result<Planned, PlanError> {
     let solved = solve(graph, registry, config).map_err(PlanError::Solve)?;
+    let warnings = if config.lints {
+        lint(&solved, registry)
+    } else {
+        Vec::new()
+    };
     let types = table_of(&solved);
     let backends = by_priority(backends, &config.priority);
     let regions = regions::build(&regions::Input {
@@ -233,6 +242,7 @@ pub fn plan(
         stitched,
         form: config.form,
         transfer_steps: Vec::new(),
+        warnings,
         backend_ids: backends.iter().map(|b| b.id().to_string()).collect(),
     };
     check_form(&planned.regions, &backends, config.form)?;

@@ -97,6 +97,7 @@ pub fn run(work: &mut Work<'_>) {
             out.push(edge.clone());
             continue;
         };
+        work.graph.nodes[index as usize].inserted = super::Inserted::Copy;
         let node = &work.graph.nodes[index as usize];
         let (input, output) = (node.inputs[0].name.clone(), node.outputs[0].name.clone());
         out.push(EdgeDoc {
