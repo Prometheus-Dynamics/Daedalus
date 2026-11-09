@@ -37,7 +37,7 @@ reference, and nothing here changes it. The work is a pre-planned list of PRs in
 ## Rules
 
 - Daedalus connects and structures. Nothing in `core/` may know what a GPU, shader, NPU, frame, image
-  or chip is. Those belong to backends and interface libraries.
+  or chip is. Those belong to backends and to whoever wrote the nodes.
 - Planning allocates. Running doesn't: steady-state running in Daedalus's own code allocates nothing.
 - Failure rule everywhere: never give up, backoff capped at 8 s, no automatic turning-off by default.
   Manual off exists, and automatic off is only a policy someone opts into.

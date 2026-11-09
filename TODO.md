@@ -20,6 +20,7 @@ The core with nothing running yet. A3 to A9 are the shared interfaces everyone b
 - [ ] [A12](docs/prs/A12.md) Backend conformance suite in testing/crates (wave 6; needs A11)
 - [ ] [A13](docs/prs/A13.md) Derive macros: NodeConfig and Type (new in this group) (wave 7; needs A4, A8, A9)
 - [ ] [A14](docs/prs/A14.md) Foreign values: owner and layout hash (wave 4; needs A5)
+- [ ] [A15](docs/prs/A15.md) #[transfer]: a memory handler in one function (wave 7; needs A7, A9)
 
 ## B. Planner
 
@@ -61,13 +62,13 @@ Walk the step list with no heap, and the Host around it: feed, step, take, reloa
 - [ ] [C14](docs/prs/C14.md) The daedalus facade crate (wave 15; needs A9, C10)
 - [ ] [C15](docs/prs/C15.md) Edge queues: pressure and freshness policies (wave 7; needs A5, C3)
 - [ ] [C16](docs/prs/C16.md) Blocking backpressure and strategy overrides (wave 8; needs C15)
-- [ ] [C17](docs/prs/C17.md) Sync groups for multi-camera feeds (wave 8; needs C3, C4)
+- [ ] [C17](docs/prs/C17.md) Sync groups for multi-input feeds (wave 8; needs C3, C4)
 - [ ] [C18](docs/prs/C18.md) Activity masks for skipping steps (wave 6; needs C1)
 - [ ] [C20](docs/prs/C20.md) Host waits, inbound readiness and drive loops (wave 7; needs C3)
 - [ ] [C21](docs/prs/C21.md) Execution domain: linked graphs ticked together (wave 15; needs C3, C10)
 - [ ] [C22](docs/prs/C22.md) Payload inspection and value serializers (wave 7; needs A4, C3)
 - [ ] [C23](docs/prs/C23.md) Host introspection, const patches and node control (wave 15; needs C9, C10)
-- [ ] [C24](docs/prs/C24.md) Frame-path overhead probe, diagnostics JSON and allocation probe (wave 7; needs C3, C11; board run)
+- [ ] [C24](docs/prs/C24.md) tick-path overhead probe, diagnostics JSON and allocation probe (wave 7; needs C3, C11; board run)
 
 ## D. CPU backend and chips
 
@@ -80,7 +81,7 @@ The first backend, merging, the Blob and Source forms, chips, the kernels, wasm 
 - [ ] [D5](docs/prs/D5.md) Chip runtime: generated firmware API, no heap, five-node budget (wave 16; needs D4)
 - [ ] [D6](docs/prs/D6.md) Scalars, parameters and wire encoding on a chip (wave 17; needs D5)
 - [ ] [D7](docs/prs/D7.md) Chip blink example: compiled, tunable, loaded and fan-in (wave 18; needs D3, D5, D6)
-- [ ] [D8](docs/prs/D8.md) Kernels library: pixel, float, copy and codec kernels (wave 2; needs A1)
+- [ ] [D8](docs/prs/D8.md) Kernels library: float, copy and codec kernels (wave 2; needs A1)
 - [ ] [D9](docs/prs/D9.md) WebAssembly: embedded preset smoke modules and Node runs (wave 15; needs C10, D1)
 - [ ] [D10](docs/prs/D10.md) No-heap tier, cross-target CPU runs and Windows (wave 15; needs C1, C10, D1)
 - [ ] [D11](docs/prs/D11.md) Acceleration inventory engine (wave 2; needs A1)
@@ -92,7 +93,7 @@ The first backend, merging, the Blob and Source forms, chips, the kernels, wasm 
 
 ## E. GPU backend
 
-wgpu as a backend: whole-shader nodes, shared submits, merged per-pixel functions, dma-buf import.
+wgpu as a backend: whole-shader nodes, shared submits, merged per-pixel functions, importing external memory, and a dma-buf memory backend.
 
 - [ ] [E1](docs/prs/E1.md) wgpu context: instance, device, adapter choice, opens on request (wave 5; needs A7; board run)
 - [ ] [E2](docs/prs/E2.md) Buffers, textures, memory spaces, pools (wave 6; needs E1; board run)
@@ -102,25 +103,15 @@ wgpu as a backend: whole-shader nodes, shared submits, merged per-pixel function
 - [ ] [E6](docs/prs/E6.md) Per-pixel functions merged into one shader (wave 13; needs E5, E7; board run)
 - [ ] [E7](docs/prs/E7.md) Your own recording code (wave 8; needs E4, E13; board run)
 - [ ] [E8](docs/prs/E8.md) Fences, bounded waits, uncaptured errors (wave 8; needs C2, E4; board run)
-- [ ] [E9](docs/prs/E9.md) dma-buf import, with no Lemnos dependency (wave 7; needs E2, F1; board run)
+- [ ] [E9](docs/prs/E9.md) dma-sys: dma-buf kernel calls in one place (wave 7; needs E2; board run)
 - [ ] [E10](docs/prs/E10.md) Multi-device and foreign-memory handoff (wave 16; needs E3)
 - [ ] [E11](docs/prs/E11.md) Device loss and the failure rule (wave 9; needs C5, E8; board run)
 - [ ] [E12](docs/prs/E12.md) GPU conformance on lavapipe and the GPU budgets (wave 14; needs E6; board run)
 - [ ] [E13](docs/prs/E13.md) Raw Vulkan boundary: backends/vk-sys (wave 6; needs E1; board run)
-- [ ] [E14](docs/prs/E14.md) dma-buf image import into sampled wgpu textures (wave 8; needs E9, E13; board run)
-- [ ] [E15](docs/prs/E15.md) Frames into storage and sampled textures (wave 9; needs E14, F2; board run)
+- [ ] [E14](docs/prs/E14.md) GPU import: external memory as a sampled texture (wave 8; needs A15, E9, E13; board run)
+- [ ] [E15](docs/prs/E15.md) images into storage and sampled textures (wave 9; needs E14; board run)
 - [ ] [E16](docs/prs/E16.md) GPU kernel ops on device-resident data (wave 8; needs D8, E4; board run)
-
-## F. Frame interface
-
-What a frame is, as a library the core never imports.
-
-- [ ] [F1](docs/prs/F1.md) daedalus-frame: vocabulary, layout, type key (wave 4; needs A5)
-- [ ] [F2](docs/prs/F2.md) SharedFrame: owned frames, identity, weak handles (wave 5; needs F1)
-- [ ] [F3](docs/prs/F3.md) Frame sources: memfd, dma-heap (wave 8; needs E9, F2; board run)
-- [ ] [F4](docs/prs/F4.md) Colorimetry and metadata keys (wave 5; needs F1)
-- [ ] [F5](docs/prs/F5.md) Frames across a plugin boundary (wave 8; needs A14, F2, G2)
-- [ ] [F6](docs/prs/F6.md) Pixel conversions, as transfers or conversion nodes (wave 5; needs D8, F1)
+- [ ] [E17](docs/prs/E17.md) dmabuf memory backend: a memory space, a pool, no nodes (wave 8; needs A7, E9; board run)
 
 ## G. Plugins and languages
 
@@ -156,9 +147,9 @@ A third-party backend that proves the interface, the budget harness, examples, d
 
 - [ ] [I1](docs/prs/I1.md) A third-party NPU backend shipped as a plugin (wave 8; needs A12, G2)
 - [ ] [I2](docs/prs/I2.md) Budget harness: instruction counts, allocations, sections (wave 17; needs C1, D5; board run)
-- [ ] [I3](docs/prs/I3.md) Frame-path overhead benchmark (wave 18; needs F2, I2; board run)
+- [ ] [I3](docs/prs/I3.md) Large-value handoff benchmark (wave 18; needs A14, I2; board run)
 - [ ] [I4](docs/prs/I4.md) CPU and host examples (wave 16; needs C11, C14, D1)
 - [ ] [I5](docs/prs/I5.md) Documentation and the doc gate (wave 16; needs C14)
 - [ ] [I6](docs/prs/I6.md) Capability audit against dev (wave 1; needs nothing)
-- [ ] [I7](docs/prs/I7.md) Finish: package surface, semver, lockfile, ready for other repositories (wave 20; needs A2, A13, B3, B5, B10, B11, B12, B14, B15, C6, C7, C8, C12, C13, C16, C17, C18, C20, C21, C22, C23, C24, D2, D9, D10, D12, D13, D15, E10, E11, E12, E15, E16, F3, F4, F5, F6, G3, G5, G6, G7, G8, G9, G11, G12, H5, H6, I1, I3, I5, I8)
+- [ ] [I7](docs/prs/I7.md) Finish: package surface, semver, lockfile, ready for other repositories (wave 20; needs A2, A13, B3, B5, B10, B11, B12, B14, B15, C6, C7, C8, C12, C13, C16, C17, C18, C20, C21, C22, C23, C24, D2, D9, D10, D12, D13, D15, E10, E11, E12, E15, E16, E17, G3, G5, G6, G7, G8, G9, G11, G12, H5, H6, I1, I3, I5, I8)
 - [ ] [I8](docs/prs/I8.md) GPU examples on lavapipe (wave 17; needs E3, E6, I4)
