@@ -385,3 +385,33 @@ owned declarations that a worker sends when it starts.
 
 **Service.** Listeners are a unix socket, loopback TCP and stdio. Nothing listens on the network.
 Runs outlive their connection. A value whose type has no wire codec is refused.
+
+**The foundation as built (A2 to A15).** The code is the reference for these, and later briefs
+build on them.
+
+- A body macro is `<path>::__daedalus_body!(kind = fn | const | transfer, name = (<expression>),
+  args = (<the backend's own tokens>), params = (<name: Type,>...), ret = <type>, decl = <ident>)`
+  and expands to a const-evaluable `BodyRecord`. `name` is in parentheses so that a generic instance
+  can be `name::<u32>`. The core macro adds `state` and `memory` itself with `BodyRecord::with_node`.
+  An authoring crate implements all three kinds; `testing/crates/author-fixture` is the example.
+- `PortDecl` and `TypeRecord` hold `TypeKey`s, which have drop glue, so a slice of them is written
+  `const X: &[PortDecl] = &[...]` or inline in a struct literal. Passing `&CONST` to a function
+  doesn't promote. `#[transfer]` emits a `static` for the same reason.
+- There is no `ConversionRecord`. A conversion is a marked one-in, one-out node, and
+  `Registry::conversions()` gives B4 the table. Memory handlers are in `Registry::transfers()` and
+  `Registry::transfer(key, from, to)`.
+- Config types have `FIELDS`, `RULES`, `CHECKERS` and `from_literals`. `ConfigDecl.rules` is what B3
+  enforces. A checker is `fn(&Self) -> Result<(), &'static str>`.
+- A default key is `rust:<module path>::<name>`, with the name lowercased. Using a type with a
+  default key from another crate is a compile error: such a type needs `#[type_key(..)]`.
+- Generated code names `::daedalus_registry`, so an author's crate depends on it. C14 makes that
+  work through the facade.
+- A registry's `std` feature holds everything that allocates. The records build without it.
+- `daedalus_abi::testing` (feature `test-run`) runs a step from test code that may not write
+  `unsafe`. Only tests turn it on.
+- The conformance suite takes a `Scenario` through `run_all_with` or `conformance!(make, scenario)`,
+  for a backend whose bodies need a real payload. It installs the counting allocator, so it links
+  only into test binaries.
+- The sim's `SimConfig` has the knobs planner tests need: `refuse`, `merge`, `form`, `faults`,
+  `absorb`, `no_transfers`, `drop_output`, `omit_covers`. A sim body's `text` is its node's id.
+  `SimMemory` is the memory-only backend, and it has the absorbable `sim.import`.
