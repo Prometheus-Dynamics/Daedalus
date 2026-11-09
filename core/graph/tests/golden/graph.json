@@ -1,0 +1,113 @@
+{
+  "format": "daedalus.graph",
+  "schema_version": 1,
+  "requires": [
+    {
+      "id": "demo.math",
+      "version": ">=1.2.0"
+    }
+  ],
+  "metadata": {
+    "title": "Example"
+  },
+  "graph": {
+    "nodes": [
+      {
+        "id": "demo.source",
+        "label": "Source",
+        "rate": {
+          "num": 2,
+          "den": 1
+        }
+      },
+      {
+        "id": "demo.gain",
+        "kind": "control",
+        "backend": "cpu",
+        "consts": {
+          "blob": {
+            "type": "bytes",
+            "value": "00ff10"
+          },
+          "gain": {
+            "type": "float",
+            "value": 2.5
+          },
+          "mode": {
+            "type": "enum",
+            "value": {
+              "name": "fast",
+              "payload": {
+                "type": "int",
+                "value": 3
+              }
+            }
+          },
+          "none": {
+            "type": "unit"
+          }
+        },
+        "shareable": true,
+        "port_types": {
+          "in": "acme.buffer"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "node": 0,
+          "port": "out"
+        },
+        "to": {
+          "node": 1,
+          "port": "in"
+        },
+        "policy": {
+          "kind": "bounded",
+          "capacity": 4,
+          "overflow": "drop_oldest"
+        }
+      }
+    ],
+    "groups": [
+      {
+        "id": "demo.pair",
+        "stages": {
+          "a": "demo.source",
+          "b": "demo.gain"
+        },
+        "connects": [
+          [
+            {
+              "stage": "a",
+              "port": "out"
+            },
+            {
+              "stage": "b",
+              "port": "in"
+            }
+          ]
+        ],
+        "outputs": {
+          "out": {
+            "stage": "b",
+            "port": "out"
+          }
+        },
+        "consts": [
+          {
+            "at": {
+              "stage": "b",
+              "port": "gain"
+            },
+            "value": {
+              "type": "float",
+              "value": 1.5
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

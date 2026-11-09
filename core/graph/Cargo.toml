@@ -1,0 +1,29 @@
+[package]
+name = "daedalus-graph"
+description = "The graph model: a constant form with no heap, and the JSON document form."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["alloc", "schema"]
+alloc = ["dep:serde", "dep:serde_json", "dep:serde_path_to_error", "daedalus-types/alloc"]
+schema = ["alloc"]
+
+[package.metadata.daedalus]
+heap_free = true
+
+[[bin]]
+name = "graph_schema"
+path = "src/bin/graph_schema.rs"
+required-features = ["schema"]
+
+[dependencies]
+daedalus-types = { path = "../types", default-features = false }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+serde_path_to_error = { workspace = true, optional = true }
+
+[lints]
+workspace = true
