@@ -70,6 +70,9 @@ fn cx<'a>() -> CompileCx<'a> {
         spaces: &[],
         bodies: &[],
         edges: &[],
+        host_inputs: &[],
+        host_outputs: &[],
+        fifo_capacity: 4,
         merge_allowed: true,
     }
 }

@@ -30,6 +30,7 @@ fn compile(
             body: BodyIndex(0),
             inputs: 0,
             outputs: 0,
+            id: "test",
             merges: true,
             code: &(),
             text,
@@ -49,6 +50,9 @@ fn compile(
         spaces: &[],
         bodies: &bodies,
         edges: &[],
+        host_inputs: &[],
+        host_outputs: &[],
+        fifo_capacity: 4,
         merge_allowed: true,
     };
     backend.compile(&region, &cx)
@@ -111,6 +115,9 @@ fn merging_is_off_when_the_planner_says_so() {
         spaces: &[],
         bodies: &[],
         edges: &[],
+        host_inputs: &[],
+        host_outputs: &[],
+        fifo_capacity: 4,
         merge_allowed: false,
     };
     assert_eq!(units(backend.compile(&region, &cx).unwrap()).len(), 2);
@@ -257,6 +264,9 @@ fn an_import_is_absorbed_by_the_step_that_reads_it() {
         spaces: &[],
         bodies: &[],
         edges: &[],
+        host_inputs: &[],
+        host_outputs: &[],
+        fifo_capacity: 4,
         merge_allowed: true,
     };
     let done = units(SimBackend::default().compile(&region, &cx).unwrap());

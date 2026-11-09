@@ -53,7 +53,7 @@ fn hash_golden() {
     };
     let planned = plan(&graph, &registry(), &[&backend], &config).unwrap();
     let hash = plan_hash(&planned, &config, &[&backend]).unwrap();
-    assert_eq!(hash, 3668697832233095048u64);
+    assert_eq!(hash, 1731357541655064528u64);
     assert_eq!(
         key(&graph, &[&backend], &config).graph_hash(),
         9274988837969866115u64

@@ -4,11 +4,11 @@ use alloc::sync::Arc;
 use core::ops::Deref;
 
 use daedalus_abi::{Slot, SlotState};
-use daedalus_runner::{Held, InlineCell, UNSTAMPED, put_typed, take_typed, typed_view};
+use daedalus_runner::{InlineCell, UNSTAMPED, put_typed, take_typed, typed_view};
 
 use daedalus_value::OwnerKind;
 
-use super::Kind;
+use super::{ConstTable, Kind};
 
 const INLINE: u32 = OwnerKind::Inline as u32;
 
@@ -17,21 +17,17 @@ fn is_full(slot: &Slot) -> bool {
     slot.state == SlotState::Full as u32
 }
 
-fn constant(consts: &[Option<Held>], at: usize) -> Option<&Slot> {
-    consts.get(at)?.as_ref().map(Held::slot)
-}
-
 /// Whether input `at` has a value, from its edge or a constant.
 #[inline]
-pub fn present(cell: &Slot, consts: &[Option<Held>], at: usize) -> bool {
-    is_full(cell) || constant(consts, at).is_some()
+pub fn present<C: ConstTable>(cell: &Slot, consts: &C, at: usize) -> bool {
+    is_full(cell) || consts.slot(at).is_some()
 }
 
 /// Borrows input `at`. A small value is copied to `hold`, since its bytes may not be aligned.
 #[inline]
-pub fn read<'a, T: 'static>(
+pub fn read<'a, T: 'static, C: ConstTable>(
     cell: &'a Slot,
-    consts: &'a [Option<Held>],
+    consts: &'a C,
     at: usize,
     kind: Kind<T>,
     hold: &'a mut Option<T>,
@@ -39,7 +35,7 @@ pub fn read<'a, T: 'static>(
     let slot = if is_full(cell) {
         cell
     } else {
-        constant(consts, at)?
+        consts.slot(at)?
     };
     if slot.owner == INLINE {
         *hold = (kind.read?)(slot);
@@ -50,14 +46,14 @@ pub fn read<'a, T: 'static>(
 
 /// Takes input `at` by value. A constant is copied, since it stays for the next tick.
 #[inline]
-pub fn take<T: 'static>(
+pub fn take<T: 'static, C: ConstTable>(
     cell: &mut Slot,
-    consts: &[Option<Held>],
+    consts: &C,
     at: usize,
     kind: Kind<T>,
 ) -> Option<T> {
     if !is_full(cell) {
-        let slot = constant(consts, at)?;
+        let slot = consts.slot(at)?;
         if slot.owner == INLINE {
             return (kind.read?)(slot);
         }

@@ -470,7 +470,8 @@ documents the patch and refresh JSON.
   Replanning a graph with string constants keeps that memory.
 - A slot number is reused only when no region is in the steps form. In the steps form a slot is a
   queue that persists across ticks, so a value that waited would collide with the next writer. D3
-  must decide this for blobs from how its runner treats a slot.
+  must decide this for blobs from how its runner treats a slot. D3's blob keeps its own queue per
+  edge, so a plan's slot numbers don't reach the small runner and reuse doesn't touch it.
 - A region lists its nodes producers first, and that's the order its steps run in.
 - A CPU node joins the node before it only when that node is its only wired input, through an edge
   with one reader and no `Bounded` policy, and neither end sets `daedalus.node.fusion` to false, so

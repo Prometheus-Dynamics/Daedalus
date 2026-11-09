@@ -56,6 +56,7 @@ pub struct Input<'a> {
     pub types: &'a TypeTable,
     pub budget: u64,
     pub merge_allowed: bool,
+    pub fifo_capacity: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

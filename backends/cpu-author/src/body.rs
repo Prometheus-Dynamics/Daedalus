@@ -33,17 +33,19 @@ macro_rules! __daedalus_body {
             "a CPU node takes at most one FanIn"
         );
 
-        struct __Run {
+        struct __Run<__K> {
             node: u32,
             inputs: usize,
             state: $crate::__or_unit!($($state)?),
             config: $crate::__or_unit!($($config)?),
-            consts: $crate::__cpu::Consts,
+            consts: __K,
             outs: [[u8; 16]; __OUTPUTS],
         }
 
         #[allow(unused_mut, unused_variables, clippy::all)]
-        impl $crate::__cpu::OwnedStep for __Run {
+        impl<__K: $crate::__cpu::ConstTable + ::core::marker::Send + 'static> $crate::__cpu::OwnedStep
+            for __Run<__K>
+        {
             #[inline]
             fn run(
                 &mut self,
@@ -93,9 +95,118 @@ macro_rules! __daedalus_body {
             state: ::core::option::Option::None,
             ports: &[],
             memory: &[],
-            code: &$crate::__cpu::CpuBody { make: __make },
+            code: &$crate::__cpu::CpuBody {
+                make: __make,
+                arena: $crate::__arena!(
+                    config = ($($config)?),
+                    fixed = $fixed,
+                    params = ($($role $at: $ty,)*),
+                    outputs = ($($oat: $oty,)*)
+                ),
+            },
             text: "",
         }
+    }};
+}
+
+/// The body as a step that can live in a fixed block of memory, if it can: `__Run` from the calling
+/// expansion, with its constants left to the runner.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __arena {
+    (config = ($config:ty), $($rest:tt)*) => {
+        ::core::option::Option::None
+    };
+    (
+        config = (),
+        fixed = $fixed:literal,
+        params = ($($role:ident $at:literal: $ty:ty,)*),
+        outputs = ($($oat:literal: $oty:ty,)*)
+    ) => {{
+        impl $crate::__cpu::Fresh for __Run<$crate::__cpu::NoConsts> {
+            fn fresh(node: u32, inputs: u32) -> Self {
+                __Run {
+                    node,
+                    inputs: inputs as usize,
+                    state: ::core::default::Default::default(),
+                    config: (),
+                    consts: $crate::__cpu::NoConsts,
+                    outs: [[0; 16]; __OUTPUTS],
+                }
+            }
+        }
+
+        const __INPUTS: [u16; $fixed] = {
+            let mut __sizes = [0; $fixed];
+            $($crate::__port_size!($role $at: $ty; __sizes);)*
+            __sizes
+        };
+        const __SIZES: [u16; __OUTPUTS] = {
+            let mut __sizes = [0; __OUTPUTS];
+            $(__sizes[$oat] = ::core::mem::size_of::<$oty>() as u16;)*
+            __sizes
+        };
+        const __FAN: ::core::option::Option<u16> = {
+            #[allow(unused_mut)]
+            let mut __fan = ::core::option::Option::None;
+            $($crate::__fan_size!($role: $ty; __fan);)*
+            __fan
+        };
+        const __FITS: bool = !::core::mem::needs_drop::<__Run<$crate::__cpu::NoConsts>>()
+            $(&& $crate::__port_fits!($role: $ty))*
+            $(&& { const __KIND: $crate::__cpu::Kind<$oty> = $crate::__kind!($oty); __KIND.write.is_some() })*;
+        const __BODY: ::core::option::Option<$crate::__cpu::ArenaBody> = if __FITS {
+            ::core::option::Option::Some($crate::__cpu::ArenaBody::of::<__Run<$crate::__cpu::NoConsts>>(
+                &__INPUTS, __FAN, &__SIZES,
+            ))
+        } else {
+            ::core::option::Option::None
+        };
+        __BODY
+    }};
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __port_size {
+    (state $($rest:tt)*) => {};
+    (config_ref $($rest:tt)*) => {};
+    (config_val $($rest:tt)*) => {};
+    (ctx $($rest:tt)*) => {};
+    (fanin $($rest:tt)*) => {};
+    ($role:ident $at:literal: $ty:ty; $sizes:ident) => {
+        $sizes[$at] = ::core::mem::size_of::<$ty>() as u16;
+    };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __fan_size {
+    (fanin: $ty:ty; $fan:ident) => {
+        $fan = ::core::option::Option::Some(::core::mem::size_of::<$ty>() as u16);
+    };
+    ($other:ident: $ty:ty; $fan:ident) => {};
+}
+
+/// Whether a parameter's value can be held in a cell's own buffer.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __port_fits {
+    (state: $ty:ty) => {
+        true
+    };
+    (config_ref: $ty:ty) => {
+        true
+    };
+    (config_val: $ty:ty) => {
+        true
+    };
+    (ctx: $ty:ty) => {
+        true
+    };
+    ($role:ident: $ty:ty) => {{
+        const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
+        __KIND.write.is_some()
     }};
 }
 

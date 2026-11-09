@@ -17,6 +17,8 @@ pub struct PlanData {
     pub spaces: Vec<u32>,
     pub types: Vec<u32>,
     pub bodies: Vec<u32>,
+    /// Words a form keeps for itself.
+    pub extra: Vec<u32>,
 }
 
 fn too_big(section: &'static str) -> PlanError {
@@ -55,12 +57,13 @@ pub fn encode(plan: &PlanData, out: &mut Vec<u8>) -> Result<(), PlanError> {
     plan.steps
         .iter()
         .for_each(|step| push_step(&mut body, step));
-    let words: [(&[u32], &'static str); 5] = [
+    let words: [(&[u32], &'static str); 6] = [
         (&plan.nodes, "nodes"),
         (&plan.slots, "slots"),
         (&plan.spaces, "spaces"),
         (&plan.types, "types"),
         (&plan.bodies, "bodies"),
+        (&plan.extra, "extra"),
     ];
     for (index, (section, name)) in words.into_iter().enumerate() {
         table[index + 1] = (offset(&body, name)?, count(section.len(), name)?);

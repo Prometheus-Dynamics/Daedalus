@@ -6,6 +6,9 @@ use crate::assign::ASSIGN_BUDGET;
 use crate::form::Form;
 use crate::solve::rewrite::Rewrite;
 
+/// The FIFO capacity of [`Config`] unless it says otherwise.
+pub const DEFAULT_FIFO_CAPACITY: u32 = 4;
+
 #[derive(Clone)]
 pub struct Config {
     /// Backend ids, highest priority first. Backends not named follow in the order given.
@@ -21,6 +24,9 @@ pub struct Config {
     pub form: Form,
     /// Let backends merge nodes. Off for finding which node in a merged region fails.
     pub merge: bool,
+    /// The capacity of a FIFO edge that declares none, in the forms that lay out their own queues.
+    /// A loader of the steps form has its own setting.
+    pub fifo_capacity: u32,
 }
 
 impl Default for Config {
@@ -33,6 +39,7 @@ impl Default for Config {
             assignment_budget: ASSIGN_BUDGET,
             form: Form::default(),
             merge: true,
+            fifo_capacity: DEFAULT_FIFO_CAPACITY,
         }
     }
 }

@@ -33,6 +33,7 @@ fn run(
         types: &types,
         budget: ASSIGN_BUDGET,
         merge_allowed: true,
+        fifo_capacity: 4,
     })
 }
 

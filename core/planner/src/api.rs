@@ -6,7 +6,7 @@ use std::path::Path;
 use daedalus_abi::Step;
 use daedalus_backend::{Backend, CompileCx, Compiled};
 use daedalus_graph::GraphBody;
-use daedalus_plan::encode;
+use daedalus_plan::{PlanView, encode};
 use daedalus_registry::Registry;
 
 use crate::config::Config;
@@ -89,8 +89,28 @@ pub struct Planned {
 }
 
 impl Planned {
-    /// The stored encoding.
+    /// The stored encoding. A region whose backend stored it as a whole plan of its own is that
+    /// plan, and it has to be the only region.
     pub fn blob(&self) -> Result<Vec<u8>, PlanError> {
+        let whole = self
+            .regions
+            .regions
+            .iter()
+            .find_map(|region| match &region.compiled {
+                Compiled::Blob { bytes, .. } if PlanView::parse(bytes).is_ok() => {
+                    Some((region, bytes))
+                }
+                _ => None,
+            });
+        if let Some((region, bytes)) = whole {
+            if self.regions.regions.len() == 1 {
+                return Ok(bytes.clone());
+            }
+            return Err(PlanError::FormUnavailable {
+                form: Form::Blob,
+                backend: self.backend_ids[usize::from(region.formed.backend.0)].clone(),
+            });
+        }
         let mut bytes = Vec::new();
         encode(&self.stitched.plan, &mut bytes).map_err(PlanError::Encode)?;
         Ok(bytes)
@@ -197,6 +217,9 @@ fn transfer_steps(
         spaces: &[],
         bodies: &[],
         edges: &[],
+        host_inputs: &[],
+        host_outputs: &[],
+        fifo_capacity: 0,
         merge_allowed: false,
     };
     let mut steps: Vec<Option<Step>> = Vec::with_capacity(stitched.transfers.len());
@@ -250,6 +273,7 @@ pub fn plan(
         types: &types,
         budget: config.assignment_budget,
         merge_allowed: config.merge,
+        fifo_capacity: config.fifo_capacity,
     })
     .map_err(PlanError::Regions)?;
     let stitched = stitch(&regions, &types);

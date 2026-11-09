@@ -77,7 +77,7 @@ The first backend, merging, the Blob and Source forms, chips, the kernels, wasm 
 - [x] [D0](docs/prs/D0.md) Per-step cells: a step sees its own inputs then outputs (needs B9, B10, C1)
 - [x] [D1](docs/prs/D1.md) CPU backend: Steps form for #[node] functions (wave 14; needs A9, B13, C1)
 - [x] [D2](docs/prs/D2.md) CPU merging: a region's nodes run as direct calls (wave 15; needs B8, D1; board run)
-- [ ] [D3](docs/prs/D3.md) Blob form and its small runner (wave 15; needs A10, D1)
+- [x] [D3](docs/prs/D3.md) Blob form and its small runner (wave 15; needs A10, D1)
 - [ ] [D4](docs/prs/D4.md) Source form: generated Rust for a solved CPU region (wave 15; needs B13, D1)
 - [ ] [D5](docs/prs/D5.md) Chip runtime: generated firmware API, no heap, five-node budget (wave 16; needs D4)
 - [ ] [D6](docs/prs/D6.md) Scalars, parameters and wire encoding on a chip (wave 17; needs D5)
