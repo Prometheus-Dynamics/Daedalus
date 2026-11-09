@@ -9,6 +9,7 @@
 
 mod bits;
 mod error;
+mod fence;
 mod step;
 mod tick;
 

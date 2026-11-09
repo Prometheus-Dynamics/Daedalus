@@ -41,6 +41,9 @@ impl Runner<'_> {
             report.idle = true;
             return Ok(report);
         }
+        if self.pending_len > 0 {
+            self.poll_fences(&mut report);
+        }
         for word in 0..words {
             loop {
                 let bits = self.dirty[word];
@@ -92,15 +95,16 @@ impl Runner<'_> {
             }
             StepEnd::Skipped => self.commit_inputs(meta),
             StepEnd::Pending(fence) => {
+                // The outputs are stored now. Consumers wait for the fence to be Ready.
                 self.commit_inputs(meta);
-                if self.pending_len == self.pending.len() {
-                    return Err(RunError::PendingFull { step: index as u32 });
-                }
-                self.pending[self.pending_len] = Pending {
+                self.publish(meta)?;
+                let entry = Pending {
                     step: index as u32,
                     fence,
                 };
-                self.pending_len += 1;
+                if !self.register_pending(entry) {
+                    return Err(RunError::PendingFull { step: index as u32 });
+                }
             }
             StepEnd::Fault => report.faults += 1,
         }
