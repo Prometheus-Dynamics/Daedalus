@@ -1,0 +1,32 @@
+[package]
+name = "daedalus"
+description = "The names an application needs from Daedalus. Re-exports only."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# Everything that needs the operating system: loading a plan, reload, streams.
+std = [
+  "daedalus-host/std",
+  "daedalus-runner/std",
+  "dep:daedalus-planner",
+]
+# The runner's own names, for hosts that drive it directly.
+runner = []
+# Parallel lanes.
+threads = ["std", "runner", "daedalus-runner/threads"]
+# Allocation attribution through the counting allocator.
+alloc-probe = ["std", "daedalus-host/alloc-probe"]
+
+[dependencies]
+daedalus-host = { path = "../host", default-features = false }
+daedalus-planner = { path = "../planner", optional = true }
+daedalus-runner = { path = "../runner" }
+daedalus-types = { path = "../types" }
+daedalus-value = { path = "../value" }
+
+[lints]
+workspace = true

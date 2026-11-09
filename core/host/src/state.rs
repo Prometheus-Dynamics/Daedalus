@@ -26,7 +26,9 @@ pub trait StateCodec: Sized + Send + 'static {
 #[derive(Clone, Copy)]
 pub struct Codec {
     pub tag: &'static str,
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub(crate) encode: fn(&(dyn Any + Send)) -> Option<String>,
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub(crate) decode: fn(&str) -> Option<Box<dyn Any + Send>>,
 }
 
@@ -176,6 +178,7 @@ impl StateStore {
     }
 
     /// Entries a snapshot writes: those with a codec, in store order.
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub(crate) fn encoded(&self) -> impl Iterator<Item = (NodeId, u32, Codec, String)> + '_ {
         self.entries.iter().filter_map(|entry| {
             let codec = entry.codec?;
@@ -184,6 +187,7 @@ impl StateStore {
         })
     }
 
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub(crate) fn insert_decoded(
         &mut self,
         node: NodeId,
