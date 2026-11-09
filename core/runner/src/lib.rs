@@ -16,6 +16,7 @@ extern crate std;
 mod access;
 #[cfg(feature = "std")]
 mod async_step;
+mod backpressure;
 mod bits;
 mod cancel;
 mod error;
@@ -54,6 +55,7 @@ use daedalus_value::OwnerKind;
 pub use access::{Held, UNSTAMPED, read_inline, take_typed, write_inline};
 #[cfg(feature = "std")]
 pub use async_step::FutureFence;
+pub use backpressure::BackpressureStrategy;
 pub use cancel::{CANCEL_REASON, CancelWord, skip_cancelled};
 pub use error::{LoadError, MaskError, RunError};
 pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
@@ -164,6 +166,7 @@ pub struct Runner<'a> {
     /// One `(done, total)` pair per step, once a host attaches them.
     progress: &'a [Progress],
     fault_log: fault_log::FaultLog,
+    any_blocking: bool,
     /// The reuse table, for a plan with a reusable step.
     reuse: Option<reuse::Table<'a>>,
     /// Timing, when a host attached a probe.
@@ -292,6 +295,7 @@ impl<'a> Runner<'a> {
             tick: 0,
             progress: &[],
             fault_log: fault_log::FaultLog::NONE,
+            any_blocking: false,
             reuse: None,
             probe: None,
         })
