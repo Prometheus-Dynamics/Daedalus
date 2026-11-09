@@ -82,13 +82,13 @@ run_target "$host" native
 
 # GPU kernels: the GPU crate's conformance tests on this machine's Vulkan
 # adapter (lavapipe in CI). Without an adapter they skip and their cells stay untested.
-# The RGA and VGLite fixed-function tests are Lemnos's (lemnos-drivers-rga and
-# lemnos-drivers-vglite at the pinned rev in Cargo.toml). Lemnos runs them in its own CI, so
+# The RGA fixed-function tests are Lemnos's (lemnos-drivers-rga at the pinned rev in
+# Cargo.toml). Lemnos runs them in its own CI, so
 # those cells stay untested here unless evidence is recorded under docs/accel-evidence/.
 
 step "GPU conformance (wgpu adapter)"
 ACCEL_TARGET=$host ACCEL_RUNNER=native ACCEL_REQUIRE_GPU=1 \
-  cargo test -q -p daedalus-gpu --features gpu-dmabuf,gpu-vulkan-raw --lib -- storage_frames_copy_into_textures kernels_tests image_tests zero_copy raw_vulkan --test-threads 1
+  cargo test -q -p daedalus-gpu --features gpu-dmabuf,gpu-vulkan-raw --lib -- storage_frames_copy_into_textures kernels_tests zero_copy raw_vulkan --test-threads 1
 # A repeated kernel dispatch allocates no more than the same dispatch written in raw wgpu.
 cargo test -q -p daedalus-gpu --features gpu-wgpu --test gpu_allocations
 

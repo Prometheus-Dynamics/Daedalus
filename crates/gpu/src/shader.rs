@@ -14,9 +14,6 @@ mod gpu_state;
 mod gpu_storage;
 mod gpu_texture;
 mod gpu_timer;
-mod image;
-#[cfg(all(test, feature = "gpu-wgpu"))]
-mod image_tests;
 mod kernels;
 mod pipeline;
 mod pipeline_cache;
@@ -50,7 +47,6 @@ pub use gpu_storage::{GpuFrameImportStats, GpuFrameImports, GpuFrameInput};
 pub use gpu_storage::{GpuReadback, GpuStorage};
 pub use gpu_texture::GpuTexture;
 pub use gpu_timer::{GpuTimeSource, GpuTimed, GpuTimer};
-pub use image::{GpuImages, ImageCall, ImageOp, ImageShape, MaskRop};
 pub use kernels::{GpuKernel, GpuKernels};
 pub(crate) use pipeline::clear_pipeline_caches_for_device;
 pub use pipeline::{

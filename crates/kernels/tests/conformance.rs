@@ -45,48 +45,6 @@ fn scalar_references_match_known_answers() {
         && r::base64_encode(b"Ma") == *b"TWE="
         && r::base64_decode(b"TWE=").as_deref() == Some(&b"Ma"[..])
         && r::base64_decode(b"TWF=").is_none();
-    // 2x2 area: (a+b+c+d+2)>>2 per channel; the odd trailing column is dropped.
-    let area = r::resize_area(&[1, 2, 9, 4, 5, 9], 3, 2, 1, 2) == (vec![3], 1, 2 / 2)
-        && r::resize_area(&[0, 10, 1, 11, 2, 12, 3, 13], 2, 2, 2, 2) == (vec![2, 12], 1, 1)
-        && r::resize_area(&[7], 1, 1, 1, 2) == (vec![7], 1, 1);
-    // 2x up: OpenCV's quarter weights, edges clamped.
-    let bilinear = r::resize_bilinear(&[0, 100], 2, 1, 1, 4, 1) == [0, 25, 75, 100]
-        && r::resize_bilinear(&[0, 100, 200, 44], 2, 2, 1, 2, 2) == [0, 100, 200, 44];
-    let mut lut = [[0u8; 4]; 256];
-    lut[2] = [1, 2, 3, 4];
-    let palette = r::palette(&[2, 0], &lut) == [1, 2, 3, 4, 0, 0, 0, 0];
-    let fill = r::fill(&[0; 6], 3, (1, 0, 2, 2), &[7]) == [0, 7, 7, 0, 7, 7];
-    // Bresenham from (0, 0) to (3, 2) on 4x3, and a line leaving the frame.
-    let line = r::line(&[0; 12], 4, 3, (0, 0), (3, 2), &[7])
-        == [7, 0, 0, 0, 0, 7, 7, 0, 0, 0, 0, 7]
-        && r::line(&[0; 4], 2, 2, (-1, 1), (3, 1), &[5]) == [0, 0, 5, 5];
-    let rop = r::mask_rop(&[0b1010], &[0b1100], '&') == [0b1000]
-        && r::mask_rop(&[0b1010], &[0b1100], '|') == [0b1110]
-        && r::mask_rop(&[0b1010], &[0b1100], '^') == [0b0110];
-    // Half-transparent white over opaque black, straight and premultiplied.
-    let blend = r::blend(
-        &[255, 255, 255, 128],
-        &[0, 0, 0, 255],
-        r::Blend::SrcOver,
-        false,
-    ) == [128, 128, 128, 255]
-        && r::blend(
-            &[128, 128, 128, 128],
-            &[0, 0, 0, 255],
-            r::Blend::SrcOver,
-            true,
-        ) == [128, 128, 128, 255]
-        && r::blend(&[1, 2, 3, 4], &[9, 9, 9, 9], r::Blend::Src, false) == [1, 2, 3, 4]
-        && r::blend(&[200, 0, 0, 255], &[0, 0, 0, 0], r::Blend::DstOver, false) == [200, 0, 0, 255];
-    // [[A, B], [C, D]] as 0, 1, 2, 3.
-    let crop = r::crop(&[0, 1, 2, 3, 4, 5], 3, 1, (1, 0, 2, 2)) == [1, 2, 4, 5];
-    let flip = r::flip(&[0, 1, 2, 3], 2, 2, 1, true, false) == [1, 0, 3, 2]
-        && r::flip(&[0, 1, 2, 3], 2, 2, 1, true, true) == [3, 2, 1, 0];
-    let rotate = r::rotate(&[0, 1, 2, 3], 2, 2, 1, 1) == (vec![2, 0, 3, 1], 2, 2)
-        && r::rotate(&[0, 1, 2, 3], 2, 2, 1, 3) == (vec![1, 3, 0, 2], 2, 2)
-        && r::rotate(&[0, 1], 2, 1, 1, 1) == (vec![0, 1], 1, 2);
-    let key =
-        r::color_key_mask(&[5, 6, 7, 10, 6, 7, 5, 6, 8], 3, [5, 6, 7], [9, 6, 7]) == [255, 0, 0];
     for op in [
         "daedalus.pixel.rgb_to_rgba",
         "daedalus.pixel.rgba_to_rgb",
@@ -102,19 +60,6 @@ fn scalar_references_match_known_answers() {
     ] {
         conform(op, Backend::Scalar, || ok);
     }
-    conform("daedalus.image.resize_area", Backend::Scalar, || area);
-    conform("daedalus.image.resize_bilinear", Backend::Scalar, || {
-        bilinear
-    });
-    conform("daedalus.image.palette", Backend::Scalar, || palette);
-    conform("daedalus.image.fill", Backend::Scalar, || fill);
-    conform("daedalus.image.line", Backend::Scalar, || line);
-    conform("daedalus.image.mask_rop", Backend::Scalar, || rop);
-    conform("daedalus.image.blend", Backend::Scalar, || blend);
-    conform("daedalus.image.crop", Backend::Scalar, || crop);
-    conform("daedalus.image.flip", Backend::Scalar, || flip);
-    conform("daedalus.image.rotate", Backend::Scalar, || rotate);
-    conform("daedalus.image.color_key_mask", Backend::Scalar, || key);
 }
 
 /// A test input of a given length and the reference output.

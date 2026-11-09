@@ -6,6 +6,18 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Removed
+
+- Every `daedalus.image.*` operation is gone: the kernel rows (`registry/fixed.rs`, `registry/gpu_image.rs`,
+  and the `IMAGE_OPS` table), their scalar references (`daedalus_kernels::reference`'s `resize_area`,
+  `resize_bilinear`, `palette`, `color_key_mask`, `crop`, `flip`, `rotate`, `fill`, `line`,
+  `mask_rop`, `blend` and `Blend`), the GPU pipeline `daedalus_gpu::GpuImages` with its
+  `image.wgsl` shader and tests, and the K230 design note (`docs/k230-fixed-function.md`). No
+  deprecation or shim: callers that lower onto these ops must stop doing so. The RGA pixel
+  conversion rows and the `gpu-image` feature (the `image` crate bridges) are unchanged. The
+  `lemnos-drivers-rga` dev-dependency stays for those rows. `docs/backend-matrix.{md,csv}` lose the
+  image rows; the 22 cells that were `pass` (11 scalar, 11 GPU) are gone with them.
+
 ### Added
 
 - `daedalus-ffi-rust`: a Rust SDK for out-of-process plugins. `Worker::from_plugin` serves a

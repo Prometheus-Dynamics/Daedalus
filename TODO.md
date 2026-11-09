@@ -132,23 +132,17 @@ order:
       `vmull.p8` in software, so this says nothing about the A7's NEON; only the board number
       can move the default.
 - [ ] **[board] What:** K230D (`riscv64gc-unknown-linux-gnu` and `-musl`): the CPU graph tests
-      and the kernel conformance binary on the board, and Lemnos's
-      `lemnos-drivers-vglite/tests/vglite.rs` (the VGLite cells, each op's measured difference).
-      Written, untested on board.
+      and the kernel conformance binary on the board.
       **Why:** the K230D has no compute-capable GPU, and qemu cannot show a real VLEN.
       **Done when:** `scripts/board.sh k230d root@<k230d>` passes and its evidence, with the board's
-      VLEN, is committed. `board.sh` no longer builds the VGLite tests: Lemnos runs them, so that
-      run needs them run separately on the K230D.
-      **Blocked by:** a K230D board. The image is ready: Gaia feb262c ships `libvg_lite.so`,
-      `/dev/dma_heap/linux,cma`; Gaia 6e4ede8: a 16 MiB CMA pool shared with VGLite's staging
-      (no `libmmz`: contiguous frames come through Lemnos's heap API).
+      VLEN, is committed.
+      **Blocked by:** a K230D board.
       **Measured:** qemu only: 91 + 5 + 2 tests in `ci.sh cross` at 03f55c5; `+v` kernels at VLEN
       128, 256 and 512, plus a run without Zvbc.
 - [ ] **[board] What:** RK3588S (Mali-G610, ROCK 5C): `gpu_probe`, the `ci.sh pi` hardware tests, `gpu_bench`
       and the `GpuKernels` evidence on the shipped driver (libmali or PanVK). Written, untested on
       board: `GpuDeviceProfile` (Mali Valhall, warp 16; b095018), the GPU kernels and fragment
-      passes, the image GPU kernels (`GpuImages`, the `gpu` cells of `daedalus.image.*` except line),
-      the AFBC modifier helpers, the checklist in `docs/testing.md`.
+      passes, the AFBC modifier helpers, the checklist in `docs/testing.md`.
       **Why:** proper hardware support on every board.
       **Done when:** `scripts/board.sh rockchip` has run; the reports are in `docs/testing.md`, the
       matrix has Mali evidence, and the
@@ -168,28 +162,21 @@ order:
       **Blocked by:** a board. **Measured:** nothing on this chip.
 - [ ] **[board] What:** RK3576, RK3566 (ZERO 3E) and RK3562 (Mali-G52): the same reports, or a confirmed
       clean CPU fallback where the driver has no usable Vulkan compute. Written, untested on board
-      (Mali Bifrost, warp 8 on G52). The image GPU kernels (`GpuImages`) are written, untested on
-      board; they use 32-bit integer arithmetic only.
+      (Mali Bifrost, warp 8 on G52).
       **Why:** as above.
       **Done when:** as above, per chip.
       **Blocked by:** boards and Gaia's driver choice.
       **Measured:** nothing on Mali.
 - [ ] **[board] What:** (Lemnos's: Lemnos owns hardware blocks. The RGA is `lemnos-drivers-rga` at
-      Lemnos cf3a4ac, item 6 above, and its routes are Lemnos's.) The Rockchip RGA fixed-function
-      cells: route (b) is the mainline V4L2 mem2mem driver (`rgb_to_rgba`, `rgba_to_rgb`, and the
-      resize, crop, flip and turn rows); route (c) is the vendor multi-RGA node `/dev/rga`
-      (`MultiRga`: `gray_to_rgba`, fill, mask ROP, blend, palette, colour key, flip and turn). Both
-      written, untested on board. The librga route (`Librga`) is gone.
+      Lemnos cf3a4ac, item 6 above, and its routes are Lemnos's.) The Rockchip RGA pixel cells:
+      route (b) is the mainline V4L2 mem2mem driver (`rgb_to_rgba`, `rgba_to_rgb`); route (c) is the
+      vendor multi-RGA node `/dev/rga` (`MultiRga`: `gray_to_rgba`). Both written, untested on board.
+      The librga route (`Librga`) is gone.
       **Why:** these are the matrix's untested RGA cells. `rgba_red` (Y-only output) has no route in
       Lemnos's caps, so it is a gap in `registry.rs`, not a cell to measure.
       **Done when:** Lemnos's `lemnos-drivers-rga/tests/{v4l2,multirga}.rs` pass on a Rockchip board
       (Lemnos runs them; `scripts/board.sh rockchip` no longer builds them) and the cells read
-      pass. The same run measures the resize, palette and colour-key cells (`daedalus.image.*`,
-      max difference printed): 2x and 4x area on NV12 and RGB (does 4x equal two 2x passes within
-      1?), and whether colour key `INVERTED` keeps the in-range pixels; the turn direction; whether
-      `IM_ROP_XOR` (0xf6) is plain XOR; the blend rounding. The results go into Lemnos's
-      `caps` as `Exact` or `Tolerance(n)`, not Daedalus's.
-      Eidos's matrix cells for its 2x area lowering wait on it (nostd, 2026-11-02).
+      pass.
       **Blocked by:** a Rockchip board.
       **Measured:** no RGA hardware run. Route (b) passes end to end on `vim2m` (Lemnos's test) with
       `dma_heap` dmabufs; the multi-RGA route was written from the vendor header and has no run.
@@ -280,48 +267,6 @@ order:
       ticks 4 engine graphs on 4 threads with every crate's `std` off: 2 allocations per tick on
       each thread, the same as one thread alone (8000 over 4000 ticks). With the old
       process-wide pool the same test counted 8515 to 12725 per thread (3/3 runs failed).
-
-- [ ] **What:** (As of 2026-11-03 these nodes sit on Lemnos's drivers and open no devices
-      themselves.) Fixed-function nodes for Eidos on the RGA and the K230D Image 2D / 2.5D GPU
-      (VGLite), with a per-SoC capability descriptor. Requested by Eidos 2026-11-02 (Eidos
-      100cc356, `docs/accel/fixed-function-audit.md`). Daedalus owns the nodes and Lemnos the
-      units. Eidos lowers its ops onto these nodes and never drives the units.
-      **Order:** (1) area and bilinear resize, for pyramids (Eidos `geometry.resize_area`,
-      `resize_linear`, `features.feature_pyramid`, `filter.build_pyramid`); (2) palette lookup and
-      colour-key range mask; (3) crop, flip, copy (partly in `lemnos-drivers-rga`); (4) blend with mask
-      alpha, fill, ROP, line draw. With (1): the capability descriptor (RGA2, RGA3, mainline V4L2
-      vs librga, K230 Image 2D, VGLite; ops and an exactness class per unit and SoC).
-      **Constraints:** today's routes: mainline `rockchip-rga` (V4L2) reaches scale, crop,
-      conversion, flip, 90/180/270 rotation and background fill only; blend, colour key, palette and
-      ROP need the multi-RGA node (vendor kernels). Lemnos's kernel module and Rust userspace drivers may change
-      what each unit reaches. RGA scaling exactness is undocumented: tolerance until a board
-      measures it.
-      K230: VGLite through Lemnos's `lemnos-drivers-vglite` (no `libvg_lite.so`); no board yet.
-      **Done when:** each node has a scalar reference, a fixed-function kernel cell in the registry,
-      and a test on `vim2m` where the path allows; board cells marked written, untested on board.
-      **Blocked by:** Lemnos's drivers (item 8 above) and boards for measurement. The hand-off
-      (item 6) is done (2026-11-06).
-      **Progress:** (1) written: `Filter::{Area, Bilinear}` on both routes, `resize_luma` through
-      NV12 on mainline, `caps::caps(soc)`, ops `daedalus.image.resize_{area,bilinear}` (scalar and
-      fixed_function rows only, `Op::only_on`); vim2m checks the plumbing. Board cells written,
-      untested on board; exactness `Unmeasured`. Open in (1): a GRAY8 dmabuf through NV12M with a
-      shared dummy chroma plane (mainline 7.2 lists NV12M on RGA2 and RGA3): not wanted, Eidos
-      chains NV12 levels (nostd, 2026-11-02). (2) written: multi-RGA palette and colour key, ops
-      `daedalus.image.{palette,color_key_mask}`, `caps` `FixedOp`; written, untested on board.
-      (3) written: crop on both routes (full frame = copy), flip and rotate on multi-RGA, ops
-      `daedalus.image.{crop,flip,rotate}`; mainline flip and rotate through Lemnos's
-      `set_control` (01939e9), flips checked exactly on vim2m. (4) written: multi-RGA fill (boxes as
-      four fills), mask AND/OR/XOR and Porter-Duff blend, ops
-      `daedalus.image.{fill,mask_rop,blend}`; mainline has none (7.2 never programs
-      `BG_COLOR`); RGA2 and RGA3 have no line mode (vendor drivers, radxa 6.1). K230 design note
-      written (`docs/k230-fixed-function.md`). `daedalus-vglite` written (nostd, 2026-11-02, now
-      `lemnos-drivers-vglite`: the
-      board is not a blocker): the `vglite` variant on resize (area 2x only, as a half-phase
-      bilinear blit), crop, flip, rotate, fill, blend (straight alpha), palette and
-      `daedalus.image.line` (new op, Bresenham reference; the one fixed-function line route);
-      scattered dmabufs and byte buffers staged through a contiguous buffer, the cost returned
-      and in `caps` (`Staging`). Written, untested on board.
-      **Measured:** n/a.
 
 ### Release steps
 

@@ -30,9 +30,6 @@ This directory is the repository-level documentation index. Crate-specific detai
 
 ## Optional Layers
 
-- [k230-fixed-function.md](k230-fixed-function.md): design note for the K230D's VGLite 2.5D GPU
-  and AI2D from Linux: what each `daedalus.image.*` op maps to, the dmabuf limit, the VGLite
-  binding (`lemnos-drivers-vglite`, in Lemnos) and what is open before code.
 - [mcu.md](mcu.md): MCU profile, graphs planned on the host and run allocation-free on microcontrollers.
 
 - [../crates/gpu/README.md](../crates/gpu/README.md): GPU backends, handles, shader helpers, and async dispatch.

@@ -77,7 +77,7 @@ pub use selection::select_wgpu_on_vendor;
 pub use selection::{devices_created, process_context, select_backend, shared_context};
 #[cfg(feature = "gpu-wgpu")]
 pub use shader::{
-    FragmentBinding, FragmentPass, FragmentRects, GpuImages, GpuInFlight, GpuKernel, GpuKernels,
+    FragmentBinding, FragmentPass, FragmentRects, GpuInFlight, GpuKernel, GpuKernels,
     GpuPipelineCache, GpuReadback, GpuStorage, GpuStoragePool, GpuStoragePoolStats, GpuTexture,
     GpuTicket, GpuTimeSource, GpuTimed, GpuTimer, SubmitGuard, SubmitLock, pipeline_cache_for,
     pipeline_cache_path_for,
