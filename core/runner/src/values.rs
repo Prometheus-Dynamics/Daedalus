@@ -11,7 +11,7 @@ use crate::owned::{self, INLINE_BYTES};
 
 impl Runner<'_> {
     /// The queue index for `slot`, or `NoSlot`.
-    fn queue_index(&self, slot: u32) -> Result<usize, RunError> {
+    pub(crate) fn queue_index(&self, slot: u32) -> Result<usize, RunError> {
         let index = slot as usize;
         if index >= self.slots {
             return Err(RunError::NoSlot { slot });

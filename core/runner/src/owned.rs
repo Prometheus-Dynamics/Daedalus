@@ -131,6 +131,12 @@ pub unsafe fn decode(slot: &Slot) -> Value {
     }
 }
 
+/// Whether a raw slot holds a typed payload.
+#[cfg(feature = "alloc")]
+pub(crate) fn is_typed(slot: &Slot) -> bool {
+    slot.owner == kind_word(OwnerKind::Typed)
+}
+
 /// Releases what a raw slot owns, if it owns anything. Once per reference.
 ///
 /// # Safety

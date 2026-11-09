@@ -27,6 +27,8 @@ mod failure;
 mod fanin;
 mod fault_log;
 mod fence;
+#[cfg(feature = "alloc")]
+mod forward;
 mod join;
 #[cfg(feature = "threads")]
 mod lanes;
@@ -58,6 +60,8 @@ pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
 #[cfg(feature = "alloc")]
 pub use fanin::fanin_order;
 pub use fault_log::StepFault;
+#[cfg(feature = "alloc")]
+pub use forward::Forward;
 pub use join::Fire;
 #[cfg(feature = "threads")]
 pub use lanes::{LaneError, Lanes, Pool};

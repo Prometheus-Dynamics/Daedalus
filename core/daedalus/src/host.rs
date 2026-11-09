@@ -12,3 +12,7 @@ pub use daedalus_host::{
     ConstTable, ConstValue, ControlError, FaultReport, LoadError, LoadOptions, LoadedHost,
     PatchError, PatchOutcome, ReloadError, ReloadReport, StopHandle, UnmergedError,
 };
+
+/// Several graphs ticked on one thread.
+#[cfg(feature = "std")]
+pub use daedalus_host::domain;

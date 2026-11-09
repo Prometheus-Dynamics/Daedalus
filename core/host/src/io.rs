@@ -278,6 +278,42 @@ impl<'a> Host<'a> {
         }
     }
 
+    /// Takes the oldest value out of the output port `name`, ready to hand to other graphs.
+    #[cfg(feature = "std")]
+    pub fn take_forward(
+        &mut self,
+        name: &str,
+    ) -> Result<Option<daedalus_runner::Forward>, HostError> {
+        let spec = self.output(name)?;
+        Ok(self.runner.take_forward(spec.slot))
+    }
+
+    /// Delivers a forwarded value to the input port `name`. The types were compared when the link
+    /// was made, since each plan numbers its types itself.
+    #[cfg(feature = "std")]
+    pub fn feed_forward(
+        &mut self,
+        name: &str,
+        forward: daedalus_runner::Forward,
+    ) -> Result<FeedOutcome, HostError> {
+        let spec = self.input(name)?;
+        let held = self.runner.is_held(spec.slot);
+        if held {
+            self.runner.clear_held(spec.slot).map_err(HostError::Run)?;
+        }
+        self.runner
+            .feed_forward(spec.slot, spec.ty, spec.space, forward)
+            .map_err(|error| self.feed_error(name, error))?;
+        Ok(FeedOutcome {
+            woke: if held {
+                0
+            } else {
+                self.wake_consumers(spec.wake)
+            },
+            dropped: None,
+        })
+    }
+
     /// Takes every value out of the output port `name`, oldest first.
     pub fn drain_value(&mut self, name: &str) -> Result<std::vec::Vec<Value>, HostError> {
         let mut values = std::vec::Vec::new();
