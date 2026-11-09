@@ -1,28 +1,28 @@
 //! Planning the bodies, and the step that runs them.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use daedalus_abi::{OwnedStep, Slot, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{
-    Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, SpaceKind,
+    Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, PortRef, Refusal, Region, SpaceKind,
     StepUnit, Transfer, UnitInfo,
 };
 use daedalus_graph::{ControlOp, NodeKindDoc};
 use daedalus_registry::Registry;
 use daedalus_runner::{
-    INLINE_BYTES, Nested, SlotList, drop_owned, place, put, put_typed, read_bool, typed_view,
+    INLINE_BYTES, Nested, NestedStep, SlotList, drop_owned, place, put, put_typed, read_bool,
+    typed_view,
 };
-use daedalus_types::{SpaceIndex, TypeIndex};
+use daedalus_types::{PortIndex, SpaceIndex, TypeIndex};
 
 use super::ControlError;
 use super::kinds::{BODY, ELSE, THEN, closed};
 use crate::api::{PlanError, Planned, plan};
 use crate::config::Config;
 use crate::form::Form;
-use crate::regions::Regions;
 use crate::solve::Graph;
-use crate::stitch::{Item, Stitched};
+use crate::stitch::Item;
 
 /// The id of the built-in backend that holds control nodes.
 pub const CONTROL_BACKEND: &str = "daedalus.control";
@@ -44,24 +44,13 @@ struct Body {
     outputs: BTreeMap<String, u32>,
 }
 
-#[derive(Clone, Copy)]
-struct OutCell {
-    slot: usize,
-    ty: TypeIndex,
-    space: SpaceIndex,
-}
-
-#[derive(Default)]
-struct Binding {
-    reads: BTreeMap<String, usize>,
-    writes: BTreeMap<String, OutCell>,
-}
-
 struct Shared {
     id: String,
     op: ControlOp,
     max: u32,
-    binding: OnceLock<Binding>,
+    /// The node's port names, in frame order.
+    inputs: Vec<String>,
+    outputs: Vec<String>,
     bodies: Mutex<BTreeMap<String, Body>>,
     covers: Vec<NestedBody>,
 }
@@ -70,7 +59,7 @@ fn take_steps(
     planned: &mut Planned,
     id: &str,
     name: &str,
-) -> Result<(Vec<Step>, Vec<Vec<u32>>), PlanError> {
+) -> Result<(Vec<NestedStep>, Vec<Vec<u32>>), PlanError> {
     let mut units: Vec<Vec<Option<StepUnit>>> = Vec::new();
     for region in &mut planned.regions.regions {
         let compiled = std::mem::replace(&mut region.compiled, Compiled::Steps(Vec::new()));
@@ -97,7 +86,8 @@ fn take_steps(
             Item::Run {
                 unit,
                 covers: nodes,
-                ..
+                reads,
+                writes,
             } => {
                 let Some(found) = units[unit.region as usize][unit.unit as usize].take() else {
                     continue;
@@ -106,17 +96,29 @@ fn take_steps(
                     found.step.discard();
                     return Err(waits());
                 }
-                steps.push(found.step);
+                steps.push(NestedStep {
+                    step: found.step,
+                    reads,
+                    writes,
+                });
                 covers.push(nodes);
             }
-            Item::Move { transfer, .. } => {
+            Item::Move {
+                from_slot,
+                to_slot,
+                transfer,
+            } => {
                 let Some(step) = planned.transfer_steps[transfer as usize].take() else {
                     return Err(PlanError::TransferUnavailable {
                         id: id.to_string(),
                         reason: "a body's transfer has no step of its own".to_string(),
                     });
                 };
-                steps.push(step);
+                steps.push(NestedStep {
+                    step,
+                    reads: vec![from_slot],
+                    writes: vec![to_slot],
+                });
             }
             Item::Wait { .. } => return Err(waits()),
         }
@@ -215,7 +217,8 @@ impl ControlBackend {
                     id,
                     op: control.op,
                     max: control.max.unwrap_or(0),
-                    binding: OnceLock::new(),
+                    inputs: node.inputs.iter().map(|port| port.name.clone()).collect(),
+                    outputs: node.outputs.iter().map(|port| port.name.clone()).collect(),
                     bodies: Mutex::new(bodies),
                     covers,
                 }),
@@ -230,50 +233,8 @@ impl ControlBackend {
         Ok((!nodes.is_empty()).then_some(ControlBackend { nodes, host }))
     }
 
-    /// Tells each control step which cells are its, now that they have numbers.
-    pub(crate) fn bind(
-        &self,
-        graph: &Graph,
-        regions: &Regions,
-        stitched: &Stitched,
-    ) -> Vec<NestedBody> {
-        for item in &stitched.layout {
-            let Item::Run {
-                unit,
-                reads,
-                writes,
-                covers,
-            } = item
-            else {
-                continue;
-            };
-            let Some(shared) = covers.first().and_then(|node| self.nodes.get(node)) else {
-                continue;
-            };
-            let formed = &regions.regions[unit.region as usize].formed;
-            let node = &graph.nodes[covers[0] as usize];
-            let mut binding = Binding::default();
-            for (at, port) in formed.inputs.iter().enumerate() {
-                binding.reads.insert(
-                    node.inputs[usize::from(port.port.0)].name.clone(),
-                    reads[at] as usize,
-                );
-            }
-            for (at, port) in formed.outputs.iter().enumerate() {
-                let slot = writes[at] as usize;
-                let info = &stitched.slots[slot];
-                let cell = OutCell {
-                    slot,
-                    ty: TypeIndex(info.ty.unwrap_or(0)),
-                    space: SpaceIndex(info.space as u16),
-                };
-                binding
-                    .writes
-                    .insert(node.outputs[usize::from(port.port.0)].name.clone(), cell);
-            }
-            // Refusal rounds compile a region again, but this runs once, on the final plan.
-            let _ = shared.binding.set(binding);
-        }
+    /// What each control node runs.
+    pub(crate) fn records(&self) -> Vec<NestedBody> {
         self.nodes
             .values()
             .flat_map(|shared| shared.covers.iter().cloned())
@@ -315,10 +276,18 @@ impl Backend for ControlBackend {
         let step = Step::boxed(ControlStep {
             shared: Arc::clone(shared),
         });
+        let ports = |count: usize| -> Vec<PortRef> {
+            (0..count)
+                .map(|port| PortRef {
+                    node: *node,
+                    port: PortIndex(port as u16),
+                })
+                .collect()
+        };
         let info = UnitInfo {
             covers: vec![*node],
-            reads: region.inputs.to_vec(),
-            writes: region.outputs.to_vec(),
+            reads: ports(shared.inputs.len()),
+            writes: ports(shared.outputs.len()),
             absorbed: Vec::new(),
             may_pend: false,
         };
@@ -336,19 +305,10 @@ fn drop_held(held: Option<Slot>) {
     }
 }
 
-fn view(slots: &mut Slots, at: usize) -> Slot {
-    slots.cell(at).map_or(Slot::EMPTY, |cell| *cell)
-}
-
-fn lend(body: &Body, slots: &mut Slots, binding: &Binding) -> Vec<Slot> {
+fn lend(body: &Body, shared: &Shared, slots: &mut Slots) -> Vec<Slot> {
     body.inputs
         .iter()
-        .map(|(name, _)| {
-            binding
-                .reads
-                .get(name)
-                .map_or(Slot::EMPTY, |&at| view(slots, at))
-        })
+        .map(|(name, _)| shared.input(slots, name))
         .collect()
 }
 
@@ -366,36 +326,49 @@ fn finished(end: StepEnd, cx: &mut StepCx, id: &str) -> Option<StepEnd> {
     }
 }
 
+impl Shared {
+    fn input(&self, slots: &mut Slots, name: &str) -> Slot {
+        let at = self.inputs.iter().position(|port| port == name);
+        at.and_then(|at| slots.cell(at).map(|cell| *cell))
+            .unwrap_or(Slot::EMPTY)
+    }
+
+    /// The output cell for `name`. It sits after the inputs in the frame.
+    fn output<'s>(&self, slots: &'s mut Slots, name: &str) -> Option<&'s mut Slot> {
+        let at = self.outputs.iter().position(|port| port == name)?;
+        slots.cell(self.inputs.len() + at)
+    }
+}
+
+// The runner stamps a published value with its slot's real type and space.
+const UNSTAMPED: (TypeIndex, SpaceIndex) = (TypeIndex(0), SpaceIndex(0));
+
 impl ControlStep {
     fn run_if(
         &self,
         bodies: &mut BTreeMap<String, Body>,
-        b: &Binding,
         slots: &mut Slots,
         cx: &mut StepCx,
     ) -> StepEnd {
-        let cond = b
-            .reads
-            .get("cond")
-            .map_or(Slot::EMPTY, |&at| view(slots, at));
-        let Some(cond) = read_bool(&cond) else {
+        let shared = &*self.shared;
+        let Some(cond) = read_bool(&shared.input(slots, "cond")) else {
             return StepEnd::Skipped;
         };
         let Some(body) = bodies.get_mut(if cond { THEN } else { ELSE }) else {
             return StepEnd::Skipped;
         };
-        let inputs = lend(body, slots, b);
+        let inputs = lend(body, shared, slots);
         let end = body.nested.run(&inputs, cx);
-        if let Some(end) = finished(end, cx, &self.shared.id) {
+        if let Some(end) = finished(end, cx, &shared.id) {
             body.nested.reset();
             return end;
         }
-        for (name, cell) in &b.writes {
+        for name in &shared.outputs {
             let taken = body
                 .outputs
                 .get(name)
                 .and_then(|&inner| body.nested.take(inner));
-            if let (Some(taken), Some(out)) = (taken, slots.cell(cell.slot)) {
+            if let (Some(taken), Some(out)) = (taken, shared.output(slots, name)) {
                 put(out, taken);
             }
         }
@@ -406,19 +379,13 @@ impl ControlStep {
     fn run_for_each(
         &self,
         bodies: &mut BTreeMap<String, Body>,
-        b: &Binding,
         slots: &mut Slots,
         cx: &mut StepCx,
     ) -> StepEnd {
-        let source = b
-            .reads
-            .get("list")
-            .map_or(Slot::EMPTY, |&at| view(slots, at));
-        let (Some(list), Some(body), Some(&out)) = (
-            typed_view::<SlotList>(&source),
-            bodies.get_mut(BODY),
-            b.writes.get("out"),
-        ) else {
+        let shared = &*self.shared;
+        let source = shared.input(slots, "list");
+        let (Some(list), Some(body)) = (typed_view::<SlotList>(&source), bodies.get_mut(BODY))
+        else {
             return StepEnd::Skipped;
         };
         let inner = body.outputs.get("out").copied();
@@ -429,7 +396,7 @@ impl ControlStep {
             }
             let element = list.get(at).copied().unwrap_or(Slot::EMPTY);
             let end = body.nested.run(&[element], cx);
-            if let Some(end) = finished(end, cx, &self.shared.id) {
+            if let Some(end) = finished(end, cx, &shared.id) {
                 body.nested.reset();
                 return end;
             }
@@ -439,8 +406,8 @@ impl ControlStep {
             body.nested.reset();
             cx.progress(at as u32 + 1, list.len() as u32);
         }
-        if let Some(cell) = slots.cell(out.slot) {
-            put_typed(cell, out.ty, out.space, Arc::new(collected));
+        if let Some(cell) = shared.output(slots, "out") {
+            put_typed(cell, UNSTAMPED.0, UNSTAMPED.1, Arc::new(collected));
         }
         StepEnd::Done
     }
@@ -448,15 +415,12 @@ impl ControlStep {
     fn run_until(
         &self,
         bodies: &mut BTreeMap<String, Body>,
-        b: &Binding,
         slots: &mut Slots,
         cx: &mut StepCx,
     ) -> StepEnd {
-        let init = b
-            .reads
-            .get("init")
-            .map_or(Slot::EMPTY, |&at| view(slots, at));
-        let (Some(body), Some(&out)) = (bodies.get_mut(BODY), b.writes.get("state")) else {
+        let shared = &*self.shared;
+        let init = shared.input(slots, "init");
+        let Some(body) = bodies.get_mut(BODY) else {
             return StepEnd::Skipped;
         };
         if init.state != daedalus_abi::SlotState::Full as u32 {
@@ -468,13 +432,13 @@ impl ControlStep {
         );
         let mut held: Option<Slot> = None;
         let mut buffers = [[0_u8; INLINE_BYTES]; 2];
-        for round in 0..self.shared.max {
+        for round in 0..shared.max {
             if cx.cancelled() {
                 drop_held(held);
                 return StepEnd::Skipped;
             }
             let end = body.nested.run(&[held.unwrap_or(init)], cx);
-            if let Some(end) = finished(end, cx, &self.shared.id) {
+            if let Some(end) = finished(end, cx, &shared.id) {
                 body.nested.reset();
                 drop_held(held);
                 return end;
@@ -485,43 +449,35 @@ impl ControlStep {
             let Some(next) = state.and_then(|cell| body.nested.take(cell)) else {
                 body.nested.reset();
                 drop_held(held);
-                cx.fault(
-                    None,
-                    &format!("the body of `{}` wrote no state", self.shared.id),
-                );
+                cx.fault(None, &format!("the body of `{}` wrote no state", shared.id));
                 return StepEnd::Fault;
             };
             let next = place(next, &mut buffers[round as usize % 2]);
             drop_held(held.replace(next));
             body.nested.reset();
             if finish == Some(true) {
-                if let (Some(value), Some(cell)) = (held.take(), slots.cell(out.slot)) {
+                if let (Some(value), Some(cell)) = (held.take(), shared.output(slots, "state")) {
                     put(cell, value);
                 }
                 return StepEnd::Done;
             }
         }
         drop_held(held);
-        let reason = format!(
-            "`{}` reached its limit of {} rounds",
-            self.shared.id, self.shared.max
+        cx.fault(
+            None,
+            &format!("`{}` reached its limit of {} rounds", shared.id, shared.max),
         );
-        cx.fault(None, &reason);
         StepEnd::Fault
     }
 }
 
 impl OwnedStep for ControlStep {
     fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
-        let Some(binding) = self.shared.binding.get() else {
-            cx.fault(None, "a control step ran before its plan was finished");
-            return StepEnd::Fault;
-        };
         let mut bodies = self.shared.bodies.lock().unwrap_or_else(|e| e.into_inner());
         match self.shared.op {
-            ControlOp::If => self.run_if(&mut bodies, binding, slots, cx),
-            ControlOp::ForEach => self.run_for_each(&mut bodies, binding, slots, cx),
-            ControlOp::Until => self.run_until(&mut bodies, binding, slots, cx),
+            ControlOp::If => self.run_if(&mut bodies, slots, cx),
+            ControlOp::ForEach => self.run_for_each(&mut bodies, slots, cx),
+            ControlOp::Until => self.run_until(&mut bodies, slots, cx),
         }
     }
 }

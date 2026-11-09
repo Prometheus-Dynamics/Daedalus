@@ -42,7 +42,7 @@ pub use handle::Handle;
 pub use layout::{LAYOUT_HASH, SHAPES, layout_hash};
 pub use message::MessageSink;
 pub use out::{Written, write_out, write_text};
-pub use slots::{Slot, SlotState, Slots};
+pub use slots::{NO_SLOT, Slot, SlotState, Slots};
 pub use status::Status;
 #[cfg(feature = "alloc")]
 pub use step::OwnedStep;

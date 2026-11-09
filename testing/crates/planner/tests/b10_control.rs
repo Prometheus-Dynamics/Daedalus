@@ -1,13 +1,12 @@
-//! A body here is one node on a small backend whose steps do real work on cells. The planner's
-//! slot numbers aren't known to a step, so each step finds its cells by state: the first full one
-//! is its input and the empty ones are its outputs. That's enough for one-node bodies.
+//! A body here is one node on a small backend whose steps do real work on their frame: the full
+//! cell is the input and the others are outputs.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use daedalus_abi::testing::run_once;
-use daedalus_abi::{OwnedStep, Slot, Slots, Step, StepCx, StepEnd};
+use daedalus_abi::{NO_SLOT, OwnedStep, Slot, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{
     Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, SpaceKind,
     StepUnit, Transfer, UnitInfo,
@@ -227,9 +226,34 @@ fn output_slot(planned: &Planned, port: &str) -> usize {
         .slot as usize
 }
 
-/// Runs the plan's one control unit.
+/// Runs the plan's control unit on a frame built from `cells`, as the runner would.
 fn tick(planned: &mut Planned, cells: &mut [Slot]) -> (StepEnd, String, Vec<u32>) {
-    let mut slots = Slots::of(cells);
+    let (reads, writes) = planned
+        .stitched
+        .layout
+        .iter()
+        .find_map(|item| match item {
+            Item::Run {
+                covers,
+                reads,
+                writes,
+                ..
+            } if covers == &[1] => Some((reads.clone(), writes.clone())),
+            _ => None,
+        })
+        .unwrap();
+    let mut frame: Vec<Slot> = reads
+        .iter()
+        .map(|&slot| {
+            if slot == NO_SLOT {
+                Slot::EMPTY
+            } else {
+                cells[slot as usize]
+            }
+        })
+        .chain(writes.iter().map(|_| Slot::EMPTY))
+        .collect();
+    let mut slots = Slots::of(&mut frame);
     let mut cx = StepCx::new();
     let region = planned
         .regions
@@ -241,6 +265,11 @@ fn tick(planned: &mut Planned, cells: &mut [Slot]) -> (StepEnd, String, Vec<u32>
         panic!("control compiles to steps");
     };
     let end = run_once(&mut units[0].step, &mut slots, &mut cx);
+    for (at, &slot) in writes.iter().enumerate() {
+        if slot != NO_SLOT {
+            cells[slot as usize] = frame[reads.len() + at];
+        }
+    }
     let covers = units[0].info.covers.iter().map(|n| n.0).collect();
     (end, cx.reason().to_string(), covers)
 }

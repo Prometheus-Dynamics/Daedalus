@@ -167,8 +167,11 @@ pub(crate) fn replay<'t, E: Env<'t>>(
     load_cells(env, meta);
     let table = env.table();
     for (at, &slot) in spanned(table, meta.inputs).iter().enumerate() {
+        if slot == daedalus_abi::NO_SLOT {
+            continue;
+        }
         let slot = slot as usize;
-        let cell = env.parts().0[slot];
+        let cell = env.parts().0[at];
         // SAFETY: `slot` was range-checked at load, and inputs are not written during a tick.
         let input = unsafe { *parts.inputs.add(slot) };
         // SAFETY: `entry.stamps` was sized by `set_reuse` to this step's input count.
@@ -181,6 +184,9 @@ pub(crate) fn replay<'t, E: Env<'t>>(
     env.health(index).on_success();
     commit_inputs(env, meta);
     for (at, &slot) in spanned(table, meta.outputs).iter().enumerate() {
+        if slot == daedalus_abi::NO_SLOT {
+            continue;
+        }
         // SAFETY: `entry.stored` was sized by `set_reuse` to this step's output count.
         let held = unsafe { *parts.stored.add(entry.stored.start as usize + at) };
         if held.state != SlotState::Full as u32 {
@@ -239,8 +245,11 @@ pub(crate) fn store<'t, E: Env<'t>>(env: &mut E, index: usize, meta: StepMeta) {
     release_stored(entry, parts);
     let table = env.table();
     for (at, &slot) in spanned(table, meta.inputs).iter().enumerate() {
+        if slot == daedalus_abi::NO_SLOT {
+            continue;
+        }
         let slot = slot as usize;
-        let cell = env.parts().0[slot];
+        let cell = env.parts().0[at];
         // SAFETY: `slot` was range-checked at load, and inputs are not written during a tick.
         let input = unsafe { *parts.inputs.add(slot) };
         // SAFETY: `entry.stamps` was sized by `set_reuse` to this step's input count.
@@ -251,8 +260,8 @@ pub(crate) fn store<'t, E: Env<'t>>(env: &mut E, index: usize, meta: StepMeta) {
                 .write(stamp_of(input, &cell))
         };
     }
-    for (at, &slot) in spanned(table, meta.outputs).iter().enumerate() {
-        let cell = env.parts().0[slot as usize];
+    for at in 0..meta.outputs.len as usize {
+        let cell = env.parts().0[crate::exec::output_at(meta, at)];
         if cell.state != SlotState::Full as u32 {
             continue;
         }
@@ -277,6 +286,9 @@ pub(crate) fn stamp_versions<'t, E: Env<'t>>(env: &mut E, index: usize, meta: St
         return;
     }
     for (at, &slot) in spanned(env.table(), meta.outputs).iter().enumerate() {
+        if slot == daedalus_abi::NO_SLOT {
+            continue;
+        }
         let version = env.with_queue(slot as usize, |queue, _| queue.version);
         // SAFETY: `entry.stored` was sized by `set_reuse` to this step's output count.
         unsafe { (*parts.stored.add(entry.stored.start as usize + at)).version = version };

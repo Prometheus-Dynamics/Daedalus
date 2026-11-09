@@ -1,5 +1,9 @@
 //! The numbered value cells a step reads and writes. `daedalus-value` gives the fields meaning.
 
+/// In a plan's slot lists, a port with no edge. A step still gets a cell for it: an empty one for
+/// an input, and one the runner throws away for an output.
+pub const NO_SLOT: u32 = u32::MAX;
+
 /// What a slot holds right now.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +44,8 @@ impl Slot {
     };
 }
 
-/// The cells of a running graph.
+/// The cells a step sees: its frame. Inputs come first, in the order its unit declares them, then
+/// its outputs. Index 0 is always the first input, so a step needs no slot numbers.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Slots {

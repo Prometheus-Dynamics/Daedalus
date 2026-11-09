@@ -88,8 +88,8 @@ fn one_step(
         &output.into_iter().collect::<Vec<_>>(),
     );
     let step = Step::boxed(Writer {
-        input: input.unwrap_or(0) as usize,
-        output: output.unwrap_or(0) as usize,
+        input: 0,
+        output: usize::from(input.is_some()),
         mode,
         log: log.clone(),
     });

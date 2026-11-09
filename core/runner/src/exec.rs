@@ -1,7 +1,7 @@
 //! One step's run, written once for the serial tick and the parallel lanes. Each supplies an
 //! [`Env`], so both run the same logic and cannot drift apart.
 
-use daedalus_abi::{Progress, Slot, SlotState, Slots, StepCx, StepEnd};
+use daedalus_abi::{NO_SLOT, Progress, Slot, SlotState, Slots, StepCx, StepEnd};
 use daedalus_value::Decision;
 
 use crate::error::RunError;
@@ -11,7 +11,7 @@ use crate::join::join_ready;
 use crate::owned::{self, InlineCell};
 use crate::policy::Recovery;
 use crate::reuse::{ReuseParts, forget, replay, stamp_versions, store};
-use crate::step::{Queue, SlotKind, StepMeta};
+use crate::step::{Queue, SlotKind, SlotStamp, StepMeta};
 use crate::telemetry::Counters;
 use crate::tick::TickReport;
 use crate::{Pending, Runner, spanned};
@@ -145,13 +145,15 @@ pub(crate) trait Env<'t> {
     fn health(&mut self, index: usize) -> &mut StepHealth;
     /// `index`'s progress cells, or null when nobody attached any.
     fn progress(&self, index: usize) -> *const Progress;
-    /// The cells bodies see, and the context for the call.
+    /// The frame a body sees, and the context for the call.
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx);
     /// The attached probe, if any.
     fn probe(&self) -> Option<&'t crate::probe::TickProbe<'t>>;
     /// The reuse table, if the plan has one.
     fn reuse(&mut self) -> Option<ReuseParts>;
     fn failure(&self) -> FailurePolicy;
+    /// What an output written to `slot` is stamped with, if the plan says.
+    fn stamp(&self, slot: usize) -> Option<SlotStamp>;
     fn counters(&mut self) -> &mut Counters;
     /// False when the activity mask holds this step back.
     fn active(&self, index: usize) -> bool;
@@ -206,7 +208,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         let (cells, cx) = env.parts();
         cx.flags = flags;
         cx.progress = progress;
-        let mut slots = Slots::of(cells);
+        let mut slots = Slots::of(&mut cells[..port_count(meta)]);
         report.step_calls += 1;
         // SAFETY: `run` and `data` come from one `Step`, so the body was built to take that data.
         // `slots` and `cx` are exclusive to this call, and they stay valid until it returns.
@@ -285,23 +287,39 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
     Ok(())
 }
 
-/// Sets the input cells from their queues, and clears the output cells, before a call.
+/// How many cells a step's frame has.
+pub(crate) fn port_count(meta: StepMeta) -> usize {
+    (meta.inputs.len + meta.outputs.len) as usize
+}
+
+/// The frame position of output `at`.
+pub(crate) fn output_at(meta: StepMeta, at: usize) -> usize {
+    meta.inputs.len as usize + at
+}
+
+/// Fills the frame's inputs from their queues and clears its outputs, before a call.
 pub(crate) fn load_cells<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
-    for &slot in spanned(env.table(), meta.inputs) {
-        let slot = slot as usize;
-        // SAFETY: `with_queue` holds what protects this queue, and only this step's slot range is
-        // read.
-        let head = env.with_queue(slot, |queue, parts| unsafe { parts.head(queue) });
-        env.parts().0[slot] = head;
+    for (at, &slot) in spanned(env.table(), meta.inputs).iter().enumerate() {
+        let head = if slot == NO_SLOT {
+            Slot::EMPTY
+        } else {
+            // SAFETY: `with_queue` holds what protects this queue, and only this step's slot range
+            // is read.
+            env.with_queue(slot as usize, |queue, parts| unsafe { parts.head(queue) })
+        };
+        env.parts().0[at] = head;
     }
-    for &slot in spanned(env.table(), meta.outputs) {
-        env.parts().0[slot as usize] = Slot::EMPTY;
+    for at in 0..meta.outputs.len as usize {
+        env.parts().0[output_at(meta, at)] = Slot::EMPTY;
     }
 }
 
 /// Drops every value queued on a disabled step's inputs, releasing each once.
 fn drop_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
     for &slot in spanned(env.table(), meta.inputs) {
+        if slot == NO_SLOT {
+            continue;
+        }
         // SAFETY: `with_queue` holds what protects this queue.
         env.with_queue(slot as usize, |queue, parts| unsafe {
             parts.drop_all(queue)
@@ -312,9 +330,12 @@ fn drop_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
 /// Removes what the step consumed. A moved entry's reference went to an output, so it is only
 /// forgotten.
 pub(crate) fn commit_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
-    for &slot in spanned(env.table(), meta.inputs) {
+    for (at, &slot) in spanned(env.table(), meta.inputs).iter().enumerate() {
+        if slot == NO_SLOT {
+            continue;
+        }
         let slot = slot as usize;
-        let moved = env.parts().0[slot].state == SlotState::Moved as u32;
+        let moved = env.parts().0[at].state == SlotState::Moved as u32;
         // SAFETY: `with_queue` holds what protects this queue.
         env.with_queue(slot, |queue, parts| unsafe { parts.commit(queue, moved) });
     }
@@ -324,11 +345,21 @@ pub(crate) fn commit_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
 /// body left empty stores nothing. On overflow, the rest of the outputs are released.
 fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<(), RunError> {
     let mut overflow = None;
-    for &slot in spanned(env.table(), meta.outputs) {
-        let slot = slot as usize;
-        let cell = core::mem::replace(&mut env.parts().0[slot], Slot::EMPTY);
+    for (at, &slot) in spanned(env.table(), meta.outputs).iter().enumerate() {
+        let mut cell = core::mem::replace(&mut env.parts().0[output_at(meta, at)], Slot::EMPTY);
         if cell.state != SlotState::Full as u32 {
             continue;
+        }
+        if slot == NO_SLOT {
+            // SAFETY: the cell is Full and this step wrote it, and nothing reads this output, so
+            // the reference is released once here.
+            unsafe { owned::release(&cell) };
+            continue;
+        }
+        let slot = slot as usize;
+        if let Some(stamp) = env.stamp(slot) {
+            cell.type_index = stamp.ty.0;
+            cell.space = u32::from(stamp.space.0);
         }
         let now = env.parts().1.now_ns;
         let stored = match overflow {
@@ -356,8 +387,8 @@ fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<(), RunError> 
 
 /// Releases the outputs a skipped or failed step wrote but did not publish.
 fn discard_outputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
-    for &slot in spanned(env.table(), meta.outputs) {
-        let cell = core::mem::replace(&mut env.parts().0[slot as usize], Slot::EMPTY);
+    for at in 0..meta.outputs.len as usize {
+        let cell = core::mem::replace(&mut env.parts().0[output_at(meta, at)], Slot::EMPTY);
         if cell.state == SlotState::Full as u32 {
             // SAFETY: the cell is Full and this step wrote it, so it owns the reference.
             unsafe { owned::release(&cell) };
@@ -388,7 +419,7 @@ impl<'a> Env<'a> for Runner<'a> {
     }
     #[inline]
     fn parts(&mut self) -> (&mut [Slot], &mut StepCx) {
-        (&mut self.cells[..self.slots], &mut self.cx)
+        (&mut *self.cells, &mut self.cx)
     }
     #[inline]
     fn probe(&self) -> Option<&'a crate::probe::TickProbe<'a>> {
@@ -401,6 +432,10 @@ impl<'a> Env<'a> for Runner<'a> {
     #[inline]
     fn failure(&self) -> FailurePolicy {
         self.failure
+    }
+    #[inline]
+    fn stamp(&self, slot: usize) -> Option<SlotStamp> {
+        self.stamps.get(slot).copied()
     }
     #[inline]
     fn counters(&mut self) -> &mut Counters {

@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::vec;
 use std::vec::Vec;
 
-use daedalus_abi::{Progress, Slot, Step, StepCx};
+use daedalus_abi::{NO_SLOT, Progress, Slot, Step, StepCx};
 
 pub use pool::Pool;
 use ready::Ready;
@@ -28,7 +28,7 @@ use crate::exec::{Env, RunFn, SlotParts, step_once};
 use crate::failure::{FailurePolicy, StepHealth};
 use crate::fence::insert_pending;
 use crate::reuse::ReuseParts;
-use crate::step::{Queue, SlotKind, StepMeta};
+use crate::step::{Queue, SlotKind, SlotStamp, StepMeta};
 use crate::telemetry::Counters;
 use crate::tick::TickReport;
 use crate::{Pending, Runner, spanned};
@@ -107,7 +107,7 @@ impl Lanes {
         let workers = (0..pool.workers())
             .map(|_| {
                 UnsafeCell::new(Worker {
-                    cells: vec![Slot::EMPTY; runner.slots],
+                    cells: vec![Slot::EMPTY; runner.widest],
                     cx: StepCx::new(),
                     report: TickReport::default(),
                     counters: Counters::default(),
@@ -149,6 +149,9 @@ fn dependencies(runner: &Runner<'_>) -> (Vec<u32>, Vec<u32>) {
         let step = index as u32;
         edges[index].extend_from_slice(spanned(runner.table, meta.wake));
         for &slot in spanned(runner.table, meta.inputs) {
+            if slot == NO_SLOT {
+                continue;
+            }
             let at = slot as usize;
             if let Some(from) = last[at].filter(|&from| from != step) {
                 edges[from as usize].push(step);
@@ -163,6 +166,9 @@ fn dependencies(runner: &Runner<'_>) -> (Vec<u32>, Vec<u32>) {
             }
         }
         for &slot in spanned(runner.table, meta.outputs) {
+            if slot == NO_SLOT {
+                continue;
+            }
             let at = slot as usize;
             if let Some(from) = last[at].filter(|&from| from != step) {
                 edges[from as usize].push(step);
@@ -197,6 +203,7 @@ struct View<'t> {
     activity: &'t [u32],
     masked: bool,
     failure: FailurePolicy,
+    stamps: &'t [SlotStamp],
     pending: *mut Pending,
     pending_cap: usize,
     pending_len: *mut usize,
@@ -250,6 +257,9 @@ impl<'t> Env<'t> for Lane<'t> {
     }
     fn failure(&self) -> FailurePolicy {
         self.view.failure
+    }
+    fn stamp(&self, slot: usize) -> Option<SlotStamp> {
+        self.view.stamps.get(slot).copied()
     }
     fn counters(&mut self) -> &mut Counters {
         &mut self.worker.counters
@@ -381,6 +391,7 @@ impl Runner<'_> {
                 activity: self.activity,
                 masked: self.masked,
                 failure: self.failure,
+                stamps: self.stamps,
                 pending: self.pending.as_mut_ptr(),
                 pending_cap: self.pending.len(),
                 pending_len: &mut self.pending_len,

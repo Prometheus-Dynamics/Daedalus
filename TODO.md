@@ -74,6 +74,7 @@ Walk the step list with no heap, and the Host around it: feed, step, take, reloa
 
 The first backend, merging, the Blob and Source forms, chips, the kernels, wasm and Windows.
 
+- [x] [D0](docs/prs/D0.md) Per-step cells: a step sees its own inputs then outputs (needs B9, B10, C1)
 - [ ] [D1](docs/prs/D1.md) CPU backend: Steps form for #[node] functions (wave 14; needs A9, B13, C1)
 - [ ] [D2](docs/prs/D2.md) CPU merging: a region's nodes run as direct calls (wave 15; needs B8, D1; board run)
 - [ ] [D3](docs/prs/D3.md) Blob form and its small runner (wave 15; needs A10, D1)

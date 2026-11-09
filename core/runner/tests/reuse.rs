@@ -152,7 +152,7 @@ fn an_upstream_change_invalidates_the_chain() {
     let step_b = Step::boxed(Pure {
         calls: Arc::clone(&calls_b),
         fault: Arc::clone(&none),
-        output: 2,
+        output: 1,
     });
     let specs = vec![
         spec(SlotKind::Latest),

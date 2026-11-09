@@ -45,7 +45,7 @@ struct Mix {
 impl OwnedStep for Mix {
     fn run(&mut self, slots: &mut Slots, _: &mut StepCx) -> StepEnd {
         let mut mix = self.id.wrapping_mul(31).wrapping_add(7);
-        for &input in &self.inputs {
+        for input in 0..self.inputs.len() {
             mix = mix.rotate_left(5) ^ cell(slots, input).len;
         }
         mix &= 0xffff;
@@ -56,8 +56,8 @@ impl OwnedStep for Mix {
         if self.skip != 0 && mix.is_multiple_of(self.skip) {
             return StepEnd::Skipped;
         }
-        for &output in &self.outputs {
-            *cell(slots, output) = tagged(mix);
+        for output in 0..self.outputs.len() {
+            *cell(slots, self.inputs.len() + output) = tagged(mix);
         }
         StepEnd::Done
     }
@@ -197,23 +197,21 @@ fn serial_and_parallel_match_on_random_plans() {
     }
 }
 
-/// Reads `word & 0xffff` plus one when `word >> 16 != 0` writes that slot.
+/// Reads its input plus one and, when `word` is not zero, writes that to its output.
 struct Plus;
 
 impl StepWord for Plus {
     fn run(word: usize, slots: &mut Slots, _: &mut StepCx) -> StepEnd {
-        let input = word & 0xffff;
-        let output = word >> 16;
-        let value = cell(slots, input).len + 1;
-        if output != 0 {
-            *cell(slots, output) = tagged(value);
+        let value = cell(slots, 0).len + 1;
+        if word != 0 {
+            *cell(slots, 1) = tagged(value);
         }
         StepEnd::Done
     }
 }
 
-fn plus(input: usize, output: usize) -> Step {
-    Step::of::<Plus>(input | (output << 16))
+fn plus() -> Step {
+    Step::of::<Plus>(1)
 }
 
 /// Faults every time.
@@ -260,7 +258,7 @@ fn chain_runs_end_to_end_in_one_tick() {
     wiring.step(&[1], &[0], &[1]);
     wiring.step(&[2], &[1], &[2]);
     wiring.step(&[], &[2], &[3]);
-    let steps = vec![plus(0, 1), plus(1, 2), plus(2, 3)];
+    let steps = vec![plus(), plus(), plus()];
     let mut fixture = Fixture::new(steps, wiring, fifo(4));
     parallel(&mut fixture, 3, |runner, lanes| {
         runner.push(0, tagged(10)).unwrap();
@@ -277,7 +275,7 @@ fn branch_runs_each_consumer_of_a_shared_slot() {
     wiring.step(&[1, 2], &[0], &[1]);
     wiring.step(&[], &[1], &[2]);
     wiring.step(&[], &[1], &[3]);
-    let steps = vec![plus(0, 1), plus(1, 2), plus(1, 3)];
+    let steps = vec![plus(), plus(), plus()];
     let specs = vec![
         SlotSpec {
             cap: 2,
@@ -323,7 +321,7 @@ fn bounded_fan_out_reports_overflow_like_the_serial_tick() {
                 kind: SlotKind::Latest,
             },
         ];
-        Fixture::new(vec![plus(0, 1), Step::of::<Plus>(0)], wiring, specs)
+        Fixture::new(vec![plus(), Step::of::<Plus>(0)], wiring, specs)
     };
     let mut serial = build();
     let mut runner = serial.load().unwrap();
@@ -349,7 +347,7 @@ fn independent_failure_leaves_the_other_branch_running() {
     let mut wiring = Wiring::default();
     wiring.step(&[], &[], &[]);
     wiring.step(&[], &[0], &[1]);
-    let steps = vec![Step::of::<Fails>(0), plus(0, 1)];
+    let steps = vec![Step::of::<Fails>(0), plus()];
     let mut fixture = Fixture::new(steps, wiring, fifo(2));
     parallel(&mut fixture, 2, |runner, lanes| {
         runner.push(0, tagged(1)).unwrap();

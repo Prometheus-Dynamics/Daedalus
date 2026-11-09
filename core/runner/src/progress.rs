@@ -5,6 +5,7 @@ use core::ptr;
 
 use daedalus_abi::Progress;
 
+use crate::step::SlotStamp;
 use crate::{LoadError, Runner};
 
 /// The cells of step `index`, or null when no cells were attached.
@@ -14,6 +15,16 @@ pub(crate) fn cell(cells: &[Progress], index: usize) -> *const Progress {
 }
 
 impl<'a> Runner<'a> {
+    /// Attaches what each slot's values are: one per slot. Without them an output keeps the
+    /// numbers its step wrote.
+    pub fn set_stamps(&mut self, stamps: &'a [SlotStamp]) -> Result<(), LoadError> {
+        if stamps.len() < self.slots {
+            return Err(LoadError::Length);
+        }
+        self.stamps = stamps;
+        Ok(())
+    }
+
     /// Attaches the progress cells: one per step. Without them `cx.progress` writes nothing.
     pub fn set_progress(&mut self, cells: &'a [Progress]) -> Result<(), LoadError> {
         if cells.len() < self.steps.len() {

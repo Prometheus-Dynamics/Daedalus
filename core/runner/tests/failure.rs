@@ -16,24 +16,21 @@ type Seen = Arc<Mutex<Vec<(usize, bool)>>>;
 struct Scripted {
     seen: Seen,
     remaining: usize,
-    input: Option<usize>,
-    output: Option<usize>,
+    input: bool,
+    output: bool,
 }
 
 impl OwnedStep for Scripted {
     fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
-        let len = match self.input {
-            Some(input) => cell(slots, input).len,
-            None => 0,
-        };
+        let len = if self.input { cell(slots, 0).len } else { 0 };
         self.seen.lock().unwrap().push((len, cx.restarting()));
         if self.remaining > 0 {
             self.remaining -= 1;
             cx.fault(None, "scripted");
             return StepEnd::Fault;
         }
-        if let (Some(input), Some(output)) = (self.input, self.output) {
-            *cell(slots, output) = *cell(slots, input);
+        if self.input && self.output {
+            *cell(slots, 1) = *cell(slots, 0);
         }
         StepEnd::Done
     }
@@ -61,8 +58,8 @@ fn pipeline(first: Scripted, recovery: Recovery, consumer_seen: &Seen) -> (Vec<S
         Step::boxed(Scripted {
             seen: consumer_seen.clone(),
             remaining: 0,
-            input: Some(1),
-            output: None,
+            input: true,
+            output: false,
         }),
     ];
     (steps, wiring)
@@ -75,8 +72,8 @@ fn single(seen: &Seen, remaining: usize, recovery: Recovery) -> (Vec<Step>, Wiri
     let steps = vec![Step::boxed(Scripted {
         seen: seen.clone(),
         remaining,
-        input: Some(0),
-        output: None,
+        input: true,
+        output: false,
     })];
     (steps, wiring)
 }
@@ -115,8 +112,8 @@ fn skip_tick_drops_output_and_keeps_running() {
     let first = Scripted {
         seen: seen.clone(),
         remaining: 1,
-        input: Some(0),
-        output: Some(1),
+        input: true,
+        output: true,
     };
     let (steps, wiring) = pipeline(first, Recovery::SkipTick, &consumer);
     let mut fixture = Fixture::new(steps, wiring, vec![fifo(4), fifo(4)]);
@@ -273,8 +270,8 @@ fn manual_off_runs_no_tick_and_consumer_sees_nothing() {
     let first = Scripted {
         seen: seen.clone(),
         remaining: 0,
-        input: Some(0),
-        output: Some(1),
+        input: true,
+        output: true,
     };
     let (steps, wiring) = pipeline(first, Recovery::Fail, &consumer);
     let mut fixture = Fixture::new(steps, wiring, vec![fifo(4), fifo(4)]);

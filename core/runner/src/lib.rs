@@ -39,7 +39,7 @@ mod telemetry;
 mod tick;
 mod values;
 
-use daedalus_abi::{Fence, Progress, Slot, Step, StepCx};
+use daedalus_abi::{Fence, NO_SLOT, Progress, Slot, Step, StepCx};
 use daedalus_plan::Span;
 use daedalus_value::OwnerKind;
 
@@ -54,7 +54,7 @@ pub use join::Fire;
 #[cfg(feature = "threads")]
 pub use lanes::{LaneError, Lanes, Pool};
 #[cfg(feature = "alloc")]
-pub use nested::{Nested, SlotList, drop_owned, read_bool, typed_view};
+pub use nested::{Nested, NestedStep, SlotList, drop_owned, read_bool, typed_view};
 pub use owned::{INLINE_BYTES, InlineCell, Untyped, place};
 #[cfg(feature = "alloc")]
 pub use owned::{TypedOps, typed_ops, typed_raw};
@@ -63,7 +63,7 @@ pub use probe::{ClockFn, HISTOGRAM_BUCKETS, StepHistogram, TickProbe, TickSample
 pub use reuse::{
     InputVersion, ReuseEntry, ReuseMarker, ReuseMemory, ReuseReason, ReuseRefused, check_reuse,
 };
-pub use step::{Queue, SlotKind, SlotSpec, StepMeta};
+pub use step::{Queue, SlotKind, SlotSpec, SlotStamp, StepMeta};
 pub use telemetry::Counters;
 pub use tick::TickReport;
 pub use values::{put, put_inline, put_static};
@@ -100,7 +100,7 @@ pub struct Plan<'a> {
 
 /// Every buffer the runner needs, supplied by the caller. Lengths are checked at load.
 pub struct Memory<'a> {
-    /// Raw cells the bodies see: one per slot, each the head of that slot's queue.
+    /// Where a body's frame is built: at least as many cells as the largest step has ports.
     pub cells: &'a mut [Slot],
     /// One queue state per slot.
     pub queues: &'a mut [Queue],
@@ -129,6 +129,10 @@ pub struct Runner<'a> {
     meta: &'a [StepMeta],
     table: &'a [u32],
     slots: usize,
+    /// The largest step's port count.
+    #[cfg(feature = "threads")]
+    widest: usize,
+    stamps: &'a [SlotStamp],
     cells: &'a mut [Slot],
     queues: &'a mut [Queue],
     storage: &'a mut [Slot],
@@ -183,7 +187,6 @@ impl<'a> Runner<'a> {
         let words = words_for(count);
         let nslots = slots.len();
         if meta.len() != count
-            || cells.len() < nslots
             || queues.len() < nslots
             || dirty.len() < words
             || carry.len() < words
@@ -214,10 +217,13 @@ impl<'a> Runner<'a> {
         health[..count].fill(StepHealth::default());
         always[..words].fill(0);
         let mut may_pend = 0;
+        let mut widest = 0;
         for (index, record) in meta.iter().enumerate() {
+            widest = widest.max((record.inputs.len + record.outputs.len) as usize);
             for &slot in span(table, record.inputs)?
                 .iter()
                 .chain(span(table, record.outputs)?)
+                .filter(|&&slot| slot != NO_SLOT)
             {
                 if slot as usize >= nslots {
                     return Err(LoadError::SlotRange);
@@ -244,7 +250,7 @@ impl<'a> Runner<'a> {
             }
             may_pend += usize::from(record.may_pend);
         }
-        if pending.len() < may_pend {
+        if pending.len() < may_pend || cells.len() < widest {
             return Err(LoadError::Length);
         }
         Ok(Runner {
@@ -252,6 +258,9 @@ impl<'a> Runner<'a> {
             meta,
             table,
             slots: nslots,
+            #[cfg(feature = "threads")]
+            widest,
+            stamps: &[],
             cells,
             queues,
             storage,
