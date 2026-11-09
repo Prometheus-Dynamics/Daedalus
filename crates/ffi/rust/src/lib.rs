@@ -34,10 +34,12 @@
 mod events;
 mod invoke;
 mod schema;
+mod state;
 mod worker;
 
 pub use daedalus_ffi_core as core;
 pub use daedalus_ffi_core::WORKER_PROTOCOL_VERSION;
 pub use events::{emit_event, event_debug, event_info, event_trace, event_warn};
 pub use schema::rust_worker_package;
+pub use state::StateSlots;
 pub use worker::{Worker, WorkerBuildError};

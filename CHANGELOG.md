@@ -15,7 +15,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   worker keeps serving. `Worker::with_state` carries `state(T)` nodes' state over the wire, and
   `rust_worker_package` builds the package the host installs. The crate does not depend on the
   stable in-process plugin ABI. All 18 canonical Rust fixtures pass through a real persistent
-  worker. Limit: a stateful node with config ports does not export its state yet.
+  worker. `Worker::with_state_slots` carries the state of stateful nodes with config ports or decoded
+  inputs too, declared with the macros' state tuple.
 - `examples/08_ffi/rust_worker`: an example plugin served by the `rust_worker` binary, and an
   end-to-end test that installs it through `FfiHost` and runs a graph of invokes.
 - Output reuse for pure nodes: `#[node(reusable)]` (metadata `daedalus.node.reusable`,

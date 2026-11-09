@@ -7,6 +7,7 @@
 use daedalus::data::model::{StructFieldValue, Value};
 use daedalus::macros::{DaedalusToValue, NodeConfig, node};
 use daedalus::runtime::NodeError;
+use daedalus::runtime::const_cache::ConfigCache;
 use daedalus::{PluginRegistry, declare_plugin};
 use daedalus_ffi_core::PluginPackage;
 use daedalus_ffi_core::PluginSchema;
@@ -15,6 +16,8 @@ use daedalus_ffi_rust::{Worker, WorkerBuildError, event_info, rust_worker_packag
 pub const PLUGIN_ID: &str = "rust_worker.showcase";
 /// The stateful node's id, for the host.
 pub const ACCUMULATE: &str = "rust_worker.showcase:accumulate";
+/// The stateful node with a config port.
+pub const ACCUMULATE_SCALED: &str = "rust_worker.showcase:accumulate_scaled";
 
 #[derive(Clone, Debug, NodeConfig)]
 pub struct ScaleConfig {
@@ -43,6 +46,17 @@ fn accumulate(value: i64, state: &mut AccumState) -> Result<i64, NodeError> {
     Ok(state.sum)
 }
 
+/// A stateful node with a config port: its stored state is `(AccumState, ConfigCache<ScaleConfig>)`.
+#[node(id = "accumulate_scaled", inputs("value", config = ScaleConfig), outputs("sum"), state(AccumState))]
+fn accumulate_scaled(
+    value: i64,
+    config: ScaleConfig,
+    state: &mut AccumState,
+) -> Result<i64, NodeError> {
+    state.sum += value * config.factor;
+    Ok(state.sum)
+}
+
 #[node(id = "boom", inputs("value"), outputs("out"))]
 fn boom(value: i64) -> Result<i64, NodeError> {
     if value < 0 {
@@ -60,7 +74,7 @@ fn describe(value: i64) -> Result<String, NodeError> {
 declare_plugin!(
     ShowcasePlugin,
     "rust_worker.showcase",
-    [add, scale, accumulate, boom, describe]
+    [add, scale, accumulate, accumulate_scaled, boom, describe]
 );
 
 fn decode_accumulate(value: &Value) -> Option<AccumState> {
@@ -79,7 +93,12 @@ fn decode_accumulate(value: &Value) -> Option<AccumState> {
 
 /// The worker for this plugin, with the stateful node's state declared.
 pub fn worker() -> Result<Worker, WorkerBuildError> {
-    Ok(Worker::from_plugin(&ShowcasePlugin::new())?.with_state(ACCUMULATE, decode_accumulate))
+    Ok(Worker::from_plugin(&ShowcasePlugin::new())?
+        .with_state(ACCUMULATE, decode_accumulate)
+        .with_state_slots::<(AccumState, ConfigCache<ScaleConfig>)>(
+            ACCUMULATE_SCALED,
+            decode_accumulate,
+        ))
 }
 
 /// The plugin's schema, as the host installs it.

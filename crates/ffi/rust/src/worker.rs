@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use daedalus::data::model::Value;
 use daedalus::data::to_value::ToValue;
+
+use crate::state::StateSlots;
 use daedalus::runtime::plugins::{PluginInstallable, PluginRegistry};
 use daedalus::runtime::type_index::TypeIndex;
 use daedalus::runtime::{ExecutionContext, StateStore};
@@ -116,32 +118,46 @@ impl Worker {
         self
     }
 
-    /// Declare the state of node `node_id` as a `state(T)` node's state, converted to and from the
-    /// wire state (`WireValue`, which the host sends and stores) through `decode` and `ToValue`.
-    /// The worker seeds the state before each call that carries one and exports it after each
+    /// Declare the state of node `node_id`, a `state(T)` node with no config or `&T` inputs, as
+    /// wire state through `decode` and `ToValue`. See [`Worker::with_state_slots`].
+    pub fn with_state<T>(self, node_id: impl Into<String>, decode: fn(&Value) -> Option<T>) -> Self
+    where
+        T: ToValue + Default + Send + Sync + 'static,
+    {
+        self.with_state_slots::<(T,)>(node_id, decode)
+    }
+
+    /// Declare the state of node `node_id` as wire state. `S` is the node's stored state tuple:
+    /// its `state(T)` first, then one cache slot per config port and per decoded `&T` input, in
+    /// the order the macros store them (`(AccumState, ConfigCache<ScaleConfig>)` for a node with
+    /// `state(AccumState)` and a `ScaleConfig` port). `decode` turns the host's wire state into `T`.
+    /// The worker seeds the state before each call that carries one and exports `T` after each
     /// call. A node without a declaration keeps its state in the worker and exports none.
-    pub fn with_state<T>(
+    pub fn with_state_slots<S>(
         mut self,
         node_id: impl Into<String>,
-        decode: fn(&Value) -> Option<T>,
+        decode: fn(&Value) -> Option<S::State>,
     ) -> Self
     where
-        T: Default + ToValue + Send + Sync + 'static,
+        S: StateSlots,
     {
-        // The macros keep a `state(T)` node's state as a tuple of its state slots: `(T,)` here.
+        // The macros keep a `state(T)` node's state in the tuple `S`; the other slots are caches
+        // that the next call rebuilds, so the import defaults them.
         let import = Box::new(
             move |ctx: &ExecutionContext, value: &Value| match decode(value) {
                 Some(state) => {
-                    ctx.set_node_state((state,));
+                    let mut slots = S::default();
+                    *slots.state_mut() = state;
+                    ctx.set_node_state(slots);
                     true
                 }
                 None => false,
             },
         );
         let export = Box::new(|ctx: &ExecutionContext| {
-            let (state,) = ctx.take_node_state::<(T,)>()?;
-            let value = state.to_value();
-            ctx.set_node_state((state,));
+            let slots = ctx.take_node_state::<S>()?;
+            let value = slots.state().to_value();
+            ctx.set_node_state(slots);
             Some(value)
         });
         self.state_codecs

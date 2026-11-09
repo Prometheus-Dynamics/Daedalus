@@ -69,15 +69,16 @@ expression, as the macros derive it.
 ## State
 
 A `state(T)` node keeps its state in the worker across invokes. A node whose state type implements
-`ToValue` declares the wire form with `Worker::with_state(node_id, decode)`: the host's state is
-seeded before the call, and the state is exported in the response. A node with config ports keeps
-its state in the worker and exports none (see Limits).
+`ToValue` declares the wire form with `Worker::with_state(node_id, decode)`, and a node with config
+ports or `&T` inputs with `Worker::with_state_slots::<S>(node_id, decode)`. `S` is the node's stored
+state tuple, `(T, cache...)`: `T` first, then one `ConfigCache<C>` per config port and one
+`DecodedInputs` per decoded `&T` input, in the order the macros store them. The host's state is
+seeded before the call, the cache slots are defaulted (they are rebuilt from the request), and the
+state is exported in the response. A declared `S` that does not match the node's stored tuple
+silently resets the state, so declare exactly the slots the macros generate.
 
 ## Limits
 
-- `with_state` covers `state(T)` nodes without config ports. The macros store a stateful node's
-  config slots in the same tuple as its state, and the SDK does not know those types, so such a
-  node's state is not exported yet.
 - Shader nodes run their CPU form in the worker; no GPU dispatch and no package artifact is loaded.
 
 ## Conformance

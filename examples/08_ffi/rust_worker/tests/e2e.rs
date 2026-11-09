@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use daedalus::registry::capability::CapabilityRegistry;
 use daedalus_ffi_core::{InvokeRequest, WORKER_PROTOCOL_VERSION, WireValue};
 use daedalus_ffi_host::{FfiHost, PersistentWorkerRunnerFactory};
-use daedalus_plugins_rust_worker::{ACCUMULATE, PLUGIN_ID, package};
+use daedalus_plugins_rust_worker::{ACCUMULATE, ACCUMULATE_SCALED, PLUGIN_ID, package};
 
 fn invoke(
     host: &FfiHost,
@@ -109,6 +109,48 @@ fn a_graph_runs_through_the_real_worker() {
         )])))
     );
     assert!(host.contains_node(ACCUMULATE));
+
+    // A stateful node with a config port: the state is kept across invokes, the config comes from
+    // the request, and the imported state is the node's state with its config slot defaulted.
+    let scaled = invoke(
+        &host,
+        "accumulate_scaled",
+        &[("value", WireValue::Int(5)), ("factor", WireValue::Int(2))],
+        None,
+    )
+    .expect("accumulate_scaled");
+    assert_eq!(int(&scaled, "sum"), 10);
+    let scaled_again = invoke(
+        &host,
+        "accumulate_scaled",
+        &[("value", WireValue::Int(1)), ("factor", WireValue::Int(3))],
+        None,
+    )
+    .expect("accumulate_scaled again");
+    assert_eq!(
+        int(&scaled_again, "sum"),
+        13,
+        "state and config both carry over"
+    );
+    let scaled_imported = invoke(
+        &host,
+        "accumulate_scaled",
+        &[("value", WireValue::Int(1)), ("factor", WireValue::Int(3))],
+        Some(WireValue::Record(BTreeMap::from([(
+            "sum".into(),
+            WireValue::Int(1000),
+        )]))),
+    )
+    .expect("accumulate_scaled with imported state");
+    assert_eq!(int(&scaled_imported, "sum"), 1003);
+    assert_eq!(
+        scaled_imported.state,
+        Some(WireValue::Record(BTreeMap::from([(
+            "sum".into(),
+            WireValue::Int(1003)
+        )])))
+    );
+    assert!(host.contains_node(ACCUMULATE_SCALED));
 
     // A node that emits an event: the event comes back with the output.
     let described =

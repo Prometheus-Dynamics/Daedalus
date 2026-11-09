@@ -2,7 +2,7 @@
 
 The Rust plugin written with the in-process authoring model and served out of process. `src/lib.rs`
 is the plugin: `#[node]` functions (`add`, `scale` with a `NodeConfig` port, `accumulate` with a
-`state(T)` node, `boom` which panics, `describe` which emits an event), declared with
+`state(T)` node, `accumulate_scaled` with a state and a config port, `boom` which panics, `describe` which emits an event), declared with
 `declare_plugin!`. `src/main.rs` serves it with `daedalus_ffi_rust::Worker`.
 
 ## Run
