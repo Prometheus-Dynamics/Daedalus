@@ -68,6 +68,15 @@ impl Decl {
         self
     }
 
+    /// An input taken by value.
+    pub fn input_move(mut self, name: &str, ty: TypeRef) -> Decl {
+        self.inputs.push(PortDecl {
+            access: daedalus_value::Access::Move,
+            ..PortDecl::new(leak_str(name), ty)
+        });
+        self
+    }
+
     pub fn input_with(mut self, port: PortDecl) -> Decl {
         self.inputs.push(port);
         self

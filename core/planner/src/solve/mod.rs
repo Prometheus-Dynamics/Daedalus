@@ -1,10 +1,14 @@
 //! Solving: everything that needs no backend.
 
+mod adapter;
 pub mod catalog;
 pub mod consts;
+pub mod convert;
 pub mod defaults;
 mod dynamic;
+pub mod exclusive;
 pub mod expand;
+pub mod host_inputs;
 pub mod hydrate;
 pub mod port_types;
 pub mod ports;
@@ -29,6 +33,8 @@ pub struct Port {
     pub access: Access,
     pub optional: bool,
     pub default: Option<Literal>,
+    /// Declared generic: its type came from unification, not the declaration.
+    pub generic: bool,
 }
 
 /// A node as the solve stages see it: the document's fields, and what they have worked out.
@@ -69,6 +75,18 @@ impl Node {
 pub struct Graph {
     pub nodes: Vec<Node>,
     pub edges: Vec<EdgeDoc>,
+}
+
+impl Work<'_> {
+    /// Adds a node the planner chose, as if the graph had named it. `None` if nothing declares it.
+    pub(crate) fn insert_node(&mut self, id: &str) -> Option<u32> {
+        let entry = self.catalog.entry(id)?;
+        let mut node = Node::new(NodeDoc::new(id), None);
+        defaults::apply_declared(&mut node, entry.decl);
+        ports::fill_node(&mut node, entry, false, &mut Vec::new());
+        self.graph.nodes.push(node);
+        Some(self.graph.nodes.len() as u32 - 1)
+    }
 }
 
 /// What every stage gets. There is no global state.

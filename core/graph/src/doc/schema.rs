@@ -72,6 +72,7 @@ pub fn json_schema() -> Value {
                 "shareable": { "type": "boolean" },
                 "ui_id": text,
                 "port_types": { "type": "object", "additionalProperties": text },
+                "host_inputs": { "type": "object", "additionalProperties": { "enum": ["consume", "held", "shared"] } },
                 "inputs": { "type": "array", "items": text },
                 "outputs": { "type": "array", "items": text },
                 "metadata": lits,

@@ -354,6 +354,16 @@
         "fire": {
           "type": "string"
         },
+        "host_inputs": {
+          "additionalProperties": {
+            "enum": [
+              "consume",
+              "held",
+              "shared"
+            ]
+          },
+          "type": "object"
+        },
         "id": {
           "type": "string"
         },
