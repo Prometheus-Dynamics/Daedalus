@@ -54,6 +54,11 @@ pub enum HostError {
     Untyped {
         port: Label,
     },
+    /// The type's serializer refused the value.
+    Refused {
+        port: Label,
+        key: Label,
+    },
     /// The graph refused the tick.
     Run(RunError),
 }
@@ -79,6 +84,9 @@ impl fmt::Display for HostError {
             }
             HostError::Full { port } => write!(f, "port {port} is full"),
             HostError::Untyped { port } => write!(f, "port {port} needs the typed feed"),
+            HostError::Refused { port, key } => {
+                write!(f, "port {port} refused a value of type {key}")
+            }
             HostError::Run(error) => write!(f, "the run was refused: {error:?}"),
         }
     }
@@ -88,7 +96,7 @@ impl fmt::Display for HostError {
 pub struct Host<'a> {
     pub(crate) runner: Runner<'a>,
     pub(crate) ports: Ports<'a>,
-    types: &'a [TypeKey],
+    pub(crate) types: &'a [TypeKey],
     /// One per port once a host sets a policy. Empty means every port takes every value.
     pub(crate) inbound: std::vec::Vec<crate::inbound::Inbound>,
     pub(crate) now_ns: u64,
