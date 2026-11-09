@@ -65,7 +65,10 @@ fn a_selected_branch_runs_and_the_other_does_not() {
     runner.wake(0);
     runner.wake(2);
     let report = runner.tick().unwrap();
-    assert_eq!(report.step_calls, 2, "the selected branch ran: its root and its consumer");
+    assert_eq!(
+        report.step_calls, 2,
+        "the selected branch ran: its root and its consumer"
+    );
     assert_eq!(runner.queue(2).unwrap().len, 0);
     assert_eq!(
         runner.queue(0).unwrap().len,
