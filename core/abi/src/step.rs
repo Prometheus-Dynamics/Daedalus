@@ -57,7 +57,6 @@ impl Step {
 }
 
 /// A step body that owns its data, written without `unsafe`.
-#[cfg(feature = "alloc")]
 pub trait OwnedStep: Send + 'static {
     fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd;
 }

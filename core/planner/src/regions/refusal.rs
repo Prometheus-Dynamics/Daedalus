@@ -54,6 +54,7 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
         types,
         budget,
         merge_allowed,
+        fifo_capacity,
     } = *input;
     let mut removed = Removed::new();
     let mut rounds = 0;
@@ -84,6 +85,7 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
             types,
             assignment: &assignment,
             merge_allowed,
+            fifo_capacity,
         };
         let mut done = Vec::with_capacity(formed.len());
         let mut refusals = Vec::new();

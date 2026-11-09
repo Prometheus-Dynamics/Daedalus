@@ -12,7 +12,7 @@ use daedalus_registry::Registry;
 use daedalus_types::fnv1a64;
 
 use crate::api::{PlanError, Planned, by_priority};
-use crate::config::Config;
+use crate::config::{Config, DEFAULT_FIFO_CAPACITY};
 use crate::form::Form;
 
 #[derive(Default)]
@@ -274,9 +274,13 @@ impl Canon {
             assignment_budget,
             form,
             merge,
+            fifo_capacity,
         } = config;
         self.flag(*strict_ports);
         self.word(*assignment_budget);
+        if *fifo_capacity != DEFAULT_FIFO_CAPACITY {
+            self.word(u64::from(*fifo_capacity));
+        }
         if !merge {
             self.byte(0xff);
         }

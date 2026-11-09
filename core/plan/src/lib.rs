@@ -7,11 +7,13 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+mod crc;
 mod format;
 mod read;
 #[cfg(feature = "alloc")]
 mod write;
 
+pub use crc::crc32;
 pub use format::{MAGIC, PlanError, Span, StepKind, StepRecord, VERSION};
 pub use read::{PlanView, Words};
 #[cfg(feature = "alloc")]

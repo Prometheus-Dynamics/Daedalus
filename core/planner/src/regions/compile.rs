@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use daedalus_backend::{
-    Backend, CompileCx, Compiled, ConstOf, Incoming, InnerEdge, NodeBody, PortRef, Refusal, Region,
-    UnitInfo,
+    Backend, CompileCx, Compiled, ConstOf, HostBinding, Incoming, InnerEdge, NodeBody, PortRef,
+    Refusal, Region, UnitInfo,
 };
 use daedalus_graph::{EdgePolicyDoc, Lit, NodeDoc};
 use daedalus_registry::Registry;
@@ -12,7 +12,7 @@ use daedalus_types::{NodeIndex, PortIndex};
 
 use super::Formed;
 use super::RegionError;
-use crate::assign::Assignment;
+use crate::assign::{Assignment, Placed};
 use crate::solve::type_table::TypeTable;
 use crate::solve::{Graph, Port};
 
@@ -22,6 +22,7 @@ pub(super) struct Compiling<'a> {
     pub types: &'a TypeTable,
     pub assignment: &'a Assignment,
     pub merge_allowed: bool,
+    pub fifo_capacity: u32,
 }
 
 /// Runs the backend's compile for one region.
@@ -50,6 +51,7 @@ pub(super) fn compile_region(
         {
             bodies.push(NodeBody {
                 node: NodeIndex(node),
+                id: &solved.doc.id,
                 body,
                 inputs: solved.inputs.len() as u16,
                 outputs: solved.outputs.len() as u16,
@@ -60,6 +62,7 @@ pub(super) fn compile_region(
         }
     }
     let edges = inner_edges(cx.graph, &formed.nodes);
+    let (host_inputs, host_outputs) = host_bindings(cx.graph, cx.assignment, &formed.nodes);
     let spaces = backend.memory();
     let region = Region {
         backend: formed.backend,
@@ -77,6 +80,9 @@ pub(super) fn compile_region(
             spaces: &spaces,
             bodies: &bodies,
             edges: &edges,
+            host_inputs: &host_inputs,
+            host_outputs: &host_outputs,
+            fifo_capacity: cx.fifo_capacity,
             merge_allowed: cx.merge_allowed,
         },
     )
@@ -98,7 +104,45 @@ fn port_at(ports: &[Port], name: &str) -> Option<PortIndex> {
     Some(PortIndex(at as u16))
 }
 
-fn inner_edges(graph: &Graph, nodes: &[u32]) -> Vec<InnerEdge> {
+/// The region's ports that face the host bridge: those it feeds, then those it reads.
+fn host_bindings<'g>(
+    graph: &'g Graph,
+    assignment: &Assignment,
+    nodes: &[u32],
+) -> (Vec<HostBinding<'g>>, Vec<HostBinding<'g>>) {
+    let is_host = |node: u32| matches!(assignment.placed[node as usize], Placed::Host);
+    let port = |node: u32, at: PortIndex| PortRef {
+        node: NodeIndex(node),
+        port: at,
+    };
+    let (mut inputs, mut outputs) = (Vec::new(), Vec::new());
+    for edge in &graph.edges {
+        let (from, to) = (edge.from.node, edge.to.node);
+        if is_host(from)
+            && nodes.contains(&to)
+            && let Some(at) = port_at(&graph.nodes[to as usize].inputs, &edge.to.port)
+        {
+            inputs.push(HostBinding {
+                port: port(to, at),
+                name: &edge.from.port,
+                policy: &edge.policy,
+            });
+        }
+        if is_host(to)
+            && nodes.contains(&from)
+            && let Some(at) = port_at(&graph.nodes[from as usize].outputs, &edge.from.port)
+        {
+            outputs.push(HostBinding {
+                port: port(from, at),
+                name: &edge.to.port,
+                policy: &edge.policy,
+            });
+        }
+    }
+    (inputs, outputs)
+}
+
+fn inner_edges<'g>(graph: &'g Graph, nodes: &[u32]) -> Vec<InnerEdge<'g>> {
     let mut edges = Vec::new();
     for edge in &graph.edges {
         let (from, to) = (edge.from.node, edge.to.node);
@@ -121,6 +165,7 @@ fn inner_edges(graph: &Graph, nodes: &[u32]) -> Vec<InnerEdge> {
                 port: input,
             },
             queued: matches!(edge.policy, EdgePolicyDoc::Bounded { .. }),
+            policy: &edge.policy,
         });
     }
     edges

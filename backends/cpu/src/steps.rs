@@ -27,10 +27,8 @@ pub const fn total(counts: &[usize]) -> usize {
     sum
 }
 
-/// A body's payload in its record: how to build its step.
-pub struct CpuBody {
-    pub make: fn(&Setup<'_>) -> Result<Step, String>,
-}
+pub use crate::body::CpuBody;
+pub use daedalus_runner::{ArenaBody, Fresh};
 
 /// What one node in one graph needs from the plan.
 pub struct Setup<'a> {
@@ -179,8 +177,31 @@ pub trait NotLit<T> {
 
 impl<T> NotLit<T> for LitOf<T> {}
 
+/// Where a step finds an input's constant.
+pub trait ConstTable {
+    fn slot(&self, at: usize) -> Option<&Slot>;
+}
+
 /// One constant per fixed input that has one. Empty when the node has none.
 pub type Consts = Vec<Option<Held>>;
+
+impl ConstTable for Consts {
+    #[inline]
+    fn slot(&self, at: usize) -> Option<&Slot> {
+        self.get(at)?.as_ref().map(Held::slot)
+    }
+}
+
+/// For a step whose constants are written into its input cells before it runs.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoConsts;
+
+impl ConstTable for NoConsts {
+    #[inline]
+    fn slot(&self, _: usize) -> Option<&Slot> {
+        None
+    }
+}
 
 /// The empty table for `fixed` inputs. It only takes room if this node has a constant.
 pub fn consts_for(setup: &Setup<'_>, fixed: usize) -> Consts {

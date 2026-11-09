@@ -2,6 +2,7 @@ use daedalus_plan::*;
 
 fn three_steps() -> PlanData {
     PlanData {
+        extra: Vec::new(),
         steps: vec![
             StepRecord {
                 kind: StepKind::Call,

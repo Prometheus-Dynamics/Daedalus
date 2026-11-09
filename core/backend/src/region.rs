@@ -2,7 +2,7 @@
 
 use std::any::Any;
 
-use daedalus_graph::Lit;
+use daedalus_graph::{EdgePolicyDoc, Lit};
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex, TypeExpr};
 
 use crate::{BodyIndex, MemorySpace};
@@ -51,6 +51,8 @@ pub struct ConstOf<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct NodeBody<'a> {
     pub node: NodeIndex,
+    /// The node's registered id.
+    pub id: &'a str,
     pub body: BodyIndex,
     /// How many inputs and outputs this node has in this graph, counting fan-in ports.
     pub inputs: u16,
@@ -65,11 +67,20 @@ pub struct NodeBody<'a> {
 
 /// An edge with both ends in the region being compiled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InnerEdge {
+pub struct InnerEdge<'a> {
     pub from: PortRef,
     pub to: PortRef,
     /// The edge's policy needs a real queue between its ends.
     pub queued: bool,
+    pub policy: &'a EdgePolicyDoc,
+}
+
+/// A port on the region's boundary that the host feeds or reads, and what the host calls it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HostBinding<'a> {
+    pub port: PortRef,
+    pub name: &'a str,
+    pub policy: &'a EdgePolicyDoc,
 }
 
 /// Only what a backend needs. It never sees the planner or the registry.
@@ -81,6 +92,10 @@ pub struct CompileCx<'a> {
     pub spaces: &'a [MemorySpace],
     pub bodies: &'a [NodeBody<'a>],
     /// The edges with both ends in this region.
-    pub edges: &'a [InnerEdge],
+    pub edges: &'a [InnerEdge<'a>],
+    pub host_inputs: &'a [HostBinding<'a>],
+    pub host_outputs: &'a [HostBinding<'a>],
+    /// The capacity of a FIFO edge that declares none, for a backend that lays out queues itself.
+    pub fifo_capacity: u32,
     pub merge_allowed: bool,
 }

@@ -1,8 +1,8 @@
 //! Reading a Blob, with every access bounds-checked.
 
 use crate::format::{
-    BODIES, HEADER_LEN, MAGIC, NODES, PlanError, SECTION_COUNT, SECTION_NAMES, SLOTS, SPACES,
-    STEP_LEN, STEPS, Span, StepKind, StepRecord, TYPES, VERSION, WORD_LEN,
+    BODIES, EXTRA, HEADER_LEN, MAGIC, NODES, PlanError, SECTION_COUNT, SECTION_NAMES, SLOTS,
+    SPACES, STEP_LEN, STEPS, Span, StepKind, StepRecord, TYPES, VERSION, WORD_LEN,
 };
 
 fn word(bytes: &[u8], at: usize) -> Option<u32> {
@@ -42,6 +42,11 @@ impl Iterator for Words<'_> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         let left = self.bytes.len() / WORD_LEN;
         (left, Some(left))
+    }
+
+    fn nth(&mut self, index: usize) -> Option<u32> {
+        self.bytes = self.bytes.get(index.checked_mul(WORD_LEN)?..)?;
+        self.next()
     }
 }
 
@@ -192,5 +197,10 @@ impl<'a> PlanView<'a> {
 
     pub fn bodies(&self) -> Words<'a> {
         self.all(BODIES)
+    }
+
+    /// Words a form keeps for itself. The plan format doesn't read them.
+    pub fn extra(&self) -> Words<'a> {
+        self.all(EXTRA)
     }
 }

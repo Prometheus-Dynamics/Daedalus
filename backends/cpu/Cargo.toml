@@ -8,13 +8,21 @@ repository.workspace = true
 
 [features]
 default = ["std", "merge"]
-std = ["alloc"]
-alloc = []
+std = ["alloc", "daedalus-registry/std"]
+alloc = [
+    "dep:daedalus-backend",
+    "dep:daedalus-graph",
+    "daedalus-abi/alloc",
+    "daedalus-plan/alloc",
+    "daedalus-runner/alloc",
+    "daedalus-types/alloc",
+    "daedalus-value/alloc",
+]
 # A region's nodes as direct calls (D2).
 merge = []
 # Blob form and its small runner (D3).
 blob = []
-receive = []
+receive = ["blob"]
 # Generated Rust for a solved region (D4).
 source = []
 tunable = []
@@ -25,18 +33,21 @@ f64 = []
 defmt = []
 
 [dependencies]
-daedalus-abi = { path = "../../core/abi", features = ["alloc"] }
-daedalus-backend = { path = "../../core/backend" }
-daedalus-graph = { path = "../../core/graph" }
-daedalus-runner = { path = "../../core/runner" }
-daedalus-types = { path = "../../core/types", features = ["alloc"] }
-daedalus-value = { path = "../../core/value" }
+daedalus-abi = { path = "../../core/abi", default-features = false }
+daedalus-backend = { path = "../../core/backend", optional = true }
+daedalus-graph = { path = "../../core/graph", optional = true }
+daedalus-plan = { path = "../../core/plan", default-features = false }
+daedalus-registry = { path = "../../core/registry", default-features = false }
+daedalus-runner = { path = "../../core/runner", default-features = false }
+daedalus-types = { path = "../../core/types", default-features = false }
+daedalus-value = { path = "../../core/value", default-features = false }
 
 [dev-dependencies]
 daedalus-abi = { path = "../../core/abi", features = ["test-run", "count-alloc"] }
 daedalus-cpu-author = { path = "../cpu-author" }
 daedalus-macros = { path = "../../core/macros" }
 daedalus-host = { path = "../../core/host" }
+daedalus-plan = { path = "../../core/plan" }
 daedalus-planner = { path = "../../core/planner" }
 daedalus-registry = { path = "../../core/registry" }
 

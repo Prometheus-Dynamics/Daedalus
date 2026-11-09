@@ -7,7 +7,7 @@ pub const VERSION: u16 = 1;
 
 /// Magic, format, flags, a reserved word, the hash, then an offset and count per section.
 pub(crate) const HEADER_LEN: usize = 24 + SECTION_COUNT * 8;
-pub(crate) const SECTION_COUNT: usize = 6;
+pub(crate) const SECTION_COUNT: usize = 7;
 pub(crate) const STEP_LEN: usize = 32;
 pub(crate) const WORD_LEN: usize = 4;
 
@@ -17,9 +17,11 @@ pub(crate) const SLOTS: usize = 2;
 pub(crate) const SPACES: usize = 3;
 pub(crate) const TYPES: usize = 4;
 pub(crate) const BODIES: usize = 5;
+pub(crate) const EXTRA: usize = 6;
 
-pub(crate) const SECTION_NAMES: [&str; SECTION_COUNT] =
-    ["steps", "nodes", "slots", "spaces", "types", "bodies"];
+pub(crate) const SECTION_NAMES: [&str; SECTION_COUNT] = [
+    "steps", "nodes", "slots", "spaces", "types", "bodies", "extra",
+];
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

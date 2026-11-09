@@ -44,7 +44,6 @@ pub use message::MessageSink;
 pub use out::{Written, write_out, write_text};
 pub use slots::{NO_SLOT, Slot, SlotState, Slots};
 pub use status::Status;
-#[cfg(feature = "alloc")]
 pub use step::OwnedStep;
 pub use step::{Step, StepEnd, StepWord};
 pub use step_cx::{

@@ -4,20 +4,27 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "alloc")]
 mod backend;
+mod body;
+#[cfg(feature = "alloc")]
 pub mod steps;
 
 #[cfg(feature = "blob")]
 pub mod blob;
 #[cfg(feature = "chip")]
 pub mod chip;
-#[cfg(feature = "merge")]
+#[cfg(all(feature = "alloc", feature = "merge"))]
 pub mod merge;
 #[cfg(feature = "source")]
 pub mod source;
 
+#[cfg(feature = "alloc")]
 pub use backend::{BACKEND_ID, CpuBackend, HOST_SPACE};
+#[cfg(feature = "alloc")]
 pub use daedalus_abi::{Fault, FixedError, StepCx as Ctx};
+#[cfg(feature = "alloc")]
 pub use steps::ports::{FanIn, FanItem};

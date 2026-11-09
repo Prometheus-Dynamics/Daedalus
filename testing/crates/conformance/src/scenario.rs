@@ -92,6 +92,7 @@ impl Scenario {
                 body: BodyIndex(0),
                 inputs: 0,
                 outputs: 0,
+                id: "test",
                 merges: true,
                 code: self.code,
                 text: self.text,
@@ -103,6 +104,9 @@ impl Scenario {
             spaces: &spaces,
             bodies: &bodies,
             edges: &[],
+            host_inputs: &[],
+            host_outputs: &[],
+            fifo_capacity: 4,
             merge_allowed: true,
         };
         body(&region, &cx)

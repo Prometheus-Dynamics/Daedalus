@@ -14,6 +14,7 @@ extern crate std;
 
 #[cfg(feature = "alloc")]
 mod access;
+mod arena;
 #[cfg(feature = "std")]
 mod async_step;
 mod backpressure;
@@ -53,6 +54,10 @@ use daedalus_value::OwnerKind;
 
 #[cfg(feature = "alloc")]
 pub use access::{Held, UNSTAMPED, read_inline, take_typed, write_inline};
+pub use arena::{
+    ArenaBody, ArenaFull, Fresh, StepArena, align_up, bytes_of, copy_inline, fill_inline,
+    steps_end, value_of,
+};
 #[cfg(feature = "std")]
 pub use async_step::FutureFence;
 pub use backpressure::BackpressureStrategy;
