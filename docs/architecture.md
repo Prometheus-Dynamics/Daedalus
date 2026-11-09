@@ -444,7 +444,7 @@ outside this repo:
 | `wgsl-infer` | `backends/wgpu-author`, using naga when the macro expands |
 | `kernels` | `backends/kernels-sys`, usable by any backend |
 | `accel` | `testing/crates/accel`: the acceleration inventory and matrix |
-| `macros` | `core/macros`, the one `#[node]` |
+| `macros` | `core/macros`, the one `#[node]` and `#[transfer]`; `core/derive`, `NodeConfig` and `Type` |
 | `ffi/core`, `ffi/host` | `backends/process`, and workers finally join graphs |
 | `ffi/rust`, `python`, `node`, `java`, `cpp` | `languages/*` |
 | `daedalus` | `core/daedalus`, re-exports only |
@@ -495,6 +495,8 @@ The page comes from reading the code. None of this design has been compiled yet.
 - **`dev` is the reference and stays untouched.** Code that took real hardware or careful measurement to get right is ported with its tests: WGSL details, driver workarounds, ISA kernels. Everything else is written for the new design.
 - **Only Daedalus matters here.** Breaking other repositories doesn't count against a PR. They stay on the `dev` they're locked to, then read `next` and send requests.
 - **No Lemnos dependency.** The gate fails on one.
+**Status:** group A is merged. Groups B and C are being built in local sessions, one owner per group, and nothing runs in the cloud until the user says so. The contracts as built are in `docs/design.md`, under "The foundation as built".
+
 - **Work is a pre-planned list of PRs into `next`,** each specific enough that a cloud session can take it with no other context.
 - **The cloud builds, and a local session runs the boards.** A PR is never held back for a board run.
 - **Budgets are enforced.** dev's numbers are the limit. What GitHub's runners can measure is checked in CI (instruction counts under callgrind, allocations, flash and RAM). Real timings are board runs.

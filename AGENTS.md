@@ -17,6 +17,9 @@ reference, and nothing here changes it. The work is a pre-planned list of PRs in
 
 [`TODO.md`](TODO.md) is the full list.
 
+Group A is merged. Groups B and C are being built in local sessions, one owner per group. No PR
+runs in the cloud until the user says so, whatever a brief's `Runs:` line says.
+
 ## Working a PR
 
 - Base branch `next`, working branch `pr/<id>` (for example `pr/A2`), one PR into `next`.
@@ -39,7 +42,7 @@ reference, and nothing here changes it. The work is a pre-planned list of PRs in
   `[lints.clippy]` tables, as `core/abi/Cargo.toml` does, because the workspace table forbids it.
 - If your PR needs a shared interface changed, stop and say so in the PR description. Shared
   interfaces (`core/abi`, `core/types`, `core/value`, `core/graph`, `core/backend`, `core/registry`,
-  `core/macros`, `core/plan`) change only through A-series PRs.
+  `core/macros`, `core/derive`, `core/plan`) change only through A-series PRs.
 - A PR merges when `scripts/gate.sh` passes. Paste the proof named in the brief into the PR
   description.
 
