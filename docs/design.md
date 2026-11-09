@@ -61,7 +61,8 @@ examples/    each directory directly inside is a crate
 ```
 
 Workspace members are globs, so adding a crate never edits the root `Cargo.toml`. Every directory
-directly inside those folders must be a crate.
+directly inside `core/`, `backends/`, `languages/`, `service/`, `testing/crates/` and `examples/`
+must be a crate.
 
 ## The flow
 

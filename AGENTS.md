@@ -20,7 +20,8 @@ reference, and nothing here changes it. The work is a pre-planned list of PRs in
 ## Working a PR
 
 - Base branch `next`, working branch `pr/<id>` (for example `pr/A2`), one PR into `next`.
-- Read `dev` as a reference: `git fetch origin dev`, then `git show origin/dev:<path>`. Bring in only
+- Read `dev` as a reference: `git fetch origin dev:refs/remotes/origin/dev`, then
+  `git show origin/dev:<path>`. Bring in only
   what the brief lists. The paths under "Read on dev" are from the repository root on `dev`.
 - Stay inside the paths your PR creates. Don't edit the root `Cargo.toml`, `TODO.md`, or a changelog.
   `Cargo.lock` is ignored until I7. Keeping to this is what lets many sessions run at once without
@@ -30,7 +31,12 @@ reference, and nothing here changes it. The work is a pre-planned list of PRs in
 - Add a crate by creating its directory under the right folder. Workspace members are globs. Inherit
   third-party dependencies with `workspace = true`. Refer to another Daedalus crate by path
   (`daedalus-value = { path = "../value" }`).
-- Add a CI step by creating `scripts/ci.d/<step>.sh`. Add a CI job by creating its own workflow file.
+- CI works one way, whatever a brief calls it. Add a step by creating an executable
+  `scripts/ci.d/<step>.sh`: the gate runs every step in that folder. A check that needs its own
+  environment gets its own workflow file instead. Where a brief says to add a `ci.sh` subcommand or
+  edit a named job in `ci.yml`, do one of those two. I7 may also edit `.gitignore` and `scripts/ci.d/`.
+- A crate that may use `unsafe` replaces `[lints] workspace = true` with its own `[lints.rust]` and
+  `[lints.clippy]` tables, as `core/abi/Cargo.toml` does, because the workspace table forbids it.
 - If your PR needs a shared interface changed, stop and say so in the PR description. Shared
   interfaces (`core/abi`, `core/types`, `core/value`, `core/graph`, `core/backend`, `core/registry`,
   `core/macros`, `core/plan`) change only through A-series PRs.
