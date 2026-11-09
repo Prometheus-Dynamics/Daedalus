@@ -12,6 +12,8 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+#[cfg(feature = "std")]
+mod async_step;
 mod bits;
 mod cancel;
 mod error;
@@ -38,6 +40,8 @@ use daedalus_abi::{Fence, Progress, Slot, Step, StepCx};
 use daedalus_plan::Span;
 use daedalus_value::OwnerKind;
 
+#[cfg(feature = "std")]
+pub use async_step::FutureFence;
 pub use cancel::{CANCEL_REASON, CancelWord, skip_cancelled};
 pub use error::{LoadError, MaskError, RunError};
 pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
@@ -142,6 +146,11 @@ pub struct Runner<'a> {
     /// The reuse table, for a plan with a reusable step.
     reuse: Option<reuse::Table<'a>>,
 }
+
+// SAFETY: a `Runner` holds exclusive borrows of its buffers and calls each step from whichever
+// thread owns it. The step contract makes each body safe to run on another thread: `OwnedStep`
+// requires `Send`, `StepWord` is a function, and a hand-built `Step` promises the same.
+unsafe impl Send for Runner<'_> {}
 
 impl<'a> Runner<'a> {
     /// Checks the plan and sets up the queues. Loading may be slow; ticking never is.
