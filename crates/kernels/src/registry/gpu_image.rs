@@ -3,7 +3,7 @@
 //! with its scalar reference (`crates/gpu/src/shader/image_tests.rs`). Line is one serial walk
 //! with at most `width + height` steps, so it has no data-parallel GPU form.
 
-use daedalus_accel::{Backend, Kernel, Registry, Status};
+use daedalus_accel::{Backend, Exempt, Kernel, Registry, Status};
 
 const SOURCE: &str = "crates/gpu/src/shader/image.wgsl";
 const TEST: &str = "crates/gpu/src/shader/image_tests.rs";
@@ -35,5 +35,9 @@ static GPU_IMAGE_KERNELS: [Kernel; 11] = [
 pub(super) static GPU_IMAGE_TABLE: Registry = Registry {
     name: "daedalus-gpu-image",
     kernels: &GPU_IMAGE_KERNELS,
+    exempt: &[Exempt {
+        path: "crates/gpu/src/shader/image.rs",
+        reason: "GpuImages: the pipeline and dispatch of image.wgsl (the kernel rows name the shader)",
+    }],
     ..Registry::EMPTY
 };
