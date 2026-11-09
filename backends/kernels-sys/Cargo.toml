@@ -1,0 +1,33 @@
+[package]
+name = "daedalus-kernels-sys"
+description = "Daedalus's data-parallel CPU kernels (float, copy and codec), vectorized per ISA."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["simd", "kernels", "base64"]
+categories = ["no-std", "encoding"]
+
+# This crate uses unsafe for the vector paths (see AGENTS.md), so it carries its own lint table.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "deny"
+unused_attributes = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[features]
+default = ["std"]
+# Runtime selection of AVX2 kernels on x86 (`is_x86_feature_detected`). Without it, x86 runs
+# the SSE2 (or compiled-in) kernels.
+std = []
+# CRC-32 kernels (added with the CRC PR). Off until then.
+crc = []
+
+[dependencies]
