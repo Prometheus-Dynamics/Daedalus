@@ -16,7 +16,7 @@ mod tick;
 use daedalus_abi::{Fence, Slot, Step, StepCx};
 use daedalus_plan::Span;
 
-pub use error::{LoadError, RunError};
+pub use error::{LoadError, MaskError, RunError};
 pub use step::{Queue, SlotKind, SlotSpec, StepMeta};
 pub use tick::TickReport;
 
@@ -64,6 +64,8 @@ pub struct Memory<'a> {
     pub always: &'a mut [u32],
     /// One entry per step with `may_pend`.
     pub pending: &'a mut [Pending],
+    /// The activity mask, in `words_for(steps)` words. Only used once a host sets a mask.
+    pub activity: &'a mut [u32],
 }
 
 /// A loaded graph ready to tick.
@@ -80,6 +82,8 @@ pub struct Runner<'a> {
     always: &'a mut [u32],
     pending: &'a mut [Pending],
     pending_len: usize,
+    activity: &'a mut [u32],
+    masked: bool,
     cx: StepCx,
     tick: u32,
 }
@@ -101,6 +105,7 @@ impl<'a> Runner<'a> {
             carry,
             always,
             pending,
+            activity,
         } = memory;
         let count = steps.len();
         let words = words_for(count);
@@ -111,6 +116,7 @@ impl<'a> Runner<'a> {
             || dirty.len() < words
             || carry.len() < words
             || always.len() < words
+            || activity.len() < words
         {
             return Err(LoadError::Length);
         }
@@ -175,6 +181,8 @@ impl<'a> Runner<'a> {
             always,
             pending,
             pending_len: 0,
+            activity,
+            masked: false,
             cx: StepCx::new(),
             tick: 0,
         })
@@ -206,6 +214,25 @@ impl<'a> Runner<'a> {
         self.queues
             .get(slot as usize)
             .filter(|_| (slot as usize) < self.slots)
+    }
+
+    /// Sets which steps may run. `None` clears the mask, so every step runs. A step whose bit is
+    /// clear is skipped and wakes nothing, and its inputs stay queued.
+    pub fn set_activity(&mut self, mask: Option<&[u32]>) -> Result<(), MaskError> {
+        let expected = words_for(self.steps.len());
+        match mask {
+            None => self.masked = false,
+            Some(words) if words.len() == expected => {
+                self.activity[..expected].copy_from_slice(words);
+                self.masked = true;
+            }
+            Some(_) => {
+                return Err(MaskError {
+                    expected: expected as u32,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// How many fences are registered and not yet finished.

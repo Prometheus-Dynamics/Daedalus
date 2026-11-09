@@ -58,6 +58,7 @@ pub struct Fixture {
     pub carry: Vec<u32>,
     pub always: Vec<u32>,
     pub pending: Vec<Pending>,
+    pub activity: Vec<u32>,
 }
 
 impl Fixture {
@@ -73,6 +74,7 @@ impl Fixture {
             carry: vec![0; words],
             always: vec![0; words],
             pending: vec![Pending::EMPTY; may_pend],
+            activity: vec![0; words],
             steps,
             wiring,
             specs,
@@ -95,6 +97,7 @@ impl Fixture {
                 carry: &mut self.carry,
                 always: &mut self.always,
                 pending: &mut self.pending,
+                activity: &mut self.activity,
             },
         )
     }

@@ -18,6 +18,13 @@ pub enum LoadError {
     Capacity,
 }
 
+/// A host's activity mask has the wrong length for the plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaskError {
+    /// How many words the plan needs.
+    pub expected: u32,
+}
+
 /// Why a tick could not finish. The step that stopped it is named, and the tick state is kept.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
