@@ -13,8 +13,8 @@ use daedalus::runtime::host_bridge::{PayloadInspection, inspect_payload};
 use daedalus::runtime::{ExecutionContext, NodeIo, PortId, RuntimeNode};
 use daedalus::transport::Payload;
 use daedalus_ffi_core::{
-    ByteEncoding, BytePayload, FfiContractError, InvokeContractError, InvokeRequest,
-    InvokeResponse, WORKER_PROTOCOL_VERSION, WirePort, WireValue,
+    ByteEncoding, BytePayload, FfiContractError, ImagePayload, InvokeContractError, InvokeRequest,
+    InvokeResponse, WORKER_PROTOCOL_VERSION, WirePayloadHandle, WirePort, WireValue,
 };
 
 use crate::events;
@@ -85,6 +85,19 @@ impl Worker {
             Arc::default(),
             Arc::clone(&self.capabilities),
         );
+        let codec = self.state_codecs.get(&node.id);
+        if let (Some(codec), Some(state)) = (codec, &request.state) {
+            let value = state
+                .clone()
+                .into_value()
+                .map_err(|err| CallFailure::new("bad_request", format!("state: {err}")))?;
+            if !(codec.import)(&ctx, &value) {
+                return Err(CallFailure::new(
+                    "bad_request",
+                    format!("state of node `{}` does not decode", node.id),
+                ));
+            }
+        }
         events::begin_call();
         let handlers = &self.registry.handlers;
         match catch_unwind(AssertUnwindSafe(|| {
@@ -107,11 +120,18 @@ impl Worker {
                 .map_err(|message| CallFailure::new("bad_output", message))?;
             outputs.insert(port.to_string(), value);
         }
+        let state = match codec.and_then(|codec| (codec.export)(&ctx)) {
+            Some(value) => Some(
+                WireValue::from_value(value)
+                    .map_err(|err| CallFailure::new("bad_output", format!("state: {err}")))?,
+            ),
+            None => None,
+        };
         let response = InvokeResponse {
             protocol_version: WORKER_PROTOCOL_VERSION,
             correlation_id: request.correlation_id.clone(),
             outputs,
-            state: None,
+            state,
             events: events::take_call_events(),
         };
         response
@@ -125,6 +145,12 @@ impl Worker {
     fn output_wire(&self, payload: &Payload) -> Result<WireValue, String> {
         if let Ok(value) = WireValue::from_payload(payload) {
             return Ok(value);
+        }
+        if let Some(image) = payload.get_ref::<ImagePayload>() {
+            return Ok(WireValue::Image(image.clone()));
+        }
+        if let Some(handle) = payload.get_ref::<WirePayloadHandle>() {
+            return Ok(WireValue::Handle(handle.clone()));
         }
         if let Some(data) = payload.get_ref::<Vec<u8>>() {
             return Ok(WireValue::Bytes(BytePayload {
@@ -154,6 +180,10 @@ fn input_payload(value: &WireValue, port: &WirePort) -> Result<Payload, CallFail
     // Bytes become a `Value::Bytes` so a `Vec<u8>` parameter coerces from them like any value; a
     // raw byte payload is only read by `&[u8]`-style parameters, which the macros do not take.
     let payload = match value {
+        // Images and handles travel as their own wire structs: the worker reads their metadata and
+        // passes them on, it does not resolve a handle's payload itself.
+        WireValue::Image(image) => Payload::owned(type_key, image.clone()),
+        WireValue::Handle(handle) => Payload::owned(type_key, handle.clone()),
         WireValue::Bytes(bytes) => Payload::owned(
             type_key,
             Value::Bytes(std::borrow::Cow::Owned(bytes.data.clone())),

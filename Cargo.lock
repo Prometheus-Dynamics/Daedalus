@@ -978,6 +978,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-plugins-rust-worker"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-ffi-core",
+ "daedalus-ffi-host",
+ "daedalus-ffi-rust",
+ "daedalus-rs",
+ "serde_json",
+]
+
+[[package]]
 name = "daedalus-plugins-stable-abi"
 version = "3.0.1-dev"
 dependencies = [

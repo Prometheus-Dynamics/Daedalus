@@ -114,6 +114,7 @@ cmd_features() {
   cargo check -p daedalus-rs --features "dylib-plugins"
   cargo check -p daedalus-runtime --features "metrics,lockfree-queues"
   cargo check -p daedalus-ffi-core -p daedalus-ffi-host --no-default-features
+  cargo check -p daedalus-ffi-rust --no-default-features
   cargo check -p daedalus-ffi-core -p daedalus-ffi-host \
     --features "daedalus-ffi-core/image-payload,daedalus-ffi-host/image-payload"
   cargo check -p daedalus-gpu --no-default-features --features "gpu-wgpu"

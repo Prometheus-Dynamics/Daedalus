@@ -4,15 +4,28 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
-use daedalus::runtime::StateStore;
+use daedalus::data::model::Value;
+use daedalus::data::to_value::ToValue;
 use daedalus::runtime::plugins::{PluginInstallable, PluginRegistry};
 use daedalus::runtime::type_index::TypeIndex;
+use daedalus::runtime::{ExecutionContext, StateStore};
 use daedalus_ffi_core::{
     BackendKind, FfiContractError, NodeSchema, PluginSchema, WORKER_PROTOCOL_VERSION, WorkerError,
     WorkerHello, WorkerMessage, WorkerMessagePayload,
 };
 use daedalus_ffi_host::{SchemaExportError, export_registry_plugin_schema};
 use thiserror::Error;
+
+/// Converts a node's state to and from its wire value (see [`Worker::with_state`]).
+pub(crate) struct StateCodec {
+    pub(crate) import: StateImport,
+    pub(crate) export: StateExport,
+}
+
+/// Seeds a node's state from its wire value; `false` when the value does not decode.
+pub(crate) type StateImport = Box<dyn Fn(&ExecutionContext, &Value) -> bool + Send + Sync>;
+/// The node's state as a wire value, `None` when it has no state yet.
+pub(crate) type StateExport = Box<dyn Fn(&ExecutionContext) -> Option<Value> + Send + Sync>;
 
 /// Why a plugin cannot be served: its install failed, or its schema does not export.
 #[derive(Debug, Error)]
@@ -31,6 +44,7 @@ pub enum WorkerBuildError {
 /// the ones the in-process runtime uses, and `state(T)` nodes keep their state here across calls.
 pub struct Worker {
     pub(crate) worker_id: String,
+    pub(crate) state_codecs: BTreeMap<String, StateCodec>,
     pub(crate) registry: PluginRegistry,
     pub(crate) types: TypeIndex,
     pub(crate) capabilities: Arc<daedalus::runtime::capabilities::CapabilityRegistry>,
@@ -86,6 +100,7 @@ impl Worker {
         let capabilities = Arc::new(registry.capabilities.clone());
         Ok(Self {
             worker_id: "daedalus-rust-worker".into(),
+            state_codecs: BTreeMap::new(),
             types,
             capabilities,
             registry,
@@ -98,6 +113,39 @@ impl Worker {
     /// The `worker_id` the hello announces (default `daedalus-rust-worker`).
     pub fn with_worker_id(mut self, worker_id: impl Into<String>) -> Self {
         self.worker_id = worker_id.into();
+        self
+    }
+
+    /// Declare the state of node `node_id` as a `state(T)` node's state, converted to and from the
+    /// wire state (`WireValue`, which the host sends and stores) through `decode` and `ToValue`.
+    /// The worker seeds the state before each call that carries one and exports it after each
+    /// call. A node without a declaration keeps its state in the worker and exports none.
+    pub fn with_state<T>(
+        mut self,
+        node_id: impl Into<String>,
+        decode: fn(&Value) -> Option<T>,
+    ) -> Self
+    where
+        T: Default + ToValue + Send + Sync + 'static,
+    {
+        // The macros keep a `state(T)` node's state as a tuple of its state slots: `(T,)` here.
+        let import = Box::new(
+            move |ctx: &ExecutionContext, value: &Value| match decode(value) {
+                Some(state) => {
+                    ctx.set_node_state((state,));
+                    true
+                }
+                None => false,
+            },
+        );
+        let export = Box::new(|ctx: &ExecutionContext| {
+            let (state,) = ctx.take_node_state::<(T,)>()?;
+            let value = state.to_value();
+            ctx.set_node_state((state,));
+            Some(value)
+        });
+        self.state_codecs
+            .insert(node_id.into(), StateCodec { import, export });
         self
     }
 

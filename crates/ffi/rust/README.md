@@ -51,15 +51,39 @@ record an event for the node that is running. Events return in the response, in 
 `rust_worker_package(schema, executable, args)` builds the `PluginPackage` the host installs: one
 persistent-worker backend per node, `executable` as the worker binary.
 
-## Not Yet
+## Wire Mapping
 
-- Image payloads are not converted.
-- Struct, enum, optional, list, map, and tuple wire values are not mapped to node ports.
-- Custom type keys and boundary contracts are not mapped at the worker boundary.
-- `WireValue` state is not imported or exported; stateful nodes keep their state in the worker.
+| Wire value | Rust port type |
+| --- | --- |
+| `Int`, `UInt`, `Float`, `Bool`, `String`, `Unit` | `i64`, `u64`, `f64`, `bool`, `String`, `()` and the other scalars |
+| `Bytes` | `Vec<u8>` (a `Value::Bytes`, coerced like any value) |
+| `List`, `Record`, `Enum` | `Vec<T>`, `BTreeMap<String, T>`, tuples, `Option<T>` and `#[derive(DaedalusTypeExpr, DaedalusToValue)]` structs and enums; decode with `register_const_coercer` and encode with `register_to_value_serializer` |
+| `Image` | `daedalus_ffi_core::ImagePayload` |
+| `Handle` | `daedalus_ffi_core::WirePayloadHandle`: the worker reads its metadata (capabilities, access, residency) and passes it on; it does not resolve the payload |
+
+Custom type keys go on the port (`port(name = "...", type_key = "...")`) and on the type
+(`#[daedalus(type_key = "...")]`). Boundary contracts are registered with
+`register_boundary_contract`, with the layout hash `LayoutHash::for_schema` over the port's type
+expression, as the macros derive it.
+
+## State
+
+A `state(T)` node keeps its state in the worker across invokes. A node whose state type implements
+`ToValue` declares the wire form with `Worker::with_state(node_id, decode)`: the host's state is
+seeded before the call, and the state is exported in the response. A node with config ports keeps
+its state in the worker and exports none (see Limits).
+
+## Limits
+
+- `with_state` covers `state(T)` nodes without config ports. The macros store a stateful node's
+  config slots in the same tuple as its state, and the SDK does not know those types, so such a
+  node's state is not exported yet.
+- Shader nodes run their CPU form in the worker; no GPU dispatch and no package artifact is loaded.
 
 ## Conformance
 
-`tests/conformance.rs` runs the canonical Rust fixtures from `daedalus-ffi-core` through a real
-persistent worker: the host starts the test binary as the worker and checks outputs and events of
-five fixtures against the expected responses. The rest are reported as not served.
+`tests/conformance.rs` runs all 18 canonical fixtures from `daedalus-ffi-core` through a persistent
+worker: the host starts the test binary as the worker, and each fixture's node is invoked twice,
+checking outputs, events and state against the fixture's expected response. The image, shader and
+package-artifact fixtures declare another backend in core; the run re-targets their schema to the
+Rust backend, which is what a Rust-served node declares.

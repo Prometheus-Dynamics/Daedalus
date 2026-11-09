@@ -11,13 +11,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Added
 
 - `daedalus-ffi-rust`: a Rust SDK for out-of-process plugins. `Worker::from_plugin` serves a
-  `declare_plugin!` plugin as a persistent worker over the worker protocol (hello, ack, invoke,
-  response, typed errors, events, clean exit on end of input). Node handlers, const coercers and
+  `declare_plugin!` plugin as a persistent worker over the worker protocol: hello, ack, invoke,
+  response, typed errors, events, clean exit on end of input. Node handlers, const coercers and
   value serializers are the in-process runtime's. A node panic is a `node_panic` error and the
-  worker keeps serving. `rust_worker_package` builds the package the host installs. The crate
-  does not depend on the stable in-process plugin ABI. Conformance: five canonical Rust fixtures run
-  through a real persistent worker. Not yet: image payloads, struct, enum, optional, list, map,
-  tuple and custom type-key wire mapping, and `WireValue` state import and export.
+  worker keeps serving. `Worker::with_state` carries `state(T)` nodes' state over the wire, and
+  `rust_worker_package` builds the package the host installs. The crate does not depend on the
+  stable in-process plugin ABI. All 18 canonical Rust fixtures pass through a real persistent
+  worker. Limit: a stateful node with config ports does not export its state yet.
+- `examples/08_ffi/rust_worker`: an example plugin served by the `rust_worker` binary, and an
+  end-to-end test that installs it through `FfiHost` and runs a graph of invokes.
 
 - `scripts/board.sh` profiles for the ROCK 5C, ZERO 3E, Cubie A7A/A7S/A7Z and Luckfox Aura; written,
   untested on board.

@@ -31,6 +31,7 @@ members = [
     "crates/mcu/macros",
     "crates/mcu/build",
     "examples",
+    "examples/08_ffi/rust_worker",
     "examples/plugins/math",
     "examples/plugins/example_project",
     "examples/plugins/example_project_dylib",

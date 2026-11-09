@@ -14,22 +14,22 @@ Status values:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Scalars | contract | host | test | test | test | test | test | generated fixture per language, width-exact SDK port types, `u64` wire round trip per SDK |
 | Bytes | contract | host | test | test | test | test | test | embedded bytes and payload-handle benchmarks |
-| Payload refs | contract | host | sdk-target | test | test | test | test | handle validation, lease tracking, SDK transport options |
-| Images | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | image feature fixture and validation |
-| Structs | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | custom struct round trip |
-| Enums | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | enum variant round trip |
-| Optional | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | present and absent values |
-| Lists | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | homogeneous list conversion |
-| Maps | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | string-key map conversion |
-| Tuples | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | positional tuple conversion |
-| Unit | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | unit input/output conversion |
+| Payload refs | contract | host | test | test | test | test | test | handle validation, lease tracking, SDK transport options |
+| Images | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | image feature fixture and validation |
+| Structs | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | custom struct round trip |
+| Enums | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | enum variant round trip |
+| Optional | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | present and absent values |
+| Lists | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | homogeneous list conversion |
+| Maps | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | string-key map conversion |
+| Tuples | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | positional tuple conversion |
+| Unit | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | unit input/output conversion |
 | Multi-output | contract | host | test | test | test | test | test | named output matching, per-output port types |
-| Stateful nodes | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | repeated invoke preserves state |
+| Stateful nodes | contract | host | test | sdk-target | sdk-target | sdk-target | repeated invoke preserves state |
 | Raw events | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | event ordering and metadata |
 | Capability nodes | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | host capability available/unavailable |
-| Custom type keys | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | type key snapshot and serializer lookup |
-| Boundary contracts | contract | host | sdk-target | test | test | test | test | access/residency/layout validation |
-| Package artifacts | contract | host | sdk-target | sdk-target | sdk-target | test | sdk-target | missing artifact and hash mismatch |
+| Custom type keys | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | type key snapshot and serializer lookup |
+| Boundary contracts | contract | host | test | test | test | test | test | access/residency/layout validation |
+| Package artifacts | contract | host | test | sdk-target | sdk-target | test | sdk-target | missing artifact and hash mismatch |
 | Worker reuse | contract | host | test | sdk-target | sdk-target | not applicable | repeated invokes do not restart worker |
 | Typed errors | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | malformed input and backend failure |
 
