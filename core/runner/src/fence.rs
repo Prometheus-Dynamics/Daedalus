@@ -7,24 +7,24 @@ use crate::step::StepMeta;
 use crate::tick::TickReport;
 use crate::{Pending, Runner};
 
-impl Runner<'_> {
-    /// Registers a pending step. The list stays sorted by step index, so the polls of one tick
-    /// always run in the same order whatever order the steps went pending in.
-    pub(crate) fn register_pending(&mut self, entry: Pending) -> bool {
-        if self.pending_len == self.pending.len() {
-            return false;
-        }
-        let mut at = self.pending_len;
-        while at > 0 && self.pending[at - 1].step > entry.step {
-            self.pending[at] = self.pending[at - 1];
-            at -= 1;
-        }
-        self.pending[at] = entry;
-        self.pending_len += 1;
-        self.counters.pending += 1;
-        true
+/// Adds `entry` to the sorted list, or returns false when it is full. The list stays sorted by step
+/// index, so the polls of one tick always run in the same order whatever order the steps went
+/// pending in.
+pub(crate) fn insert_pending(list: &mut [Pending], len: &mut usize, entry: Pending) -> bool {
+    if *len == list.len() {
+        return false;
     }
+    let mut at = *len;
+    while at > 0 && list[at - 1].step > entry.step {
+        list[at] = list[at - 1];
+        at -= 1;
+    }
+    list[at] = entry;
+    *len += 1;
+    true
+}
 
+impl Runner<'_> {
     /// Polls every registered fence once, in step index order. Ready steps wake their consumers,
     /// and a failed step is counted as a fault. Nothing is woken for a fence that is still
     /// pending, and an entry that finishes is removed while the rest keep their order.

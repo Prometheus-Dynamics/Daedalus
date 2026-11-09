@@ -78,12 +78,18 @@ impl Queue {
     }
 
     /// Appends `value`, which must not be full. Stamps it with the next version.
-    pub(crate) fn push(&mut self, storage: &mut [Slot], mut value: Slot) {
+    pub(crate) fn push(&mut self, storage: &mut [Slot], value: Slot) {
+        let at = self.tail_index();
+        storage[at] = self.stamp(value);
+    }
+
+    /// Counts one more value, which the caller stores at `tail_index`, and stamps its version.
+    pub(crate) fn stamp(&mut self, mut value: Slot) -> Slot {
         self.version = self.version.wrapping_add(1);
         value.version = self.version;
-        storage[self.tail_index()] = value;
         self.len += 1;
         self.unconsumed += 1;
+        value
     }
 
     /// Removes the oldest value, as a commit does, according to how this slot is read.
