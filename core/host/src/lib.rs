@@ -14,6 +14,7 @@ mod ports;
 mod snapshot;
 mod state;
 mod take;
+mod telemetry;
 
 pub use daedalus_runner::TickReport;
 
@@ -24,3 +25,4 @@ pub use ports::{Dir, PortSpec, Ports, PortsError};
 pub use state::{Codec, StateCodec, StateStore};
 #[cfg(feature = "std")]
 pub use state::{SnapshotError, restore_json, snapshot_json};
+pub use telemetry::{Event, EventLog, ExecutionReport, Level, NodeRow, Telemetry};
