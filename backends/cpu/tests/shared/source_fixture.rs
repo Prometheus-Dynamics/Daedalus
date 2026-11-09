@@ -10,7 +10,9 @@
 
 use daedalus_cpu::source::SourceBackend;
 use daedalus_cpu::{Ctx, FanIn, Fault};
-use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, Lit, NodeDoc, NodeKindDoc, PortRefDoc};
+use daedalus_graph::{
+    EdgeDoc, EdgePolicyDoc, GraphBody, Lit, LitField, NodeDoc, NodeKindDoc, PortRefDoc,
+};
 use daedalus_macros::node;
 use daedalus_planner::{Config, Form, PlanError, plan};
 use daedalus_registry::Registry;
@@ -151,6 +153,45 @@ pub fn graph() -> GraphBody {
         groups: Vec::new(),
     }
 }
+
+fn labeled(mut node: NodeDoc, label: &str) -> NodeDoc {
+    node.label = Some(label.to_string());
+    node
+}
+
+fn field(name: &str, value: Lit) -> LitField {
+    LitField {
+        name: name.to_string(),
+        value,
+    }
+}
+
+/// [`graph`] with four of its constants marked as parameters.
+pub fn tunable() -> GraphBody {
+    let mut graph = graph();
+    let mark = |node: &mut NodeDoc, value: Lit| {
+        node.metadata.insert(PARAMS_KEY.to_string(), value);
+    };
+    graph.nodes[2] = labeled(graph.nodes[2].clone(), "lowpass");
+    graph.nodes[3] = labeled(graph.nodes[3].clone(), "threshold");
+    graph.nodes[5] = labeled(graph.nodes[5].clone(), "blink");
+    let range = |low: f64, high: f64| Lit::List(vec![Lit::Float(low), Lit::Float(high)]);
+    mark(
+        &mut graph.nodes[2],
+        Lit::Struct(vec![field("alpha", range(0.0, 1.0))]),
+    );
+    mark(
+        &mut graph.nodes[3],
+        Lit::Struct(vec![field("on", range(0.0, 5.0)), field("off", Lit::Unit)]),
+    );
+    mark(
+        &mut graph.nodes[5],
+        Lit::List(vec![Lit::Str("period".to_string())]),
+    );
+    graph
+}
+
+pub const PARAMS_KEY: &str = "daedalus.chip.params";
 
 /// A graph whose two host inputs become the same function name.
 pub fn clashing() -> GraphBody {
@@ -308,6 +349,19 @@ pub fn generate(graph: &GraphBody) -> Result<String, PlanError> {
 }
 
 pub fn generate_with(graph: &GraphBody, fifo_capacity: u32) -> Result<String, PlanError> {
+    generate_full(graph, fifo_capacity, false)
+}
+
+/// With every marked parameter fixed.
+pub fn generate_frozen(graph: &GraphBody) -> Result<String, PlanError> {
+    generate_full(graph, Config::default().fifo_capacity, true)
+}
+
+fn generate_full(
+    graph: &GraphBody,
+    fifo_capacity: u32,
+    freeze_params: bool,
+) -> Result<String, PlanError> {
     let mut registry = Registry::new();
     registry
         .register_all(&[
@@ -333,6 +387,7 @@ pub fn generate_with(graph: &GraphBody, fifo_capacity: u32) -> Result<String, Pl
     let config = Config {
         form: Form::Source,
         fifo_capacity,
+        freeze_params,
         ..Config::default()
     };
     plan(graph, &registry, &[&backend], &config)?.source()

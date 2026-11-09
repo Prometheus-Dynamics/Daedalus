@@ -32,13 +32,24 @@ Every edge gets one fixed-size queue, or a local variable where two nodes always
 
 A node waits for its required inputs. If one is missing, it doesn't run this tick. A node that fails, or a queue with the error policy that fills up, stops the tick and returns a `ChipError`. `NODE_IDS` and `EDGES` turn the numbers in it into names.
 
+## Changing constants while running
+
+Mark constants in the node's metadata, under `daedalus.chip.params`: either a list of input names, or a struct from input name to `[min, max]`, or to unit for the type's full range. Each marked input must be a scalar constant inside its range.
+
+The generated module then has one field per parameter, a `set_<name>` for each, `PARAM_NAMES`, `PARAMS` and `impl Tunable`. A parameter is named `<label>.<input>`, or `<node id>.<input>` if the node has no label. Ids follow run order, then input order. A new value is used from the next tick. The firmware needs the `chip-params` feature of `daedalus-cpu`.
+
+A blob graph can be changed the same way: `Interpreter` implements `Tunable`.
+
+A host sends a 3 to 14 byte message. `daedalus_cpu::param_host::encode_update` writes it from the module's `PARAM_NAMES` and `PARAMS`, with the checks the chip will apply, and the chip calls `apply_update`. `threshold.on = 2.5` as id 1 is `01 09 00 00 20 40`.
+
+Setting `Config.freeze_params` turns every marker back into a plain constant, and gives the same module as a graph with no markers. Without the `f64` feature, no `f64` arithmetic is linked: an `f64` value sent to an `f32` parameter still converts, in integer arithmetic.
+
 ## Limitations
 
 - Port values must be `Copy`. Planning refuses anything else and names the type.
 - Node state must be `Default`. It's created the first time the node runs.
 - A module holds one connected graph. Planning refuses a graph with separate parts.
 - Two host ports whose names become the same Rust identifier are refused by name.
-- Parameters you can change at run time come with the tunable mode, not yet here.
 
 ## Measurements
 

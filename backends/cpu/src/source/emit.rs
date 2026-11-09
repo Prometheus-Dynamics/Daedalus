@@ -14,6 +14,7 @@ use daedalus_graph::{EdgePolicyDoc, Lit};
 use daedalus_types::{NodeIndex, PortIndex};
 
 use super::graph_struct::graph_struct;
+use super::tunable::{self, Param};
 use crate::backend::{BACKEND_ID, CpuBackend, body_of};
 use crate::blob::ScalarKind;
 use crate::body::CpuBody;
@@ -63,6 +64,7 @@ pub(super) struct Module {
     pub ids: Vec<String>,
     pub inputs: Vec<HostPort>,
     pub outputs: Vec<HostPort>,
+    pub params: Vec<Param>,
 }
 
 /// Rewrites every path in a type's name so it resolves from the generated module.
@@ -96,7 +98,7 @@ fn rooted(ty: &str, root: Option<&(String, String)>) -> String {
     out
 }
 
-fn sanitize(name: &str) -> String {
+pub(super) fn sanitize(name: &str) -> String {
     let mut out: String = name
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { '_' })
@@ -115,7 +117,7 @@ fn overflow_text(overflow: Overflow) -> &'static str {
     }
 }
 
-fn literal(kind: ScalarKind, value: &Lit) -> Option<String> {
+pub(super) fn literal(kind: ScalarKind, value: &Lit) -> Option<String> {
     let number = |text: String| Some(format!("{text}_{}", kind.key()));
     match (kind, value) {
         (ScalarKind::Bool, Lit::Bool(flag)) => Some(flag.to_string()),
@@ -144,7 +146,7 @@ fn literal(kind: ScalarKind, value: &Lit) -> Option<String> {
     }
 }
 
-fn shape_of(body: &NodeBody<'_>) -> Result<BodyShape, Refusal> {
+pub(super) fn shape_of(body: &NodeBody<'_>) -> Result<BodyShape, Refusal> {
     let shape = body
         .code
         .downcast_ref::<CpuBody>()
@@ -177,7 +179,7 @@ fn input_ty(shape: &BodyShape, port: u16) -> Option<&'static str> {
     Some((found.ty)())
 }
 
-fn has_port(role: Role) -> bool {
+pub(super) fn has_port(role: Role) -> bool {
     matches!(
         role,
         Role::Read | Role::Take | Role::Modify | Role::OptRead | Role::OptTake | Role::OptModify
@@ -371,6 +373,7 @@ struct NodeEmit<'a> {
     shape: BodyShape,
     inputs: u16,
     wires: &'a Wires,
+    params: &'a [Param],
     cx: &'a CompileCx<'a>,
     root: Option<&'a (String, String)>,
 }
@@ -403,6 +406,13 @@ impl NodeEmit<'_> {
     }
 
     fn constant(&self, param: &ParamShape) -> Result<Option<String>, Refusal> {
+        if let Some(id) = self
+            .params
+            .iter()
+            .position(|one| one.node == self.node && one.port == param.port)
+        {
+            return Ok(Some(format!("self.p{id}")));
+        }
         let Some(one) = self
             .cx
             .consts
@@ -599,6 +609,7 @@ fn tick_text(
     wires: &Wires,
     root: Option<&(String, String)>,
     fires_all: &[bool],
+    params: &[Param],
 ) -> Result<String, Refusal> {
     let mut out = String::new();
     let uses_cx = region.nodes.iter().try_fold(false, |any, node| {
@@ -626,6 +637,7 @@ fn tick_text(
             shape: shape_of(body)?,
             inputs: body.inputs,
             wires,
+            params,
             cx,
             root,
         };
@@ -663,7 +675,8 @@ impl SourceBackend {
             fires_all.push(body.fire_all);
             ids.push(body.id.to_string());
         }
-        let tick = tick_text(region, cx, &wires, root.as_ref(), &fires_all)?;
+        let params = tunable::collect(region, cx)?;
+        let tick = tick_text(region, cx, &wires, root.as_ref(), &fires_all, &params)?;
         let module = Module {
             name: self.name.to_string(),
             queues: wires.queues,
@@ -671,6 +684,7 @@ impl SourceBackend {
             ids,
             inputs: hosts.0,
             outputs: hosts.1,
+            params,
         };
         Ok(graph_struct(&module, &tick))
     }

@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use core::fmt::Write as _;
 
 use super::emit::{CHIP, Module};
+use super::tunable;
 
 fn queue_text(module: &Module) -> Vec<String> {
     module
@@ -44,6 +45,7 @@ pub(super) fn graph_struct(module: &Module, tick: &str) -> String {
         labels.len(),
         names(&labels),
     );
+    out.push_str(&tunable::tables(&module.params));
     let _ = writeln!(
         out,
         "/// The planned graph: one queue per edge, one state per node."
@@ -54,6 +56,14 @@ pub(super) fn graph_struct(module: &Module, tick: &str) -> String {
     }
     for (step, ty) in &module.states {
         let _ = writeln!(out, "    s{step}: Option<{ty}>,");
+    }
+    for (id, param) in module.params.iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "    /// {}\n    p{id}: {},",
+            param.name,
+            param.kind.key()
+        );
     }
     out.push_str("}\n\n");
     let _ = writeln!(
@@ -71,6 +81,9 @@ pub(super) fn graph_struct(module: &Module, tick: &str) -> String {
     }
     for (step, _) in &module.states {
         let _ = writeln!(out, "            s{step}: None,");
+    }
+    for (id, param) in module.params.iter().enumerate() {
+        let _ = writeln!(out, "            p{id}: {},", param.value);
     }
     out.push_str("        }\n    }\n");
     for port in &module.inputs {
@@ -104,6 +117,8 @@ pub(super) fn graph_struct(module: &Module, tick: &str) -> String {
         "\n    /// Runs every node once, with the time at zero.\n    pub fn tick(&mut self) -> Result<(), {CHIP}::ChipError> {{\n        self.tick_at(0)\n    }}\n\n    /// [`Self::tick`] at the time `clock` reads.\n    pub fn tick_with(&mut self, clock: &impl {CHIP}::Clock) -> Result<(), {CHIP}::ChipError> {{\n        self.tick_at({CHIP}::Clock::now_ns(clock))\n    }}\n"
     );
     out.push_str(tick);
+    out.push_str(&tunable::setters(&module.params));
     out.push_str("}\n");
+    out.push_str(&tunable::tunable_impl(name, &module.params));
     out
 }

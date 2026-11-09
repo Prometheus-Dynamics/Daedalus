@@ -7,9 +7,11 @@ use daedalus_types::Typed;
 use super::library::{Library, name_hash};
 use super::load::{
     self, ABSENT, CONST_LEN, CONST_LINK, EDGE_LEN, HOST_LEN, LINK_LEN, LINK_SHIFT, Layout,
-    LoadError, STEP_LEN, get_u16, get_u32, put_u16,
+    LoadError, PARAM_LEN, STEP_LEN, get_u16, get_u32, put_u16,
 };
 use super::{MAX_PORTS, Overflow};
+use crate::chip::{ParamError, Scalar, Tunable};
+use crate::scalar_kind::ScalarKind;
 
 /// Why a tick or a port call stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,4 +298,45 @@ fn ring_pop(data: &mut [u8], layout: &Layout, edge: u16, out: &mut InlineCell) -
     out[..stride].copy_from_slice(&data[base..base + stride]);
     store_ring(data, at, ring);
     Some(stride)
+}
+
+impl<const ARENA: usize> Interpreter<ARENA> {
+    /// A parameter's kind, the place its value is held, and its lowest and highest bits.
+    fn param_at(&self, id: u16) -> Option<(ScalarKind, usize, u64, u64)> {
+        let layout = self.layout.as_ref().filter(|layout| id < layout.params)?;
+        let at = usize::from(layout.params_at) + usize::from(id) * PARAM_LEN;
+        let data = self.arena.data_ref();
+        let bits = |start: usize| {
+            let mut word = [0; 8];
+            word.copy_from_slice(&data[start..start + 8]);
+            u64::from_le_bytes(word)
+        };
+        let constant = usize::from(get_u16(data, at + 1));
+        let value = usize::from(layout.consts_at) + constant * CONST_LEN + 1;
+        Some((
+            ScalarKind::from_u8(data[at])?,
+            value,
+            bits(at + 3),
+            bits(at + 11),
+        ))
+    }
+}
+
+impl<const ARENA: usize> Tunable for Interpreter<ARENA> {
+    fn set_param(&mut self, id: u16, value: Scalar) -> Result<(), ParamError> {
+        let (kind, at, low, high) = self.param_at(id).ok_or(ParamError::Id)?;
+        let bits = value.coerce(kind).ok_or(ParamError::Type)?.bits();
+        if !kind.in_order(low, bits, high) {
+            return Err(ParamError::Range);
+        }
+        self.arena.data()[at..at + 8].copy_from_slice(&bits.to_le_bytes());
+        Ok(())
+    }
+
+    fn param(&self, id: u16) -> Option<Scalar> {
+        let (kind, at, _, _) = self.param_at(id)?;
+        let mut word = [0; 8];
+        word.copy_from_slice(&self.arena.data_ref()[at..at + 8]);
+        Some(Scalar::from_bits(kind, u64::from_le_bytes(word)))
+    }
 }

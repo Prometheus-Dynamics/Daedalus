@@ -296,3 +296,41 @@ fn loading_and_ticking_allocate_nothing() {
     });
     assert_eq!(allocations, 0);
 }
+
+#[test]
+fn a_marked_constant_can_be_changed_while_running() {
+    use daedalus_cpu::chip::{ParamError, Scalar, Tunable};
+    let mut marked = graph();
+    let range = Lit::List(vec![Lit::Int(1), Lit::Int(10)]);
+    marked.nodes[1].metadata.insert(
+        "daedalus.chip.params".to_string(),
+        Lit::Struct(vec![daedalus_graph::LitField {
+            name: "by".to_string(),
+            value: range,
+        }]),
+    );
+    let mut running = Box::new(Running::new(&LIBRARY));
+    running.load(&stored(&marked).unwrap()).unwrap();
+    let (input, output) = (running.input("in").unwrap(), running.output("out").unwrap());
+    assert_eq!(running.param(0), Some(Scalar::U32(3)));
+    running.push(input, 1_u32).unwrap();
+    running.tick().unwrap();
+    assert_eq!(running.pop::<u32>(output), Ok(Some(3)));
+
+    running.set_param(0, Scalar::I64(5)).unwrap();
+    assert_eq!(running.param(0), Some(Scalar::U32(5)));
+    running.push(input, 1_u32).unwrap();
+    running.tick().unwrap();
+    assert_eq!(running.pop::<u32>(output), Ok(Some(8)), "3 + 1 * 5");
+
+    assert_eq!(
+        running.set_param(0, Scalar::U32(11)),
+        Err(ParamError::Range)
+    );
+    assert_eq!(
+        running.set_param(0, Scalar::F32(2.5)),
+        Err(ParamError::Type)
+    );
+    assert_eq!(running.set_param(1, Scalar::U32(2)), Err(ParamError::Id));
+    assert_eq!(running.param(0), Some(Scalar::U32(5)));
+}

@@ -40,6 +40,7 @@ fn build_with(
         types: &types,
         budget: ASSIGN_BUDGET,
         merge_allowed: true,
+        freeze_params: false,
         fifo_capacity: 4,
     })
 }

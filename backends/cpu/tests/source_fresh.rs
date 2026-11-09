@@ -18,4 +18,5 @@ fn fresh(name: &str, graph: &daedalus_graph::GraphBody) {
 fn the_checked_in_modules_are_fresh() {
     fresh("blink", &nodes::graph());
     fresh("mixed", &nodes::mixed());
+    fresh("blink_tunable", &nodes::tunable());
 }

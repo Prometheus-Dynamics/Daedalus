@@ -33,6 +33,8 @@ fn compile(
             id: "test",
             merges: true,
             fire_all: false,
+            label: None,
+            metadata: &daedalus_backend::NO_METADATA,
             code: &(),
             text,
         })
@@ -55,6 +57,7 @@ fn compile(
         host_outputs: &[],
         fifo_capacity: 4,
         merge_allowed: true,
+        freeze_params: false,
     };
     backend.compile(&region, &cx)
 }
@@ -120,6 +123,7 @@ fn merging_is_off_when_the_planner_says_so() {
         host_outputs: &[],
         fifo_capacity: 4,
         merge_allowed: false,
+        freeze_params: false,
     };
     assert_eq!(units(backend.compile(&region, &cx).unwrap()).len(), 2);
 }
@@ -269,6 +273,7 @@ fn an_import_is_absorbed_by_the_step_that_reads_it() {
         host_outputs: &[],
         fifo_capacity: 4,
         merge_allowed: true,
+        freeze_params: false,
     };
     let done = units(SimBackend::default().compile(&region, &cx).unwrap());
     assert!(done[0].info.absorbed.is_empty(), "a copy is not absorbed");

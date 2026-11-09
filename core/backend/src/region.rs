@@ -1,11 +1,15 @@
 //! What a backend is given to compile.
 
 use std::any::Any;
+use std::collections::BTreeMap;
 
 use daedalus_graph::{EdgePolicyDoc, Lit};
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex, TypeExpr};
 
 use crate::{BodyIndex, MemorySpace};
+
+/// For a node with no metadata.
+pub static NO_METADATA: BTreeMap<String, Lit> = BTreeMap::new();
 
 /// A port on a solved node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -61,6 +65,9 @@ pub struct NodeBody<'a> {
     pub merges: bool,
     /// Runs only when every input has a value, rather than when any has.
     pub fire_all: bool,
+    pub label: Option<&'a str>,
+    /// The graph's metadata for this node.
+    pub metadata: &'a BTreeMap<String, Lit>,
     /// The backend's own payload: a function pointer or a generated stub.
     pub code: &'a (dyn Any + Send + Sync),
     /// Source, for bodies written as text.
@@ -100,4 +107,6 @@ pub struct CompileCx<'a> {
     /// The capacity of a FIFO edge that declares none, for a backend that lays out queues itself.
     pub fifo_capacity: u32,
     pub merge_allowed: bool,
+    /// Treat every constant as fixed, even one the graph marks as changeable.
+    pub freeze_params: bool,
 }

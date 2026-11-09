@@ -13,7 +13,8 @@ pub use compiled::{Compiled, GeneratedCode, Refusal, StepUnit, UnitInfo};
 pub use memory::{MemorySpace, SpaceKind, Transfer, TransferCost, find_transfer};
 pub use offer::{BodyIndex, NodeRef, Offer, OfferNode, PortInfo};
 pub use region::{
-    CompileCx, ConstOf, HostBinding, Incoming, InnerEdge, NodeBody, PortRef, RateId, Region,
+    CompileCx, ConstOf, HostBinding, Incoming, InnerEdge, NO_METADATA, NodeBody, PortRef, RateId,
+    Region,
 };
 
 /// Anything that can hold values or run nodes. A backend with no nodes is valid: `can_take`

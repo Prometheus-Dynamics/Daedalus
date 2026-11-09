@@ -10,8 +10,13 @@ extern crate alloc;
 #[cfg(feature = "alloc")]
 mod backend;
 mod body;
+#[cfg(all(feature = "std", feature = "chip-params"))]
+pub mod param_host;
+#[cfg(all(feature = "alloc", feature = "chip-params"))]
+mod param_mark;
 #[cfg(all(feature = "alloc", any(feature = "blob", feature = "source")))]
 mod queue_shape;
+pub mod scalar_kind;
 pub mod shape;
 pub mod steps;
 
