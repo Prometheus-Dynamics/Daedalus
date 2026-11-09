@@ -1,0 +1,15 @@
+[package]
+name = "daedalus-backend"
+description = "The one interface between Daedalus and anything that runs nodes or holds memory."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-abi = { path = "../abi" }
+daedalus-types = { path = "../types" }
+daedalus-value = { path = "../value" }
+
+[lints]
+workspace = true
