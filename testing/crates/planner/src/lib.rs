@@ -2,6 +2,9 @@
 
 #![forbid(unsafe_code)]
 
+use daedalus_backend::{
+    Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, Transfer,
+};
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, NodeDoc, PortRefDoc};
 use daedalus_registry::{
     BodyRecord, ConfigDecl, Conversion, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, Registry,
@@ -194,5 +197,41 @@ pub fn edge(from: u32, from_port: &str, to: u32, to_port: &str) -> EdgeDoc {
             port: to_port.to_string(),
         },
         policy: EdgePolicyDoc::default(),
+    }
+}
+
+/// A backend that takes whatever it is offered and compiles nothing, for placement tests. A body
+/// that needs [`DECLINED`] is not taken.
+pub struct Named(pub &'static str);
+
+pub const DECLINED: &str = "t.declined";
+
+impl Backend for Named {
+    fn id(&self) -> &str {
+        self.0
+    }
+
+    fn memory(&self) -> Vec<MemorySpace> {
+        Vec::new()
+    }
+
+    fn transfers(&self) -> Vec<Transfer> {
+        Vec::new()
+    }
+
+    fn can_take(&self, offer: &Offer<'_>) -> Vec<NodeRef> {
+        offer
+            .nodes
+            .iter()
+            .filter(|node| !node.needs.contains(&DECLINED))
+            .map(|node| NodeRef {
+                node: node.node,
+                body: node.body,
+            })
+            .collect()
+    }
+
+    fn compile(&self, _: &Region<'_>, _: &CompileCx<'_>) -> Result<Compiled, Refusal> {
+        Err(Refusal::whole_region("placement tests compile nothing"))
     }
 }

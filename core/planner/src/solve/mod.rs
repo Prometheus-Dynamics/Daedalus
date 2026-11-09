@@ -16,6 +16,7 @@ pub mod ports;
 pub mod rates;
 pub mod rewrite;
 mod suggest;
+pub mod type_table;
 pub mod typecheck;
 
 use std::collections::BTreeMap;

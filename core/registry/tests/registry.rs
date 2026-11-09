@@ -264,14 +264,14 @@ fn an_offer_lists_only_nodes_with_a_body_for_the_backend() {
         (NodeIndex(1), "demo.widen"),
         (NodeIndex(2), "demo.missing"),
     ];
-    let data = registry.offer_data("alt", &nodes, |_| Some(TypeIndex(5)));
+    let data = registry.offer_data("alt", &nodes, |_, _, _| Some(TypeIndex(5)));
     let listed = data.nodes();
     let offer = Offer { nodes: &listed };
     assert_eq!(offer.nodes.len(), 1);
     assert_eq!(offer.nodes[0].node, NodeIndex(0));
     assert_eq!(offer.nodes[0].inputs[0].ty, TypeIndex(5));
     assert_eq!(offer.nodes[0].outputs[0].name, "out");
-    let none = registry.offer_data("alt", &nodes, |_| None);
+    let none = registry.offer_data("alt", &nodes, |_, _, _| None);
     assert!(
         none.nodes().is_empty(),
         "a port type with no index leaves the node out"
