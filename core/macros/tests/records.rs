@@ -103,6 +103,7 @@ impl Typed for Settings {
 
 impl Settings {
     const FIELDS: &'static [daedalus_registry::PortDecl] = &[];
+    const RULES: &'static [daedalus_registry::FieldRule] = &[];
 }
 
 #[node(id = "t.cfg", inputs(value, config = Settings), backend = fixture)]

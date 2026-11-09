@@ -67,11 +67,22 @@ impl PortDecl {
     }
 }
 
+/// Limits on a config field. Recorded here and enforced when a graph is planned.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FieldRule {
+    pub field: &'static str,
+    pub min: Option<Literal>,
+    pub max: Option<Literal>,
+    pub odd: bool,
+    pub policy: &'static str,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConfigDecl {
     pub name: &'static str,
     pub ty: TypeRef,
     pub fields: &'static [PortDecl],
+    pub rules: &'static [FieldRule],
 }
 
 /// Indexed fan-in ports: `prefix0`, `prefix1`, and so on.

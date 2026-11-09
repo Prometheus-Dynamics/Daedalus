@@ -155,6 +155,7 @@ fn config_tokens(args: &NodeArgs) -> TokenStream {
             name: "config",
             ty: #ty,
             fields: <#config>::FIELDS,
+            rules: <#config>::RULES,
         },
     }
 }

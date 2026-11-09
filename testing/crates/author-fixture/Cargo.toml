@@ -15,6 +15,7 @@ std = ["daedalus-registry/std", "daedalus-types/alloc"]
 heap_free = true
 
 [dependencies]
+daedalus-derive = { path = "../../../core/derive" }
 daedalus-macros = { path = "../../../core/macros" }
 daedalus-registry = { path = "../../../core/registry", default-features = false }
 daedalus-types = { path = "../../../core/types", default-features = false }
