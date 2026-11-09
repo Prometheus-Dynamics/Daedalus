@@ -18,5 +18,8 @@ daedalus-registry = { path = "../../../core/registry" }
 daedalus-types = { path = "../../../core/types" }
 daedalus-value = { path = "../../../core/value" }
 
+[dev-dependencies]
+serde_json = { workspace = true }
+
 [lints]
 workspace = true
