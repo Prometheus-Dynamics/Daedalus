@@ -19,17 +19,23 @@ extern crate std;
 
 mod base64;
 mod copy;
+#[cfg(feature = "crc")]
+mod crc;
 mod float;
 mod hex;
 #[cfg(daedalus_portable_simd)]
 pub mod portable;
 pub mod reference;
+#[cfg(all(feature = "crc", target_arch = "riscv64", target_os = "linux"))]
+mod riscv;
 
 pub use base64::{
     Base64Error, base64_decode, base64_decode_into, base64_decoded_len, base64_encode,
     base64_encode_into, base64_encoded_len, decode_groups, encode_groups,
 };
 pub use copy::{copy_bytes, copy_rows};
+#[cfg(feature = "crc")]
+pub use crc::{crc32, crc32_combine};
 pub use float::{f16_to_f32, f16_to_f32_base, f16_to_f32_with_f16c, f32_from_le, f32_to_unorm8};
 pub use hex::hex_lower;
 
