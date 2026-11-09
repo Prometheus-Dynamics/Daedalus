@@ -13,7 +13,7 @@ Status values:
 | Feature | Contract | Host | Rust | Python | Node/TS | Java | C/C++ | Required Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Scalars | contract | host | test | test | test | test | test | generated fixture per language, width-exact SDK port types, `u64` wire round trip per SDK |
-| Bytes | contract | host | sdk-target | test | test | test | test | embedded bytes and payload-handle benchmarks |
+| Bytes | contract | host | test | test | test | test | test | embedded bytes and payload-handle benchmarks |
 | Payload refs | contract | host | sdk-target | test | test | test | test | handle validation, lease tracking, SDK transport options |
 | Images | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | image feature fixture and validation |
 | Structs | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | custom struct round trip |
@@ -25,13 +25,13 @@ Status values:
 | Unit | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | unit input/output conversion |
 | Multi-output | contract | host | test | test | test | test | test | named output matching, per-output port types |
 | Stateful nodes | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | repeated invoke preserves state |
-| Raw events | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | event ordering and metadata |
+| Raw events | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | event ordering and metadata |
 | Capability nodes | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | host capability available/unavailable |
 | Custom type keys | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | type key snapshot and serializer lookup |
 | Boundary contracts | contract | host | sdk-target | test | test | test | test | access/residency/layout validation |
 | Package artifacts | contract | host | sdk-target | sdk-target | sdk-target | test | sdk-target | missing artifact and hash mismatch |
-| Worker reuse | contract | host | not applicable | sdk-target | sdk-target | sdk-target | not applicable | repeated invokes do not restart worker |
-| Typed errors | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | malformed input and backend failure |
+| Worker reuse | contract | host | test | sdk-target | sdk-target | not applicable | repeated invokes do not restart worker |
+| Typed errors | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | malformed input and backend failure |
 
 ## Scalar Widths
 

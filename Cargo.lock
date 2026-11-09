@@ -697,6 +697,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-ffi-rust"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-ffi-core",
+ "daedalus-ffi-host",
+ "daedalus-rs",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "daedalus-frame-bench"
 version = "3.0.1-dev"
 dependencies = [
