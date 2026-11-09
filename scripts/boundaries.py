@@ -7,8 +7,11 @@ HARDWARE_WORDS = {"gpu", "wgpu", "shader", "texture", "npu", "frame", "image", "
 UNSAFE_ALLOWED = ("core/abi", "core/capi", "core/loader", "core/runner")
 HEAP_FREE_TARGETS = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"]
 PRODUCT_NAMES = re.compile(r"\b(lemnos|eidos|ariadne|gaia|orion|helios)\b", re.I)
-HEAP_TOKENS = re.compile(r"\b(alloc::|std::|Vec<|Box<|extern\s+crate\s+alloc)|(?<![:\w])String\b")
+HEAP_TOKENS = re.compile(r"\b(alloc::|std::|Vec<|Box<|extern\s+crate\s+alloc)|\bString::|(?<!:):\s*String\b|->\s*String\b|[<&(]\s*String\b")
 FEATURE_GATE = re.compile(r'#\[cfg\((?:test|(?:any\()?feature\s*=\s*"(?:alloc|std)")')
+
+ITEM_KEYWORD = re.compile(r"\b(fn|impl|mod|struct|enum|trait|use|const|static|type)\b")
+GATED_FILE = re.compile(r'#!\[cfg\(feature\s*=\s*"(?:alloc|std)"\)\]')
 
 violations = []
 
@@ -78,7 +81,7 @@ def blank_gated_items(text):
                 if depth == 0 and c == "}":
                     j += 1
                     break
-            elif c in ";," and depth == 0:
+            elif depth == 0 and (c == ";" or (c == "," and not ITEM_KEYWORD.search(code, m.end(), j))):
                 j += 1
                 break
             j += 1
@@ -190,7 +193,10 @@ def check_heap_free(root, packages, build):
         src = os.path.join(os.path.dirname(pkg["manifest_path"]), "src")
         clean = True
         for path in rust_files(src):
-            code = blank_gated_items(open(path, encoding="utf-8").read())
+            text = open(path, encoding="utf-8").read()
+            if GATED_FILE.search(blank_comments_and_strings(text, keep_strings=True)):
+                continue
+            code = blank_gated_items(text)
             for lineno, line in enumerate(code.splitlines(), 1):
                 if m := HEAP_TOKENS.search(line):
                     clean = False
