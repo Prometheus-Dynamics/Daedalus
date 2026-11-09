@@ -54,6 +54,7 @@ fn run_with(
         &registry(),
         &Config {
             strict_ports: strict,
+            ..Config::default()
         },
     )
 }

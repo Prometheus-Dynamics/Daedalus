@@ -1,6 +1,7 @@
 //! The solve stages, in their one fixed order. Only this file calls stages.
 
 use std::fmt;
+use std::sync::Arc;
 
 use daedalus_graph::GraphBody;
 use daedalus_registry::Registry;
@@ -13,6 +14,7 @@ use crate::solve::exclusive::{self, ExclusiveError};
 use crate::solve::expand::{self, ExpandError};
 use crate::solve::hydrate::{self, HydrateError};
 use crate::solve::ports::{self, PortError};
+use crate::solve::rewrite::{self, Rewrite, RewriteError};
 use crate::solve::typecheck::{self, TypeCheckError};
 use crate::solve::{Graph, Work};
 
@@ -21,6 +23,8 @@ use crate::solve::{Graph, Work};
 pub struct Config {
     /// Also check a graph's own port lists against the declaration.
     pub strict_ports: bool,
+    /// Graph rewrites, run in this order.
+    pub rewrites: Vec<Arc<dyn Rewrite>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +38,7 @@ pub enum SolveError {
     Consts(ConstError),
     Convert(ConvertError),
     Exclusive(ExclusiveError),
+    Rewrite(RewriteError),
 }
 
 impl fmt::Display for SolveError {
@@ -47,6 +52,7 @@ impl fmt::Display for SolveError {
             SolveError::Consts(error) => error.fmt(f),
             SolveError::Convert(error) => error.fmt(f),
             SolveError::Exclusive(error) => error.fmt(f),
+            SolveError::Rewrite(error) => error.fmt(f),
         }
     }
 }
@@ -68,7 +74,7 @@ pub fn solve(
     };
     expand::run(&mut work, graph);
     defaults::run(&mut work);
-    // B5: the rewrite hook runs here.
+    rewrite::run(&mut work);
     hydrate::run(&mut work);
     ports::run(&mut work);
     typecheck::run(&mut work);

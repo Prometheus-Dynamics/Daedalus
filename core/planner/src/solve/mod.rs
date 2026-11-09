@@ -12,6 +12,7 @@ pub mod host_inputs;
 pub mod hydrate;
 pub mod port_types;
 pub mod ports;
+pub mod rewrite;
 mod suggest;
 pub mod typecheck;
 
@@ -75,6 +76,8 @@ impl Node {
 pub struct Graph {
     pub nodes: Vec<Node>,
     pub edges: Vec<EdgeDoc>,
+    /// The rewrites that ran, in order.
+    pub applied: Vec<rewrite::Applied>,
 }
 
 impl Work<'_> {
