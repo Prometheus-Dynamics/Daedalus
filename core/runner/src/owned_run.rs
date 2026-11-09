@@ -17,7 +17,7 @@ use crate::fault_log::StepFault;
 use crate::owned::InlineCell;
 use crate::probe::{ClockFn, TickProbe};
 use crate::reuse::{InputVersion, ReuseEntry, ReuseMemory};
-use crate::step::{Queue, SlotSpec, StepMeta};
+use crate::step::{Queue, SlotSpec, SlotStamp, StepMeta};
 use crate::{Memory, Pending, Plan, Runner, StepHealth};
 
 /// One boxed slice, held raw so a `Runner<'static>` can borrow it while this owns it.
@@ -66,6 +66,7 @@ pub struct RunBuffers {
     _meta: Raw<StepMeta>,
     _table: Raw<u32>,
     _slots: Raw<SlotSpec>,
+    _stamps: Raw<SlotStamp>,
     _cells: Raw<Slot>,
     _queues: Raw<Queue>,
     _storage: Raw<Slot>,
@@ -108,6 +109,7 @@ pub fn build(
     meta: Vec<StepMeta>,
     table: Vec<u32>,
     slots: Vec<SlotSpec>,
+    slot_stamps: Vec<SlotStamp>,
     host_inputs: &[u32],
     clock: Option<ClockFn>,
 ) -> Result<(Runner<'static>, RunBuffers), LoadError> {
@@ -129,6 +131,7 @@ pub fn build(
         _meta: Raw::new(meta),
         _table: Raw::new(table),
         _slots: Raw::new(slots),
+        _stamps: Raw::new(slot_stamps),
         _cells: Raw::new(vec![Slot::EMPTY; widest]),
         _queues: Raw::new(vec![Queue::default(); nslots]),
         _storage: Raw::new(vec![Slot::EMPTY; storage as usize]),
@@ -174,6 +177,8 @@ pub fn build(
         }
     };
     let mut runner = Runner::load(plan, memory)?;
+    // SAFETY: as above; this table is borrowed only here.
+    runner.set_stamps(unsafe { buffers._stamps.borrow() })?;
     if stamps + stored > 0 {
         // SAFETY: as above; these five are borrowed only here.
         let table = unsafe {

@@ -29,9 +29,9 @@ fn shared_graph_runs_under_a_full_host() {
         let expected = reference.step(raw);
         assert_eq!(
             (
-                host.take::<f32>("level").unwrap(),
-                host.take::<bool>("active").unwrap(),
-                host.take::<u32>("rises").unwrap(),
+                host.take_copy::<f32>("level").unwrap(),
+                host.take_copy::<bool>("active").unwrap(),
+                host.take_copy::<u32>("rises").unwrap(),
             ),
             expected
         );

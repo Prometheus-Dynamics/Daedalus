@@ -21,7 +21,7 @@ use daedalus_planner::stitch::Item;
 use daedalus_planner::stitch::{HostPort, Stitched};
 use daedalus_runner::ClockFn;
 use daedalus_runner::owned_run;
-use daedalus_runner::{Fire, Recovery, SlotKind, SlotSpec, StepMeta};
+use daedalus_runner::{Fire, Recovery, SlotKind, SlotSpec, SlotStamp, StepMeta};
 use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey};
 use daedalus_value::{Overflow, Pressure};
 
@@ -415,6 +415,19 @@ fn wire(drafts: &[Draft]) -> (Vec<StepMeta>, Vec<u32>) {
 }
 
 /// The sorted port table. Interned, so loading the same graph again adds nothing.
+/// What each slot's values are. A compiled step doesn't know these numbers, so the runner writes
+/// them on what the step publishes.
+fn slot_stamps(stitched: &Stitched) -> Vec<SlotStamp> {
+    stitched
+        .slots
+        .iter()
+        .map(|info| SlotStamp {
+            ty: TypeIndex(info.ty.unwrap_or(0)),
+            space: SpaceIndex(info.space as u16),
+        })
+        .collect()
+}
+
 fn port_table(
     planned: &Planned,
     meta: &[StepMeta],
@@ -548,8 +561,10 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         .iter()
         .map(|p| p.slot)
         .collect();
+    let stamps = slot_stamps(&planned.stitched);
     let (mut runner, buffers) =
-        owned_run::build(steps, meta, table, slots, &host_inputs, clock).map_err(LoadError::Run)?;
+        owned_run::build(steps, meta, table, slots, stamps, &host_inputs, clock)
+            .map_err(LoadError::Run)?;
     for (slot, rule) in edges {
         // A slot a kept rule can't apply to stays on the default.
         let _ = runner.set_pressure(slot, rule.pressure);
