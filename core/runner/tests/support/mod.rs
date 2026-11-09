@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Each test binary uses part of this module.
+
 //! Fixtures shared by the runner tests: buffers for a plan, and small step bodies.
 
 use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd, StepWord};
@@ -22,6 +24,15 @@ impl Wiring {
     }
 
     pub fn step(&mut self, wake: &[u32], inputs: &[u32], outputs: &[u32]) {
+        self.record(wake, inputs, outputs, false);
+    }
+
+    /// A step that may return `Pending`, so it gets a pending entry.
+    pub fn pending_step(&mut self, wake: &[u32], inputs: &[u32], outputs: &[u32]) {
+        self.record(wake, inputs, outputs, true);
+    }
+
+    fn record(&mut self, wake: &[u32], inputs: &[u32], outputs: &[u32], may_pend: bool) {
         let wake = self.span(wake);
         let inputs = self.span(inputs);
         let outputs = self.span(outputs);
@@ -30,7 +41,7 @@ impl Wiring {
             inputs,
             outputs,
             always: false,
-            may_pend: false,
+            may_pend,
         });
     }
 }
