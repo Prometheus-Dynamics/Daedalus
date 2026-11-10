@@ -1,0 +1,79 @@
+name: Budgets
+
+# The budget table with every tool installed, and the timing comparison. The gate runs the same
+# step, but without valgrind it cannot run the instruction rows; here a row that cannot be run
+# is a failure. Timings are compared against the previous run on the same branch and never fail
+# the workflow: a hosted runner's clock is not a measurement.
+on:
+  push:
+    branches:
+      - next
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE-*"
+  pull_request:
+    branches:
+      - next
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BENCH_ARTIFACT: criterion
+
+jobs:
+  budgets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # rust-toolchain.toml selects the toolchain and its components.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup target add thumbv7em-none-eabihf thumbv6m-none-eabi
+      - run: sudo apt-get update && sudo apt-get install -y valgrind
+      - run: ./scripts/ci.sh budgets
+        env:
+          BUDGETS_REQUIRE_ALL: "1"
+
+  timings:
+    runs-on: ubuntu-latest
+    # Not on pull requests: a comparison needs runs of one branch.
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Start from an empty criterion directory so only this run's estimates are uploaded.
+      - run: rm -rf target/criterion && cargo bench -p daedalus-budget-harness --bench ticks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BENCH_ARTIFACT }}
+          path: target/criterion
+          retention-days: 90
+      - name: Download the previous run's timings
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          mkdir -p baseline
+          for id in $(gh run list --workflow bench.yml --branch "$BRANCH" --status completed \
+              --limit 50 --json databaseId --jq '.[].databaseId'); do
+            # Only earlier runs: a newer run may already have finished, and it is not a baseline.
+            [ "$id" -ge "$GITHUB_RUN_ID" ] && continue
+            if gh run download "$id" --name "$BENCH_ARTIFACT" --dir baseline 2>/dev/null; then
+              echo "Using the timings of run $id"
+              exit 0
+            fi
+          done
+          echo "No earlier run has timings"
+      - name: Compare with the previous run
+        # A slower timing is reported, in the summary and as a warning, and does not fail.
+        continue-on-error: true
+        run: python3 scripts/bench-compare.py baseline target/criterion --threshold 15

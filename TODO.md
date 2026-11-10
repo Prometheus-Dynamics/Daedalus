@@ -147,7 +147,7 @@ Dylib plugins carrying nodes and backends, the process backend, and an SDK per l
 A third-party backend that proves the interface, the budget harness, examples, documentation, and the audit that nothing was lost.
 
 - [ ] [I1](docs/prs/I1.md) A third-party NPU backend shipped as a plugin (wave 8; needs A12, G2)
-- [ ] [I2](docs/prs/I2.md) Budget harness: instruction counts, allocations, sections (wave 17; needs C1, D5; board run)
+- [x] [I2](docs/prs/I2.md) Budget harness: instruction counts, allocations, sections (wave 17; needs C1, D5; board run)
 - [ ] [I3](docs/prs/I3.md) Large-value handoff benchmark (wave 18; needs A14, I2; board run)
 - [ ] [I4](docs/prs/I4.md) CPU and host examples (wave 16; needs C11, C14, D1)
 - [ ] [I5](docs/prs/I5.md) Documentation and the doc gate (wave 16; needs C14)
