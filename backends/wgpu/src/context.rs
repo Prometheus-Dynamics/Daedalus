@@ -32,6 +32,9 @@ pub(crate) struct Context {
     pub(crate) device: wgpu::Device,
     #[expect(dead_code, reason = "read from E2 on")]
     pub(crate) queue: wgpu::Queue,
+    /// Held around every call that can submit on `queue`.
+    #[expect(dead_code, reason = "read from E2 on")]
+    pub(crate) submit: daedalus_vk_sys::SubmitLock,
     pub(crate) record: CapsRecord,
 }
 
@@ -68,6 +71,7 @@ impl Context {
         Context {
             device,
             queue,
+            submit: daedalus_vk_sys::SubmitLock::default(),
             record,
         }
     }
@@ -95,6 +99,7 @@ impl Context {
                     return Ok(Context {
                         device,
                         queue,
+                        submit: daedalus_vk_sys::SubmitLock::default(),
                         record,
                     });
                 }

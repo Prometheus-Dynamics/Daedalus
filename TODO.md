@@ -108,7 +108,7 @@ wgpu as a backend: whole-shader nodes, shared submits, merged per-pixel function
 - [ ] [E10](docs/prs/E10.md) Multi-device and foreign-memory handoff (wave 16; needs E3)
 - [ ] [E11](docs/prs/E11.md) Device loss and the failure rule (wave 9; needs C5, E8; board run)
 - [ ] [E12](docs/prs/E12.md) GPU conformance on lavapipe and the GPU budgets (wave 14; needs E6; board run)
-- [ ] [E13](docs/prs/E13.md) Raw Vulkan boundary: backends/vk-sys (wave 6; needs E1; board run)
+- [x] [E13](docs/prs/E13.md) Raw Vulkan boundary: backends/vk-sys (wave 6; needs E1; board run)
 - [ ] [E14](docs/prs/E14.md) GPU import: external memory as a sampled texture (wave 8; needs A15, E9, E13; board run)
 - [ ] [E15](docs/prs/E15.md) images into storage and sampled textures (wave 9; needs E14; board run)
 - [ ] [E16](docs/prs/E16.md) GPU kernel ops on device-resident data (wave 8; needs D8, E4; board run)

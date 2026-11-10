@@ -48,6 +48,8 @@ impl Drop for DriverGuard {
     }
 }
 
+impl daedalus_vk_sys::DriverHeld for DriverGuard {}
+
 /// How many devices this process has opened here. Adopted devices aren't counted.
 pub fn devices_created() -> u64 {
     DEVICES.load(Ordering::Relaxed)
@@ -72,13 +74,22 @@ impl<'g> LockedInstance<'g> {
     }
 }
 
-/// Opens a device on `adapter`. The only device constructor.
+/// Opens a device on `adapter`. The only device constructor. On Vulkan the device also gets
+/// dma-buf import and 8-bit storage where the adapter has them.
 pub(crate) fn open_device(
-    _held: &DriverGuard,
+    held: &DriverGuard,
     adapter: &wgpu::Adapter,
     desc: &wgpu::DeviceDescriptor<'_>,
 ) -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
-    let opened = pollster::block_on(adapter.request_device(desc))?;
+    #[cfg(target_os = "linux")]
+    let extended = daedalus_vk_sys::device::open_extended(held, adapter, desc);
+    #[cfg(not(target_os = "linux"))]
+    let extended = None;
+    let _ = held;
+    let opened = match extended {
+        Some(opened) => opened,
+        None => pollster::block_on(adapter.request_device(desc))?,
+    };
     DEVICES.fetch_add(1, Ordering::Relaxed);
     Ok(opened)
 }
