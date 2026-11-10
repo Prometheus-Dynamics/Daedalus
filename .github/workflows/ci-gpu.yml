@@ -1,0 +1,29 @@
+name: GPU
+
+on:
+  push:
+    branches:
+      - next
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE-*"
+  pull_request:
+    branches:
+      - next
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lavapipe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # lavapipe: Vulkan on the CPU.
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1
+      - run: ./scripts/gpu.sh
