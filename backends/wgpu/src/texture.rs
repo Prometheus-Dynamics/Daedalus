@@ -10,7 +10,11 @@ use crate::context::{Context, OpenError};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
     R8,
+    /// Two channels, 8 bits each.
+    Rg8,
     Rgba8,
+    /// As `Rgba8` with blue first in memory, which is how most displays and cameras store it.
+    Bgra8,
     R32F,
     Rg32F,
     R8Uint,
@@ -19,9 +23,11 @@ pub enum Format {
 }
 
 impl Format {
-    pub const ALL: [Format; 7] = [
+    pub const ALL: [Format; 9] = [
         Format::R8,
+        Format::Rg8,
         Format::Rgba8,
+        Format::Bgra8,
         Format::R32F,
         Format::Rg32F,
         Format::R8Uint,
@@ -32,20 +38,26 @@ impl Format {
     pub const fn bytes_per_pixel(self) -> u32 {
         match self {
             Format::R8 | Format::R8Uint => 1,
-            Format::Rgba8 | Format::R32F => 4,
+            Format::Rg8 => 2,
+            Format::Rgba8 | Format::Bgra8 | Format::R32F => 4,
             Format::Rg32F | Format::Rgba16Uint | Format::Rg32Uint => 8,
         }
     }
 
     /// Whether WebGPU lets a compute pass write this format as a storage texture.
     pub const fn storage(self) -> bool {
-        !matches!(self, Format::R8 | Format::R8Uint)
+        !matches!(
+            self,
+            Format::R8 | Format::Rg8 | Format::Bgra8 | Format::R8Uint
+        )
     }
 
     pub(crate) const fn to_wgpu(self) -> wgpu::TextureFormat {
         match self {
             Format::R8 => wgpu::TextureFormat::R8Unorm,
+            Format::Rg8 => wgpu::TextureFormat::Rg8Unorm,
             Format::Rgba8 => wgpu::TextureFormat::Rgba8Unorm,
+            Format::Bgra8 => wgpu::TextureFormat::Bgra8Unorm,
             Format::R32F => wgpu::TextureFormat::R32Float,
             Format::Rg32F => wgpu::TextureFormat::Rg32Float,
             Format::R8Uint => wgpu::TextureFormat::R8Uint,
@@ -154,6 +166,8 @@ pub struct Texture {
     /// Unique to this texture, for the bind group cache.
     pub(crate) id: u64,
     desc: TextureDesc,
+    /// The half-size plane of U and V, when this is the Y plane of an imported NV12 image.
+    chroma: Option<Box<Texture>>,
     context: Arc<Context>,
 }
 
@@ -197,8 +211,62 @@ impl Texture {
             texture,
             id: Context::next_id(),
             desc,
+            chroma: None,
             context,
         })
+    }
+
+    /// A texture over an image imported from external memory. An NV12 image is two planes in
+    /// one image: this is its Y plane, as one channel, and [`Texture::chroma`] is the other.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn imported(
+        context: Arc<Context>,
+        texture: wgpu::Texture,
+        format: crate::dmabuf::ImageFormat,
+        width: u32,
+        height: u32,
+    ) -> Texture {
+        use crate::dmabuf::ImageFormat;
+        let plane = |aspect, format: Format, width, height| Texture {
+            view: texture.create_view(&wgpu::TextureViewDescriptor {
+                aspect,
+                format: Some(format.to_wgpu()),
+                ..wgpu::TextureViewDescriptor::default()
+            }),
+            texture: texture.clone(),
+            id: Context::next_id(),
+            desc: TextureDesc {
+                format,
+                width,
+                height,
+            },
+            chroma: None,
+            context: Arc::clone(&context),
+        };
+        let all = wgpu::TextureAspect::All;
+        match format {
+            ImageFormat::R8 => plane(all, Format::R8, width, height),
+            ImageFormat::Rg8 => plane(all, Format::Rg8, width, height),
+            ImageFormat::Rgba8 => plane(all, Format::Rgba8, width, height),
+            ImageFormat::Bgra8 => plane(all, Format::Bgra8, width, height),
+            ImageFormat::Nv12 => {
+                let mut luma = plane(wgpu::TextureAspect::Plane0, Format::R8, width, height);
+                let chroma = plane(
+                    wgpu::TextureAspect::Plane1,
+                    Format::Rg8,
+                    width / 2,
+                    height / 2,
+                );
+                luma.chroma = Some(Box::new(chroma));
+                luma
+            }
+        }
+    }
+
+    /// The U and V plane of an imported NV12 image, at half the size each way, as two channels.
+    /// `None` for any other texture.
+    pub fn chroma(&self) -> Option<&Texture> {
+        self.chroma.as_deref()
     }
 
     pub fn desc(&self) -> TextureDesc {

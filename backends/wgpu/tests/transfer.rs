@@ -82,7 +82,11 @@ fn the_planner_is_offered_one_way_each_way() {
         "never in one hop"
     );
     // Every space the backend names but the device's own is one hop from the host.
-    for space in backend.memory().iter().skip(1) {
+    let buffers = backend
+        .memory()
+        .into_iter()
+        .filter(|space| space.id != "wgpu.texture");
+    for space in buffers.skip(1) {
         assert!(
             find_transfer(&table, &key, &space.id, HOST_SPACE).is_some(),
             "{}",

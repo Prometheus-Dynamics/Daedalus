@@ -26,3 +26,6 @@ daedalus-value = { path = "../../core/value" }
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+daedalus-dma-sys = { path = "../dma-sys" }

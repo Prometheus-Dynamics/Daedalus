@@ -18,6 +18,9 @@ pub const SPACE_HOST_CACHED: &str = "wgpu.cached";
 /// imported for the device. What host-cached means on a device with no cached memory of its own.
 pub const SPACE_DMA_HEAP: &str = "wgpu.dmaheap";
 
+/// A texture on the device: an imported image, or one a node made.
+pub const SPACE_TEXTURE: &str = "wgpu.texture";
+
 pub(crate) fn spaces() -> Vec<MemorySpace> {
     let space = |id, kind| MemorySpace {
         id: Cow::Borrowed(id),
@@ -29,6 +32,7 @@ pub(crate) fn spaces() -> Vec<MemorySpace> {
         space(SPACE_HOST_MAPPED, SpaceKind::Shared),
         space(SPACE_HOST_CACHED, SpaceKind::Shared),
         space(SPACE_DMA_HEAP, SpaceKind::Shared),
+        space(SPACE_TEXTURE, SpaceKind::Device),
     ]
 }
 

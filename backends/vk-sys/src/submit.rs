@@ -135,6 +135,43 @@ impl Submitter {
         if waits.len() > MAX_WAITS {
             return Err(Error::Range);
         }
+        let mut semaphores = [vk::Semaphore::null(); MAX_WAITS];
+        for (out, wait) in semaphores.iter_mut().zip(waits) {
+            *out = wait.raw;
+        }
+        // SAFETY: the caller's contract, passed on.
+        unsafe { self.submit_waiting(record, semaphores, waits.len()) }
+    }
+
+    /// As [`Submitter::submit`], waiting on at most one semaphore given by handle, for this
+    /// crate's own imports.
+    ///
+    /// # Safety
+    ///
+    /// As [`Submitter::submit`]. The semaphore, when there is one, must be live until the
+    /// submit has finished.
+    // SAFETY: the contract is in the doc comment above.
+    pub(crate) unsafe fn submit_raw(
+        &self,
+        record: impl FnOnce(&ash::Device, vk::CommandBuffer),
+        wait: Option<vk::Semaphore>,
+    ) -> Result<(), Error> {
+        let mut semaphores = [vk::Semaphore::null(); MAX_WAITS];
+        semaphores[0] = wait.unwrap_or(vk::Semaphore::null());
+        // SAFETY: the caller's contract, passed on.
+        unsafe { self.submit_waiting(record, semaphores, usize::from(wait.is_some())) }.map(drop)
+    }
+
+    /// # Safety
+    ///
+    /// As [`Submitter::submit`], for the first `count` of `semaphores`.
+    // SAFETY: the contract is in the doc comment above.
+    unsafe fn submit_waiting(
+        &self,
+        record: impl FnOnce(&ash::Device, vk::CommandBuffer),
+        semaphores: [vk::Semaphore; MAX_WAITS],
+        count: usize,
+    ) -> Result<Ticket<'_>, Error> {
         let index = self.next.get();
         let slot = self.slots.get(index).ok_or(Error::Range)?;
         let vk_device = &self.device;
@@ -152,16 +189,12 @@ impl Submitter {
             vk_device.end_command_buffer(slot.commands)?;
             vk_device.reset_fences(&[slot.fence])?;
         }
-        let mut semaphores = [vk::Semaphore::null(); MAX_WAITS];
-        for (out, wait) in semaphores.iter_mut().zip(waits) {
-            *out = wait.raw;
-        }
         let stages = [vk::PipelineStageFlags::ALL_COMMANDS; MAX_WAITS];
         let commands = [slot.commands];
         let info = vk::SubmitInfo::default()
             .command_buffers(&commands)
-            .wait_semaphores(semaphores.get(..waits.len()).unwrap_or(&[]))
-            .wait_dst_stage_mask(stages.get(..waits.len()).unwrap_or(&[]));
+            .wait_semaphores(semaphores.get(..count).unwrap_or(&[]))
+            .wait_dst_stage_mask(stages.get(..count).unwrap_or(&[]));
         let submitted = {
             let _held = self.lock.lock();
             // SAFETY: the queue is the device's, and the submit lock keeps this from
