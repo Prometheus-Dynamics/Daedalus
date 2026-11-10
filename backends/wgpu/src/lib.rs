@@ -8,12 +8,14 @@ mod buffer;
 mod caps;
 mod context;
 mod copy_limiter;
+pub mod devices;
 pub mod dmabuf;
 mod driver;
 mod fence;
 #[cfg(test)]
 mod fence_tests;
 pub mod fragment;
+pub mod handoff;
 pub mod image;
 mod inflight;
 pub mod kernels;

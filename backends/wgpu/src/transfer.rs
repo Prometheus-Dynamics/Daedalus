@@ -5,13 +5,7 @@
 //! spaces it was made. A node body never copies across a space: the planner puts one of these
 //! between two nodes when their memories differ.
 
-use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-use daedalus_abi::Step;
-use daedalus_backend::{CompileCx, Refusal, Transfer, TransferCost};
-
-use crate::memory::{SPACE_DEVICE, SPACE_DMA_HEAP, SPACE_HOST_CACHED, SPACE_HOST_MAPPED};
 
 /// The CPU backend's memory space.
 pub const HOST_SPACE: &str = "cpu.host";
@@ -67,64 +61,18 @@ impl Counters {
     }
 }
 
-fn entry(
-    id: &'static str,
-    from: &'static str,
-    to: &'static str,
-    cost: TransferCost,
-    make: fn(&CompileCx<'_>) -> Result<Step, Refusal>,
-) -> Transfer {
-    Transfer {
-        id,
-        key: None,
-        from: Cow::Borrowed(from),
-        to: Cow::Borrowed(to),
-        cost,
-        make,
+/// A string kept for the life of the process, once for each distinct text.
+pub(crate) fn intern(text: String) -> &'static str {
+    static KEPT: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut kept = KEPT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(found) = kept.iter().find(|have| **have == text) {
+        return found;
     }
-}
-
-/// Every move this backend offers. All are for any type.
-pub(crate) fn table() -> Vec<Transfer> {
-    use TransferCost::{Copy, Import};
-    vec![
-        entry(UPLOAD, HOST_SPACE, SPACE_DEVICE, Copy, crate::upload::make),
-        entry(
-            UPLOAD_MAPPED,
-            HOST_SPACE,
-            SPACE_HOST_MAPPED,
-            Copy,
-            crate::upload::make_mapped,
-        ),
-        entry(
-            READBACK,
-            SPACE_DEVICE,
-            SPACE_HOST_MAPPED,
-            Copy,
-            crate::readback::make,
-        ),
-        entry(
-            MAP,
-            SPACE_HOST_MAPPED,
-            HOST_SPACE,
-            Import,
-            crate::readback::make_map,
-        ),
-        entry(
-            MAP_CACHED,
-            SPACE_HOST_CACHED,
-            HOST_SPACE,
-            Import,
-            crate::readback::make_map,
-        ),
-        entry(
-            MAP_HEAP,
-            SPACE_DMA_HEAP,
-            HOST_SPACE,
-            Import,
-            crate::readback::make_map,
-        ),
-    ]
+    let leaked: &'static str = text.leak();
+    kept.push(leaked);
+    leaked
 }
 
 /// Buffers a transfer step keeps to reuse. A consumer that holds more than this at once makes

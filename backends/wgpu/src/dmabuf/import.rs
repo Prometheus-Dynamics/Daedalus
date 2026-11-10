@@ -353,6 +353,8 @@ pub trait ImportExternal: Send + Sync + 'static {
 /// reads it keeps it until its work on the device is done.
 struct ImportStep<T> {
     context: Option<Arc<Context>>,
+    /// Which device it imports on: 0 for the default, or a named device's place.
+    slot: usize,
     of: std::marker::PhantomData<fn(T)>,
 }
 
@@ -368,7 +370,11 @@ impl<T: ImportExternal> OwnedStep for ImportStep<T> {
         let context = match &self.context {
             Some(context) if !context.is_lost() => Arc::clone(context),
             _ => {
-                let found = Context::latest().filter(|latest| !latest.is_lost());
+                let found = match self.slot {
+                    // Never opens one: an import goes to the device the graph already uses.
+                    0 => Context::latest().filter(|latest| !latest.is_lost()),
+                    slot => crate::devices::context(slot).ok(),
+                };
                 let Some(context) = found else {
                     return fault("an import has no device to go to");
                 };
@@ -392,15 +398,17 @@ impl<T: ImportExternal> OwnedStep for ImportStep<T> {
     }
 }
 
-fn make_import<T: ImportExternal>(_: &CompileCx<'_>) -> Result<Step, Refusal> {
+fn make_import<T: ImportExternal, const SLOT: usize>(_: &CompileCx<'_>) -> Result<Step, Refusal> {
     Ok(Step::boxed(ImportStep::<T> {
         context: None,
+        slot: SLOT,
         of: std::marker::PhantomData,
     }))
 }
 
-/// The transfer that imports values of `T` from the memory space `from` as textures. Add it to
-/// what a backend of yours offers, and a `T` that reaches a GPU node is imported on the way.
+/// The transfer that imports values of `T` from the memory space `from` as textures on the
+/// default device. Add it to what a backend of yours offers, and a `T` that reaches a GPU node
+/// is imported on the way.
 pub fn import_transfer<T: ImportExternal + Typed>(
     id: &'static str,
     from: &'static str,
@@ -411,6 +419,30 @@ pub fn import_transfer<T: ImportExternal + Typed>(
         from: std::borrow::Cow::Borrowed(from),
         to: std::borrow::Cow::Borrowed(SPACE_TEXTURE),
         cost: TransferCost::Import,
-        make: make_import::<T>,
+        make: make_import::<T, 0>,
+    }
+}
+
+/// [`import_transfer`] onto `backend`'s device, which for a named device is its own texture
+/// space.
+pub fn import_transfer_on<T: ImportExternal + Typed>(
+    backend: &crate::WgpuBackend,
+    id: &'static str,
+    from: &'static str,
+) -> Transfer {
+    let named = backend.link().named_as();
+    let make: fn(&CompileCx<'_>) -> Result<Step, Refusal> = match named.map(|named| named.slot) {
+        Some(1) => make_import::<T, 1>,
+        Some(2) => make_import::<T, 2>,
+        Some(3) => make_import::<T, 3>,
+        _ => make_import::<T, 0>,
+    };
+    Transfer {
+        id,
+        key: Some(T::KEY),
+        from: std::borrow::Cow::Borrowed(from),
+        to: crate::handoff::on_device(backend.device_name(), SPACE_TEXTURE),
+        cost: TransferCost::Import,
+        make,
     }
 }

@@ -13,7 +13,9 @@ mod refused;
 
 pub use fence::{Acquired, DEFAULT_ACQUIRE_TIMEOUT, FenceWait, acquire};
 #[cfg(target_os = "linux")]
-pub use import::{ExternalImage, ExternalPlane, ImportExternal, ImportStats, import_transfer};
+pub use import::{
+    ExternalImage, ExternalPlane, ImportExternal, ImportStats, import_transfer, import_transfer_on,
+};
 pub use layout::{Described, Fourcc, ImageFormat, ImportError, Layout, PlaneFormat};
 pub use modifiers::{Importer, MAX_MEMORY_PLANES, MOD_INVALID, MOD_LINEAR, vendor_of};
 pub use refused::{Settled, settle};

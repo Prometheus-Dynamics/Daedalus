@@ -31,6 +31,8 @@ pub struct WgpuBackend {
 /// when that one is lost.
 pub(crate) struct Link {
     options: Options,
+    /// Set for a device of this backend's own, opened by name.
+    named: Option<crate::devices::Named>,
     state: Mutex<State>,
 }
 
@@ -45,6 +47,23 @@ struct State {
 }
 
 impl Link {
+    /// The key of the device this has open, if it has one.
+    pub(crate) fn open_key(&self) -> Option<u64> {
+        self.state().context.as_ref().map(|context| context.key)
+    }
+
+    pub(crate) fn named_as(&self) -> Option<&crate::devices::Named> {
+        self.named.as_ref()
+    }
+
+    pub(crate) fn named(options: Options, named: crate::devices::Named) -> Link {
+        Link {
+            options,
+            named: Some(named),
+            state: Mutex::default(),
+        }
+    }
+
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -74,10 +93,18 @@ impl Link {
         if let Some(wait) = state.retry.wait(now) {
             return Err(OpenError::Backoff(wait));
         }
-        match Context::open(&self.options) {
+        // A named device is this backend's alone, and uploads for the default device don't go
+        // to it.
+        let opened = match &self.named {
+            Some(_) => Context::open_own(&self.options),
+            None => Context::open(&self.options),
+        };
+        match opened {
             Ok(opened) => {
                 state.retry.worked();
-                Context::note_latest(&opened);
+                if self.named.is_none() {
+                    Context::note_latest(&opened);
+                }
                 state.context = Some(Arc::clone(&opened));
                 Ok(opened)
             }
@@ -95,9 +122,18 @@ impl WgpuBackend {
         WgpuBackend {
             link: Arc::new(Link {
                 options,
+                named: None,
                 state: Mutex::default(),
             }),
         }
+    }
+
+    pub(crate) fn of(link: Arc<Link>) -> WgpuBackend {
+        WgpuBackend { link }
+    }
+
+    pub(crate) fn open_key(&self) -> Option<u64> {
+        self.open_context().map(|context| context.key)
     }
 
     /// A backend on a device that already exists.
@@ -111,6 +147,7 @@ impl WgpuBackend {
         WgpuBackend {
             link: Arc::new(Link {
                 options: Options::default(),
+                named: None,
                 state: Mutex::new(State {
                     context: Some(context),
                     adopted: true,
@@ -196,14 +233,14 @@ impl WgpuBackend {
         self.link.context()
     }
 
-    pub(crate) fn link(&self) -> Arc<Link> {
-        Arc::clone(&self.link)
+    pub(crate) fn link(&self) -> &Arc<Link> {
+        &self.link
     }
 }
 
 impl Backend for WgpuBackend {
     fn id(&self) -> &str {
-        "wgpu"
+        self.link.named.as_ref().map_or("wgpu", |named| &named.id)
     }
 
     /// Zero until something is known about the device, so a plan made on the default limits is
@@ -217,11 +254,11 @@ impl Backend for WgpuBackend {
     }
 
     fn memory(&self) -> Vec<MemorySpace> {
-        crate::memory::spaces()
+        crate::handoff::spaces(self.link.named.as_ref())
     }
 
     fn transfers(&self) -> Vec<Transfer> {
-        crate::transfer::table()
+        crate::handoff::transfers(self.link.named.as_ref())
     }
 
     /// Answers from the caps record and opens nothing. With no record, a node is accepted when
