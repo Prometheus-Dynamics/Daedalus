@@ -25,16 +25,17 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # 1. Both units verify. The units name /usr/bin/daedalusd, which is not installed here, so a
-# copy that names the built daemon is what is verified. Any message is a failure.
+# copy that names the built daemon is what is verified. Any message about them is a failure.
 cp "$here/daedalusd.service" "$here/daedalusd.socket" "$work/"
 sed -i "s|^ExecStart=/usr/bin/daedalusd |ExecStart=$DAEDALUSD |" "$work/daedalusd.service"
 grep -q "^ExecStart=$DAEDALUSD " "$work/daedalusd.service" || fail "the service does not start /usr/bin/daedalusd"
-if ! verified="$(systemd-analyze verify "$work/daedalusd.service" "$work/daedalusd.socket" 2>&1)"; then
-  fail "systemd-analyze verify failed:
-$verified"
-fi
-[[ -z "$verified" ]] || fail "systemd-analyze verify complained:
-$verified"
+# The tool also loads the units these depend on, and reports what it thinks of the host's own
+# units on the way. Only what it says about these two is judged: a line that names one of them,
+# by its file or by its unit name.
+verified="$(systemd-analyze verify "$work/daedalusd.service" "$work/daedalusd.socket" 2>&1 || true)"
+ours="$(grep -E "(^|[^[:alnum:]_.@-])daedalusd\.(service|socket)" <<<"$verified" || true)"
+[[ -z "$ours" ]] || fail "systemd-analyze verify complained:
+$ours"
 
 # 2. The sample config is accepted, and resolves to the socket the socket unit listens on.
 checked="$("$DAEDALUSD" --check-config --config "$here/daedalusd.toml")" || fail "the sample config was refused"
