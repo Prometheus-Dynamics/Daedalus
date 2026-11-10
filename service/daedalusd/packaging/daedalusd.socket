@@ -1,0 +1,16 @@
+# The socket daedalusd is reached on. It is the daemon's own default path, so a client that is
+# given no address finds it.
+
+[Unit]
+Description=Daedalus daemon socket
+Documentation=https://github.com/Prometheus-Dynamics/Daedalus
+
+[Socket]
+ListenStream=/run/daedalusd/daedalusd.sock
+SocketUser=daedalusd
+SocketGroup=daedalusd
+SocketMode=0660
+DirectoryMode=0750
+
+[Install]
+WantedBy=sockets.target

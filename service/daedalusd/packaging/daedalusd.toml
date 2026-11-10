@@ -1,0 +1,19 @@
+# /etc/daedalusd/daedalusd.toml: the config of the packaged daemon. Every key is optional.
+
+# Where to listen: `unix:<absolute path>` or `tcp:<loopback address>:<port>`. Nothing listens on
+# the network. Under systemd the socket unit passes its socket in and this list is not used; it
+# names the same path, so the daemon listens there when it is started by hand too.
+listen = ["unix:/run/daedalusd/daedalusd.sock"]
+
+# Every library in this directory is loaded at start. One that fails to load is tried again,
+# with at most 8 s between attempts, until it loads or its file is removed.
+plugin_dir = "/usr/lib/daedalusd/plugins"
+
+# Most runs held at once. 0 is no limit.
+max_runs = 64
+
+# Most connections served at once.
+connections = 64
+
+# error, warn, info or debug.
+log_level = "info"
