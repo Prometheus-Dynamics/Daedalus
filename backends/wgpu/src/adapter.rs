@@ -107,7 +107,7 @@ impl AdapterInfo {
 }
 
 /// How [`WgpuBackend::open`](crate::WgpuBackend::open) picks its adapter.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Options {
     /// Where to look. If nothing is found there, every API is tried.
     pub apis: Apis,
@@ -125,6 +125,29 @@ pub struct Options {
     pub staging: crate::StagingConfig,
     /// How many scratch buffers and textures the device keeps.
     pub temp_pool: crate::TempPoolLimits,
+    /// The bound on any wait the backend makes. One that outlives it fails and marks the device
+    /// lost.
+    pub wait_timeout: std::time::Duration,
+    /// Submissions a device has unfinished at once. Past it, a run is told to wait for the
+    /// oldest.
+    #[doc(hidden)]
+    pub max_in_flight: usize,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            apis: Apis::default(),
+            vendor: None,
+            adapter: None,
+            known: None,
+            hints: crate::MemoryHints::default(),
+            staging: crate::StagingConfig::default(),
+            temp_pool: crate::TempPoolLimits::default(),
+            wait_timeout: crate::wait::DEFAULT_WAIT_TIMEOUT,
+            max_in_flight: crate::inflight::DEFAULT_IN_FLIGHT,
+        }
+    }
 }
 
 /// What ranking looks at.

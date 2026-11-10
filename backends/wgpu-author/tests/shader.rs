@@ -6,7 +6,7 @@ use std::any::Any;
 use daedalus_macros::node;
 use daedalus_registry::{Registry, TypeRef};
 use daedalus_types::Typed;
-use daedalus_wgpu::shader::{BindingKind, Bound, Dispatch, Shader, ShaderError, ShaderSpec};
+use daedalus_wgpu::shader::{BindingKind, Bound, Dispatch, Run, Shader, ShaderError, ShaderSpec};
 use daedalus_wgpu::{Options, Storage, WgpuBackend};
 
 #[node(id = "t.copy", inputs(src), outputs(dst), backend = daedalus_wgpu_author(src: u32, dst: u32))]
@@ -55,6 +55,16 @@ fn backend() -> Option<WgpuBackend> {
                 "{error}"
             );
             None
+        }
+    }
+}
+
+/// Runs the shader and waits for it, waiting out a busy device first.
+fn go(shader: &Shader, bound: &[Bound<'_>]) {
+    loop {
+        match shader.run(bound).expect("runs") {
+            Run::Started(ticket) => return ticket.wait().expect("finishes"),
+            Run::Busy(oldest) => oldest.wait().expect("finishes"),
         }
     }
 }
@@ -167,9 +177,7 @@ fn a_copy_shader_matches_the_cpu() {
     let dst = Storage::new(&backend, 4000).expect("a buffer");
     src.write(0, &bytes).expect("in range");
     let shader = Shader::load(&backend, spec(COPY_NODE.body.code)).expect("loads");
-    shader
-        .run(&[Bound::Storage(&src), Bound::Storage(&dst)])
-        .expect("runs");
+    go(&shader, &[Bound::Storage(&src), Bound::Storage(&dst)]);
     let mut seen = vec![0; 4000];
     dst.read_into(0, &mut seen).expect("a readback");
     assert_eq!(words(&seen), input);
@@ -191,7 +199,7 @@ fn a_copy_shader_matches_the_cpu() {
         Bound::Storage(&dst),
         Bound::Uniform(&config),
     ];
-    scale.run(&bound).expect("runs");
+    go(&scale, &bound);
     dst.read_into(0, &mut seen).expect("a readback");
     let got: Vec<f32> = seen
         .as_chunks::<4>()
@@ -205,22 +213,26 @@ fn a_copy_shader_matches_the_cpu() {
     // Explicit counts and a named entry point: two workgroups of four.
     let fill = Shader::load(&backend, spec(FILL_NODE.body.code)).expect("loads");
     let small = Storage::new(&backend, 32).expect("a buffer");
-    fill.run(&[Bound::Storage(&small)]).expect("runs");
+    go(&fill, &[Bound::Storage(&small)]);
     let mut eight = [0; 32];
     small.read_into(0, &mut eight).expect("a readback");
     assert_eq!(words(&eight), [10, 11, 12, 13, 14, 15, 16, 17]);
 
     // What doesn't match the binding table is refused before anything is submitted.
     let wrong = shader.run(&[Bound::Storage(&src)]);
-    assert!(matches!(wrong, Err(ShaderError::Binding(text)) if text.contains("2 bindings")));
+    assert!(
+        matches!(wrong.map(drop), Err(ShaderError::Binding(text)) if text.contains("2 bindings"))
+    );
     let wrong = scale.run(&[
         Bound::Storage(&src),
         Bound::Storage(&dst),
         Bound::Uniform(&[0; 4]),
     ]);
-    assert!(matches!(wrong, Err(ShaderError::Binding(text)) if text.contains("`config`")));
+    assert!(
+        matches!(wrong.map(drop), Err(ShaderError::Binding(text)) if text.contains("`config`"))
+    );
     let wrong = shader.run(&[Bound::Sampler, Bound::Storage(&dst)]);
-    assert!(matches!(wrong, Err(ShaderError::Binding(text)) if text.contains("`src`")));
+    assert!(matches!(wrong.map(drop), Err(ShaderError::Binding(text)) if text.contains("`src`")));
 }
 
 #[test]
@@ -276,25 +288,21 @@ fn pipelines_and_bind_groups_are_kept_by_content() {
         Storage::new(&backend, 256).unwrap(),
     );
     for _ in 0..5 {
-        first
-            .run(&[Bound::Storage(&a), Bound::Storage(&b)])
-            .expect("runs");
-        second
-            .run(&[Bound::Storage(&a), Bound::Storage(&b)])
-            .expect("runs");
+        go(&first, &[Bound::Storage(&a), Bound::Storage(&b)]);
+        go(&second, &[Bound::Storage(&a), Bound::Storage(&b)]);
     }
     assert_eq!(
         backend.shader_stats().expect("open").bind_groups,
         1,
         "the same buffers, one bind group"
     );
-    first
-        .run(&[Bound::Storage(&b), Bound::Storage(&a)])
-        .expect("runs");
+    go(&first, &[Bound::Storage(&b), Bound::Storage(&a)]);
     assert_eq!(backend.shader_stats().expect("open").bind_groups, 2);
 
     // A buffer on another device is refused.
     let foreign = Storage::new(&shared, 256).unwrap();
     let wrong = first.run(&[Bound::Storage(&foreign), Bound::Storage(&b)]);
-    assert!(matches!(wrong, Err(ShaderError::Binding(text)) if text.contains("another device")));
+    assert!(
+        matches!(wrong.map(drop), Err(ShaderError::Binding(text)) if text.contains("another device"))
+    );
 }

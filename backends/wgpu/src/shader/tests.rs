@@ -2,7 +2,10 @@
 
 use daedalus_abi::counting::counted;
 
-use super::{BindingKind, BindingSpec, Bound, Dispatch, Shader, ShaderSpec};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use super::{BindingKind, BindingSpec, Bound, Dispatch, Run, Shader, ShaderSpec};
 use crate::{Options, Storage, WgpuBackend};
 
 static DOUBLE: ShaderSpec = ShaderSpec {
@@ -53,7 +56,6 @@ fn a_kernel_dispatch_allocates_no_more_than_raw_wgpu() {
     let dst = Storage::new(&backend, 4096).expect("a buffer");
     let bound = [Bound::Storage(&src), Bound::Storage(&dst)];
 
-    // The same pass with nothing of ours around it.
     let group = context
         .device
         .create_bind_group(&wgpu::BindGroupDescriptor {
@@ -70,6 +72,7 @@ fn a_kernel_dispatch_allocates_no_more_than_raw_wgpu() {
                 },
             ],
         });
+    // The same pass with nothing of ours around it, and the same notice when it's done.
     let raw = || {
         let mut encoder = context
             .device
@@ -80,27 +83,49 @@ fn a_kernel_dispatch_allocates_no_more_than_raw_wgpu() {
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(16, 1, 1);
         }
+        let done = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&done);
         let _held = context.submit.lock();
         context.queue.submit([encoder.finish()]);
+        context
+            .queue
+            .on_submitted_work_done(move || flag.store(true, Ordering::Release));
+        done
+    };
+    let ours = || match shader.run(&bound).expect("runs") {
+        Run::Started(ticket) => ticket,
+        Run::Busy(_) => panic!("the device was idle"),
     };
 
-    // Warm both paths, then count. wgpu's own allocations vary a little from run to run as its
-    // tables grow, so compare the cheapest run of each.
+    // Warm both paths, then count the submit alone, with the device idle before each. wgpu's
+    // own allocations vary a little from run to run as its tables grow, so compare the cheapest
+    // run of each.
+    let idle = || context.wait("the test's work").expect("idle");
     for _ in 0..8 {
-        shader.run(&bound).expect("runs");
-        raw();
+        ours().wait().expect("finishes");
+        drop(raw());
+        idle();
     }
-    let cheapest = |run: &dyn Fn()| (0..16).map(|_| counted(run).1).min().unwrap_or(0);
-    let ours = cheapest(&|| shader.run(&bound).expect("runs"));
-    let theirs = cheapest(&raw);
+    let cheapest_of = |run: &dyn Fn() -> usize| (0..16).map(|_| run()).min().unwrap_or(0);
+    let ours_cost = cheapest_of(&|| {
+        let (ticket, cost) = counted(ours);
+        ticket.wait().expect("finishes");
+        cost
+    });
+    let raw_cost = cheapest_of(&|| {
+        let (done, cost) = counted(raw);
+        idle();
+        assert!(done.load(Ordering::Acquire));
+        cost
+    });
     assert!(
-        ours <= theirs,
-        "a run allocates {ours} times, and raw wgpu {theirs}"
+        ours_cost <= raw_cost,
+        "a run allocates {ours_cost} times, and raw wgpu {raw_cost}"
     );
 
     let mut seen = [0; 16];
     src.write(0, &[21, 0, 0, 0]).expect("in range");
-    shader.run(&bound).expect("runs");
+    ours().wait().expect("finishes");
     dst.read_into(0, &mut seen).expect("a readback");
     assert_eq!(seen[..4], [42, 0, 0, 0]);
 }

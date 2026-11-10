@@ -360,9 +360,8 @@ impl Storage {
                 });
         }
         context
-            .device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|_| lost("was lost with the device"))?;
+            .wait("a readback")
+            .map_err(|error| StorageError::Device(error.to_string()))?;
         if !mapped.load(Ordering::Acquire) {
             return Err(lost("could not be mapped"));
         }

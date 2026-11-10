@@ -118,8 +118,8 @@ impl ShaderCache {
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
-        if let Some(error) = pollster::block_on(scope.pop()) {
-            return Err(error.to_string());
+        if let Some(error) = crate::wait::scope_error(scope) {
+            return Err(error);
         }
         let built = Arc::new(Pipeline { pipeline, layout });
         self.pipelines.insert(key, Arc::clone(&built));

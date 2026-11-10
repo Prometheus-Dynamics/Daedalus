@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+daedalus-abi = { path = "../../core/abi" }
 daedalus-backend = { path = "../../core/backend" }
 daedalus-vk-sys = { path = "../vk-sys" }
 pollster = { workspace = true }
