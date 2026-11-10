@@ -112,11 +112,18 @@ esac
 
 packages=()
 for manifest in backends/wgpu*/Cargo.toml backends/vk-sys/Cargo.toml \
-  testing/crates/wgpu-conformance/Cargo.toml testing/crates/gpu-budgets/Cargo.toml; do
+  testing/crates/wgpu-conformance/Cargo.toml testing/crates/gpu-budgets/Cargo.toml \
+  examples/04_gpu/Cargo.toml; do
   packages+=(-p "$(sed -n 's/^name = "\(.*\)"/\1/p' "$manifest" | head -1)")
 done
 out="$work/tests.out"
 cargo test "${packages[@]}" 2>&1 | tee "$out"
+
+# The GPU examples: each binary checks its own answer against the CPU's and exits 0, and has
+# no way to skip.
+for example in fragment mixed upload_download; do
+  cargo run -q -p daedalus-example-gpu --bin "$example"
+done
 
 ran=$(passed_tests "$out")
 if [[ "$ran" == 0 ]]; then

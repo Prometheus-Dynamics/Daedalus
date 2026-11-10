@@ -81,6 +81,8 @@ fn examples_use_only_the_facade() {
             let forbidden = line.starts_with("use daedalus_")
                 && !line.starts_with("use daedalus_cpu::")
                 && !line.starts_with("use daedalus_cpu_author::")
+                && !line.starts_with("use daedalus_wgpu::")
+                && !line.starts_with("use daedalus_wgpu_author::")
                 && !line.starts_with("use daedalus_example_")
                 && !line.starts_with("use daedalus_plugins_")
                 && !line.starts_with("use daedalus_wasm_");

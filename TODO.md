@@ -153,4 +153,4 @@ A third-party backend that proves the interface, the budget harness, examples, d
 - [x] [I5](docs/prs/I5.md) Documentation and the doc gate (wave 16; needs C14)
 - [x] [I6](docs/prs/I6.md) Capability audit against dev (wave 1; needs nothing)
 - [ ] [I7](docs/prs/I7.md) Finish: package surface, semver, lockfile, ready for other repositories (wave 20; needs A2, A13, B3, B5, B10, B11, B12, B14, B15, C6, C7, C8, C12, C13, C16, C17, C18, C20, C21, C22, C23, C24, D2, D9, D10, D12, D13, D15, E10, E11, E12, E15, E16, E17, G3, G5, G6, G7, G8, G9, G11, G12, H5, H6, I1, I3, I5, I8)
-- [ ] [I8](docs/prs/I8.md) GPU examples on lavapipe (wave 17; needs E3, E6, I4)
+- [x] [I8](docs/prs/I8.md) GPU examples on lavapipe (wave 17; needs E3, E6, I4)

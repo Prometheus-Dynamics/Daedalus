@@ -1,0 +1,23 @@
+[package]
+name = "daedalus-example-gpu"
+description = "Shader nodes: a merged per-pixel chain, a CPU node around a GPU node, and the round trip between the host and the device."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus = { path = "../../core/daedalus", features = ["std"] }
+# The CPU backend runs the plain functions. Its authoring crate is what `#[node]` on one expands to.
+daedalus-cpu = { path = "../../backends/cpu" }
+daedalus-cpu-author = { path = "../../backends/cpu-author" }
+# The GPU backend runs the shaders. Its authoring crate is what `#[node]` on one expands to,
+# and that names the registry and the types crate.
+daedalus-wgpu = { path = "../../backends/wgpu" }
+daedalus-wgpu-author = { path = "../../backends/wgpu-author" }
+daedalus-registry = { path = "../../core/registry" }
+daedalus-types = { path = "../../core/types" }
+
+[lints]
+workspace = true
