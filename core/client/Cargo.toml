@@ -1,0 +1,16 @@
+[package]
+name = "daedalus-client"
+description = "A client for daedalusd: connect, pipeline requests, watch, reconnect."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-wire = { path = "../wire" }
+
+[dev-dependencies]
+daedalus-types = { path = "../types" }
+
+[lints]
+workspace = true
