@@ -10,6 +10,7 @@ use daedalus_backend::{
 use crate::adapter::Options;
 use crate::caps::{CapsRecord, ComputeCaps, Need};
 use crate::context::{Context, OpenError};
+use crate::staging::StagingStats;
 
 /// A device someone else set up. Whoever made it kept device creation from racing: see
 /// [`driver_lock`](crate::driver_lock).
@@ -71,6 +72,12 @@ impl WgpuBackend {
         self.options.known.clone()
     }
 
+    /// Counters of the device's pool of readback buffers. `None` while no device is open.
+    pub fn staging_stats(&self) -> Option<StagingStats> {
+        let own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
+        own.as_ref().map(|context| context.staging().stats())
+    }
+
     pub(crate) fn context(&self) -> Result<Arc<Context>, OpenError> {
         let mut own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(context) = own.as_ref() {
@@ -98,7 +105,7 @@ impl Backend for WgpuBackend {
     }
 
     fn memory(&self) -> Vec<MemorySpace> {
-        Vec::new()
+        crate::memory::spaces()
     }
 
     fn transfers(&self) -> Vec<Transfer> {
