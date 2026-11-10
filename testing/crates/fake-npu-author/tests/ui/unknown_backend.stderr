@@ -1,0 +1,5 @@
+error[E0433]: cannot find module or crate `acme_npu_author` in this scope
+ --> tests/ui/unknown_backend.rs:7:15
+  |
+7 |     backend = acme_npu_author(model = "scale2", x: u32, y: u32)
+  |               ^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `acme_npu_author`

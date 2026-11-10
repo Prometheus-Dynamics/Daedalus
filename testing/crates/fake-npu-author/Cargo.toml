@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-fake-npu-author"
+description = "The authoring crate of the fake NPU backend: what `#[node(backend = daedalus_fake_npu_author(..))]` expands to."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-types = { path = "../../../core/types" }
+
+[dev-dependencies]
+daedalus-macros = { path = "../../../core/macros" }
+trybuild = { workspace = true }
+
+[lints]
+workspace = true
