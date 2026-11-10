@@ -1,0 +1,18 @@
+[package]
+name = "daedalus-example-host"
+description = "A host fed, stepped and drained in a loop, with a reload in the middle."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus = { path = "../../core/daedalus", features = ["std"] }
+# The CPU backend runs the nodes. Its authoring crate and the registry are what `#[node]` expands to.
+daedalus-cpu = { path = "../../backends/cpu" }
+daedalus-cpu-author = { path = "../../backends/cpu-author" }
+daedalus-registry = { path = "../../core/registry" }
+
+[lints]
+workspace = true

@@ -1,8 +1,9 @@
 //! The host around one loaded graph.
 
 pub use daedalus_host::{
-    Dir, FeedOutcome, Host, HostError, HostValue, PortInfo, PortSpec, Ports, PortsError,
-    StateStore, TickOverheadReport, TickReport, ValueSerializers,
+    Dir, Event, EventLog, ExecutionReport, FeedOutcome, Host, HostError, HostValue, Level, NodeRow,
+    PortInfo, PortSpec, Ports, PortsError, StateStore, Telemetry, TickOverheadReport, TickReport,
+    ValueSerializers,
 };
 
 #[cfg(feature = "std")]

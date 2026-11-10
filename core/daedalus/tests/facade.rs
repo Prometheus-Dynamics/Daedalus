@@ -76,7 +76,12 @@ fn examples_use_only_the_facade() {
         let content = fs::read_to_string(&path).expect("read example");
         for (at, line) in content.lines().enumerate() {
             let line = line.trim();
+            // A backend is beside the facade, not under it: the core names none, so the
+            // application names the one it runs on, and that backend's authoring types.
             let forbidden = line.starts_with("use daedalus_")
+                && !line.starts_with("use daedalus_cpu::")
+                && !line.starts_with("use daedalus_cpu_author::")
+                && !line.starts_with("use daedalus_example_")
                 && !line.starts_with("use daedalus_plugins_")
                 && !line.starts_with("use daedalus_wasm_");
             if forbidden {

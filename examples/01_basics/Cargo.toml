@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-example-basics"
+description = "Typed ports, constants, a config struct, one fan-out and one fan-in."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus = { path = "../../core/daedalus", features = ["std"] }
+# The CPU backend runs the nodes. Its authoring crate and the registry are what `#[node]` expands to.
+daedalus-cpu = { path = "../../backends/cpu" }
+daedalus-cpu-author = { path = "../../backends/cpu-author" }
+daedalus-registry = { path = "../../core/registry" }
+daedalus-types = { path = "../../core/types" }
+
+[lints]
+workspace = true

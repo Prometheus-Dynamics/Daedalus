@@ -22,6 +22,8 @@ pub mod layers {
     pub use daedalus_host as host;
     #[cfg(feature = "std")]
     pub use daedalus_planner as planner;
+    #[cfg(feature = "std")]
+    pub use daedalus_registry as registry;
     pub use daedalus_runner as runner;
     pub use daedalus_types as types;
     pub use daedalus_value as value;
