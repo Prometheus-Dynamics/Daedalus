@@ -28,7 +28,10 @@ const fn storage(index: u32, name: &'static str, read_only: bool) -> BindingSpec
 const PARAMS: BindingSpec = BindingSpec {
     index: 2,
     name: "params",
-    kind: BindingKind::Uniform { size: 16 },
+    kind: BindingKind::Storage {
+        read_only: true,
+        stride: 0,
+    },
 };
 
 /// What most ops bind: the input, the output and their counts.
@@ -85,9 +88,9 @@ const PARAMS_KEPT: usize = 64;
 pub struct Kernels {
     pub(super) context: Arc<Context>,
     shaders: [OnceLock<Shader>; 8],
-    /// The counts of a run, on the device, by what they are. They are copied into the shader's
-    /// uniform by the same encoder that records the pass, so two runs of an op in one encoder
-    /// each see their own.
+    /// The counts of a run, on the device, by what they are: one small buffer for each
+    /// distinct set, bound as it is. Two runs of an op in one encoder each bind their own, and
+    /// nothing is copied before a pass.
     params: Mutex<HashMap<[u32; 3], Arc<Storage>>>,
     pub(super) table: OnceLock<Storage>,
 }
@@ -211,7 +214,7 @@ impl Kernels {
         let plain = [
             Bound::Storage(src),
             Bound::Storage(dst),
-            Bound::UniformFrom(&params),
+            Bound::Storage(&params),
         ];
         let with = extra.map(|extra| [plain[0], plain[1], plain[2], Bound::Storage(extra)]);
         let bound: &[Bound<'_>] = match &with {

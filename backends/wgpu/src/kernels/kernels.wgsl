@@ -14,7 +14,9 @@ struct Params {
 
 @group(0) @binding(0) var<storage, read> src: array<u32>;
 @group(0) @binding(1) var<storage, read_write> dst: array<u32>;
-@group(0) @binding(2) var<uniform> params: Params;
+// A small buffer of its own for each distinct set of counts, bound as it is: nothing is
+// copied before a pass.
+@group(0) @binding(2) var<storage, read> params: Params;
 // base64 decode: [offset of the first invalid symbol, or 0xffffffff; decoded length].
 @group(0) @binding(3) var<storage, read_write> status: array<atomic<u32>>;
 // The CRC-32 table.
