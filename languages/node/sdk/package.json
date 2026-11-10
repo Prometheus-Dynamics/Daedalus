@@ -1,0 +1,14 @@
+{
+  "name": "daedalus-node-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Node worker SDK: declare nodes, then serve them over the Daedalus worker protocol.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --test test/wire.test.js test/worker.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
