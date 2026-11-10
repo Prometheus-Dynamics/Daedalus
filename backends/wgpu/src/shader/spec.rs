@@ -94,6 +94,44 @@ pub struct ShaderSpec {
     /// In binding order.
     pub bindings: &'static [BindingSpec],
     pub dispatch: Dispatch,
+    /// For each of the node's input ports, in the order it declares them, the position in
+    /// `bindings` of the binding that port feeds.
+    pub inputs: &'static [u32],
+    /// The same for its output ports.
+    pub outputs: &'static [u32],
+}
+
+/// For each port, the position in `bindings` of the binding with its name. The authoring macro
+/// calls this in a const, so a port that names no binding fails the build.
+pub const fn port_bindings<const N: usize>(
+    ports: &[daedalus_registry::PortDecl],
+    bindings: &[BindingSpec],
+) -> [u32; N] {
+    assert!(ports.len() == N, "one position per declared port");
+    let mut out = [0; N];
+    let mut port = 0;
+    while port < N {
+        let name = ports[port].name.as_bytes();
+        let mut at = 0;
+        let mut found = false;
+        while at < bindings.len() && !found {
+            let have = bindings[at].name.as_bytes();
+            let mut same = have.len() == name.len();
+            let mut byte = 0;
+            while same && byte < name.len() {
+                same = have[byte] == name[byte];
+                byte += 1;
+            }
+            if same {
+                out[port] = at as u32;
+                found = true;
+            }
+            at += 1;
+        }
+        assert!(found, "a declared port names no binding in the shader");
+        port += 1;
+    }
+    out
 }
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;

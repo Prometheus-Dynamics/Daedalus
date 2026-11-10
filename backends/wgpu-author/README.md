@@ -50,6 +50,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   `@binding` in a comment is nothing, and a `@workgroup_size` built from a `const` is read.
   Nothing parses WGSL while a graph runs.
 - All bindings are in `@group(0)`.
+- A written buffer has as many elements as the first array the shader reads. When the shader
+  reads none, the node says how large with `bytes.<port>` in its metadata.
 - A crate with shader nodes depends on `daedalus-wgpu`, `daedalus-registry` and `daedalus-types`,
   which the generated code names.
 
