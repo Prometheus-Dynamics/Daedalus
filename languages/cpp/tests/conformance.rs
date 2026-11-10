@@ -10,9 +10,16 @@ use daedalus_wire::codec::Writer;
 use daedalus_wire::{DEFAULT_CAP, kind, read_packet, write_packet};
 use daedalus_worker_conformance::run_all;
 
+/// Builds the worker once per test binary. Tests run in parallel, and two CMake configures into one
+/// build directory race, so every test gets the same built path.
 fn built() -> std::path::PathBuf {
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cpp-build");
-    build(&dir).expect("cmake builds the fixture worker")
+    static BUILT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    BUILT
+        .get_or_init(|| {
+            let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cpp-build");
+            build(&dir).expect("cmake builds the fixture worker")
+        })
+        .clone()
 }
 
 #[test]
