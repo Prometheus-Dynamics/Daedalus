@@ -232,16 +232,25 @@ impl Storage {
         Err(StorageError::Unsupported("dma-heaps are a Linux interface"))
     }
 
-    #[cfg(target_os = "linux")]
     fn placed(
         backend: &WgpuBackend,
+        size: u64,
+        space: &'static str,
+    ) -> Result<Storage, StorageError> {
+        let context = backend.context().map_err(StorageError::Open)?;
+        Storage::placed_on(context, size, space)
+    }
+
+    /// A buffer in `space` on `context`'s device.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn placed_on(
+        context: Arc<Context>,
         size: u64,
         space: &'static str,
     ) -> Result<Storage, StorageError> {
         use daedalus_vk_sys::Error;
         use daedalus_vk_sys::memory::{Placement, storage_buffer};
 
-        let context = backend.context().map_err(StorageError::Open)?;
         check_size(&context, size)?;
         let placement = match space {
             SPACE_HOST_MAPPED => Placement::HostMapped,
@@ -263,8 +272,12 @@ impl Storage {
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn placed(backend: &WgpuBackend, size: u64, _: &'static str) -> Result<Storage, StorageError> {
-        Storage::new(backend, size)
+    pub(crate) fn placed_on(
+        context: Arc<Context>,
+        size: u64,
+        _: &'static str,
+    ) -> Result<Storage, StorageError> {
+        Storage::zeroed(context, size)
     }
 
     pub fn size(&self) -> u64 {
@@ -378,6 +391,7 @@ impl Storage {
         staging.unmap();
         let size = staging.size();
         context.staging().put(size, staging);
+        context.moved.download(len);
         Ok(())
     }
 }

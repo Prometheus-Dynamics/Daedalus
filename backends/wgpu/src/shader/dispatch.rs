@@ -56,6 +56,9 @@ pub enum Bound<'a> {
     Storage(&'a Storage),
     /// The bytes of a uniform, exactly as long as the shader's struct.
     Uniform(&'a [u8]),
+    /// A uniform whose bytes are already on the device, at the start of this buffer. They are
+    /// copied into the shader's uniform in the same submit, ahead of the pass.
+    UniformFrom(&'a Storage),
     Texture(&'a Texture),
     /// The shader's own sampler, made when it loaded.
     Sampler,
@@ -228,6 +231,21 @@ impl Shader {
                     self.context.queue.write_buffer(buffer, 0, bytes);
                     (u64::MAX, Some(buffer.as_entire_binding()))
                 }
+                (
+                    BindingKind::Uniform { size },
+                    Bound::UniformFrom(storage),
+                    Some(Owned::Uniform(buffer)),
+                ) => {
+                    if storage.context.key != self.context.key {
+                        return Err(self.mismatch(at, "the buffer is on another device"));
+                    }
+                    if storage.size < u64::from(*size).next_multiple_of(4) {
+                        return Err(self.mismatch(at, "the buffer is smaller than the uniform"));
+                    }
+                    // The copy makes the uniform's contents this run's, so the bind group is the
+                    // same one every run.
+                    (u64::MAX, Some(buffer.as_entire_binding()))
+                }
                 (BindingKind::Texture { .. }, Bound::Texture(texture), _) => (
                     texture.id,
                     Some(wgpu::BindingResource::TextureView(&texture.view)),
@@ -327,6 +345,23 @@ impl Shader {
         context.count_pass();
     }
 
+    /// Records the copies that fill uniforms whose bytes are on the device. `bound` has been
+    /// checked.
+    fn copy_uniforms(&self, encoder: &mut wgpu::CommandEncoder, bound: &[Bound<'_>]) {
+        let rows = self.spec.bindings.iter().zip(bound).zip(&self.owned);
+        for ((binding, bound), owned) in rows {
+            if let (
+                BindingKind::Uniform { size },
+                Bound::UniformFrom(storage),
+                Some(Owned::Uniform(buffer)),
+            ) = (&binding.kind, bound, owned)
+            {
+                let bytes = u64::from(*size).next_multiple_of(4);
+                encoder.copy_buffer_to_buffer(&storage.buffer, 0, buffer, 0, bytes);
+            }
+        }
+    }
+
     /// Checks `bound` and records one pass of this shader into `encoder`, for a region that
     /// submits several passes together. Nothing is submitted here.
     pub(crate) fn encode(
@@ -336,6 +371,7 @@ impl Shader {
     ) -> Result<(), ShaderError> {
         let resources = self.resources(bound)?;
         let counts = self.counts(bound)?;
+        self.copy_uniforms(encoder, bound);
         self.pass(encoder, resources, counts, None);
         Ok(())
     }
@@ -362,6 +398,7 @@ impl Shader {
         let mut encoder = context
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        self.copy_uniforms(&mut encoder, bound);
         self.pass(
             &mut encoder,
             resources,

@@ -426,3 +426,78 @@ fn a_region_steps_allocations_dont_grow_with_its_nodes() {
     );
     assert!(one <= 64, "one node: {one}");
 }
+
+/// `out = src * gain`, with the gain in a uniform that a port feeds.
+static GAIN: ShaderSpec = ShaderSpec {
+    name: "gain",
+    entry: "main",
+    source: "
+        struct Config { gain: u32 }
+        @group(0) @binding(0) var<storage, read> src: array<u32>;
+        @group(0) @binding(1) var<uniform> config: Config;
+        @group(0) @binding(2) var<storage, read_write> out: array<u32>;
+        @compute @workgroup_size(64)
+        fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+            if id.x < arrayLength(&out) { out[id.x] = src[id.x] * config.gain; }
+        }
+    ",
+    workgroup: [64, 1, 1],
+    bindings: &[
+        storage(0, "src", true),
+        BindingSpec {
+            index: 1,
+            name: "config",
+            kind: BindingKind::Uniform { size: 4 },
+        },
+        storage(2, "out", false),
+    ],
+    dispatch: Dispatch::PerElement {
+        binding: 2,
+        stride: 4,
+    },
+    inputs: &[0, 1],
+    outputs: &[2],
+};
+
+#[test]
+fn a_uniform_takes_plain_bytes_or_bytes_already_on_the_device() {
+    let Some(backend) = private() else { return };
+    let made = Chain {
+        bodies: vec![body(0, &GAIN, &NO_METADATA)],
+        edges: Vec::new(),
+        nodes: vec![NodeIndex(0)],
+        inputs: vec![port(0, 0), port(0, 1)],
+    };
+    let mut unit = compile(&backend, &made, &[port(0, 0)]);
+    let src = filled(&backend, &[1, 2, 3, 4]);
+    let mut go = |gain: Slot| {
+        let mut cells = [Slot::EMPTY, gain, Slot::EMPTY];
+        put_typed(&mut cells[0], TypeIndex(0), SpaceIndex(0), Arc::clone(&src));
+        let mut cx = StepCx::new();
+        let end = run_once(&mut unit.step, &mut Slots::of(&mut cells), &mut cx);
+        assert!(matches!(end, StepEnd::Pending(_)), "{}", cx.reason());
+        drop(take_typed::<Storage>(&mut cells[0]));
+        daedalus_runner::drop_owned(cells[1]);
+        words(&take_typed::<Storage>(&mut cells[2]).expect("an output"))
+    };
+    // As a CPU node writes a small value: inline bytes.
+    let mut inline = Slot::EMPTY;
+    daedalus_runner::put_inline(
+        &mut inline,
+        TypeIndex(0),
+        SpaceIndex(0),
+        &5u32.to_le_bytes(),
+    )
+    .expect("fits");
+    assert_eq!(go(inline), [5, 10, 15, 20]);
+    // As an upload leaves it: a buffer on the device, copied into the uniform in the same submit.
+    let mut uploaded = Slot::EMPTY;
+    put_typed(
+        &mut uploaded,
+        TypeIndex(0),
+        SpaceIndex(0),
+        filled(&backend, &[7]),
+    );
+    assert_eq!(go(uploaded), [7, 14, 21, 28]);
+    release(unit.step);
+}
