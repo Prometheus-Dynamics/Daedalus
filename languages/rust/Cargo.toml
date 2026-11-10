@@ -1,0 +1,24 @@
+[package]
+name = "daedalus-lang-rust"
+description = "The Rust worker SDK: serve nodes declared with #[node] over the worker wire protocol."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-registry = { path = "../../core/registry" }
+daedalus-types = { path = "../../core/types" }
+daedalus-wire = { path = "../../core/wire" }
+daedalus-macros = { path = "../../core/macros" }
+
+[dev-dependencies]
+daedalus-backend-process = { path = "../../backends/process" }
+daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance" }
+
+[[bin]]
+name = "daedalus-rust-fixture-worker"
+path = "fixtures/worker.rs"
+
+[lints]
+workspace = true
