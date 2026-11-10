@@ -44,37 +44,52 @@ fn limits(backend: &WgpuBackend) {
     println!("{:#?}", record.compute);
 }
 
-/// Eight ops over 64 KiB each: one submit for all, against a submit and a wait for each.
+fn median(times: &mut [Duration]) -> Duration {
+    times.sort_unstable();
+    times.get(times.len() / 2).copied().unwrap_or_default()
+}
+
+/// Eight small ops, as eight submits and as one: the workload the design's budget row is
+/// measured on. Each op is a shader copy of 64 KiB. The eight submits are made one after the
+/// other and waited for once, at the end. The median of 35 frames after 5 to warm up.
 fn batching(backend: &WgpuBackend) {
     let kernels = Kernels::new(backend).expect("a device");
     let n = 64 * 1024;
     let work: Vec<(Storage, Storage)> = (0..8)
         .map(|_| {
             let src = Storage::new(backend, n).expect("a buffer");
-            let dst = Storage::new(backend, Kernel::HexLower.output_len(n)).expect("a buffer");
+            let dst = Storage::new(backend, n).expect("a buffer");
             (src, dst)
         })
         .collect();
-    let together = best(|| {
+    let (mut apart, mut together) = (Vec::new(), Vec::new());
+    for round in 0..40 {
+        let start = Instant::now();
+        let mut last = None;
+        for (src, dst) in &work {
+            last = Some(kernels.run(Kernel::Copy, src, dst, n).expect("runs"));
+        }
+        // Work on a device finishes in the order it was submitted: the last one is all of it.
+        if let Some(last) = last {
+            last.wait().expect("finishes");
+        }
+        let eight = start.elapsed();
+
+        let start = Instant::now();
         let mut encoder = kernels.encoder();
         for (src, dst) in &work {
             kernels
-                .encode(&mut encoder, Kernel::HexLower, src, dst, n)
+                .encode(&mut encoder, Kernel::Copy, src, dst, n)
                 .expect("fits");
         }
         kernels.submit(encoder).wait().expect("finishes");
-    });
-    let apart = best(|| {
-        for (src, dst) in &work {
-            kernels
-                .run(Kernel::HexLower, src, dst, n)
-                .expect("runs")
-                .wait()
-                .expect("finishes");
+        if round >= 5 {
+            apart.push(eight);
+            together.push(start.elapsed());
         }
-    });
-    println!("8 ops, 1 submit:  {:.3} ms", ms(together));
-    println!("8 ops, 8 submits: {:.3} ms", ms(apart));
+    }
+    println!("8 ops, 8 submits: {:.3} ms", ms(median(&mut apart)));
+    println!("8 ops, 1 submit:  {:.3} ms", ms(median(&mut together)));
 }
 
 fn allocation(backend: &WgpuBackend) {
