@@ -14,6 +14,7 @@ pub use generate::fragment_pass;
 
 pub(crate) use cache::merged;
 pub(crate) use chain::segments;
+pub(crate) use generate::fragment_pass_on;
 
 use crate::shader::{BindingKind, BindingSpec};
 

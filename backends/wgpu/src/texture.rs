@@ -168,6 +168,9 @@ pub struct Texture {
     desc: TextureDesc,
     /// The half-size plane of U and V, when this is the Y plane of an imported NV12 image.
     chroma: Option<Box<Texture>>,
+    /// What this texture's memory belongs to, kept for as long as the texture is. For one
+    /// frame of an imported image, that is the producer's value for that frame.
+    hold: Option<Arc<dyn std::any::Any + Send + Sync>>,
     context: Arc<Context>,
 }
 
@@ -184,6 +187,14 @@ impl Texture {
     /// format allows.
     pub fn new(backend: &WgpuBackend, desc: TextureDesc) -> Result<Texture, TextureError> {
         let context = backend.context().map_err(TextureError::Open)?;
+        Texture::new_on(context, desc)
+    }
+
+    /// A texture on `context`'s device.
+    pub(crate) fn new_on(
+        context: Arc<Context>,
+        desc: TextureDesc,
+    ) -> Result<Texture, TextureError> {
         desc.validate(context.limits.max_texture_dimension_2d)?;
         let mut usage = wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::RENDER_ATTACHMENT
@@ -212,6 +223,7 @@ impl Texture {
             id: Context::next_id(),
             desc,
             chroma: None,
+            hold: None,
             context,
         })
     }
@@ -241,6 +253,7 @@ impl Texture {
                 height,
             },
             chroma: None,
+            hold: None,
             context: Arc::clone(&context),
         };
         let all = wgpu::TextureAspect::All;
@@ -261,6 +274,30 @@ impl Texture {
                 luma
             }
         }
+    }
+
+    /// The same texture, holding `hold` for as long as this value lives. An import is cached
+    /// and outlives every frame, so each frame gets a value of its own that holds that frame's
+    /// producer buffer and lets it go when the last reader is done.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn holding(&self, hold: Arc<dyn std::any::Any + Send + Sync>) -> Texture {
+        Texture {
+            texture: self.texture.clone(),
+            view: self.view.clone(),
+            id: self.id,
+            desc: self.desc,
+            chroma: self
+                .chroma
+                .as_ref()
+                .map(|chroma| Box::new(chroma.holding(Arc::clone(&hold)))),
+            hold: Some(hold),
+            context: Arc::clone(&self.context),
+        }
+    }
+
+    /// Whether this value holds something of its producer's.
+    pub fn holds_its_source(&self) -> bool {
+        self.hold.is_some()
     }
 
     /// The U and V plane of an imported NV12 image, at half the size each way, as two channels.

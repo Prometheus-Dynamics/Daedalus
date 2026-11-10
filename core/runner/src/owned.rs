@@ -189,9 +189,9 @@ mod typed {
         /// Drops the reference, and nothing else.
         pub(super) release: unsafe fn(*mut u8),
         /// Takes another reference, and nothing else.
-        pub(super) retain: unsafe fn(*mut u8),
+        pub(crate) retain: unsafe fn(*mut u8),
         /// Turns the reference into an `Arc<dyn Any>` for a `Value`.
-        pub(super) rebuild: unsafe fn(*mut u8) -> Arc<dyn Any + Send + Sync>,
+        pub(crate) rebuild: unsafe fn(*mut u8) -> Arc<dyn Any + Send + Sync>,
     }
 
     struct Ops<T>(PhantomData<fn() -> T>);

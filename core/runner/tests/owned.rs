@@ -203,3 +203,37 @@ fn a_typed_value_cannot_be_fed_as_a_plain_value() {
         "refused value is dropped once"
     );
 }
+
+#[test]
+fn sharing_a_typed_cell_keeps_its_payload_alive_and_drops_it_once() {
+    use daedalus_abi::Slot;
+    use daedalus_runner::{drop_owned, put_inline, share_typed};
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut slot = Slot::EMPTY;
+    put_typed(
+        &mut slot,
+        TY,
+        SP,
+        Arc::new(Counted {
+            id: 9,
+            log: Arc::clone(&log),
+        }),
+    );
+    // A second reference, and the cell still has its own.
+    let shared = share_typed(&slot).expect("a typed cell");
+    assert_eq!(
+        shared.downcast_ref::<Counted>().map(|counted| counted.id),
+        Some(9)
+    );
+    drop_owned(slot);
+    assert!(log.lock().unwrap().is_empty(), "the share keeps it alive");
+    drop(shared);
+    assert_eq!(*log.lock().unwrap(), [9], "and it is dropped once");
+
+    // Nothing to share in an empty cell, or in one that holds plain bytes.
+    assert!(share_typed(&Slot::EMPTY).is_none());
+    let mut bytes = Slot::EMPTY;
+    put_inline(&mut bytes, TY, SP, &[1, 2, 3]).expect("fits");
+    assert!(share_typed(&bytes).is_none());
+}

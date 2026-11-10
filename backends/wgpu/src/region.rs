@@ -60,6 +60,27 @@ pub(crate) struct Owned {
     pub(crate) kept: Vec<Arc<Storage>>,
     /// The one this run uses, as an index into `kept`.
     pub(crate) current: usize,
+    /// Set for a run in which the value is a texture and not a buffer: a chain of pixel bodies
+    /// that was given a texture writes one.
+    pub(crate) texture: Option<Arc<crate::texture::Texture>>,
+}
+
+/// A merged chain of pixel bodies, kept so it can run as a fragment pass when its input turns
+/// out to be a texture. Whether a value is a buffer or a texture is only known when it arrives.
+pub(crate) struct PixelChain {
+    pub(crate) specs: Vec<crate::merge::PixelSpec>,
+    /// Every side input in chain order, and every config with its size, as a fragment pass
+    /// binds them.
+    pub(crate) sides: Vec<Source>,
+    pub(crate) configs: Vec<(Source, u32)>,
+    /// The region buffer the chain's output is.
+    pub(crate) output: usize,
+    /// The pass, for the format it was last built for.
+    pub(crate) pass: Option<(crate::texture::Format, crate::fragment::FragmentPass)>,
+    /// Textures the chain has written, reused once nobody else holds them.
+    pub(crate) targets: Vec<Arc<crate::texture::Texture>>,
+    /// A small buffer for each config, which a fragment pass reads as storage.
+    pub(crate) config_buffers: Vec<Storage>,
 }
 
 /// How a node does its work.
@@ -79,6 +100,8 @@ pub(crate) struct Node {
     /// The buffers this node writes, which are sized before it runs: (position, buffer). The
     /// position is a binding's for a shader and an output port's for a recording body.
     pub(crate) makes: Vec<(usize, usize)>,
+    /// Set for a merged chain of pixel bodies.
+    pub(crate) pixel: Option<PixelChain>,
 }
 
 fn refuse(node: NodeIndex, reason: impl AsRef<str>) -> Refusal {
@@ -222,11 +245,12 @@ fn merged_node(
     };
     let mut sources = Vec::new();
     let mut makes = Vec::new();
-    for (position, (slot, _, _)) in crate::merge::layout(&specs).into_iter().enumerate() {
+    let (mut sides, mut configs, mut output) = (Vec::new(), Vec::new(), 0);
+    for (position, (slot, kind, _)) in crate::merge::layout(&specs).into_iter().enumerate() {
         let named = |source: Option<Source>, what: &str| {
             source.ok_or_else(|| refuse(tail, format!("nothing is connected to {what}")))
         };
-        sources.push(match slot {
+        let source = match slot {
             Slot::Input => {
                 let pixel = port_of(0, specs[0].params[0]);
                 let source = match pixel {
@@ -249,6 +273,7 @@ fn merged_node(
                     publish: region.outputs.iter().position(|output| *output == here),
                     kept: Vec::new(),
                     current: 0,
+                    texture: None,
                 });
                 made.push((here, owned.len() - 1));
                 makes.push((position, owned.len() - 1));
@@ -267,7 +292,14 @@ fn merged_node(
                 };
                 named(source, &format!("`{name}` of `{}`", specs[at].name))?
             }
-        });
+        };
+        match (slot, kind) {
+            (Slot::Output, _) => output = owned.len() - 1,
+            (Slot::Config(_), BindingKind::Uniform { size }) => configs.push((source, size)),
+            (Slot::Side(..), _) => sides.push(source),
+            _ => {}
+        }
+        sources.push(source);
     }
     let _ = head;
     Ok(Node {
@@ -275,6 +307,15 @@ fn merged_node(
         work: Work::Shader(shader),
         sources,
         makes,
+        pixel: Some(PixelChain {
+            specs: specs.iter().map(|spec| **spec).collect(),
+            sides,
+            configs,
+            output,
+            pass: None,
+            targets: Vec::new(),
+            config_buffers: Vec::new(),
+        }),
     })
 }
 
@@ -345,6 +386,7 @@ pub(crate) fn compile(
                     publish: region.outputs.iter().position(|output| *output == here),
                     kept: Vec::new(),
                     current: 0,
+                    texture: None,
                 });
                 made.push((here, owned.len() - 1));
                 makes.push((usize::from(port), owned.len() - 1));
@@ -357,6 +399,7 @@ pub(crate) fn compile(
                 work: Work::Record(*record),
                 sources,
                 makes,
+                pixel: None,
             });
             continue;
         }
@@ -416,6 +459,7 @@ pub(crate) fn compile(
                 publish: region.outputs.iter().position(|output| *output == here),
                 kept: Vec::new(),
                 current: 0,
+                texture: None,
             });
             let buffer = owned.len() - 1;
             made.push((here, buffer));
@@ -441,6 +485,7 @@ pub(crate) fn compile(
             work: Work::Shader(shader),
             sources: resolved,
             makes,
+            pixel: None,
         });
     }
 

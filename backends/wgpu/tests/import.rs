@@ -340,10 +340,16 @@ fn a_type_that_describes_itself_is_imported_by_its_transfer() {
         assert!(matches!(end, StepEnd::Done));
         let texture = take_typed::<Texture>(&mut cells[1]).expect("a texture");
         assert_eq!(texture.desc().format, Format::R8);
+        // The frame's texture holds the frame: the producer's buffer isn't free while a reader
+        // still has the texture.
+        assert!(texture.holds_its_source());
+        assert_eq!(Arc::strong_count(&frame), 2, "ours, and the texture's");
         let mut seen = vec![0; pixels.len()];
         texture.read_into(&mut seen).expect("a readback");
         assert_eq!(seen, pixels, "round {round}");
     }
+    // With the last reader gone the frame is the producer's again, though the import is kept.
+    assert_eq!(Arc::strong_count(&frame), 1);
     // Three frames of one buffer are one import.
     let stats = backend.import_stats().expect("open");
     assert!(

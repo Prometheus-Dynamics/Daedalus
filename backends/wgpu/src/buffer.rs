@@ -166,6 +166,19 @@ impl Storage {
         })
     }
 
+    /// A buffer whose memory was imported from outside. The device reads it where it is.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn imported(context: Arc<Context>, buffer: wgpu::Buffer, size: u64) -> Storage {
+        Storage {
+            buffer,
+            size,
+            id: Context::next_id(),
+            space: SPACE_DEVICE,
+            mapping: None,
+            context,
+        }
+    }
+
     /// A buffer in device memory that nothing has cleared. Only for a buffer its producer writes
     /// in full before anything reads it: skipping the clear is the point. Off Vulkan this is
     /// [`Storage::new`].

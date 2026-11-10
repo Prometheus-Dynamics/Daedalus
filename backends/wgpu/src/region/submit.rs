@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use daedalus_abi::{OwnedStep, Slot, Slots, StepCx, StepEnd};
-use daedalus_runner::{UNSTAMPED, put_typed, typed_view};
+use daedalus_runner::{UNSTAMPED, put_typed, share_typed, typed_view};
 
-use super::{Node, Owned, Size, Source, Work};
+use super::{Node, Owned, PixelChain, Size, Source, Work};
 use crate::backend::Link;
 use crate::buffer::Storage;
 use crate::context::Context;
@@ -28,6 +28,11 @@ pub(crate) struct RegionStep {
     reads: usize,
     /// For uniforms nothing feeds.
     zeroes: Vec<u8>,
+    /// What the last run read. The device may still be reading it after the step has returned,
+    /// so the region keeps its own reference until its next run, which the runner holds back
+    /// until this run's fence has resolved. For an imported image that reference is what keeps
+    /// the producer from reusing the buffer.
+    held: Vec<Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 impl RegionStep {
@@ -58,6 +63,7 @@ impl RegionStep {
             owned,
             reads,
             zeroes: vec![0; largest],
+            held: Vec::with_capacity(reads),
         }
     }
 }
@@ -103,14 +109,155 @@ impl Owned {
     }
 }
 
+/// The texture a source names, if it is one this run.
+fn texture_of<'a>(source: Source, inputs: &'a [Slot], owned: &'a [Owned]) -> Option<&'a Texture> {
+    match source {
+        Source::Cell(cell) => typed_view::<Texture>(inputs.get(cell)?),
+        Source::Buffer(buffer) => owned.get(buffer)?.texture.as_deref(),
+        _ => None,
+    }
+}
+
+/// Textures a chain keeps to draw to. A consumer that holds more than this at once makes the
+/// chain allocate.
+const TARGETS: usize = 4;
+
+/// Runs a merged chain as one fragment pass when the chain's input is a texture this run, and
+/// says whether it did. With a buffer for an input the chain is a compute pass, as any shader.
+fn fragment_chain(
+    node: &mut Node,
+    inputs: &[Slot],
+    owned: &[Owned],
+    context: &Arc<Context>,
+    encoder: &mut wgpu::CommandEncoder,
+) -> Result<Option<(usize, Arc<Texture>)>, String> {
+    let Some(chain) = node.pixel.as_mut() else {
+        return Ok(None);
+    };
+    let Some(&first) = node.sources.first() else {
+        return Ok(None);
+    };
+    let Some(source) = texture_of(first, inputs, owned) else {
+        return Ok(None);
+    };
+    let desc = source.desc();
+    if !chain
+        .pass
+        .as_ref()
+        .is_some_and(|(format, _)| *format == desc.format)
+    {
+        let specs: Vec<&crate::merge::PixelSpec> = chain.specs.iter().collect();
+        let pass = crate::merge::fragment_pass_on(Arc::clone(context), &specs, desc.format)
+            .map_err(|error| error.to_string())?;
+        chain.pass = Some((desc.format, pass));
+    }
+    // A texture nobody else still holds, of this size, or a new one.
+    let free = chain
+        .targets
+        .iter()
+        .position(|target| target.desc() == desc && Arc::strong_count(target) == 1);
+    let target = match free {
+        Some(at) => Arc::clone(&chain.targets[at]),
+        None => {
+            let made =
+                Texture::new_on(Arc::clone(context), desc).map_err(|error| error.to_string())?;
+            let stale = chain.targets.iter().position(|target| {
+                Arc::strong_count(target) == 1
+                    && (target.desc() != desc || chain.targets.len() >= TARGETS)
+            });
+            if let Some(stale) = stale {
+                chain.targets.swap_remove(stale);
+            }
+            chain.targets.push(Arc::new(made));
+            Arc::clone(&chain.targets[chain.targets.len() - 1])
+        }
+    };
+    // One small buffer for each config: a fragment pass reads it as storage.
+    while chain.config_buffers.len() < chain.configs.len() {
+        let size = u64::from(chain.configs[chain.config_buffers.len()].1)
+            .max(4)
+            .next_multiple_of(4);
+        let buffer =
+            Storage::zeroed(Arc::clone(context), size).map_err(|error| error.to_string())?;
+        chain.config_buffers.push(buffer);
+    }
+    let mut textures = [source; MAX_BINDINGS];
+    let mut count = 1;
+    for &side in &chain.sides {
+        let texture = texture_of(side, inputs, owned)
+            .ok_or("a chain that is given a texture takes textures for its other inputs too")?;
+        *textures.get_mut(count).ok_or("too many inputs")? = texture;
+        count += 1;
+    }
+    let Some(first_config) = chain.config_buffers.first() else {
+        // No configs: bind the textures alone.
+        draw(chain, &textures[..count], &[], &target, encoder)?;
+        return Ok(Some((chain.output, target)));
+    };
+    let mut buffers = [first_config; MAX_BINDINGS];
+    for (at, ((from, size), own)) in chain.configs.iter().zip(&chain.config_buffers).enumerate() {
+        let slot = buffers.get_mut(at).ok_or("too many configs")?;
+        *slot = match *from {
+            Source::Bytes(cell) => {
+                let cell = inputs.get(cell);
+                match cell.and_then(Slot::bytes) {
+                    Some(bytes) if bytes.len() == *size as usize => {
+                        let mut padded = vec![0; own.size as usize];
+                        padded[..bytes.len()].copy_from_slice(bytes);
+                        own.write(0, &padded).map_err(|error| error.to_string())?;
+                        own
+                    }
+                    Some(_) => return Err("a config's bytes aren't its struct's size".into()),
+                    // Bytes an upload already put on the device.
+                    None => cell
+                        .and_then(typed_view::<Storage>)
+                        .ok_or("a config's input has no bytes")?,
+                }
+            }
+            // Nothing feeds it: the buffer is zeroes, as it was made.
+            _ => own,
+        };
+    }
+    let buffers = &buffers[..chain.configs.len()];
+    draw(chain, &textures[..count], buffers, &target, encoder)?;
+    Ok(Some((chain.output, target)))
+}
+
+/// Binds and records a chain's fragment pass, and notes the texture it drew as the chain's
+/// output for this run.
+fn draw(
+    chain: &PixelChain,
+    textures: &[&Texture],
+    buffers: &[&Storage],
+    target: &Arc<Texture>,
+    encoder: &mut wgpu::CommandEncoder,
+) -> Result<(), String> {
+    let Some((_, pass)) = &chain.pass else {
+        return Err("the chain has no pass".into());
+    };
+    let binding = pass
+        .bind(textures, buffers)
+        .map_err(|error| error.to_string())?;
+    pass.encode_bound(encoder, &binding, &[target])
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 impl RegionStep {
     fn record(
         &mut self,
         inputs: &[Slot],
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<(), (u32, String)> {
-        for node in &self.nodes {
+        for node in &mut self.nodes {
             let at = node.index.0;
+            // A chain of pixel bodies that is given a texture draws to one.
+            let drawn = fragment_chain(node, inputs, &self.owned, &self.context, encoder)
+                .map_err(|reason| (at, reason))?;
+            if let Some((output, texture)) = drawn {
+                self.owned[output].texture = Some(texture);
+                continue;
+            }
             // Size what this node writes from what it was given, then pick the buffers.
             for &(position, buffer) in &node.makes {
                 let bytes = match self.owned[buffer].size {
@@ -209,7 +356,14 @@ impl RegionStep {
                     Source::Zeroes => Bound::Uniform(&[]),
                     Source::Buffer(buffer) => {
                         let owned = &self.owned[buffer];
-                        Bound::Storage(&owned.kept[owned.current])
+                        // What the node before made: a texture if it drew one this run.
+                        match (&owned.texture, owned.kept.get(owned.current)) {
+                            (Some(texture), _) => Bound::Texture(texture),
+                            (None, Some(storage)) => Bound::Storage(storage),
+                            (None, None) => {
+                                return Err((at, "an input from this region wasn't made".into()));
+                            }
+                        }
                     }
                     Source::Sampler => Bound::Sampler,
                 };
@@ -250,6 +404,12 @@ impl RegionStep {
         for owned in &mut self.owned {
             owned.kept.clear();
             owned.current = 0;
+            owned.texture = None;
+        }
+        for chain in self.nodes.iter_mut().filter_map(|node| node.pixel.as_mut()) {
+            chain.pass = None;
+            chain.targets.clear();
+            chain.config_buffers.clear();
         }
         self.context = context;
         Ok(())
@@ -275,6 +435,11 @@ impl OwnedStep for RegionStep {
             cx.fault(None, &reported);
             return StepEnd::Fault;
         }
+        // The last run's work is done, or this run wouldn't have been called.
+        self.held.clear();
+        for owned in &mut self.owned {
+            owned.texture = None;
+        }
         let cells = slots.as_mut_slice();
         let reads = self.reads.min(cells.len());
         let (inputs, outputs) = cells.split_at_mut(reads);
@@ -296,12 +461,16 @@ impl OwnedStep for RegionStep {
                 .queue
                 .on_submitted_work_done(move || finished.finish());
         }
+        self.held.extend(inputs.iter().filter_map(share_typed));
         // What leaves the region. The values are on the device, and the fence says when the
         // work that fills them is done.
         for owned in &self.owned {
-            if let (Some(cell), Some(storage)) = (owned.publish, owned.kept.get(owned.current))
-                && let Some(out) = outputs.get_mut(cell)
-            {
+            let Some(out) = owned.publish.and_then(|cell| outputs.get_mut(cell)) else {
+                continue;
+            };
+            if let Some(texture) = &owned.texture {
+                put_typed(out, UNSTAMPED.0, UNSTAMPED.1, Arc::clone(texture));
+            } else if let Some(storage) = owned.kept.get(owned.current) {
                 put_typed(out, UNSTAMPED.0, UNSTAMPED.1, Arc::clone(storage));
             }
         }

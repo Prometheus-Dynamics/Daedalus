@@ -82,7 +82,7 @@ pub use join::Fire;
 #[cfg(feature = "threads")]
 pub use lanes::{LaneError, Lanes, Pool};
 #[cfg(feature = "alloc")]
-pub use nested::{Nested, NestedStep, SlotList, drop_owned, read_bool, typed_view};
+pub use nested::{Nested, NestedStep, SlotList, drop_owned, read_bool, share_typed, typed_view};
 pub use owned::{INLINE_BYTES, InlineCell, Untyped, place};
 #[cfg(feature = "alloc")]
 pub use owned::{TypedOps, typed_ops, typed_raw};

@@ -39,6 +39,24 @@ pub fn typed_view<T: 'static>(slot: &Slot) -> Option<&T> {
     ((ops.type_id)() == TypeId::of::<T>()).then(|| unsafe { &*slot.data.cast::<T>().cast_const() })
 }
 
+/// Another reference to what a typed cell holds, without taking it from the cell. For a step
+/// that has to keep what it read alive after it returns, such as one whose work on a device is
+/// still reading it.
+pub fn share_typed(slot: &Slot) -> Option<alloc::sync::Arc<dyn core::any::Any + Send + Sync>> {
+    if !is_full(slot) || slot.owner != OwnerKind::Typed as u32 {
+        return None;
+    }
+    // SAFETY: a full typed cell's `cap` was written by `typed_raw`, so it names this table.
+    let ops = unsafe { owned::typed_ops(slot.cap) };
+    // SAFETY: the cell holds one reference to a payload this table is for. `retain` takes a
+    // second one, which `rebuild` then turns into the `Arc` returned, so the cell's own is
+    // untouched.
+    Some(unsafe {
+        (ops.retain)(slot.data);
+        (ops.rebuild)(slot.data)
+    })
+}
+
 /// The bool in a cell, typed or as one byte.
 pub fn read_bool(slot: &Slot) -> Option<bool> {
     if !is_full(slot) {

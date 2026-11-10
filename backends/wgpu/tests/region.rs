@@ -679,3 +679,29 @@ fn a_raw_submitter_is_made_on_the_backends_device() {
         Err(error) => assert!(storage.raw_buffer().is_none(), "{error}"),
     }
 }
+
+#[test]
+fn a_region_keeps_what_it_read_until_its_next_run() {
+    let Some(backend) = private() else { return };
+    let made = chain(2);
+    let mut unit = compile(&backend, &made, &[port(1, 0)]);
+    let (x, y) = (filled(&backend, &[1, 2]), filled(&backend, &[3, 4]));
+    let alone = Arc::strong_count(&x);
+    // The step has returned and its cells are released, and the device may still be reading
+    // the inputs: the region holds them. The runner doesn't run it again until its fence has
+    // resolved, so that is exactly long enough.
+    drop(run(&mut unit, made.inputs.len(), 1, &x, &y));
+    assert_eq!(Arc::strong_count(&x), alone + 1, "held by the region");
+    assert_eq!(Arc::strong_count(&y), alone + 1);
+    // The next run lets go of what the last one read, and holds what it reads itself.
+    let (other_x, other_y) = (filled(&backend, &[5, 6]), filled(&backend, &[7, 8]));
+    drop(run(&mut unit, made.inputs.len(), 1, &other_x, &other_y));
+    assert_eq!(
+        (Arc::strong_count(&x), Arc::strong_count(&y)),
+        (alone, alone)
+    );
+    assert_eq!(Arc::strong_count(&other_x), alone + 1);
+    // And the step lets go of everything when it goes.
+    release(unit.step);
+    assert_eq!(Arc::strong_count(&other_x), alone);
+}
