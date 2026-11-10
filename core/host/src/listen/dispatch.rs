@@ -16,8 +16,8 @@ use daedalus_planner::lint::lint;
 use daedalus_planner::{Config, Form, Planned, plan, solve};
 use daedalus_wire::service::{
     CacheAction, CacheInfo, CarryReport, Diagnostic, EndReason, ErrorCode, EventBody, EventKinds,
-    HostInfo, InspectTarget, Inspection, Names, Op, PlanForm, PlanOptions, PlanSummary, Reply,
-    Request, Response, RunId, ServiceError, Severity, StartConfig, StepSummary, StopMode,
+    HostInfo, InspectTarget, Inspection, Names, Op, PlanForm, PlanOptions, PlanSummary, PluginInfo,
+    Reply, Request, Response, RunId, ServiceError, Severity, StartConfig, StepSummary, StopMode,
     TelemetryEvent, TypedValue,
 };
 
@@ -182,7 +182,7 @@ impl ServiceHost {
             Op::Ping => Ok(Reply::Pong {
                 version: daedalus_wire::service::SERVICE_VERSION,
             }),
-            Op::LoadPlugin { path } => self.load_plugin(path),
+            Op::LoadPlugin { path } => self.load_plugin(path).map(Reply::Plugin),
             Op::PutGraph { name, json } => self.put_graph(space, name, json),
             Op::PatchGraph { graph, patch } => self.patch_graph(space, graph, patch),
             Op::Plan { graph, options } => self.plan(space, graph, options),
@@ -225,7 +225,9 @@ impl ServiceHost {
         }
     }
 
-    fn load_plugin(&self, path: &str) -> Answer {
+    /// Loads a plugin through the host's loader, as the `load_plugin` op does. The embedder
+    /// calls this for the plugins it loads at start.
+    pub fn load_plugin(&self, path: &str) -> Result<PluginInfo, ServiceError> {
         let mut engine = lock(&self.engine);
         let Engine {
             registry,
@@ -243,7 +245,7 @@ impl ServiceHost {
         if !loaded.contains(&info.name) {
             loaded.push(info.name.clone());
         }
-        Ok(Reply::Plugin(info))
+        Ok(info)
     }
 
     fn put_graph(&self, session: &str, name: &str, json: &str) -> Answer {

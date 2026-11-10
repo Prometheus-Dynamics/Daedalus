@@ -106,6 +106,22 @@ impl RunBuffers {
     }
 }
 
+impl Drop for RunBuffers {
+    /// Releases the steps. They were moved in at [`build`], so nothing else will.
+    fn drop(&mut self) {
+        // SAFETY: the runner that borrowed the steps is dropped before its buffers, as the type
+        // requires, so this is the only view of them.
+        let steps = unsafe { &mut *self._steps.ptr };
+        for step in steps {
+            if let Some(release) = step.release.take() {
+                // SAFETY: `release` belongs to this step's `data`, and taking it out of the step
+                // means it is called once.
+                unsafe { release(step.data) };
+            }
+        }
+    }
+}
+
 /// A runner's cancel word, shared. Cancelling through it is what [`RunBuffers::cancel`] does.
 #[derive(Clone)]
 pub struct CancelHandle(Arc<CancelWord>);

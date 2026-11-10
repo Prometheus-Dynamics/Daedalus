@@ -490,3 +490,29 @@ documents the patch and refresh JSON.
   fan-out of plain numbers needs no copy node.
 - A step can't know plan-wide type and space numbers either. A wrapper writes placeholders and the
   runner stamps each output at publish from `Runner::set_stamps`.
+
+**The service as built (H1 to H4).** `core/wire`'s `service` module, `core/client`,
+`core/host/src/listen` and `service/daedalusd` are the reference.
+
+- The service protocol shares the worker protocol's packets and value codec and nothing else. Its
+  kind bytes are `0x80` and up, and its layout hash covers the worker's. A value carries its own
+  type tree, since a service client has no port declarations to type it by. The server's hello
+  lists the type keys it has codecs for.
+- A `LoadedHost` is one graph, so what sessions share is a `ServiceHost`: the registry, the
+  backends, stored graphs by session name, the runs, the plan cache, the watches and the trace.
+  Runs and watches are numbers the host gives out. A run is stepped by `step` requests, one tick
+  at a time, and has no thread of its own.
+- Each session has a reader thread and a writer thread. Answers wait in a queue of 256, and a
+  client past that, or one a write has blocked on for 10 s, is disconnected. A watch holds 64
+  events and reports `lagged`. Nothing that runs a graph writes to a client.
+- A port is fed and taken through a `WireCodec` for its type key. Every scalar has one. A port
+  whose type has none is refused with `unsupported`.
+- A runner built by `owned_run` owns its steps and releases them when its buffers are dropped,
+  which is what lets a plugin's library close once the last run that used it is gone. Its cancel
+  word is in an `Arc`, so another thread can hold a `CancelHandle` to it.
+- `daedalusd` links no backend of its own. Each backend comes from a plugin, wrapped so the
+  planner can use it, and every plugin backend's values live in the one space `plugin.host`.
+  Loading a plugin's name again is a new generation whose backend replaces the old one.
+- The daemon's default socket is `$RUNTIME_DIRECTORY/daedalusd.sock`, else
+  `$XDG_RUNTIME_DIR/daedalusd/daedalusd.sock`, else `/run/daedalusd/daedalusd.sock`. Sockets a
+  service manager passes in (`LISTEN_FDS`) are used in place of the configured ones.

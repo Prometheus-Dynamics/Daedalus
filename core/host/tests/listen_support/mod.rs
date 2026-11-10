@@ -28,6 +28,9 @@ use std::net::{SocketAddr, TcpStream};
 /// Set when the waiting node's body is running.
 pub static WAITING: AtomicBool = AtomicBool::new(false);
 
+/// How many bodies of the node `t.probe` are alive: compiled and not yet released.
+pub static PROBES: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
 enum Kind {
     Double,
     Boom,
@@ -38,6 +41,15 @@ enum Kind {
 struct Body {
     kind: Kind,
     node: u32,
+    probe: bool,
+}
+
+impl Drop for Body {
+    fn drop(&mut self) {
+        if self.probe {
+            PROBES.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
 }
 
 impl OwnedStep for Body {
@@ -108,7 +120,7 @@ impl Backend for TestBackend {
             .find(|body| body.node == *node)
             .map_or("", |body| body.id);
         let kind = match id {
-            "t.double" | "t.blob" => Kind::Double,
+            "t.double" | "t.blob" | "t.probe" => Kind::Double,
             "t.boom" => Kind::Boom,
             _ => Kind::Wait,
         };
@@ -119,7 +131,15 @@ impl Backend for TestBackend {
             absorbed: Vec::new(),
             may_pend: false,
         };
-        let step = Step::boxed(Body { kind, node: node.0 });
+        let probe = id == "t.probe";
+        if probe {
+            PROBES.fetch_add(1, Ordering::SeqCst);
+        }
+        let step = Step::boxed(Body {
+            kind,
+            node: node.0,
+            probe,
+        });
         Ok(Compiled::Steps(vec![StepUnit { step, info }]))
     }
 }
@@ -132,6 +152,7 @@ pub fn registry() -> Registry {
         ("t.double", u32_ty as fn() -> TypeRef),
         ("t.boom", u32_ty),
         ("t.wait", u32_ty),
+        ("t.probe", u32_ty),
         ("t.blob", blob),
     ] {
         registry

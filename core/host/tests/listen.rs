@@ -537,3 +537,30 @@ fn a_unix_socket_serves_clients_and_replaces_a_stale_file() {
     assert!(!path.exists(), "the socket file goes with the listener");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_run_that_is_reloaded_or_stopped_releases_its_steps() {
+    let live = || listen_support::PROBES.load(Ordering::SeqCst);
+    let (host, addr) = serving(ListenOptions::default());
+    let client = connect(addr);
+    client.put_graph("p", &graph("t.probe")).unwrap();
+    assert_eq!(live(), 0, "storing a graph compiles nothing");
+    // A plan that is only looked at is compiled and then let go.
+    client.plan("p", PlanOptions::default()).unwrap();
+    assert_eq!(live(), 0);
+    let run = client.start("p", StartConfig::default()).unwrap();
+    assert_eq!(live(), 1);
+    // A reload compiles the new body and releases the one it replaces.
+    client.reload(run, "p").unwrap();
+    assert_eq!(live(), 1);
+    client.feed(run, "in", u32_value(2)).unwrap();
+    client.step(run, 1).unwrap();
+    assert_eq!(client.take(run, "out").unwrap(), Some(u32_value(4)));
+    client.stop(run, StopMode::Immediate).unwrap();
+    assert_eq!(live(), 0, "a stopped run holds nothing");
+    // Shutdown drops the runs that are left.
+    client.start("p", StartConfig::default()).unwrap();
+    assert_eq!(live(), 1);
+    host.shutdown();
+    until("the last run to be released", || live() == 0);
+}
