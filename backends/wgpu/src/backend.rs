@@ -1,7 +1,8 @@
 //! The backend the planner and the host see.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use daedalus_backend::{
     Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, Transfer,
@@ -10,6 +11,7 @@ use daedalus_backend::{
 use crate::adapter::Options;
 use crate::caps::{CapsRecord, ComputeCaps, Need};
 use crate::context::{Context, OpenError};
+use crate::loss::Retry;
 use crate::staging::StagingStats;
 
 /// A device someone else set up. Whoever made it kept device creation from racing: see
@@ -22,16 +24,79 @@ pub struct Handle {
 
 /// The wgpu backend. Making one opens nothing: the device opens the first time it's needed.
 pub struct WgpuBackend {
+    link: Arc<Link>,
+}
+
+/// What a backend and the steps it compiled share: how to get the device, and to get another
+/// when that one is lost.
+pub(crate) struct Link {
     options: Options,
-    context: Mutex<Option<Arc<Context>>>,
+    state: Mutex<State>,
+}
+
+#[derive(Default)]
+struct State {
+    context: Option<Arc<Context>>,
+    retry: Retry,
+    /// Turned off by the host. Nothing here ever sets it.
+    off: bool,
+    /// The device was handed in, so there is nothing to reopen it from.
+    adopted: bool,
+}
+
+impl Link {
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The device, opened if there is none. A lost device is let go of and another is opened,
+    /// under the failure rule: an attempt that fails is tried again after a wait that doubles
+    /// from 250 ms to 8 s, for ever.
+    pub(crate) fn context(&self) -> Result<Arc<Context>, OpenError> {
+        let mut state = self.state();
+        if state.off {
+            return Err(OpenError::Off);
+        }
+        match &state.context {
+            Some(context) if !context.is_lost() => return Ok(Arc::clone(context)),
+            Some(lost) => {
+                lost.retire();
+                state.context = None;
+            }
+            None => {}
+        }
+        if state.adopted {
+            return Err(OpenError::Device(
+                "the device this backend was given is lost".into(),
+            ));
+        }
+        let now = Instant::now();
+        if let Some(wait) = state.retry.wait(now) {
+            return Err(OpenError::Backoff(wait));
+        }
+        match Context::open(&self.options) {
+            Ok(opened) => {
+                state.retry.worked();
+                Context::note_latest(&opened);
+                state.context = Some(Arc::clone(&opened));
+                Ok(opened)
+            }
+            Err(error) => {
+                state.retry.failed(now);
+                Err(error)
+            }
+        }
+    }
 }
 
 impl WgpuBackend {
     /// A backend that finds and opens its own device, on first use.
     pub fn open(options: Options) -> WgpuBackend {
         WgpuBackend {
-            options,
-            context: Mutex::new(None),
+            link: Arc::new(Link {
+                options,
+                state: Mutex::default(),
+            }),
         }
     }
 
@@ -44,13 +109,19 @@ impl WgpuBackend {
         ));
         Context::note_latest(&context);
         WgpuBackend {
-            options: Options::default(),
-            context: Mutex::new(Some(context)),
+            link: Arc::new(Link {
+                options: Options::default(),
+                state: Mutex::new(State {
+                    context: Some(context),
+                    adopted: true,
+                    ..State::default()
+                }),
+            }),
         }
     }
 
-    /// Opens the device now if it isn't open, and says what it can do. A failure isn't kept: the
-    /// next call tries again.
+    /// Opens the device now if it isn't open, and says what it can do. A failure is tried again
+    /// on a later call, after the wait the failure rule gives.
     pub fn start(&self) -> Result<CapsRecord, OpenError> {
         self.context().map(|context| context.record.clone())
     }
@@ -58,52 +129,75 @@ impl WgpuBackend {
     /// Lets go of this backend's hold on its device. The device closes when nothing else holds
     /// it, and opens again on the next use.
     pub fn stop(&self) {
-        *self.context.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        self.link.state().context = None;
+    }
+
+    /// Turns the backend off: no device is opened and nothing runs on it until
+    /// [`WgpuBackend::turn_on`]. Only the host does this. A device that keeps failing is never
+    /// turned off for it.
+    pub fn turn_off(&self) {
+        let mut state = self.link.state();
+        state.off = true;
+        state.context = None;
+    }
+
+    pub fn turn_on(&self) {
+        self.link.state().off = false;
+    }
+
+    /// How long until the next attempt to open a device, after one that failed. `None` when an
+    /// attempt is due now, or none has failed.
+    pub fn retry_in(&self) -> Option<Duration> {
+        self.link.state().retry.wait(Instant::now())
+    }
+
+    /// Marks the open device lost, as its driver or a timed-out wait would. For tests.
+    #[doc(hidden)]
+    pub fn mark_lost(&self) {
+        if let Some(context) = self.link.state().context.as_ref() {
+            context.mark_lost("marked lost by a test");
+        }
+    }
+
+    fn open_context(&self) -> Option<Arc<Context>> {
+        self.link.state().context.clone()
     }
 
     /// What is known about the device without opening one: this backend's own device, then the
     /// one the process shares, then what the options carried from an earlier run.
     pub fn caps(&self) -> Option<CapsRecord> {
-        let own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(context) = own.as_ref() {
+        if let Some(context) = self.open_context() {
             return Some(context.record.clone());
         }
-        drop(own);
-        if self.options.adapter.is_none()
+        if self.link.options.adapter.is_none()
             && let Some(record) = Context::shared_record()
         {
             return Some(record);
         }
-        self.options.known.clone()
+        self.link.options.known.clone()
     }
 
     /// Counters of the device's pool of readback buffers. `None` while no device is open.
     pub fn staging_stats(&self) -> Option<StagingStats> {
-        let own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
-        own.as_ref().map(|context| context.staging().stats())
+        self.open_context().map(|context| context.staging().stats())
     }
 
     /// How much the device's shader cache has built. `None` while no device is open.
     pub fn shader_stats(&self) -> Option<crate::shader::ShaderStats> {
-        let own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
-        own.as_ref().map(|context| context.shader_stats())
+        self.open_context().map(|context| context.shader_stats())
     }
 
     /// How much has moved between the host and the device. `None` while no device is open.
     pub fn transfer_stats(&self) -> Option<crate::TransferStats> {
-        let own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
-        own.as_ref().map(|context| context.moved.stats())
+        self.open_context().map(|context| context.moved.stats())
     }
 
     pub(crate) fn context(&self) -> Result<Arc<Context>, OpenError> {
-        let mut own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(context) = own.as_ref() {
-            return Ok(Arc::clone(context));
-        }
-        let opened = Context::open(&self.options)?;
-        Context::note_latest(&opened);
-        *own = Some(Arc::clone(&opened));
-        Ok(opened)
+        self.link.context()
+    }
+
+    pub(crate) fn link(&self) -> Arc<Link> {
+        Arc::clone(&self.link)
     }
 }
 

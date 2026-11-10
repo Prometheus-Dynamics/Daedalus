@@ -35,10 +35,13 @@ impl OwnedStep for UploadStep {
             Some([]) => return fault(cx, "an upload was given no bytes"),
             Some(bytes) => {
                 let context = match &self.context {
-                    Some(context) => Arc::clone(context),
-                    None => {
+                    Some(context) if !context.is_lost() => Arc::clone(context),
+                    // None yet, or the one it had was lost: find the device again.
+                    _ => {
+                        self.kept.clear();
                         // The device the backend opened, or the one the process shares.
                         let found = Context::latest()
+                            .filter(|latest| !latest.is_lost())
                             .map_or_else(|| Context::open(&Options::default()), Ok);
                         let Ok(context) = found else {
                             return fault(cx, "an upload has no device to go to");

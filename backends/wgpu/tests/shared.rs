@@ -46,5 +46,14 @@ fn shared_context_opens_one_device_per_process() {
         ..Options::default()
     });
     assert_eq!(missing.start(), Err(daedalus_wgpu::OpenError::NoAdapter));
-    assert_eq!(missing.start(), Err(daedalus_wgpu::OpenError::NoAdapter));
+    // The attempt failed, so the next is held back: 250 ms at first, doubling to 8 s, for ever.
+    assert!(matches!(
+        missing.start(),
+        Err(daedalus_wgpu::OpenError::Backoff(_))
+    ));
+    assert!(
+        missing
+            .retry_in()
+            .is_some_and(|wait| wait <= daedalus_wgpu::RETRY_FIRST)
+    );
 }

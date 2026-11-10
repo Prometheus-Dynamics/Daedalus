@@ -20,6 +20,10 @@ pub enum OpenError {
     NoAdapter,
     /// Adapters passed, and none gave a device. The text is the last one's reason.
     Device(String),
+    /// The last attempt failed, and the next is due after this long.
+    Backoff(std::time::Duration),
+    /// The host turned the backend off.
+    Off,
 }
 
 impl fmt::Display for OpenError {
@@ -27,6 +31,8 @@ impl fmt::Display for OpenError {
         match self {
             OpenError::NoAdapter => f.write_str("no adapter matches"),
             OpenError::Device(reason) => write!(f, "no adapter gave a device: {reason}"),
+            OpenError::Backoff(wait) => write!(f, "no device: trying again in {wait:?}"),
+            OpenError::Off => f.write_str("the backend is turned off"),
         }
     }
 }
@@ -47,16 +53,12 @@ pub(crate) struct Context {
     shaders: Mutex<crate::shader::ShaderCache>,
     /// What the device reported outside any call.
     pub(crate) errors: Arc<PendingErrors>,
-    lost: AtomicBool,
+    lost: Arc<AtomicBool>,
     wait_timeout: std::time::Duration,
     inflight: Mutex<InFlight>,
     submits: AtomicU64,
     passes: AtomicU64,
     pub(crate) moved: crate::transfer::Counters,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "shader nodes take their scratch here, from E4")
-    )]
     pub(crate) temp: Mutex<TempPool>,
 }
 
@@ -76,7 +78,8 @@ impl Context {
             return Context::open_private(options).map(Arc::new);
         }
         let mut shared = SHARED.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(open) = shared.upgrade() {
+        // A lost device is nobody's to share any more.
+        if let Some(open) = shared.upgrade().filter(|open| !open.is_lost()) {
             return Ok(open);
         }
         let opened = Arc::new(Context::open_private(options)?);
@@ -123,9 +126,18 @@ impl Context {
         device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
             record.record(error.to_string());
         }));
+        let lost = Arc::new(AtomicBool::new(false));
+        let (flag, record) = (Arc::clone(&lost), Arc::clone(&errors));
+        device.set_device_lost_callback(move |reason, message| {
+            // Dropping the device calls this too, and that isn't a loss.
+            if reason != wgpu::DeviceLostReason::Destroyed {
+                flag.store(true, Ordering::Release);
+                record.record(format!("the device was lost: {message}"));
+            }
+        });
         Context {
             errors,
-            lost: AtomicBool::new(false),
+            lost,
             wait_timeout: options.wait_timeout,
             inflight: Mutex::new(InFlight::new(options.max_in_flight)),
             submits: AtomicU64::new(0),
@@ -191,7 +203,23 @@ impl Context {
         }
     }
 
-    /// Whether a wait on this device has timed out. Its work can't be trusted to finish.
+    /// Marks the device lost: nothing more runs on it.
+    pub(crate) fn mark_lost(&self, why: &str) {
+        self.lost.store(true, Ordering::Release);
+        self.errors.record(format!("the device was lost: {why}"));
+    }
+
+    /// Lets go of everything a lost device kept: its readback buffers, its scratch and its
+    /// pipelines. Its key is never used again.
+    pub(crate) fn retire(&self) {
+        *self.staging() = StagingPool::new(crate::StagingConfig::default());
+        *self.temp.lock().unwrap_or_else(PoisonError::into_inner) =
+            TempPool::new(crate::TempPoolLimits::default());
+        *self.shaders() = crate::shader::ShaderCache::default();
+    }
+
+    /// Whether the driver lost the device or a wait on it timed out. Its work can't be trusted
+    /// to finish.
     pub(crate) fn is_lost(&self) -> bool {
         self.lost.load(Ordering::Acquire)
     }

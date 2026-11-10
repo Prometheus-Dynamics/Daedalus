@@ -161,7 +161,7 @@ pub(crate) fn compile(
         if !ports_match {
             return Err(refuse(index, "the shader's ports aren't the node's ports"));
         }
-        let shader = Shader::load(backend, spec).map_err(|error| match error {
+        let shader = Shader::load_on(Arc::clone(&context), spec).map_err(|error| match error {
             ShaderError::Limits(text) | ShaderError::Build(text) => refuse(index, text),
             other => refuse(index, other.to_string()),
         })?;
@@ -237,7 +237,7 @@ pub(crate) fn compile(
         });
     }
 
-    let step = RegionStep::new(context, nodes, owned, region.inputs.len());
+    let step = RegionStep::new(backend.link(), context, nodes, owned, region.inputs.len());
     Ok(StepUnit {
         step: daedalus_abi::Step::boxed(step),
         info: UnitInfo {
