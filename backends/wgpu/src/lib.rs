@@ -16,6 +16,7 @@ mod fence;
 mod fence_tests;
 pub mod fragment;
 pub mod handoff;
+mod host_bytes;
 pub mod image;
 mod inflight;
 pub mod kernels;
@@ -45,6 +46,7 @@ pub use caps::{CapsRecord, ComputeCaps, ComputeFeatures, Need};
 pub use context::OpenError;
 pub use driver::{DriverGuard, devices_created, driver_lock, with_driver_lock};
 pub use fence::Ticket;
+pub use host_bytes::HostBytes;
 pub use loss::{RETRY_CAP, RETRY_FIRST, retry_delay};
 pub use memory::{
     MemoryHints, SPACE_DEVICE, SPACE_DMA_HEAP, SPACE_HOST_CACHED, SPACE_HOST_MAPPED, SPACE_TEXTURE,

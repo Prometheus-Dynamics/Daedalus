@@ -17,6 +17,8 @@ struct UploadStep {
     space: &'static str,
     /// Which device the buffers are made on: 0 for the default, or a named device's place.
     slot: usize,
+    /// The bytes of what the input cell holds: a cell's own, or those of a typed value.
+    bytes: fn(&daedalus_abi::Slot) -> Option<&[u8]>,
     /// The device, found the first time the step runs.
     context: Option<Arc<Context>>,
     kept: Vec<Arc<Storage>>,
@@ -32,7 +34,7 @@ impl OwnedStep for UploadStep {
         let Some(input) = slots.cell(0) else {
             return fault(cx, "an upload has no input");
         };
-        let storage = match input.bytes() {
+        let storage = match (self.bytes)(input) {
             Some([]) => return fault(cx, "an upload was given no bytes"),
             Some(bytes) => {
                 let context = match &self.context {
@@ -123,9 +125,18 @@ impl UploadStep {
 }
 
 fn step(space: &'static str, slot: usize) -> Step {
+    step_reading(space, slot, daedalus_abi::Slot::bytes)
+}
+
+fn step_reading(
+    space: &'static str,
+    slot: usize,
+    bytes: fn(&daedalus_abi::Slot) -> Option<&[u8]>,
+) -> Step {
     Step::boxed(UploadStep {
         space,
         slot,
+        bytes,
         context: None,
         kept: Vec::new(),
     })
@@ -140,6 +151,24 @@ fn make_mapped<const SLOT: usize>(_: &CompileCx<'_>) -> Result<Step, Refusal> {
 }
 
 type Make = fn(&CompileCx<'_>) -> Result<Step, Refusal>;
+
+fn typed<T: crate::HostBytes, const SLOT: usize>(_: &CompileCx<'_>) -> Result<Step, Refusal> {
+    Ok(step_reading(
+        SPACE_DEVICE,
+        SLOT,
+        crate::host_bytes::bytes_of::<T>,
+    ))
+}
+
+/// The maker of the upload of `T`'s bytes into device memory, for the device in `slot`.
+pub(crate) fn make_typed<T: crate::HostBytes>(slot: usize) -> Make {
+    match slot {
+        1 => typed::<T, 1>,
+        2 => typed::<T, 2>,
+        3 => typed::<T, 3>,
+        _ => typed::<T, 0>,
+    }
+}
 
 /// The makers of the upload into device memory and of the one into host-mapped memory, for
 /// the device in `slot`. A transfer's maker is a plain function, so which device it is for is

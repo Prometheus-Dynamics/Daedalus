@@ -119,6 +119,11 @@ pub struct Options {
     /// Only this one of the adapters that pass the rest, counted from 0 with the best first.
     /// Like naming an adapter, this opens a device of this backend's own.
     pub index: Option<usize>,
+    /// Where a graph's host ports are, for the nodes of this backend. By default they are on
+    /// the host: what the host feeds is uploaded, and what it takes was read back. With this
+    /// set they are on the device: the host feeds and takes [`Storage`](crate::Storage), and
+    /// nothing is copied for it.
+    pub host_ports_on_device: bool,
     /// What an earlier run learned about the adapter, so planning can use it before a device
     /// opens.
     pub known: Option<crate::CapsRecord>,
@@ -144,6 +149,7 @@ impl Default for Options {
             vendor: None,
             adapter: None,
             index: None,
+            host_ports_on_device: false,
             known: None,
             hints: crate::MemoryHints::default(),
             staging: crate::StagingConfig::default(),
