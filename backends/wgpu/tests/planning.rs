@@ -38,7 +38,11 @@ fn planning_creates_no_device() {
     assert_eq!(backend.version(), 0);
     // With nothing known, the WebGPU default limits decide.
     assert_eq!(taken(&backend, &nodes), [0, 1]);
-    assert!(backend.memory().is_empty() && backend.transfers().is_empty());
+    assert_eq!(
+        backend.memory().first().map(|space| &*space.id),
+        Some("wgpu.buffer")
+    );
+    assert!(backend.transfers().is_empty());
 
     // With a record from an earlier run, that decides.
     let adapter = AdapterInfo {

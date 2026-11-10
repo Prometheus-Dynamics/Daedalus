@@ -119,6 +119,12 @@ pub struct Options {
     /// What an earlier run learned about the adapter, so planning can use it before a device
     /// opens.
     pub known: Option<crate::CapsRecord>,
+    /// How the device sizes its memory blocks.
+    pub hints: crate::MemoryHints,
+    /// Limits of the pool of readback buffers.
+    pub staging: crate::StagingConfig,
+    /// How many scratch buffers and textures the device keeps.
+    pub temp_pool: crate::TempPoolLimits,
 }
 
 /// What ranking looks at.
