@@ -170,7 +170,9 @@ fn the_backend_names_its_memory_spaces() {
             SPACE_HOST_MAPPED,
             "wgpu.cached",
             "wgpu.dmaheap",
-            "wgpu.texture"
+            "wgpu.texture",
+            // The host's own space, which tells the planner where host ports are.
+            "cpu.host"
         ]
     );
 }

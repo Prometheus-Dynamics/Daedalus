@@ -85,7 +85,7 @@ fn the_planner_is_offered_one_way_each_way() {
     let buffers = backend
         .memory()
         .into_iter()
-        .filter(|space| space.id != "wgpu.texture");
+        .filter(|space| space.id != "wgpu.texture" && space.id != HOST_SPACE);
     for space in buffers.skip(1) {
         assert!(
             find_transfer(&table, &key, &space.id, HOST_SPACE).is_some(),

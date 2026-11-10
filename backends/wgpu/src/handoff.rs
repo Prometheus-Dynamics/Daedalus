@@ -53,19 +53,30 @@ fn name(named: Option<&Named>) -> Option<&str> {
     named.map(|named| &*named.name)
 }
 
-pub(crate) fn spaces(named: Option<&Named>) -> Vec<MemorySpace> {
+/// A backend's memory. With `host` the last entry is the host's own space, which no shader
+/// reads: it tells the planner that a host port's value lives on the host, so the way to and
+/// from this backend's nodes is an upload and a readback.
+pub(crate) fn spaces(named: Option<&Named>, host: bool) -> Vec<MemorySpace> {
     let space = |id, kind| MemorySpace {
         id: on_device(name(named), id),
         kind,
         readable: true,
     };
-    vec![
+    let mut spaces = vec![
         space(SPACE_DEVICE, SpaceKind::Device),
         space(SPACE_HOST_MAPPED, SpaceKind::Shared),
         space(SPACE_HOST_CACHED, SpaceKind::Shared),
         space(SPACE_DMA_HEAP, SpaceKind::Shared),
         space(SPACE_TEXTURE, SpaceKind::Device),
-    ]
+    ];
+    if host {
+        spaces.push(MemorySpace {
+            id: Cow::Borrowed(HOST_SPACE),
+            kind: SpaceKind::Host,
+            readable: false,
+        });
+    }
+    spaces
 }
 
 type Make = fn(&CompileCx<'_>) -> Result<Step, Refusal>;

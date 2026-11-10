@@ -113,7 +113,8 @@ fn a_named_device_is_another_backend_with_its_own_memory() {
             "wgpu.mapped",
             "wgpu.cached",
             "wgpu.dmaheap",
-            "wgpu.texture"
+            "wgpu.texture",
+            "cpu.host"
         ]
     );
     assert_eq!(
@@ -123,7 +124,8 @@ fn a_named_device_is_another_backend_with_its_own_memory() {
             "wgpu.b.mapped",
             "wgpu.b.cached",
             "wgpu.b.dmaheap",
-            "wgpu.b.texture"
+            "wgpu.b.texture",
+            "cpu.host"
         ]
     );
 

@@ -33,6 +33,8 @@ pub(crate) struct Link {
     options: Options,
     /// Set for a device of this backend's own, opened by name.
     named: Option<crate::devices::Named>,
+    /// Moves for types of the author's own, added by `with_bytes`.
+    typed: Mutex<Vec<Transfer>>,
     state: Mutex<State>,
 }
 
@@ -52,6 +54,23 @@ impl Link {
         self.state().context.as_ref().map(|context| context.key)
     }
 
+    /// Adds moves to what this backend lists. One already listed, by id, is left as it is.
+    pub(crate) fn offer(&self, more: impl IntoIterator<Item = Transfer>) {
+        let mut typed = self.typed.lock().unwrap_or_else(PoisonError::into_inner);
+        for transfer in more {
+            if typed.iter().all(|have| have.id != transfer.id) {
+                typed.push(transfer);
+            }
+        }
+    }
+
+    fn offered(&self) -> Vec<Transfer> {
+        self.typed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     pub(crate) fn named_as(&self) -> Option<&crate::devices::Named> {
         self.named.as_ref()
     }
@@ -60,6 +79,7 @@ impl Link {
         Link {
             options,
             named: Some(named),
+            typed: Mutex::default(),
             state: Mutex::default(),
         }
     }
@@ -123,6 +143,7 @@ impl WgpuBackend {
             link: Arc::new(Link {
                 options,
                 named: None,
+                typed: Mutex::default(),
                 state: Mutex::default(),
             }),
         }
@@ -148,6 +169,7 @@ impl WgpuBackend {
             link: Arc::new(Link {
                 options: Options::default(),
                 named: None,
+                typed: Mutex::default(),
                 state: Mutex::new(State {
                     context: Some(context),
                     adopted: true,
@@ -254,11 +276,16 @@ impl Backend for WgpuBackend {
     }
 
     fn memory(&self) -> Vec<MemorySpace> {
-        crate::handoff::spaces(self.link.named.as_ref())
+        crate::handoff::spaces(
+            self.link.named.as_ref(),
+            !self.link.options.host_ports_on_device,
+        )
     }
 
     fn transfers(&self) -> Vec<Transfer> {
-        crate::handoff::transfers(self.link.named.as_ref())
+        let mut table = crate::handoff::transfers(self.link.named.as_ref());
+        table.extend(self.link.offered());
+        table
     }
 
     /// Answers from the caps record and opens nothing. With no record, a node is accepted when
