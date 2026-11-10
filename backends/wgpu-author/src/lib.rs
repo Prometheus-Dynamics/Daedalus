@@ -4,6 +4,7 @@
 
 mod bindings;
 mod infer;
+mod pixel;
 
 use proc_macro::TokenStream;
 

@@ -16,6 +16,10 @@ quote = { workspace = true }
 syn = { workspace = true }
 
 [dev-dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["test-run"] }
+daedalus-backend = { path = "../../core/backend" }
+daedalus-graph = { path = "../../core/graph" }
+daedalus-runner = { path = "../../core/runner" }
 daedalus-macros = { path = "../../core/macros" }
 daedalus-registry = { path = "../../core/registry" }
 daedalus-types = { path = "../../core/types" }

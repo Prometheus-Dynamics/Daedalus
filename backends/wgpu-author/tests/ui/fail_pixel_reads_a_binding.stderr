@@ -1,0 +1,15 @@
+error: `src` is a global: a pixel body sees only the pixel `apply` is given, so it declares no bindings and no memory
+ --> tests/ui/fail_pixel_reads_a_binding.rs:4:20
+  |
+4 |   const BLUR: &str = "
+  |  ____________________^
+5 | |     @group(0) @binding(0) var<storage, read> src: array<u32>;
+6 | |     fn apply(c: u32) -> u32 { return c + src[1]; }
+7 | | ";
+  | |_^
+
+error[E0080]: evaluation panicked: a pixel body has exactly one output: the pixel `apply` returns
+ --> tests/ui/fail_pixel_reads_a_binding.rs:9:1
+  |
+9 | #[node(id = "ui.two", inputs(c), outputs(a, b), backend = daedalus_wgpu_author(pixel, c: u32, a: u32, b: u32))]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `TWO_NODE::__DAEDALUS_BODY::_` failed here

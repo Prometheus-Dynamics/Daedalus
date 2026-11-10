@@ -16,6 +16,7 @@ pub mod fragment;
 mod inflight;
 mod loss;
 mod memory;
+pub mod merge;
 mod pool;
 mod profile;
 #[cfg(target_os = "linux")]
