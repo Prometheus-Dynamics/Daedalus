@@ -166,11 +166,13 @@ impl fmt::Debug for Texture {
 }
 
 impl Texture {
-    /// A texture that can be sampled and copied, and written by compute where the format allows.
+    /// A texture that can be sampled, copied and drawn to, and written by compute where the
+    /// format allows.
     pub fn new(backend: &WgpuBackend, desc: TextureDesc) -> Result<Texture, TextureError> {
         let context = backend.context().map_err(TextureError::Open)?;
         desc.validate(context.limits.max_texture_dimension_2d)?;
         let mut usage = wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::COPY_SRC
             | wgpu::TextureUsages::COPY_DST;
         if desc.format.storage() {

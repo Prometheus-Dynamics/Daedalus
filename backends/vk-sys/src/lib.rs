@@ -20,3 +20,7 @@ mod tests;
 pub use ash;
 #[cfg(target_os = "linux")]
 pub use error::Error;
+
+#[cfg(all(test, target_os = "linux"))]
+#[global_allocator]
+static ALLOC: daedalus_abi::counting::CountingAlloc = daedalus_abi::counting::CountingAlloc;

@@ -5,11 +5,12 @@ use std::sync::Arc;
 use daedalus_abi::{OwnedStep, Slot, Slots, StepCx, StepEnd};
 use daedalus_runner::{UNSTAMPED, put_typed, typed_view};
 
-use super::{Node, Owned, Size, Source};
+use super::{Node, Owned, Size, Source, Work};
 use crate::backend::Link;
 use crate::buffer::Storage;
 use crate::context::Context;
 use crate::fence::{Ticket, TicketState};
+use crate::record::RecordCx;
 use crate::shader::Bound;
 use crate::shader::pipeline::MAX_BINDINGS;
 use crate::texture::Texture;
@@ -39,7 +40,11 @@ impl RegionStep {
     ) -> RegionStep {
         let largest = nodes
             .iter()
-            .flat_map(|node| node.shader.spec().bindings)
+            .filter_map(|node| match &node.work {
+                Work::Shader(shader) => Some(shader.spec().bindings),
+                Work::Record(_) => None,
+            })
+            .flatten()
             .filter_map(|binding| match binding.kind {
                 crate::shader::BindingKind::Uniform { size } => Some(size as usize),
                 _ => None,
@@ -120,12 +125,58 @@ impl RegionStep {
                             .ok_or_else(|| (at, "an input buffer is missing".to_string()))?;
                         (given / u64::from(of)) * u64::from(stride)
                     }
+                    Size::Recorded { output } => {
+                        let Work::Record(body) = &node.work else {
+                            return Err((at, "only a recording body sizes its own outputs".into()));
+                        };
+                        let mut given = [0; MAX_BINDINGS];
+                        for (bytes, source) in given.iter_mut().zip(&node.sources) {
+                            *bytes = bytes_of(*source, inputs, &self.owned)
+                                .ok_or_else(|| (at, "an input buffer is missing".to_string()))?;
+                        }
+                        (body.output_bytes)(&given[..node.sources.len()], output)
+                    }
                 };
                 let _ = position;
                 self.owned[buffer]
                     .prepare(&self.context, bytes.max(4).next_multiple_of(4))
                     .map_err(|error| (at, error))?;
             }
+            let shader = match &node.work {
+                Work::Shader(shader) => shader,
+                Work::Record(body) => {
+                    // The author's own recording, with the node's buffers by port.
+                    let mut given = [None; MAX_BINDINGS];
+                    for (slot, source) in given.iter_mut().zip(&node.sources) {
+                        *slot = match *source {
+                            Source::Cell(cell) => inputs.get(cell).and_then(typed_view::<Storage>),
+                            Source::Buffer(buffer) => {
+                                let owned = &self.owned[buffer];
+                                owned.kept.get(owned.current).map(|storage| &**storage)
+                            }
+                            _ => None,
+                        };
+                        if slot.is_none() {
+                            return Err((at, "an input isn't a buffer on the device".into()));
+                        }
+                    }
+                    let mut written = [None; MAX_BINDINGS];
+                    for &(port, buffer) in &node.makes {
+                        let owned = &self.owned[buffer];
+                        if let Some(slot) = written.get_mut(port) {
+                            *slot = owned.kept.get(owned.current).map(|storage| &**storage);
+                        }
+                    }
+                    let mut cx = RecordCx {
+                        device: &self.context.device,
+                        encoder: &mut *encoder,
+                        inputs: &given[..node.sources.len()],
+                        outputs: &written[..node.makes.len()],
+                    };
+                    (body.record)(&mut cx).map_err(|reason| (at, reason))?;
+                    continue;
+                }
+            };
             let mut bound = [Bound::Sampler; MAX_BINDINGS];
             for (slot, source) in bound.iter_mut().zip(&node.sources) {
                 *slot = match *source {
@@ -164,7 +215,7 @@ impl RegionStep {
                 };
             }
             // A uniform nothing feeds is zeroes of the size the shader declares.
-            let spec = node.shader.spec();
+            let spec = shader.spec();
             for (slot, binding) in bound.iter_mut().zip(spec.bindings) {
                 if let (Bound::Uniform([]), crate::shader::BindingKind::Uniform { size }) =
                     (&*slot, binding.kind)
@@ -172,7 +223,7 @@ impl RegionStep {
                     *slot = Bound::Uniform(&self.zeroes[..size as usize]);
                 }
             }
-            node.shader
+            shader
                 .encode(encoder, &bound[..node.sources.len()])
                 .map_err(|error| (at, error.to_string()))?;
         }
@@ -188,11 +239,13 @@ impl RegionStep {
             .context()
             .map_err(|error| format!("the device was lost: {error}"))?;
         for node in &mut self.nodes {
-            let spec = *node.shader.spec();
-            node.shader =
-                crate::shader::Shader::load_on(Arc::clone(&context), &spec).map_err(|error| {
-                    format!("the device was lost, and the new one refused: {error}")
-                })?;
+            // A recording body keeps what it made itself, and makes it again on the new device.
+            if let Work::Shader(shader) = &mut node.work {
+                let spec = *shader.spec();
+                *shader = crate::shader::Shader::load_on(Arc::clone(&context), &spec).map_err(
+                    |error| format!("the device was lost, and the new one refused: {error}"),
+                )?;
+            }
         }
         for owned in &mut self.owned {
             owned.kept.clear();

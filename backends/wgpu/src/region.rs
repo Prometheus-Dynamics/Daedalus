@@ -15,6 +15,7 @@ use daedalus_types::{NodeIndex, PortIndex};
 
 use crate::WgpuBackend;
 use crate::buffer::Storage;
+use crate::record::RecordBody;
 use crate::shader::{BindingKind, Shader, ShaderError, ShaderSpec};
 
 pub(crate) use submit::RegionStep;
@@ -46,6 +47,8 @@ pub(crate) enum Size {
         of: u32,
         stride: u32,
     },
+    /// What the node's recording body says, for its output port of this index.
+    Recorded { output: usize },
 }
 
 /// A buffer the region makes. One that leaves the region is handed to the runner each run, so
@@ -59,12 +62,22 @@ pub(crate) struct Owned {
     pub(crate) current: usize,
 }
 
+/// How a node does its work.
+pub(crate) enum Work {
+    /// One compute pass of a shader.
+    Shader(Shader),
+    /// The author's own recording.
+    Record(RecordBody),
+}
+
 pub(crate) struct Node {
     pub(crate) index: NodeIndex,
-    pub(crate) shader: Shader,
-    /// One per binding, in the binding table's order.
+    pub(crate) work: Work,
+    /// For a shader, one per binding in the binding table's order. For a recording body, one
+    /// per input port.
     pub(crate) sources: Vec<Source>,
-    /// The buffers this node writes, which are sized before it runs: (binding position, buffer).
+    /// The buffers this node writes, which are sized before it runs: (position, buffer). The
+    /// position is a binding's for a shader and an output port's for a recording body.
     pub(crate) makes: Vec<(usize, usize)>,
 }
 
@@ -153,8 +166,63 @@ pub(crate) fn compile(
 
     for &index in region.nodes {
         let body = body_of(index, cx)?;
+        if let Some(record) = body.code.downcast_ref::<RecordBody>() {
+            // Its ports are its inputs and outputs by index: there is no binding table.
+            let mut sources = Vec::with_capacity(usize::from(body.inputs));
+            for port in 0..body.inputs {
+                let here = PortRef {
+                    node: index,
+                    port: PortIndex(port),
+                };
+                sources.push(
+                    if let Some(cell) = region.inputs.iter().position(|input| *input == here) {
+                        Source::Cell(cell)
+                    } else if let Some(edge) = cx.edges.iter().find(|edge| edge.to == here) {
+                        match made.iter().find(|(port, _)| *port == edge.from) {
+                            Some(&(_, buffer)) => Source::Buffer(buffer),
+                            None => {
+                                let text = "an input comes from a node later in the region";
+                                return Err(refuse(index, text));
+                            }
+                        }
+                    } else {
+                        return Err(refuse(
+                            index,
+                            format!("nothing is connected to input {port}"),
+                        ));
+                    },
+                );
+            }
+            let mut makes = Vec::with_capacity(usize::from(body.outputs));
+            for port in 0..body.outputs {
+                let here = PortRef {
+                    node: index,
+                    port: PortIndex(port),
+                };
+                owned.push(Owned {
+                    size: Size::Recorded {
+                        output: usize::from(port),
+                    },
+                    publish: region.outputs.iter().position(|output| *output == here),
+                    kept: Vec::new(),
+                    current: 0,
+                });
+                made.push((here, owned.len() - 1));
+                makes.push((usize::from(port), owned.len() - 1));
+            }
+            if sources.len() > crate::shader::pipeline::MAX_BINDINGS {
+                return Err(refuse(index, "a recording body has at most 16 inputs"));
+            }
+            nodes.push(Node {
+                index,
+                work: Work::Record(*record),
+                sources,
+                makes,
+            });
+            continue;
+        }
         let Some(spec) = body.code.downcast_ref::<ShaderSpec>() else {
-            return Err(refuse(index, "this body isn't a shader"));
+            return Err(refuse(index, "this body isn't a shader or a recording"));
         };
         let ports_match = spec.inputs.len() == usize::from(body.inputs)
             && spec.outputs.len() == usize::from(body.outputs);
@@ -231,7 +299,7 @@ pub(crate) fn compile(
         }
         nodes.push(Node {
             index,
-            shader,
+            work: Work::Shader(shader),
             sources: resolved,
             makes,
         });

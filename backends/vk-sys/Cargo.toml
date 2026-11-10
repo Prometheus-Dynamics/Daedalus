@@ -11,6 +11,7 @@ ash = { workspace = true }
 wgpu = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["count-alloc"] }
 naga = { workspace = true }
 pollster = { workspace = true }
 

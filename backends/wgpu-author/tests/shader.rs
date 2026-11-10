@@ -308,3 +308,34 @@ fn pipelines_and_bind_groups_are_kept_by_content() {
         matches!(wrong.map(drop), Err(ShaderError::Binding(text)) if text.contains("another device"))
     );
 }
+
+fn record_nothing(_: &mut daedalus_wgpu::record::RecordCx<'_>) -> Result<(), String> {
+    Ok(())
+}
+
+#[node(id = "t.recorded", inputs(src), outputs(dst), backend = daedalus_wgpu_author(record, src: u32, dst: u32))]
+const RECORDED: daedalus_wgpu::record::RecordBody =
+    daedalus_wgpu::record::RecordBody::new(record_nothing);
+
+#[test]
+fn a_recording_body_is_a_node_with_no_shader() {
+    let body = &RECORDED_NODE.body;
+    assert_eq!((body.backend, body.text), ("wgpu", ""));
+    assert!(
+        body.needs.is_empty(),
+        "nothing to check before the device is open"
+    );
+    assert_eq!(
+        body.ports,
+        [
+            ("src", TypeRef::Key(u32::KEY)),
+            ("dst", TypeRef::Key(u32::KEY))
+        ]
+    );
+    let code = body.code as &dyn Any;
+    assert!(
+        code.downcast_ref::<daedalus_wgpu::record::RecordBody>()
+            .is_some()
+    );
+    assert!(code.downcast_ref::<ShaderSpec>().is_none());
+}
