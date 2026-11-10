@@ -1,0 +1,18 @@
+[package]
+name = "daedalus-fake-npu"
+description = "A software model of an NPU as a backend: its own memory space, transfers to and from host memory, a fixed list of ops."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi" }
+daedalus-backend = { path = "../../../core/backend" }
+daedalus-loader = { path = "../../../core/loader" }
+daedalus-runner = { path = "../../../core/runner" }
+daedalus-types = { path = "../../../core/types" }
+
+[lints]
+workspace = true

@@ -1,0 +1,32 @@
+[package]
+name = "daedalus-fake-npu-plugin"
+description = "A dylib plugin that carries the fake NPU backend and three nodes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi" }
+daedalus-fake-npu = { path = "../fake-npu" }
+daedalus-loader = { path = "../../../core/loader" }
+daedalus-runner = { path = "../../../core/runner" }
+
+[dev-dependencies]
+daedalus-backend = { path = "../../../core/backend" }
+daedalus-cpu = { path = "../../../backends/cpu" }
+daedalus-cpu-author = { path = "../../../backends/cpu-author" }
+daedalus-fake-npu-author = { path = "../fake-npu-author" }
+daedalus-graph = { path = "../../../core/graph" }
+daedalus-host = { path = "../../../core/host" }
+daedalus-macros = { path = "../../../core/macros" }
+daedalus-planner = { path = "../../../core/planner" }
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-types = { path = "../../../core/types" }
+
+[lints]
+workspace = true
