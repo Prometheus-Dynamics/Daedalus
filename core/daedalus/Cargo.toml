@@ -14,6 +14,7 @@ std = [
   "daedalus-runner/std",
   "dep:daedalus-graph",
   "dep:daedalus-planner",
+  "dep:daedalus-registry",
 ]
 # The runner's own names, for hosts that drive it directly.
 runner = []
@@ -25,7 +26,10 @@ alloc-probe = ["std", "daedalus-host/alloc-probe"]
 [dependencies]
 daedalus-graph = { path = "../graph", optional = true }
 daedalus-host = { path = "../host", default-features = false }
+daedalus-derive = { path = "../derive" }
+daedalus-macros = { path = "../macros" }
 daedalus-planner = { path = "../planner", optional = true }
+daedalus-registry = { path = "../registry", optional = true }
 daedalus-runner = { path = "../runner" }
 daedalus-types = { path = "../types" }
 daedalus-value = { path = "../value" }
