@@ -13,9 +13,9 @@ help: the trait `daedalus_registry::__private::Typed` is not implemented for `No
             &'static [u8]
             &'static str
             ()
+            Arc<T>
             Outer
             String
             Vec<u8>
             bool
-            f32
           and $N others

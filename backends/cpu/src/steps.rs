@@ -84,7 +84,47 @@ pub struct Kind<T: 'static> {
     /// The type is `Copy`, so taking it leaves the original for any other consumer.
     pub copy: bool,
     pub decode: Option<fn(&Lit) -> Option<T>>,
+    /// Set when `T` is `Arc<U>`: the handle itself is what a parameter takes and a result
+    /// gives, so a value handed on is neither copied nor put behind a new handle.
+    pub handle: Option<Handle<T>>,
 }
+
+/// How a handle type goes in and out of a cell.
+pub struct Handle<T: 'static> {
+    /// Takes the cell's handle out of it.
+    pub take: fn(&mut Slot) -> Option<T>,
+    /// Another handle to what the cell holds, leaving the cell's own.
+    pub share: fn(&Slot) -> Option<T>,
+    /// Puts the handle in a cell, as it is.
+    pub put: fn(T, &mut Slot),
+}
+
+impl<T> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Handle<T> {}
+
+/// Whether `T` is a handle, `Arc<U>`.
+pub struct HandleOf<T>(PhantomData<T>);
+
+#[cfg(feature = "alloc")]
+impl<U: Send + Sync + 'static> HandleOf<alloc::sync::Arc<U>> {
+    pub const HANDLE: Option<Handle<alloc::sync::Arc<U>>> = Some(Handle {
+        take: ports::take_handle::<U>,
+        share: ports::share_handle::<U>,
+        put: ports::put_handle::<U>,
+    });
+}
+
+/// The answer for a `T` that isn't a handle.
+pub trait NotHandle<T: 'static> {
+    const HANDLE: Option<Handle<T>> = None;
+}
+
+impl<T: 'static> NotHandle<T> for HandleOf<T> {}
 
 impl<T> Clone for Kind<T> {
     fn clone(&self) -> Self {

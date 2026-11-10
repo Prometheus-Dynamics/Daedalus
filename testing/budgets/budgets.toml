@@ -89,19 +89,20 @@ limit = 0
 
 [[row]]
 name = "alloc_large_handle_moved_tick"
-measure = "allocations per tick when a node takes the megabyte and hands it on"
+measure = "allocations per tick when a node takes the megabyte's handle and hands it on"
 tool = "alloc"
 dev = 0
-# Worse than dev. A CPU node's output that is not plain data of 16 bytes or less is published
-# in a new `Arc` every tick: one allocation an output.
-limit = 1
+# The node takes `Arc<Big>` and returns it. A node that takes `Big` itself and returns one has
+# the result put behind a new handle, which is one allocation: the handoff rows hold that.
+limit = 0
 
 [[row]]
 name = "alloc_detector_frame"
 measure = "allocations per frame of the detector-shaped graph"
 tool = "alloc"
 dev = 0
-# Worse than dev, for the same reason: the five stages have six struct outputs.
+# Worse than dev. A CPU node's output that is not plain data of 16 bytes or less is put behind a
+# new handle every tick: the five stages make six struct outputs.
 limit = 6
 
 # --- Flash and static RAM: ELF section sizes of the five-node firmware. ---------------------------
@@ -138,8 +139,8 @@ limit_flash = 17920
 limit_ram = 584
 
 # --- Large-value handoff (I3): three ways to pass a large value, on the same graphs. --------------
-# `read` is the host's value read through a reference by 8 nodes. `chain` is the value taken and
-# handed on by 8 stages, then read once. The paths are a struct that owns its bytes (handle),
+# `read` is the host's value read through a reference by 8 nodes. `chain` is the value taken out
+# of its handle and returned by 8 stages, then read once. The paths are a struct that owns its bytes (handle),
 # reference-counted bytes (shared) and a stage that makes its own vector (vec), in
 # testing/crates/handoff-bench. Dev has no figure for these under callgrind: its handoff numbers
 # are times, which are a board run. So each instruction row's limit is this branch plus 10%.
@@ -245,6 +246,57 @@ measure = "allocations per tick: a megabyte passed as a vec, handed on through 8
 tool = "alloc"
 # The contrast: each stage allocates its vector and the handle around it, and copies the bytes.
 limit = 16
+
+# `handed` is the same chain of 8 stages, each taking the value's handle (`Arc<T>`) and
+# returning it. Nothing is allocated, on any path: the value never leaves its handle.
+
+[[row]]
+name = "handoff_handle_handed_tick"
+measure = "instructions per tick: a 4 KiB value passed as a handle, its handle handed on through 8 stages"
+tool = "callgrind"
+command = "handoff {n} handle handed"
+limit = 11309
+next = 10281
+tolerance_percent = 10
+board_run = "I3"
+
+[[row]]
+name = "alloc_handoff_handle_handed_tick"
+measure = "allocations per tick: a megabyte passed as a handle, its handle handed on through 8 stages"
+tool = "alloc"
+limit = 0
+
+[[row]]
+name = "handoff_shared_handed_tick"
+measure = "instructions per tick: a 4 KiB value passed as a shared, its handle handed on through 8 stages"
+tool = "callgrind"
+command = "handoff {n} shared handed"
+limit = 12522
+next = 11384
+tolerance_percent = 10
+board_run = "I3"
+
+[[row]]
+name = "alloc_handoff_shared_handed_tick"
+measure = "allocations per tick: a megabyte passed as a shared, its handle handed on through 8 stages"
+tool = "alloc"
+limit = 0
+
+[[row]]
+name = "handoff_vec_handed_tick"
+measure = "instructions per tick: a 4 KiB value passed as a vec, its handle handed on through 8 stages"
+tool = "callgrind"
+command = "handoff {n} vec handed"
+limit = 11311
+next = 10283
+tolerance_percent = 10
+board_run = "I3"
+
+[[row]]
+name = "alloc_handoff_vec_handed_tick"
+measure = "allocations per tick: a megabyte passed as a vec, its handle handed on through 8 stages"
+tool = "alloc"
+limit = 0
 
 # --- GPU submits: counted on lavapipe, in the GPU workflow. ----------------------------------------
 

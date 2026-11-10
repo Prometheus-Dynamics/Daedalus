@@ -109,6 +109,38 @@ fn pass_frame(value: Frame) -> Frame {
     value
 }
 
+/// Takes the value's handle and hands the same handle on. The value isn't moved, and nothing
+/// is allocated.
+#[node(id = "handoff.frame.hand", inputs(value), outputs(value))]
+fn hand_frame(value: Arc<Frame>) -> Arc<Frame> {
+    value
+}
+
+/// Changes the value in place through its handle and hands it on. `make_mut` copies only when
+/// someone else still holds the value, and along a chain nobody does.
+#[node(id = "handoff.frame.edit", inputs(value), outputs(value))]
+fn edit_frame(mut value: Arc<Frame>) -> Arc<Frame> {
+    let frame = Arc::make_mut(&mut value);
+    frame.bytes[1] = frame.bytes[1].wrapping_add(1);
+    value
+}
+
+/// Reads through a borrowed handle.
+#[node(id = "handoff.frame.peek", inputs(value), outputs(sum))]
+fn peek_frame(value: &Arc<Frame>) -> u64 {
+    ends(&value.bytes) + u64::from(value.bytes[1])
+}
+
+#[node(id = "handoff.shared.hand", inputs(value), outputs(value))]
+fn hand_shared(value: Arc<Shared>) -> Arc<Shared> {
+    value
+}
+
+#[node(id = "handoff.plain.hand", inputs(value), outputs(value))]
+fn hand_plain(value: Arc<Plain>) -> Arc<Plain> {
+    value
+}
+
 #[node(id = "handoff.frame.read", inputs(value), outputs(sum))]
 fn read_frame(value: &Frame) -> u64 {
     ends(&value.bytes)
@@ -143,7 +175,12 @@ fn total(items: FanIn<'_, u64>) -> u64 {
     items.iter().map(|item| *item).sum()
 }
 
-const NODES: [&NodeRecord; 7] = [
+const NODES: [&NodeRecord; 12] = [
+    &EDIT_FRAME_NODE,
+    &PEEK_FRAME_NODE,
+    &HAND_FRAME_NODE,
+    &HAND_SHARED_NODE,
+    &HAND_PLAIN_NODE,
     &PASS_FRAME_NODE,
     &READ_FRAME_NODE,
     &PASS_SHARED_NODE,
@@ -187,6 +224,15 @@ impl Path {
             Path::Vec => ("handoff:plain", "handoff.plain.pass", "handoff.plain.read"),
         }
     }
+
+    /// The node that takes this path's value by its handle and hands the handle on.
+    fn hand(self) -> &'static str {
+        match self {
+            Path::Handle => "handoff.frame.hand",
+            Path::Shared => "handoff.shared.hand",
+            Path::Vec => "handoff.plain.hand",
+        }
+    }
 }
 
 /// The shape of the graph.
@@ -195,11 +241,20 @@ pub enum Shape {
     /// The value goes through this many stages, each taking it and handing it on, and the
     /// last stage's output is read once. Every value has one consumer.
     Chain(u32),
+    /// The same chain, with stages that take the value's handle (`Arc<T>`) and return it. The
+    /// value never moves.
+    Handed(u32),
+    /// A chain whose stages each change the value in place through its handle, read at the
+    /// end through a borrowed handle. For [`Path::Handle`] only. The sum is 3 plus the stages.
+    Edited(u32),
     /// The host's value is read through a reference by this many nodes.
     Readers(u32),
     /// The host's value is taken by this many stages. More than one can't each have it, so
     /// this plans only for one: see [`plans`].
     Takers(u32),
+    /// The host's value is taken by its handle by this many stages. As with [`Shape::Takers`],
+    /// this plans only for one.
+    HandTakers(u32),
 }
 
 fn edge(from: u32, from_port: &str, to: u32, to_port: &str) -> EdgeDoc {
@@ -239,7 +294,12 @@ fn planned(path: Path, shape: Shape) -> Result<daedalus_planner::Planned, String
     // Every graph ends in one `total`, fed by its readers.
     let mut readers = Vec::new();
     match shape {
-        Shape::Chain(stages) => {
+        Shape::Chain(stages) | Shape::Handed(stages) | Shape::Edited(stages) => {
+            let (pass, read) = match shape {
+                Shape::Handed(_) => (path.hand(), read),
+                Shape::Edited(_) => ("handoff.frame.edit", "handoff.frame.peek"),
+                _ => (pass, read),
+            };
             for at in 1..=stages {
                 nodes.push(NodeDoc::new(pass));
                 edges.push(match at {
@@ -258,7 +318,11 @@ fn planned(path: Path, shape: Shape) -> Result<daedalus_planner::Planned, String
                 readers.push(at);
             }
         }
-        Shape::Takers(count) => {
+        Shape::Takers(count) | Shape::HandTakers(count) => {
+            let pass = match shape {
+                Shape::HandTakers(_) => path.hand(),
+                _ => pass,
+            };
             for at in 0..count {
                 let (taker, reader) = (1 + at * 2, 2 + at * 2);
                 nodes.push(NodeDoc::new(pass));
@@ -288,8 +352,8 @@ fn planned(path: Path, shape: Shape) -> Result<daedalus_planner::Planned, String
 /// How many nodes read the value in `shape`, which is what `out` sums over.
 pub fn readers(shape: Shape) -> u64 {
     match shape {
-        Shape::Chain(_) => 1,
-        Shape::Readers(count) | Shape::Takers(count) => u64::from(count),
+        Shape::Chain(_) | Shape::Handed(_) | Shape::Edited(_) => 1,
+        Shape::Readers(count) | Shape::Takers(count) | Shape::HandTakers(count) => u64::from(count),
     }
 }
 

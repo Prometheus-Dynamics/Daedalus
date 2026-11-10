@@ -332,6 +332,12 @@ call, and an idle tick does almost nothing. Steady-state running allocates nothi
 These were worked out while planning the PRs. Where a brief and this section disagree, this section
 wins.
 
+**Handles in CPU nodes.** `Arc<T>` has `T`'s type key, so a parameter or a result written as
+`Arc<T>` is a port of type `T`. A CPU node that takes `Arc<T>` gets the cell's handle as it is, and
+one that returns `Arc<T>` has it put in the output cell as it is: a value handed on is neither
+copied nor put behind a new handle. Taking a handle is taking, so the planner still refuses two
+nodes that each take one value.
+
 **The step interface (A3).**
 `Step` also carries `release: Option<unsafe extern "C" fn(*mut ())>`, which frees its `data`. It is
 `None` for generated code. `Fence` is `{ poll, data }`, and the runner polls it. `StepCx` carries the

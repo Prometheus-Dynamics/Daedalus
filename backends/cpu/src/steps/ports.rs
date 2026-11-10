@@ -50,6 +50,11 @@ pub fn read<'a, T: 'static, C: ConstTable>(
         *hold = (kind.read?)(slot);
         return hold.as_ref();
     }
+    // A handle is read as another handle to the same value, kept for the call.
+    if let Some(handle) = kind.handle {
+        *hold = (handle.share)(slot);
+        return hold.as_ref();
+    }
     typed_view::<T>(slot)
 }
 
@@ -61,6 +66,14 @@ pub fn take<T: 'static, C: ConstTable>(
     at: usize,
     kind: Kind<T>,
 ) -> Option<T> {
+    if let Some(handle) = kind.handle {
+        // A constant stays for the next tick, so it is shared. An edge's handle is taken as it
+        // is: nothing is unwrapped and nothing is made.
+        return match is_full(cell) {
+            true => (handle.take)(cell),
+            false => (handle.share)(consts.slot(at)?),
+        };
+    }
     if !is_full(cell) {
         let slot = consts.slot(at)?;
         if slot.owner == INLINE {
@@ -98,10 +111,31 @@ pub fn encode<T: Send + Sync + 'static>(
     buf: &mut InlineCell,
     slot: &mut Slot,
 ) {
+    if let Some(handle) = kind.handle {
+        return (handle.put)(value, slot);
+    }
     match kind.write {
         Some(write) => write(&value, buf, slot),
         None => put_shared_value(value, slot),
     }
+}
+
+/// Takes the handle a cell holds.
+#[cfg(feature = "alloc")]
+pub fn take_handle<U: Send + Sync + 'static>(cell: &mut Slot) -> Option<Arc<U>> {
+    take_typed::<U>(cell)
+}
+
+/// Another handle to what a cell holds, leaving the cell's own where it is.
+#[cfg(feature = "alloc")]
+pub fn share_handle<U: Send + Sync + 'static>(cell: &Slot) -> Option<Arc<U>> {
+    daedalus_runner::share_typed(cell)?.downcast::<U>().ok()
+}
+
+/// Puts a handle in a cell as it is: the value isn't moved and no handle is made.
+#[cfg(feature = "alloc")]
+pub fn put_handle<U: Send + Sync + 'static>(value: Arc<U>, slot: &mut Slot) {
+    put_typed(slot, UNSTAMPED.0, UNSTAMPED.1, value);
 }
 
 #[cfg(feature = "alloc")]

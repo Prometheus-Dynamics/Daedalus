@@ -62,9 +62,10 @@ fn sum(a: u64, b: u64) -> u64 {
     a + b
 }
 
-/// Hands a large value on by moving its handle.
+/// Hands a large value on by its handle: the node takes `Arc<Big>` and returns it, so the
+/// megabyte isn't moved and nothing is allocated.
 #[node(id = "budget.pass", inputs(big), outputs(big))]
-fn pass(big: Big) -> Big {
+fn pass(big: Arc<Big>) -> Arc<Big> {
     big
 }
 
