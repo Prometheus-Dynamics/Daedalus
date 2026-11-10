@@ -14,7 +14,10 @@ pub fn fixture_worker() -> PathBuf {
         .join("worker.mjs")
 }
 
-/// A spec that starts `script` with `node`.
+/// A spec that starts `script` with `node`. Node's cold start on a Windows runner can pass the
+/// default five-second hello window, so this spec allows thirty seconds.
 pub fn spec(script: &Path) -> WorkerSpec {
-    WorkerSpec::new("node").arg(script.display().to_string())
+    let mut spec = WorkerSpec::new("node").arg(script.display().to_string());
+    spec.startup = std::time::Duration::from_secs(30);
+    spec
 }
