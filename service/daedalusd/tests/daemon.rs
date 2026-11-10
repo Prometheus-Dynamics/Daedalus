@@ -341,6 +341,14 @@ mod unix {
         assert_eq!(client.step(run, 1).unwrap().step_calls, 1);
         assert_eq!(client.take(run, "out").unwrap(), Some(u32_value(5)));
 
+        // Many values through the plugin's node, each fed, stepped and taken. A number travels
+        // in place, as its bytes, which is the form a plugin reads and forwards.
+        for value in 0..2000 {
+            client.feed(run, "in", u32_value(value)).unwrap();
+            client.step(run, 1).unwrap();
+            assert_eq!(client.take(run, "out").unwrap(), Some(u32_value(value)));
+        }
+
         // Reload onto the same graph: every node is carried.
         let report = client.reload(run, "g").unwrap();
         assert_eq!(report.carried.names, ["io", "work"]);
