@@ -154,6 +154,15 @@ impl FragmentPass {
         targets: &[Format],
     ) -> Result<FragmentPass, FragmentError> {
         let context = backend.context().map_err(FragmentError::Open)?;
+        FragmentPass::new_on(context, fragment_wgsl, targets)
+    }
+
+    /// A pass on `context`'s device.
+    pub(crate) fn new_on(
+        context: Arc<Context>,
+        fragment_wgsl: &str,
+        targets: &[Format],
+    ) -> Result<FragmentPass, FragmentError> {
         if targets.is_empty() {
             return Err(invalid("a fragment pass needs at least one target"));
         }

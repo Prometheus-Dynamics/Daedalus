@@ -348,14 +348,12 @@ pub trait ImportExternal: Send + Sync + 'static {
     fn describe(&self) -> Result<ExternalImage, ImportError>;
 }
 
-/// How many values a transfer step keeps alive after importing them, so a producer doesn't
-/// reuse a buffer the device is still reading. E15 replaces this with a hold that ends exactly
-/// when the reading work does.
-const HELD: usize = 4;
-
+/// Imports each value of `T` it is given. What it passes on is a texture that holds that
+/// value, so the producer's buffer is kept until the last reader lets go, and a region that
+/// reads it keeps it until its work on the device is done.
 struct ImportStep<T> {
-    held: std::collections::VecDeque<Arc<T>>,
     context: Option<Arc<Context>>,
+    of: std::marker::PhantomData<fn(T)>,
 }
 
 impl<T: ImportExternal> OwnedStep for ImportStep<T> {
@@ -385,10 +383,7 @@ impl<T: ImportExternal> OwnedStep for ImportStep<T> {
             Ok(texture) => texture,
             Err(error) => return fault(&error.to_string()),
         };
-        if self.held.len() >= HELD {
-            self.held.pop_front();
-        }
-        self.held.push_back(value);
+        let texture = Arc::new(texture.holding(value));
         let Some(out) = slots.cell(1) else {
             return fault("an import has no output");
         };
@@ -399,8 +394,8 @@ impl<T: ImportExternal> OwnedStep for ImportStep<T> {
 
 fn make_import<T: ImportExternal>(_: &CompileCx<'_>) -> Result<Step, Refusal> {
     Ok(Step::boxed(ImportStep::<T> {
-        held: std::collections::VecDeque::with_capacity(HELD),
         context: None,
+        of: std::marker::PhantomData,
     }))
 }
 

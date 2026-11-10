@@ -208,6 +208,16 @@ pub fn fragment_pass(
     chain: &[&PixelSpec],
     format: Format,
 ) -> Result<FragmentPass, FragmentError> {
+    let context = backend.context().map_err(FragmentError::Open)?;
+    fragment_pass_on(context, chain, format)
+}
+
+/// [`fragment_pass`] on `context`'s device.
+pub(crate) fn fragment_pass_on(
+    context: std::sync::Arc<crate::context::Context>,
+    chain: &[&PixelSpec],
+    format: Format,
+) -> Result<FragmentPass, FragmentError> {
     let scalar = texel(format);
     let wanted = format!("vec4<{scalar}>");
     let texels = |ty: &str| ty.replace(' ', "") == wanted;
@@ -219,7 +229,7 @@ pub fn fragment_pass(
             "a chain drawn to {format:?} is one or more bodies that each take and return {wanted}"
         )));
     }
-    FragmentPass::new(backend, &fragment(chain, scalar), &[format])
+    FragmentPass::new_on(context, &fragment(chain, scalar), &[format])
 }
 
 /// Whether two WGSL type names are the same type, as far as a chain is concerned.

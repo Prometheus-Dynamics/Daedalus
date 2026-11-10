@@ -511,3 +511,167 @@ fn the_fragment_form_gives_what_the_compute_form_gives() {
     let wrong = fragment_pass(&backend, &[spec(&INC_NODE)], Format::Rgba16Uint);
     assert!(wrong.is_err());
 }
+
+#[node(id = "p.mask4", inputs(c, cfg), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, cfg: u32, out: u32))]
+const MASK4: &str = "
+    struct Config { mask: u32 }
+    fn apply(c: vec4<u32>, cfg: Config) -> vec4<u32> { return c ^ vec4<u32>(cfg.mask); }
+";
+
+#[node(id = "p.plus4", inputs(c, other), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, other: u32, out: u32))]
+const PLUS4: &str = "fn apply(c: vec4<u32>, other: vec4<u32>) -> vec4<u32> { return c + other; }";
+
+fn texture_of(backend: &WgpuBackend, desc: TextureDesc, words: &[u32]) -> Arc<Texture> {
+    let texture = Texture::new(backend, desc).expect("a texture");
+    let texels: Vec<u8> = words
+        .iter()
+        .flat_map(|&word| (word as u16).to_le_bytes())
+        .collect();
+    texture.write(&texels, desc.width * 8).expect("valid bytes");
+    Arc::new(texture)
+}
+
+fn texels(texture: &Texture) -> Vec<u32> {
+    let desc = texture.desc();
+    let mut read = vec![0; (desc.width * desc.height * 8) as usize];
+    texture.read_into(&mut read).expect("a readback");
+    read.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|word| u32::from(u16::from_le_bytes(*word)))
+        .collect()
+}
+
+/// Runs a step whose first inputs are textures and whose last is a config word, and returns
+/// the texture it made with how many passes that took.
+fn draw(
+    backend: &WgpuBackend,
+    unit: &mut StepUnit,
+    textures: &[&Arc<Texture>],
+    word: Option<u32>,
+) -> (Arc<Texture>, u64) {
+    let inputs = textures.len() + usize::from(word.is_some());
+    let mut cells = vec![Slot::EMPTY; inputs + 1];
+    for (cell, texture) in cells.iter_mut().zip(textures) {
+        put_typed(cell, TypeIndex(0), SpaceIndex(0), Arc::clone(texture));
+    }
+    if let Some(word) = word {
+        put_inline(
+            &mut cells[textures.len()],
+            TypeIndex(0),
+            SpaceIndex(0),
+            &word.to_le_bytes(),
+        )
+        .expect("fits");
+    }
+    let before = backend.shader_stats().expect("open");
+    let mut cx = StepCx::new();
+    let end = run_once(&mut unit.step, &mut Slots::of(&mut cells), &mut cx);
+    assert!(matches!(end, StepEnd::Pending(_)), "{}", cx.reason());
+    let after = backend.shader_stats().expect("open");
+    assert_eq!(after.submits - before.submits, 1);
+    let (read, written) = cells.split_at_mut(inputs);
+    for cell in read {
+        if take_typed::<Texture>(cell).is_none() {
+            drop_owned(*cell);
+        }
+    }
+    let out = take_typed::<Texture>(&mut written[0]).expect("a texture out");
+    (out, after.passes - before.passes)
+}
+
+#[test]
+fn a_chain_given_a_texture_draws_one() {
+    let Some(backend) = backend() else { return };
+    let records: [&'static NodeRecord; 4] = [&INC4_NODE, &MASK4_NODE, &PLUS4_NODE, &TWICE4_NODE];
+    let desc = TextureDesc {
+        format: Format::Rgba16Uint,
+        width: 9,
+        height: 5,
+    };
+    let count = desc.width * desc.height * 4;
+    let pixels: Vec<u32> = (0..count).map(|at| at * 3 + 1).collect();
+    let others: Vec<u32> = (0..count).map(|at| 1000 - at).collect();
+    let mask = 0b0101_1010;
+    let by_hand = |mask: u32| -> Vec<u32> {
+        let add = [1, 2, 3, 4];
+        pixels
+            .iter()
+            .zip(&others)
+            .enumerate()
+            .map(|(at, (pixel, other))| (((pixel + add[at % 4]) ^ mask) + other) * 2)
+            .collect()
+    };
+
+    // Inputs: the chain's pixels, the mask's config, the other side of the sum.
+    let net = || {
+        let mut net = Net::chain(&records);
+        net.inputs.push(port(2, 1));
+        net.inputs.push(port(1, 1));
+        net
+    };
+    let mut unit = net().compile(&backend, &[port(3, 0)]);
+    let (source, other) = (
+        texture_of(&backend, desc, &pixels),
+        texture_of(&backend, desc, &others),
+    );
+    let (first, passes) = draw(&backend, &mut unit, &[&source, &other], Some(mask));
+    assert_eq!(passes, 1, "four nodes, one render pass");
+    assert_eq!(first.desc(), desc);
+    assert_eq!(texels(&first), by_hand(mask), "what the nodes would give");
+
+    // The same step, with buffers, is the compute form and gives the same numbers.
+    let (compute, passes, _) = run(
+        &backend,
+        &mut unit,
+        &[
+            In::Buffer(&filled(&backend, &pixels)),
+            In::Buffer(&filled(&backend, &others)),
+            In::Word(mask),
+        ],
+        1,
+    );
+    assert_eq!(passes, 1);
+    assert_eq!(compute[0], texels(&first), "bit for bit");
+
+    // A texture still held isn't drawn over; one given back is drawn to again.
+    let (second, _) = draw(&backend, &mut unit, &[&source, &other], Some(0));
+    assert_eq!(texels(&second), by_hand(0), "the config is read each run");
+    assert_eq!(texels(&first), by_hand(mask), "the held one is untouched");
+    let kept = Arc::as_ptr(&first);
+    drop(first);
+    let (third, _) = draw(&backend, &mut unit, &[&source, &other], Some(mask));
+    assert_eq!(Arc::as_ptr(&third), kept, "drawn to again, not made again");
+    assert_eq!(texels(&third), by_hand(mask));
+
+    // A texture for the pixels and a buffer for the other side is refused, by name.
+    let mut cells = vec![Slot::EMPTY; 4];
+    put_typed(
+        &mut cells[0],
+        TypeIndex(0),
+        SpaceIndex(0),
+        Arc::clone(&source),
+    );
+    put_typed(
+        &mut cells[1],
+        TypeIndex(0),
+        SpaceIndex(0),
+        filled(&backend, &others),
+    );
+    put_inline(
+        &mut cells[2],
+        TypeIndex(0),
+        SpaceIndex(0),
+        &mask.to_le_bytes(),
+    )
+    .expect("fits");
+    let mut cx = StepCx::new();
+    let end = run_once(&mut unit.step, &mut Slots::of(&mut cells), &mut cx);
+    assert!(matches!(end, StepEnd::Fault), "a mixed chain");
+    assert!(cx.reason().contains("textures"), "{}", cx.reason());
+    assert!(take_typed::<Texture>(&mut cells[0]).is_some());
+    assert!(take_typed::<Storage>(&mut cells[1]).is_some());
+    drop_owned(cells[2]);
+    drop((second, third));
+    release(unit.step);
+}

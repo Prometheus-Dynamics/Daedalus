@@ -14,6 +14,7 @@ mod fence;
 #[cfg(test)]
 mod fence_tests;
 pub mod fragment;
+pub mod image;
 mod inflight;
 mod loss;
 mod memory;
