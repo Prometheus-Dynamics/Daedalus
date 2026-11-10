@@ -33,7 +33,9 @@ fn read(texture: &Texture) -> Vec<u8> {
 /// The WGSL type a fragment writes for a format, and whether it is an integer one.
 fn output_of(format: Format) -> (&'static str, bool) {
     match format {
-        Format::R8 | Format::Rgba8 | Format::R32F | Format::Rg32F => ("vec4<f32>", false),
+        Format::R8 | Format::Rg8 | Format::Rgba8 | Format::Bgra8 | Format::R32F | Format::Rg32F => {
+            ("vec4<f32>", false)
+        }
         Format::R8Uint | Format::Rgba16Uint | Format::Rg32Uint => ("vec4<u32>", true),
     }
 }
@@ -68,6 +70,15 @@ fn every_target_format_renders_and_reads_back() {
             let (fx, fy) = ((x as f32 + 0.5) / 16.0, (y as f32 + 0.5) / 16.0);
             let want: Vec<u8> = match format {
                 Format::R8 => vec![(fx * 255.0).round() as u8],
+                Format::Rg8 => vec![(fx * 255.0).round() as u8, (fy * 255.0).round() as u8],
+                Format::Bgra8 => {
+                    vec![
+                        64,
+                        (fy * 255.0).round() as u8,
+                        (fx * 255.0).round() as u8,
+                        255,
+                    ]
+                }
                 Format::Rgba8 => {
                     vec![
                         (fx * 255.0).round() as u8,

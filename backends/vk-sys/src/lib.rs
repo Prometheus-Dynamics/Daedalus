@@ -8,6 +8,8 @@ pub mod device;
 #[cfg(target_os = "linux")]
 mod error;
 #[cfg(target_os = "linux")]
+pub mod image;
+#[cfg(target_os = "linux")]
 pub mod memory;
 #[cfg(target_os = "linux")]
 pub mod semaphore;

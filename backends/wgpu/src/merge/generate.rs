@@ -150,7 +150,9 @@ pub(crate) fn compute(chain: &[&PixelSpec]) -> String {
 /// The texel type a format is loaded and written as, or `None` for one a fragment can't write.
 fn texel(format: Format) -> &'static str {
     match format {
-        Format::R8 | Format::Rgba8 | Format::R32F | Format::Rg32F => "f32",
+        Format::R8 | Format::Rg8 | Format::Rgba8 | Format::Bgra8 | Format::R32F | Format::Rg32F => {
+            "f32"
+        }
         Format::R8Uint | Format::Rgba16Uint | Format::Rg32Uint => "u32",
     }
 }

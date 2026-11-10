@@ -169,7 +169,8 @@ fn the_backend_names_its_memory_spaces() {
             SPACE_DEVICE,
             SPACE_HOST_MAPPED,
             "wgpu.cached",
-            "wgpu.dmaheap"
+            "wgpu.dmaheap",
+            "wgpu.texture"
         ]
     );
 }

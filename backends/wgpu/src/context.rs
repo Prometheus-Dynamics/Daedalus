@@ -56,6 +56,8 @@ pub(crate) struct Context {
     lost: Arc<AtomicBool>,
     wait_timeout: std::time::Duration,
     inflight: Mutex<InFlight>,
+    #[cfg(target_os = "linux")]
+    imports: Mutex<crate::dmabuf::Imports>,
     submits: AtomicU64,
     passes: AtomicU64,
     pub(crate) moved: crate::transfer::Counters,
@@ -140,6 +142,8 @@ impl Context {
             lost,
             wait_timeout: options.wait_timeout,
             inflight: Mutex::new(InFlight::new(options.max_in_flight)),
+            #[cfg(target_os = "linux")]
+            imports: Mutex::default(),
             submits: AtomicU64::new(0),
             passes: AtomicU64::new(0),
             moved: crate::transfer::Counters::default(),
@@ -158,6 +162,12 @@ impl Context {
 
     pub(crate) fn shaders(&self) -> MutexGuard<'_, crate::shader::ShaderCache> {
         self.shaders.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The device's imports of external memory.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn imports(&self) -> MutexGuard<'_, crate::dmabuf::Imports> {
+        self.imports.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub(crate) fn count_submit(&self) {
