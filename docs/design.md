@@ -511,6 +511,10 @@ documents the patch and refresh JSON.
   which is only sound for a value with no reference count. Text and bytes are fed as typed
   payloads by `WireCodecs::scalars()` and as shared bytes by `WireCodecs::byte_form()`, which the
   daemon uses.
+- A node's state is in its step. A reload moves a step into the new runner as it is when it
+  covers the same nodes at the same places with the same bodies, constants and ports, and
+  compiles every other step again. A node whose step did not move starts fresh and is reported.
+  Nodes merged into one step are kept or started fresh together.
 - A runner built by `owned_run` owns its steps and releases them when its buffers are dropped,
   which is what lets a plugin's library close once the last run that used it is gone. Its cancel
   word is in an `Arc`, so another thread can hold a `CancelHandle` to it.

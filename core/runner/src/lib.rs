@@ -339,6 +339,24 @@ impl<'a> Runner<'a> {
         Ok(())
     }
 
+    /// Exchanges step `step` of this runner with step `other_step` of `other`. A host that
+    /// reloads a graph moves a step that did not change, with the state it holds, into the new
+    /// runner this way. False when either index is past the end, or either step is waiting on
+    /// a fence: a step with work unfinished stays where its fence is.
+    pub fn swap_step(&mut self, step: u32, other: &mut Runner<'_>, other_step: u32) -> bool {
+        let (at, other_at) = (step as usize, other_step as usize);
+        if at >= self.steps.len() || other_at >= other.steps.len() {
+            return false;
+        }
+        let waiting = fence::holds(&self.pending[..self.pending_len], at)
+            || fence::holds(&other.pending[..other.pending_len], other_at);
+        if waiting {
+            return false;
+        }
+        core::mem::swap(&mut self.steps[at], &mut other.steps[other_at]);
+        true
+    }
+
     /// Marks `step` dirty, so it runs on the next tick. Steps past the end are ignored.
     pub fn wake(&mut self, step: u32) {
         if (step as usize) < self.steps.len() {

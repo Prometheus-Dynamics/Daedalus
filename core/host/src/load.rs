@@ -116,7 +116,13 @@ pub(crate) fn node_entries(planned: &Planned) -> Vec<NodeEntry> {
         .enumerate()
         .map(|(at, node)| NodeEntry {
             key: node_key(&node.doc, &mut seen),
-            body: std::format!("{:?}:{}", backend_of[at], node.doc.id),
+            // Another version of a backend, as a plugin loaded again is, is another body.
+            body: std::format!(
+                "{:?}:{}",
+                backend_of[at]
+                    .and_then(|index| planned.backend(daedalus_types::BackendIndex(index))),
+                node.doc.id
+            ),
         })
         .collect()
 }
@@ -159,6 +165,7 @@ struct Built {
     slots: Vec<SlotSpec>,
     edges: EdgeRules,
     covers: Vec<Vec<u32>>,
+    same_as: Vec<Option<String>>,
 }
 
 /// The pressure each edge declared, by the slot it lands on.
@@ -198,6 +205,8 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
     let mut steps = Vec::new();
     let mut drafts = Vec::new();
     let mut step_covers = Vec::new();
+    let mut same_as = Vec::new();
+    let entries = node_entries(planned);
     let mut edges = EdgeRules::new();
     let host_spaces = host_spaces(stitched);
     for item in &stitched.layout {
@@ -216,6 +225,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                 };
                 steps.push(step);
                 step_covers.push(covers.clone());
+                same_as.push(Some(same_step(planned, &entries, covers, &info)));
                 let connected = connected_reads(planned, &info, reads);
                 let (fire, required) = join_for(planned, covers, &connected);
                 for (slot, edge) in &connected {
@@ -247,6 +257,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                 };
                 steps.push(step);
                 step_covers.push(Vec::new());
+                same_as.push(None);
                 drafts.push(Draft {
                     reads: vec![*from_slot],
                     writes: vec![*to_slot],
@@ -272,7 +283,24 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
         slots,
         edges,
         covers: step_covers,
+        same_as,
     })
+}
+
+/// What has to be equal for a step of one plan to stand in for a step of another: the nodes it
+/// covers, at the same places in the graph, with the same bodies and constants, and the same
+/// ports in the same order. A step holds its nodes' state and constants, so a step that matches
+/// is moved across a reload as it is, and one that doesn't starts fresh.
+fn same_step(planned: &Planned, entries: &[NodeEntry], covers: &[u32], info: &UnitInfo) -> String {
+    let nodes: Vec<_> = covers
+        .iter()
+        .map(|&node| {
+            let entry = &entries[node as usize];
+            let consts = &planned.graph.nodes[node as usize].consts;
+            (node, &entry.key, &entry.body, consts)
+        })
+        .collect();
+    std::format!("{nodes:?} {info:?}")
 }
 
 /// The spaces a host port lives in. Reuse keeps an output between runs, which only a value the
@@ -516,11 +544,14 @@ pub struct LoadedHost {
     pub(crate) consts: ConstTable,
     pub(crate) off_nodes: BTreeSet<String>,
     pub(crate) overhead: Option<TickOverheadWindow>,
+    pub(crate) same_as: Vec<Option<String>>,
 }
 
 /// Everything one version of the graph brings.
 pub(crate) struct Parts {
     pub(crate) host: Host<'static>,
+    /// For each step, what a step of another plan must equal to stand in for it.
+    pub(crate) same_as: Vec<Option<String>>,
     pub(crate) nodes: Vec<NodeEntry>,
     pub(crate) bridges: Vec<String>,
     pub(crate) covers: Vec<&'static [&'static str]>,
@@ -540,6 +571,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         slots,
         edges,
         covers,
+        same_as,
     } = built;
     let node_names: Vec<&'static str> = nodes.iter().map(|node| intern(&node.key)).collect();
     let covers = covers
@@ -581,6 +613,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
     host.held_feeds_wake = true;
     Ok(Parts {
         host,
+        same_as,
         nodes,
         bridges,
         covers,
@@ -614,6 +647,7 @@ impl LoadedHost {
             overhead: (options.overhead_window > 0)
                 .then(|| TickOverheadWindow::new(options.overhead_window)),
             host: parts.host,
+            same_as: parts.same_as,
             nodes: parts.nodes,
             bridges: parts.bridges,
             covers: parts.covers,

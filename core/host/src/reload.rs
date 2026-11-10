@@ -43,8 +43,10 @@ impl fmt::Display for ReloadError {
 impl std::error::Error for ReloadError {}
 
 impl LoadedHost {
-    /// Replaces the graph with `planned`. A node with the same body keeps its state, a changed one
-    /// starts fresh and is reported, and a removed node's state is dropped exactly once. Host
+    /// Replaces the graph with `planned`. A node keeps its state when its step is the same in both
+    /// plans: the same nodes at the same places, bodies, constants and ports. Its step moves
+    /// across as it is. Any other node starts fresh and is reported, and a removed node's state
+    /// is dropped exactly once. Host
     /// ports the new plan lacks lose their queued values, and the report says how many.
     pub fn reload(&mut self, mut planned: Planned) -> Result<ReloadReport, ReloadError> {
         let offered = bridge_keys(&planned);
@@ -58,7 +60,26 @@ impl LoadedHost {
         let parts = build_host(&mut planned, self.options).map_err(ReloadError::Load)?;
         self.collect_faults();
         let nodes = parts.nodes;
-        let host = parts.host;
+        let mut host = parts.host;
+        // A step holds its nodes' state. One that is the same in both plans moves into the new
+        // runner as it is, and the step compiled for the new plan goes back in its place, to be
+        // released with the old graph. Every other node starts fresh.
+        let mut taken = vec![false; self.same_as.len()];
+        let mut moved: HashSet<&str> = HashSet::new();
+        for (at, same) in parts.same_as.iter().enumerate() {
+            let Some(same) = same else { continue };
+            let from = (0..self.same_as.len())
+                .find(|&old| !taken[old] && self.same_as[old].as_ref() == Some(same));
+            let Some(from) = from else { continue };
+            if host
+                .runner
+                .swap_step(at as u32, &mut self.host.runner, from as u32)
+            {
+                taken[from] = true;
+                moved.extend(parts.covers[at].iter().copied());
+            }
+        }
+        let stateless = |key: &str| !parts.covers.iter().any(|covers| covers.contains(&key));
         let mut report = ReloadReport::default();
         let before: HashMap<&str, &str> = self
             .nodes
@@ -68,7 +89,14 @@ impl LoadedHost {
         for node in &nodes {
             match before.get(node.key.as_str()) {
                 None => report.added.push(&node.key),
-                Some(body) if *body == node.body => report.carried.push(&node.key),
+                // The same body, and its step came across, or it has no step at all, as a host
+                // bridge has none.
+                Some(body)
+                    if *body == node.body
+                        && (moved.contains(node.key.as_str()) || stateless(&node.key)) =>
+                {
+                    report.carried.push(&node.key);
+                }
                 Some(_) => {
                     report.fresh.push(&node.key);
                     self.state.remove_node(node_id(&node.key));
@@ -98,6 +126,7 @@ impl LoadedHost {
         self.fault_seen.clear();
         self.fault_seen.resize(parts.covers.len(), 0);
         self.covers = parts.covers;
+        self.same_as = parts.same_as;
         self.node_names = parts.node_names;
         self.consts.seed(&planned);
         self.reapply_off_nodes();
