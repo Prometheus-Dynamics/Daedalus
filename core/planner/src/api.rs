@@ -86,9 +86,20 @@ pub struct Planned {
     /// What each control node runs, by body.
     pub nested: Vec<NestedBody>,
     pub(crate) backend_ids: Vec<String>,
+    pub(crate) backend_versions: Vec<u64>,
 }
 
 impl Planned {
+    /// The id and version of the backend a region index names. A host compares them across a
+    /// reload: another version of a backend is another body for its nodes.
+    pub fn backend(&self, index: daedalus_types::BackendIndex) -> Option<(&str, u64)> {
+        let at = usize::from(index.0);
+        Some((
+            self.backend_ids.get(at)?.as_str(),
+            *self.backend_versions.get(at)?,
+        ))
+    }
+
     /// The stored encoding. A region whose backend stored it as a whole plan of its own is that
     /// plan, and it has to be the only region.
     pub fn blob(&self) -> Result<Vec<u8>, PlanError> {
@@ -303,6 +314,7 @@ pub fn plan(
         warnings,
         nested,
         backend_ids: backends.iter().map(|b| b.id().to_string()).collect(),
+        backend_versions: backends.iter().map(|b| b.version()).collect(),
     };
     check_form(&planned.regions, &backends, config.form)?;
     if config.form == Form::Steps {
