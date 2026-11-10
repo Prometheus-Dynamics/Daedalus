@@ -1,5 +1,5 @@
 //! A plugin the loader tests open. `pass` forwards its input cell to its output cell. `boom`
-//! panics, to prove a panic in a node is a fault.
+//! panics, to prove a panic in a node is a fault. `abort` ends the process.
 
 use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
 use daedalus_loader::export::{NodeDef, PluginDef, PortDef};
@@ -24,6 +24,11 @@ fn boom(_slots: &mut Slots, _cx: &mut StepCx) -> StepEnd {
     panic!("boom: the node panicked on purpose");
 }
 
+/// Takes the whole process down, as a crashing plugin would.
+fn abort(_slots: &mut Slots, _cx: &mut StepCx) -> StepEnd {
+    std::process::abort();
+}
+
 static PASS_IN: [PortDef; 1] = [PortDef {
     name: "in",
     key: "u32",
@@ -35,7 +40,7 @@ static PASS_OUT: [PortDef; 1] = [PortDef {
     optional: false,
 }];
 
-static NODES: [NodeDef; 2] = [
+static NODES: [NodeDef; 3] = [
     NodeDef {
         id: "fixture.pass",
         source: "dylib-fixture",
@@ -53,6 +58,15 @@ static NODES: [NodeDef; 2] = [
         inputs: &PASS_IN,
         outputs: &PASS_OUT,
         run: boom,
+    },
+    NodeDef {
+        id: "fixture.abort",
+        source: "dylib-fixture",
+        backend: "fixture.cpu",
+        text: "abort",
+        inputs: &PASS_IN,
+        outputs: &PASS_OUT,
+        run: abort,
     },
 ];
 

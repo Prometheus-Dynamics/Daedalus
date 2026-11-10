@@ -129,7 +129,7 @@ Dylib plugins carrying nodes and backends, the process backend, and an SDK per l
 - [ ] [G9](docs/prs/G9.md) Rust SDK: worker serve loop, context, panic containment (wave 8; needs A9, G4)
 - [ ] [G10](docs/prs/G10.md) C surface: core/capi, run a graph from a shared library (wave 15; needs C10, G2)
 - [ ] [G11](docs/prs/G11.md) Rust host over the C surface, safe crate over a sys crate (wave 16; needs G10)
-- [ ] [G12](docs/prs/G12.md) Plugin worker: isolate a dylib plugin's nodes in the process backend (wave 8; needs G2, G4)
+- [x] [G12](docs/prs/G12.md) Plugin worker: isolate a dylib plugin's nodes in the process backend (wave 8; needs G2, G4)
 
 ## H. Service
 
