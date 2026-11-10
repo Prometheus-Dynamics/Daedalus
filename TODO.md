@@ -135,7 +135,7 @@ Dylib plugins carrying nodes and backends, the process backend, and an SDK per l
 
 `daedalusd`, its protocol, its client and `daedalus-ctl`.
 
-- [ ] [H1](docs/prs/H1.md) Service wire protocol: daedalusd requests, responses, watch events (wave 5; needs A5, G1)
+- [x] [H1](docs/prs/H1.md) Service wire protocol: daedalusd requests, responses, watch events (wave 5; needs A5, G1)
 - [ ] [H2](docs/prs/H2.md) Service client: connect, pipeline, watch, reconnect (wave 6; needs H1)
 - [ ] [H3](docs/prs/H3.md) Host listener: one Host, many clients, unix socket, TCP loopback and stdio (wave 15; needs C10, H1)
 - [ ] [H4](docs/prs/H4.md) daedalusd: the daemon binary, config, plugin loading, shutdown (wave 16; needs G2, H3)

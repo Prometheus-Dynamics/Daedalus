@@ -13,6 +13,7 @@ mod error;
 mod hello;
 mod packet;
 mod schema;
+pub mod service;
 mod value;
 mod worker;
 pub use worker::kind;
