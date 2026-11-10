@@ -16,12 +16,15 @@ mod inflight;
 mod memory;
 mod pool;
 mod profile;
+mod readback;
 mod region;
 pub mod shader;
 mod staging;
 mod storage_pool;
 mod texture;
 mod timer;
+mod transfer;
+mod upload;
 mod wait;
 
 pub use adapter::{AdapterInfo, Api, Apis, Candidate, DeviceKind, Options, is_software, rank};
@@ -38,6 +41,9 @@ pub use staging::{StagingConfig, StagingStats};
 pub use storage_pool::{StoragePool, StoragePoolStats};
 pub use texture::{Format, Texture, TextureDesc, TextureError};
 pub use timer::TimeSource;
+pub use transfer::{
+    HOST_SPACE, MAP, MAP_CACHED, MAP_HEAP, READBACK, TransferStats, UPLOAD, UPLOAD_MAPPED,
+};
 pub use wait::{DEFAULT_WAIT_TIMEOUT, WaitError};
 
 #[cfg(test)]

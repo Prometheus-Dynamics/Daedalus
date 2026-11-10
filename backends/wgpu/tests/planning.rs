@@ -42,7 +42,11 @@ fn planning_creates_no_device() {
         backend.memory().first().map(|space| &*space.id),
         Some("wgpu.buffer")
     );
-    assert!(backend.transfers().is_empty());
+    assert_eq!(
+        backend.transfers().len(),
+        6,
+        "listing the moves opens nothing either"
+    );
 
     // With a record from an earlier run, that decides.
     let adapter = AdapterInfo {

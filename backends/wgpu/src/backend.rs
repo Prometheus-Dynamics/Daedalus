@@ -37,10 +37,15 @@ impl WgpuBackend {
 
     /// A backend on a device that already exists.
     pub fn adopt(handle: Handle) -> WgpuBackend {
-        let context = Context::adopted(handle.device, handle.queue, &handle.adapter);
+        let context = Arc::new(Context::adopted(
+            handle.device,
+            handle.queue,
+            &handle.adapter,
+        ));
+        Context::note_latest(&context);
         WgpuBackend {
             options: Options::default(),
-            context: Mutex::new(Some(Arc::new(context))),
+            context: Mutex::new(Some(context)),
         }
     }
 
@@ -84,12 +89,19 @@ impl WgpuBackend {
         own.as_ref().map(|context| context.shader_stats())
     }
 
+    /// How much has moved between the host and the device. `None` while no device is open.
+    pub fn transfer_stats(&self) -> Option<crate::TransferStats> {
+        let own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
+        own.as_ref().map(|context| context.moved.stats())
+    }
+
     pub(crate) fn context(&self) -> Result<Arc<Context>, OpenError> {
         let mut own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(context) = own.as_ref() {
             return Ok(Arc::clone(context));
         }
         let opened = Context::open(&self.options)?;
+        Context::note_latest(&opened);
         *own = Some(Arc::clone(&opened));
         Ok(opened)
     }
@@ -115,7 +127,7 @@ impl Backend for WgpuBackend {
     }
 
     fn transfers(&self) -> Vec<Transfer> {
-        Vec::new()
+        crate::transfer::table()
     }
 
     /// Answers from the caps record and opens nothing. With no record, a node is accepted when

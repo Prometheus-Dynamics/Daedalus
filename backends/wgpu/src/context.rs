@@ -52,6 +52,7 @@ pub(crate) struct Context {
     inflight: Mutex<InFlight>,
     submits: AtomicU64,
     passes: AtomicU64,
+    pub(crate) moved: crate::transfer::Counters,
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "shader nodes take their scratch here, from E4")
@@ -63,6 +64,10 @@ static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
 
 /// The device the process shares. It closes with its last holder.
 static SHARED: Mutex<Weak<Context>> = Mutex::new(Weak::new());
+
+/// The device a backend opened most recently. An upload's step is made by a plain function that
+/// can't see its backend, so this is where it finds the device to upload to.
+static LATEST: Mutex<Weak<Context>> = Mutex::new(Weak::new());
 
 impl Context {
     /// The shared device, opened if nobody holds it. A named adapter gets a device of its own.
@@ -77,6 +82,19 @@ impl Context {
         let opened = Arc::new(Context::open_private(options)?);
         *shared = Arc::downgrade(&opened);
         Ok(opened)
+    }
+
+    /// Notes `context` as the device uploads go to.
+    pub(crate) fn note_latest(context: &Arc<Context>) {
+        *LATEST.lock().unwrap_or_else(PoisonError::into_inner) = Arc::downgrade(context);
+    }
+
+    /// The device a backend opened most recently, if it is still open.
+    pub(crate) fn latest() -> Option<Arc<Context>> {
+        LATEST
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .upgrade()
     }
 
     /// The shared device's record, if the device is open. Opens nothing.
@@ -112,6 +130,7 @@ impl Context {
             inflight: Mutex::new(InFlight::new(options.max_in_flight)),
             submits: AtomicU64::new(0),
             passes: AtomicU64::new(0),
+            moved: crate::transfer::Counters::default(),
             record: CapsRecord::new(info, &limits, device.features()),
             limits,
             device,

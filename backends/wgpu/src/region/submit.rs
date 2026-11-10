@@ -139,10 +139,17 @@ impl RegionStep {
                             },
                         }
                     }
-                    Source::Bytes(cell) => match inputs.get(cell).and_then(Slot::bytes) {
-                        Some(bytes) => Bound::Uniform(bytes),
-                        None => return Err((at, "a uniform's input has no bytes".into())),
-                    },
+                    Source::Bytes(cell) => {
+                        let cell = inputs.get(cell);
+                        // Plain bytes, or bytes an upload already put on the device.
+                        match cell.and_then(Slot::bytes) {
+                            Some(bytes) => Bound::Uniform(bytes),
+                            None => match cell.and_then(typed_view::<Storage>) {
+                                Some(storage) => Bound::UniformFrom(storage),
+                                None => return Err((at, "a uniform's input has no bytes".into())),
+                            },
+                        }
+                    }
                     Source::Zeroes => Bound::Uniform(&[]),
                     Source::Buffer(buffer) => {
                         let owned = &self.owned[buffer];

@@ -82,6 +82,8 @@ pub enum TextureError {
         len: usize,
         needed: u64,
     },
+    /// The device lost the readback, or didn't finish it in time.
+    Device(String),
 }
 
 impl fmt::Display for TextureError {
@@ -104,6 +106,7 @@ impl fmt::Display for TextureError {
             TextureError::Length { len, needed } => {
                 write!(f, "{len} bytes, where the texture needs {needed}")
             }
+            TextureError::Device(reason) => f.write_str(reason),
         }
     }
 }
@@ -146,7 +149,6 @@ impl TextureDesc {
 
 /// A texture on the backend's device. Made at setup, never while a region runs.
 pub struct Texture {
-    #[expect(dead_code, reason = "copied by the transfers of E3")]
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
     /// Unique to this texture, for the bind group cache.
@@ -199,6 +201,114 @@ impl Texture {
 
     pub fn desc(&self) -> TextureDesc {
         self.desc
+    }
+
+    fn extent(&self) -> wgpu::Extent3d {
+        wgpu::Extent3d {
+            width: self.desc.width,
+            height: self.desc.height,
+            depth_or_array_layers: 1,
+        }
+    }
+
+    /// Uploads the whole texture from `bytes`, laid out in rows of `bytes_per_row`. The last row
+    /// may stop at its last pixel. The bytes travel with the next submit.
+    pub fn write(&self, bytes: &[u8], bytes_per_row: u32) -> Result<(), TextureError> {
+        self.desc.validate_bytes(bytes_per_row, bytes.len())?;
+        self.context.queue.write_texture(
+            self.texture.as_image_copy(),
+            bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(self.desc.height),
+            },
+            self.extent(),
+        );
+        self.context.moved.upload(bytes.len() as u64);
+        Ok(())
+    }
+
+    /// Reads the whole texture into `out`, as rows with no padding. This waits for the copy, and
+    /// for the device's earlier work: it is for setup and tests, and nothing in a region calls it.
+    pub fn read_into(&self, out: &mut [u8]) -> Result<(), TextureError> {
+        let context = &self.context;
+        let row = self.desc.width * self.desc.format.bytes_per_pixel();
+        let needed = u64::from(row) * u64::from(self.desc.height);
+        if out.len() as u64 != needed {
+            return Err(TextureError::Length {
+                len: out.len(),
+                needed,
+            });
+        }
+        let lost = |what: &str| TextureError::Device(format!("the readback {what}"));
+        // A copy into a buffer wants each row to start on a 256-byte boundary.
+        let padded = row.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let size = u64::from(padded) * u64::from(self.desc.height);
+        let _place = context.copies.acquire();
+        let staging = context.staging().take(size).unwrap_or_else(|| {
+            context.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_texture_to_buffer(
+            self.texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(self.desc.height),
+                },
+            },
+            self.extent(),
+        );
+        let mapped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&mapped);
+        {
+            let _held = context.submit.lock();
+            context.queue.submit([encoder.finish()]);
+        }
+        {
+            let _held = context.submit.lock();
+            staging
+                .slice(..size)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    flag.store(result.is_ok(), std::sync::atomic::Ordering::Release);
+                });
+        }
+        context
+            .wait("a readback")
+            .map_err(|error| TextureError::Device(error.to_string()))?;
+        if !mapped.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(lost("could not be mapped"));
+        }
+        {
+            let view = staging
+                .slice(..size)
+                .get_mapped_range()
+                .map_err(|_| lost("could not be mapped"))?;
+            let rows = view
+                .chunks(padded as usize)
+                .zip(out.chunks_mut(row as usize));
+            for (from, to) in rows {
+                let pixels = from
+                    .get(..to.len())
+                    .ok_or_else(|| lost("came back short"))?;
+                to.copy_from_slice(pixels);
+            }
+        }
+        staging.unmap();
+        let kept = staging.size();
+        context.staging().put(kept, staging);
+        context.moved.download(needed);
+        Ok(())
     }
 
     /// Which device this is on. Two values with one key share a device.

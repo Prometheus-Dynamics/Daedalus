@@ -98,7 +98,7 @@ wgpu as a backend: whole-shader nodes, shared submits, merged per-pixel function
 
 - [x] [E1](docs/prs/E1.md) wgpu context: instance, device, adapter choice, opens on request (wave 5; needs A7; board run)
 - [x] [E2](docs/prs/E2.md) Buffers, textures, memory spaces, pools (wave 6; needs E1; board run)
-- [ ] [E3](docs/prs/E3.md) CPU-to-GPU and GPU-to-CPU transfers (wave 15; needs D1, E2; board run)
+- [x] [E3](docs/prs/E3.md) CPU-to-GPU and GPU-to-CPU transfers (wave 15; needs D1, E2; board run)
 - [x] [E4](docs/prs/E4.md) Whole-shader nodes, WGSL inference, authoring crate (wave 7; needs A9, E2)
 - [x] [E5](docs/prs/E5.md) Shared submit across nodes in a region (wave 12; needs B8, E4; board run)
 - [ ] [E6](docs/prs/E6.md) Per-pixel functions merged into one shader (wave 13; needs E5, E7; board run)
