@@ -94,6 +94,11 @@ enum Owned {
 impl Shader {
     pub fn load(backend: &WgpuBackend, spec: &ShaderSpec) -> Result<Shader, ShaderError> {
         let context = backend.context().map_err(ShaderError::Open)?;
+        Shader::load_on(context, spec)
+    }
+
+    /// Loads `spec` on `context`'s device.
+    pub(crate) fn load_on(context: Arc<Context>, spec: &ShaderSpec) -> Result<Shader, ShaderError> {
         let caps = &context.record.compute;
         let (buffers, textures) = spec.counts();
         let limit = |what: &str, have: u32, max: u32| {

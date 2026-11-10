@@ -501,3 +501,52 @@ fn a_uniform_takes_plain_bytes_or_bytes_already_on_the_device() {
     assert_eq!(go(uploaded), [7, 14, 21, 28]);
     release(unit.step);
 }
+
+#[test]
+fn a_lost_device_faults_the_region_then_is_reopened_and_the_region_runs_again() {
+    let Some(backend) = private() else { return };
+    let made = chain(3);
+    let mut unit = compile(&backend, &made, &[port(2, 0)]);
+    let want: Vec<u32> = [3u32, 4].iter().map(|&x| reference(3, x, 9)[2]).collect();
+    let (x, y) = (filled(&backend, &[3, 4]), filled(&backend, &[9, 9]));
+    assert_eq!(
+        words(&run(&mut unit, made.inputs.len(), 1, &x, &y)[0]),
+        want
+    );
+    let old_device = x.device_key();
+
+    // The device is lost. The region's next run faults and submits nothing, and what covers it
+    // is still every node, so the fault can be laid at the right nodes.
+    backend.mark_lost();
+    let mut cells = vec![Slot::EMPTY; made.inputs.len() + 1];
+    for (at, cell) in cells.iter_mut().take(made.inputs.len()).enumerate() {
+        let value = if at == 1 { &y } else { &x };
+        put_typed(cell, TypeIndex(0), SpaceIndex(0), Arc::clone(value));
+    }
+    let mut cx = StepCx::new();
+    let end = run_once(&mut unit.step, &mut Slots::of(&mut cells), &mut cx);
+    assert!(matches!(end, StepEnd::Fault));
+    assert!(cx.reason().contains("lost"), "{}", cx.reason());
+    assert_eq!(unit.info.covers, made.nodes);
+    for cell in &mut cells {
+        drop(take_typed::<Storage>(cell));
+    }
+
+    // That request reopened the device, with no wait before the first attempt, and the region
+    // was built again on it. Values made on the new device run through it as before.
+    assert_eq!(backend.retry_in(), None);
+    let (x, y) = (filled(&backend, &[3, 4]), filled(&backend, &[9, 9]));
+    assert_ne!(x.device_key(), old_device, "the backend is on a new device");
+    assert_eq!(
+        words(&run(&mut unit, made.inputs.len(), 1, &x, &y)[0]),
+        want
+    );
+    release(unit.step);
+
+    // Off is the host's doing, and only the host's. Nothing opens while it's off.
+    backend.turn_off();
+    assert_eq!(backend.start(), Err(daedalus_wgpu::OpenError::Off));
+    assert!(Storage::new(&backend, 16).is_err());
+    backend.turn_on();
+    assert!(backend.start().is_ok());
+}

@@ -6,6 +6,7 @@ use daedalus_abi::{OwnedStep, Slot, Slots, StepCx, StepEnd};
 use daedalus_runner::{UNSTAMPED, put_typed, typed_view};
 
 use super::{Node, Owned, Size, Source};
+use crate::backend::Link;
 use crate::buffer::Storage;
 use crate::context::Context;
 use crate::fence::{Ticket, TicketState};
@@ -18,6 +19,8 @@ use crate::texture::Texture;
 const KEPT: usize = 4;
 
 pub(crate) struct RegionStep {
+    /// Where another device comes from when this one is lost.
+    link: Arc<Link>,
     context: Arc<Context>,
     nodes: Vec<Node>,
     owned: Vec<Owned>,
@@ -28,6 +31,7 @@ pub(crate) struct RegionStep {
 
 impl RegionStep {
     pub(crate) fn new(
+        link: Arc<Link>,
         context: Arc<Context>,
         nodes: Vec<Node>,
         owned: Vec<Owned>,
@@ -43,6 +47,7 @@ impl RegionStep {
             .max()
             .unwrap_or(0);
         RegionStep {
+            link,
             context,
             nodes,
             owned,
@@ -175,15 +180,46 @@ impl RegionStep {
     }
 }
 
+impl RegionStep {
+    /// Loads every shader again on a device that isn't lost, and forgets the old buffers.
+    fn rebuild(&mut self) -> Result<(), String> {
+        let context = self
+            .link
+            .context()
+            .map_err(|error| format!("the device was lost: {error}"))?;
+        for node in &mut self.nodes {
+            let spec = *node.shader.spec();
+            node.shader =
+                crate::shader::Shader::load_on(Arc::clone(&context), &spec).map_err(|error| {
+                    format!("the device was lost, and the new one refused: {error}")
+                })?;
+        }
+        for owned in &mut self.owned {
+            owned.kept.clear();
+            owned.current = 0;
+        }
+        self.context = context;
+        Ok(())
+    }
+}
+
 impl OwnedStep for RegionStep {
     fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
         let context = Arc::clone(&self.context);
-        if let Some(reported) = context.errors.take() {
-            cx.fault(None, &reported);
+        let reported = context.errors.take();
+        if context.is_lost() {
+            // The device this region was built on is gone. Ask for another, which the backend
+            // opens under the failure rule, and build the region again on it. What this run was
+            // given is on the lost device, so this run faults either way.
+            let reason = match self.rebuild() {
+                Ok(()) => "the device was lost, and the region is rebuilt on a new one".into(),
+                Err(reason) => reason,
+            };
+            cx.fault(None, &reason);
             return StepEnd::Fault;
         }
-        if context.is_lost() {
-            cx.fault(None, "the device is lost");
+        if let Some(reported) = reported {
+            cx.fault(None, &reported);
             return StepEnd::Fault;
         }
         let cells = slots.as_mut_slice();

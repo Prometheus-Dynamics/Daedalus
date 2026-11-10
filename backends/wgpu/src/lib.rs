@@ -13,6 +13,7 @@ mod fence;
 #[cfg(test)]
 mod fence_tests;
 mod inflight;
+mod loss;
 mod memory;
 mod pool;
 mod profile;
@@ -34,6 +35,7 @@ pub use caps::{CapsRecord, ComputeCaps, ComputeFeatures, Need};
 pub use context::OpenError;
 pub use driver::{DriverGuard, devices_created, driver_lock, with_driver_lock};
 pub use fence::Ticket;
+pub use loss::{RETRY_CAP, RETRY_FIRST, retry_delay};
 pub use memory::{MemoryHints, SPACE_DEVICE, SPACE_DMA_HEAP, SPACE_HOST_CACHED, SPACE_HOST_MAPPED};
 pub use pool::TempPoolLimits;
 pub use profile::{DeviceProfile, Family, vendor_ids};
