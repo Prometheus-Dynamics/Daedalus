@@ -16,7 +16,7 @@ libloading = { workspace = true }
 [dev-dependencies]
 daedalus-abi = { path = "../abi", features = ["count-alloc", "test-run"] }
 
-# This crate may use unsafe (see AGENTS.md), so it carries its own lint table.
+# This crate may use unsafe, so it carries its own lint table.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 unused_lifetimes = "deny"

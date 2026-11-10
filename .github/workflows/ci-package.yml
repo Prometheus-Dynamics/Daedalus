@@ -1,0 +1,37 @@
+name: Package
+
+on:
+  push:
+    branches:
+      - next
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE-*"
+  pull_request:
+    branches:
+      - next
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The semver step compares against a tag, when there is one.
+          fetch-depth: 0
+      # rust-toolchain.toml selects the toolchain and its components.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Every publishable crate lists its files with no warning.
+      - run: ./scripts/ci.sh package
+      # Reports against the last release. Does nothing until there is one.
+      - run: ./scripts/ci.sh semver
+      # A build leaves nothing in the tree that git doesn't ignore.
+      - run: cargo build --locked --workspace
+      - run: ./scripts/repo-clean.sh

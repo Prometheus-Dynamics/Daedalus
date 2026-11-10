@@ -7,7 +7,7 @@ readonly EXAMPLES=(quickstart basics host metrics)
 
 for example in "${EXAMPLES[@]}"; do
   package="daedalus-example-$example"
-  cargo run -q -p "$package" >/dev/null
-  cargo test -q -p "$package" >/dev/null
+  cargo run --locked -q -p "$package" >/dev/null
+  cargo test --locked -q -p "$package" >/dev/null
   echo "  $package: ran, and its output is the golden one"
 done
