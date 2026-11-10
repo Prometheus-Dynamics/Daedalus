@@ -92,3 +92,26 @@ impl Slots {
         Some(unsafe { &mut *self.cells.add(index) })
     }
 }
+
+impl Slot {
+    /// The bytes a full cell holds, for the owners made of bytes: static, inline and shared.
+    /// `None` for an empty cell, for a slot, host or typed owner, and for a cell with no data.
+    pub fn bytes(&self) -> Option<&[u8]> {
+        if self.state != SlotState::Full as u32 {
+            return None;
+        }
+        // The owner codes are `OwnerKind` in daedalus-value: Static 0, Inline 1, Shared 4.
+        if !matches!(self.owner, 0 | 1 | 4) {
+            return None;
+        }
+        if self.len == 0 {
+            return Some(&[]);
+        }
+        if self.data.is_null() {
+            return None;
+        }
+        // SAFETY: a full cell of these owners points `len` readable bytes at `data`, which stay
+        // valid while the cell holds the value, as the runner guarantees for the step's cells.
+        Some(unsafe { core::slice::from_raw_parts(self.data.cast_const(), self.len) })
+    }
+}

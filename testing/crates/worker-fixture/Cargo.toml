@@ -1,0 +1,15 @@
+[package]
+name = "daedalus-worker-fixture"
+description = "A worker process that serves the canonical conformance fixtures over the wire protocol."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-wire = { path = "../../../core/wire" }
+daedalus-worker-conformance = { path = "../worker-conformance" }
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-worker-conformance"
+description = "The canonical worker fixtures, and a runner that drives any worker spec through the process backend."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi", features = ["test-run"] }
+daedalus-backend = { path = "../../../core/backend" }
+daedalus-backend-process = { path = "../../../backends/process" }
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-types = { path = "../../../core/types" }
+daedalus-wire = { path = "../../../core/wire" }
+
+[lints]
+workspace = true

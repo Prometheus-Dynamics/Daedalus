@@ -186,6 +186,23 @@ impl<'a> Reader<'a> {
             .map_err(|_| WireError::InvalidUtf8)
     }
 
+    /// The read position, from the start of the input.
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
+
+    /// The bytes read since `from`, a position from [`Reader::pos`].
+    pub fn span(&self, from: usize) -> &'a [u8] {
+        &self.buf[from..self.pos]
+    }
+
+    /// A string field, borrowed from the input: no allocation.
+    pub fn text(&mut self) -> Result<&'a str, WireError> {
+        let len = self.count()?;
+        let raw = self.take(len)?;
+        core::str::from_utf8(raw).map_err(|_| WireError::InvalidUtf8)
+    }
+
     /// Refuses bytes left after a complete message.
     pub fn finish(&self) -> Result<(), WireError> {
         match self.remaining() {

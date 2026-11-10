@@ -12,7 +12,7 @@ use crate::value::{WireValue, decode_value, encode_value};
 pub const REASON_CAP: usize = 512;
 
 /// The kind bytes, one per message. Changing one changes [`crate::LAYOUT_HASH`].
-pub(crate) mod kind {
+pub mod kind {
     pub const RUN: u8 = 0x01;
     pub const CANCEL: u8 = 0x02;
     pub const STATE_EXPORT: u8 = 0x03;
