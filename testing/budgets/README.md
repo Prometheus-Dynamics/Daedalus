@@ -84,3 +84,11 @@ runs only those.
 workflow uploads the result and compares it with the previous run on the same branch using
 `scripts/bench-compare.py`. A slower timing is a warning and never a failure. The timings that
 count are board runs.
+
+## Large-value handoff (I3)
+
+The `handoff_*` and `alloc_handoff_*` rows are three ways to pass a large value on the same
+graphs, from `testing/crates/handoff-bench`. A value read through a reference costs no
+allocation on any path. A value handed on through 8 stages allocates 8 times as a handle or as
+shared bytes, which is not the design's zero and is held where it is, and 16 times as a vector
+each stage makes for itself. `docs/prs/I3.md` has the table.

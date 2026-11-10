@@ -1,0 +1,22 @@
+[package]
+name = "daedalus-handoff-bench"
+description = "Three ways to pass a large value along a graph, measured: a handle, shared bytes, and a plain Vec."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi", features = ["count-alloc"] }
+daedalus-cpu = { path = "../../../backends/cpu" }
+daedalus-cpu-author = { path = "../../../backends/cpu-author" }
+daedalus-graph = { path = "../../../core/graph" }
+daedalus-host = { path = "../../../core/host" }
+daedalus-macros = { path = "../../../core/macros" }
+daedalus-planner = { path = "../../../core/planner" }
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-types = { path = "../../../core/types" }
+
+[lints]
+workspace = true
