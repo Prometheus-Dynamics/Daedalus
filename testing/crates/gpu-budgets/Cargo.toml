@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-gpu-budgets"
+description = "What the wgpu backend may ask of a device, counted in CI, and the tool that times it on boards."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi", features = ["count-alloc", "test-run"] }
+daedalus-backend = { path = "../../../core/backend" }
+daedalus-runner = { path = "../../../core/runner" }
+daedalus-types = { path = "../../../core/types" }
+daedalus-wgpu = { path = "../../../backends/wgpu" }
+daedalus-wgpu-conformance = { path = "../wgpu-conformance" }
+
+[lints]
+workspace = true
