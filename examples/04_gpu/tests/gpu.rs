@@ -36,7 +36,14 @@ fn binary_prints(path: &str, line: &str) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), line);
+    // Under the Vulkan validation layer, as in the GPU lane, the layer writes a line of its own
+    // to the program's output when it starts. That line isn't the example's.
+    let printed: String = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|printed| !printed.starts_with("Validation Layer"))
+        .map(|printed| format!("{printed}\n"))
+        .collect();
+    assert_eq!(printed, line);
 }
 
 #[test]
