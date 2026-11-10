@@ -55,5 +55,5 @@ const LAYOUT: &[u64] = &[
     8,
 ];
 
-/// The hash of [`LAYOUT`]. A hello carries it, and the host refuses a worker that has another.
+/// The hash of the layout. A hello carries it, and the host refuses a worker that has another.
 pub const LAYOUT_HASH: u64 = daedalus_abi::layout_hash(LAYOUT);
