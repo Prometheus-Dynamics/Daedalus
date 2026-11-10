@@ -146,10 +146,21 @@ impl TextureDesc {
 
 /// A texture on the backend's device. Made at setup, never while a region runs.
 pub struct Texture {
-    #[expect(dead_code, reason = "bound by shader nodes, from E4")]
+    #[expect(dead_code, reason = "copied by the transfers of E3")]
     pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
+    /// Unique to this texture, for the bind group cache.
+    pub(crate) id: u64,
     desc: TextureDesc,
     context: Arc<Context>,
+}
+
+impl fmt::Debug for Texture {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Texture")
+            .field("desc", &self.desc)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Texture {
@@ -178,7 +189,9 @@ impl Texture {
             view_formats: &[],
         });
         Ok(Texture {
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             texture,
+            id: Context::next_id(),
             desc,
             context,
         })

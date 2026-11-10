@@ -78,6 +78,12 @@ impl WgpuBackend {
         own.as_ref().map(|context| context.staging().stats())
     }
 
+    /// How much the device's shader cache has built. `None` while no device is open.
+    pub fn shader_stats(&self) -> Option<crate::shader::ShaderStats> {
+        let own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
+        own.as_ref().map(|context| context.shaders().stats())
+    }
+
     pub(crate) fn context(&self) -> Result<Arc<Context>, OpenError> {
         let mut own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(context) = own.as_ref() {
