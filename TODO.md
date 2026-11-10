@@ -104,7 +104,7 @@ wgpu as a backend: whole-shader nodes, shared submits, merged per-pixel function
 - [ ] [E6](docs/prs/E6.md) Per-pixel functions merged into one shader (wave 13; needs E5, E7; board run)
 - [ ] [E7](docs/prs/E7.md) Your own recording code (wave 8; needs E4, E13; board run)
 - [ ] [E8](docs/prs/E8.md) Fences, bounded waits, uncaptured errors (wave 8; needs C2, E4; board run)
-- [ ] [E9](docs/prs/E9.md) dma-sys: dma-buf kernel calls in one place (wave 7; needs E2; board run)
+- [x] [E9](docs/prs/E9.md) dma-sys: dma-buf kernel calls in one place (wave 7; needs E2; board run)
 - [ ] [E10](docs/prs/E10.md) Multi-device and foreign-memory handoff (wave 16; needs E3)
 - [ ] [E11](docs/prs/E11.md) Device loss and the failure rule (wave 9; needs C5, E8; board run)
 - [ ] [E12](docs/prs/E12.md) GPU conformance on lavapipe and the GPU budgets (wave 14; needs E6; board run)

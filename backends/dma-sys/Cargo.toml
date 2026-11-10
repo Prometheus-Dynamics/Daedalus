@@ -1,0 +1,21 @@
+[package]
+name = "daedalus-dma-sys"
+description = "The dma-buf, dma-heap and sync_file kernel calls, in one place."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
+[lints.rust]
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+undocumented_unsafe_blocks = "deny"
