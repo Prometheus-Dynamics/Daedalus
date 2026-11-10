@@ -265,11 +265,19 @@ pub struct Ran {
 /// Runs `unit` once on `inputs`, with `outputs` cells to write.
 pub fn run(backend: &WgpuBackend, unit: &mut StepUnit, inputs: &[In<'_>], outputs: usize) -> Ran {
     let (ty, space) = (TypeIndex(0), SpaceIndex(0));
+    // `put_inline` keeps a pointer to the bytes it is given, so they live until the run is over.
+    let held: Vec<[u8; 4]> = inputs
+        .iter()
+        .map(|input| match input {
+            In::Word(word) => word.to_le_bytes(),
+            In::Buffer(_) => [0; 4],
+        })
+        .collect();
     let mut cells = vec![Slot::EMPTY; inputs.len() + outputs];
-    for (cell, input) in cells.iter_mut().zip(inputs) {
+    for ((cell, input), word) in cells.iter_mut().zip(inputs).zip(&held) {
         match input {
             In::Buffer(storage) => put_typed(cell, ty, space, Arc::clone(storage)),
-            In::Word(word) => put_inline(cell, ty, space, &word.to_le_bytes()).expect("fits"),
+            In::Word(_) => put_inline(cell, ty, space, word).expect("fits"),
         }
     }
     let mut cx = StepCx::new();

@@ -103,15 +103,18 @@ impl WgpuBackend {
                 planes: image.planes,
             });
         }
-        // A buffer is a whole number of words.
-        let size = len / 4 * 4;
+        let refused = |error: Error| match error {
+            Error::NoDmaBufImport | Error::NotVulkan => {
+                ImportError::Unsupported("this device can't import a dma-buf".into())
+            }
+            other => ImportError::Refused(other.to_string()),
+        };
+        // A buffer is a whole number of words, and as much of the dma-buf as the device can
+        // back with it: one that pads a buffer's memory gets a buffer that much shorter.
+        let size = daedalus_vk_sys::memory::dma_buf_size_that_fits(&context.device, len)
+            .map_err(refused)?;
         let imported =
-            import_dma_buf(&context.device, image.fd, size, None).map_err(|error| match error {
-                Error::NoDmaBufImport | Error::NotVulkan => {
-                    ImportError::Unsupported("this device can't import a dma-buf".into())
-                }
-                other => ImportError::Refused(other.to_string()),
-            })?;
+            import_dma_buf(&context.device, image.fd, size, len, None).map_err(refused)?;
         let storage = Arc::new(Storage::imported(Arc::clone(&context), imported, size));
         imports.stats.imports += 1;
         if imports.kept.len() >= KEPT {

@@ -17,6 +17,8 @@ pub enum Error {
     Range,
     /// The fd was refused.
     Fd,
+    /// The dma-buf is smaller than the memory the device needs for the buffer.
+    TooSmall { have: u64, need: u64 },
     /// Vulkan said no.
     Vulkan(vk::Result),
 }
@@ -30,6 +32,10 @@ impl fmt::Display for Error {
             Error::NoMemoryType => f.write_str("no memory type fits"),
             Error::Range => f.write_str("a size or range that can't be used"),
             Error::Fd => f.write_str("the fd was refused"),
+            Error::TooSmall { have, need } => write!(
+                f,
+                "the dma-buf is {have} bytes, and the device needs {need} for the buffer"
+            ),
             Error::Vulkan(result) => write!(f, "Vulkan: {result:?}"),
         }
     }

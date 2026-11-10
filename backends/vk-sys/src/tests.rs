@@ -301,7 +301,7 @@ fn an_fd_that_is_no_dma_buf_is_refused_with_a_typed_error() {
     for (device, _queue) in devices() {
         let extras = Extras::of(&device).expect("a Vulkan device");
         let not_a_dma_buf = || OwnedFd::from(std::fs::File::open("/dev/zero").expect("/dev/zero"));
-        let imported = memory::import_dma_buf(&device, not_a_dma_buf(), BYTES, None);
+        let imported = memory::import_dma_buf(&device, not_a_dma_buf(), BYTES, u64::MAX, None);
         if extras.dma_buf_import {
             // The device can import, and this fd isn't one it can.
             assert!(imported.is_err(), "/dev/zero imported as a dma-buf");
@@ -309,8 +309,26 @@ fn an_fd_that_is_no_dma_buf_is_refused_with_a_typed_error() {
             // lavapipe is here.
             assert_eq!(imported.err(), Some(Error::NoDmaBufImport));
         }
-        let refused = memory::import_dma_buf(&device, not_a_dma_buf(), 6, None);
+        let refused = memory::import_dma_buf(&device, not_a_dma_buf(), 6, u64::MAX, None);
         assert_eq!(refused.err(), Some(Error::Range));
+        if extras.dma_buf_import {
+            // What the device needs behind a buffer is at least the buffer. A dma-buf shorter
+            // than that is refused with both sizes, before the driver sees the fd, and one
+            // that long fits a buffer of the size asked for.
+            let need = memory::dma_buf_bytes_needed(&device, BYTES).expect("a size");
+            assert!(need >= BYTES);
+            let short = memory::import_dma_buf(&device, not_a_dma_buf(), BYTES, need - 4, None);
+            let too_small = Error::TooSmall {
+                have: need - 4,
+                need,
+            };
+            assert_eq!(short.err(), Some(too_small));
+            let fits = memory::dma_buf_size_that_fits(&device, need).expect("fits");
+            assert!(fits <= BYTES && fits > 0 && fits.is_multiple_of(4));
+            assert!(memory::dma_buf_bytes_needed(&device, fits).expect("a size") <= need);
+            let odd = memory::dma_buf_bytes_needed(&device, 6);
+            assert_eq!(odd.err(), Some(Error::Range));
+        }
     }
 }
 

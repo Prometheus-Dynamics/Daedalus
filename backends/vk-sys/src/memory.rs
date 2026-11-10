@@ -257,19 +257,71 @@ pub fn dma_buf_memory_types(device: &wgpu::Device, fd: BorrowedFd<'_>) -> Result
     Ok(properties.memory_type_bits)
 }
 
+/// How many bytes of memory the device needs behind an imported storage buffer of `size`
+/// bytes. A device may need more than `size`: V3D pads a buffer, so a dma-buf of exactly the
+/// buffer's size is refused there. Allocate a dma-buf this large to import as `size` bytes.
+pub fn dma_buf_bytes_needed(device: &wgpu::Device, size: u64) -> Result<u64, Error> {
+    if size == 0 || !size.is_multiple_of(4) {
+        return Err(Error::Range);
+    }
+    let raw = Raw::of(device).ok_or(Error::NotVulkan)?;
+    if !raw.has(khr::external_memory_fd::NAME) || !raw.has(ash::ext::external_memory_dma_buf::NAME)
+    {
+        return Err(Error::NoDmaBufImport);
+    }
+    let vk_device = &raw.device;
+    let handle = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
+    let mut external = vk::ExternalMemoryBufferCreateInfo::default().handle_types(handle);
+    let info = buffer_info(size).push_next(&mut external);
+    // SAFETY: a valid create info on a live device. The buffer is destroyed before returning.
+    let buffer = unsafe { vk_device.create_buffer(&info, None) }?;
+    // SAFETY: a query on the buffer just made, which is then destroyed, with nothing bound.
+    let needs = unsafe {
+        let needs = vk_device.get_buffer_memory_requirements(buffer);
+        vk_device.destroy_buffer(buffer, None);
+        needs
+    };
+    Ok(needs.size)
+}
+
+/// The largest storage buffer, in bytes, that a dma-buf of `have` bytes can be imported as on
+/// this device: `have` rounded down to a word where the device needs no more than the buffer,
+/// and less where it pads.
+pub fn dma_buf_size_that_fits(device: &wgpu::Device, have: u64) -> Result<u64, Error> {
+    let whole = have / 4 * 4;
+    let need = dma_buf_bytes_needed(device, whole)?;
+    if need <= have {
+        return Ok(whole);
+    }
+    // The device needs `need - whole` more than the buffer: take that off and ask again.
+    let smaller = have.saturating_sub(need - whole) / 4 * 4;
+    if smaller == 0 {
+        return Err(Error::TooSmall { have, need });
+    }
+    match dma_buf_bytes_needed(device, smaller)? {
+        need if need <= have => Ok(smaller),
+        need => Err(Error::TooSmall { have, need }),
+    }
+}
+
 /// A storage buffer whose memory is the dma-buf behind `fd`, with no copy. `size` is a non-zero
-/// multiple of 4, no larger than the dma-buf. The buffer owns the fd from here.
+/// multiple of 4, and `have` is the dma-buf's own length, which has to cover what
+/// [`dma_buf_bytes_needed`] says for `size`. The buffer owns the fd from here.
 pub fn import_dma_buf(
     device: &wgpu::Device,
     fd: OwnedFd,
     size: u64,
+    have: u64,
     label: Option<&str>,
 ) -> Result<wgpu::Buffer, Error> {
     if size == 0 || !size.is_multiple_of(4) {
         return Err(Error::Range);
     }
-    let allowed = dma_buf_memory_types(device, std::os::fd::AsFd::as_fd(&fd))?;
     let raw = Raw::of(device).ok_or(Error::NotVulkan)?;
+    if !raw.has(khr::external_memory_fd::NAME) || !raw.has(ash::ext::external_memory_dma_buf::NAME)
+    {
+        return Err(Error::NoDmaBufImport);
+    }
     let vk_device = &raw.device;
     let handle = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
     let mut external = vk::ExternalMemoryBufferCreateInfo::default().handle_types(handle);
@@ -278,12 +330,23 @@ pub fn import_dma_buf(
     let buffer = unsafe { vk_device.create_buffer(&info, None) }?;
     // SAFETY: a query on the buffer just made.
     let needs = unsafe { vk_device.get_buffer_memory_requirements(buffer) };
-    let both = needs.memory_type_bits & allowed;
-    if both == 0 {
-        // SAFETY: made above, and nothing else has it.
-        unsafe { vk_device.destroy_buffer(buffer, None) };
-        return Err(Error::NoMemoryType);
-    }
+    // Checked before the driver is asked about the fd: it would refuse a short one without
+    // saying why.
+    let allowed = match needs.size > have {
+        true => Err(Error::TooSmall {
+            have,
+            need: needs.size,
+        }),
+        false => dma_buf_memory_types(device, std::os::fd::AsFd::as_fd(&fd)),
+    };
+    let both = match allowed {
+        Ok(allowed) if needs.memory_type_bits & allowed != 0 => needs.memory_type_bits & allowed,
+        other => {
+            // SAFETY: made above, and nothing else has it.
+            unsafe { vk_device.destroy_buffer(buffer, None) };
+            return Err(other.err().unwrap_or(Error::NoMemoryType));
+        }
+    };
     let raw_fd = fd.into_raw_fd();
     let mut import = vk::ImportMemoryFdInfoKHR::default()
         .handle_type(handle)
@@ -302,7 +365,10 @@ pub fn import_dma_buf(
                 drop(<OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(raw_fd));
                 vk_device.destroy_buffer(buffer, None);
             }
-            return Err(error.into());
+            return Err(match error {
+                vk::Result::ERROR_INVALID_EXTERNAL_HANDLE => Error::Fd,
+                other => other.into(),
+            });
         }
     };
     // SAFETY: the memory was imported for this buffer and is bound once.

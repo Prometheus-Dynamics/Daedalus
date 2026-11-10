@@ -481,14 +481,10 @@ fn a_uniform_takes_plain_bytes_or_bytes_already_on_the_device() {
         words(&take_typed::<Storage>(&mut cells[2]).expect("an output"))
     };
     // As a CPU node writes a small value: inline bytes.
+    // `put_inline` keeps a pointer to the bytes it is given, so they live until the run is over.
+    let five = 5u32.to_le_bytes();
     let mut inline = Slot::EMPTY;
-    daedalus_runner::put_inline(
-        &mut inline,
-        TypeIndex(0),
-        SpaceIndex(0),
-        &5u32.to_le_bytes(),
-    )
-    .expect("fits");
+    daedalus_runner::put_inline(&mut inline, TypeIndex(0), SpaceIndex(0), &five).expect("fits");
     assert_eq!(go(inline), [5, 10, 15, 20]);
     // As an upload leaves it: a buffer on the device, copied into the uniform in the same submit.
     let mut uploaded = Slot::EMPTY;

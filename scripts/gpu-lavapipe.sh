@@ -118,6 +118,9 @@ for manifest in backends/wgpu*/Cargo.toml backends/vk-sys/Cargo.toml \
 done
 out="$work/tests.out"
 cargo test "${packages[@]}" 2>&1 | tee "$out"
+# And optimised: a test that reads memory it no longer owns can pass unoptimised and fail here,
+# which is what boards run.
+cargo test --release "${packages[@]}" 2>&1 | tee -a "$out"
 
 # The GPU examples: each binary checks its own answer against the CPU's and exits 0, and has
 # no way to skip.
