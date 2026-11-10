@@ -140,7 +140,7 @@ Dylib plugins carrying nodes and backends, the process backend, and an SDK per l
 - [x] [H3](docs/prs/H3.md) Host listener: one Host, many clients, unix socket, TCP loopback and stdio (wave 15; needs C10, H1)
 - [x] [H4](docs/prs/H4.md) daedalusd: the daemon binary, config, plugin loading, shutdown (wave 16; needs G2, H3)
 - [x] [H5](docs/prs/H5.md) daedalus-ctl: command line client for daedalusd (wave 17; needs H2, H4)
-- [ ] [H6](docs/prs/H6.md) Packaging the service: unit files, socket activation, hardening (wave 17; needs H4)
+- [x] [H6](docs/prs/H6.md) Packaging the service: unit files, socket activation, hardening (wave 17; needs H4)
 
 ## I. Proof and finish
 
