@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 packages=()
-for manifest in backends/wgpu*/Cargo.toml; do
+for manifest in backends/wgpu*/Cargo.toml backends/vk-sys/Cargo.toml; do
   packages+=(-p "$(sed -n 's/^name = "\(.*\)"/\1/p' "$manifest" | head -1)")
 done
 DAEDALUS_GPU_REQUIRED=1 cargo test "${packages[@]}"
