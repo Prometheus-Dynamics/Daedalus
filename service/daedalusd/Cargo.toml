@@ -1,0 +1,29 @@
+[package]
+name = "daedalusd"
+description = "The Daedalus daemon: one host, served to clients over a unix socket, loopback TCP or stdio."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-abi = { path = "../../core/abi" }
+daedalus-backend = { path = "../../core/backend" }
+daedalus-host = { path = "../../core/host", features = ["listen"] }
+daedalus-loader = { path = "../../core/loader" }
+daedalus-registry = { path = "../../core/registry" }
+daedalus-types = { path = "../../core/types" }
+daedalus-wire = { path = "../../core/wire" }
+serde = { workspace = true, features = ["std"] }
+signal-hook = { workspace = true }
+toml = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+listenfd = { workspace = true }
+
+[dev-dependencies]
+daedalus-client = { path = "../../core/client" }
+daedalus-graph = { path = "../../core/graph" }
+
+[lints]
+workspace = true
