@@ -394,6 +394,9 @@ build on them.
   args = (<the backend's own tokens>), params = (<name: Type,>...), ret = <type>, bind = (<see "The planner as built">), decl = <ident>)`
   and expands to a const-evaluable `BodyRecord`. `name` is in parentheses so that a generic instance
   can be `name::<u32>`. The core macro adds `state` and `memory` itself with `BodyRecord::with_node`.
+  A `const` body also gets a trailing `init = (<the const's initializer tokens>)`, so an authoring
+  macro that has to read the body at expansion (a shader, parsed there) can: the name alone tells a
+  macro nothing.
   An authoring crate implements all three kinds; `testing/crates/author-fixture` is the example.
 - `PortDecl` and `TypeRecord` hold `TypeKey`s, which have drop glue, so a slice of them is written
   `const X: &[PortDecl] = &[...]` or inline in a struct literal. Passing `&CONST` to a function

@@ -15,7 +15,8 @@ pub use daedalus_derive as derive;
 pub struct FanIn<T>(pub T);
 
 /// The contract every authoring crate implements: it expands to a const-evaluable `BodyRecord`.
-/// `args` is the backend's own, here the port types of a body held in a const.
+/// `args` is the backend's own, here the port types of a body held in a const. A const body
+/// also gets `init`, the tokens of the const's initializer.
 #[macro_export]
 macro_rules! __daedalus_body {
     (
@@ -25,7 +26,8 @@ macro_rules! __daedalus_body {
         params = (),
         ret = (),
         bind = $bind:tt,
-        decl = $decl:ident
+        decl = $decl:ident,
+        init = ($($init:tt)*)
     ) => {
         $crate::registry::BodyRecord {
             backend: "fixture",
@@ -38,7 +40,12 @@ macro_rules! __daedalus_body {
             )),*],
             memory: &[],
             code: &$crate::registry::NoCode,
-            text: $($name)*,
+            // The initializer is the same text as the const: `init` is for a macro that has to
+            // read it at expansion.
+            text: {
+                const _: &str = $($name)*;
+                $($init)*
+            },
         }
     };
     (
