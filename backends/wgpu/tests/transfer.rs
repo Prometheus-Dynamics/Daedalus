@@ -164,8 +164,10 @@ fn small_values_upload_too_and_buffers_are_reused() {
     // An inline value, as a CPU node writes a small Copy type.
     let mut first = None;
     for round in 0..6u32 {
+        // `put_inline` keeps a pointer to the bytes it is given, so they live until the run is over.
+        let bytes = round.to_le_bytes();
         let mut cell = Slot::EMPTY;
-        put_inline(&mut cell, TY, SPACE, &round.to_le_bytes()).expect("fits inline");
+        put_inline(&mut cell, TY, SPACE, &bytes).expect("fits inline");
         let (end, mut out, why) = through(&mut upload, cell);
         assert!(matches!(end, StepEnd::Done), "{why}");
         let storage = take_typed::<Storage>(&mut out).expect("a buffer");

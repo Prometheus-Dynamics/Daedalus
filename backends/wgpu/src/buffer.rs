@@ -219,16 +219,21 @@ impl Storage {
         let failed = |error: daedalus_dma_sys::Error| StorageError::Device(error.to_string());
         let heap = daedalus_dma_sys::DmaHeap::open("system")
             .map_err(|_| StorageError::Unsupported("no /dev/dma_heap/system to allocate from"))?;
-        let buf = heap.allocate(size).map_err(failed)?;
+        let unsupported = |error: Error| match error {
+            Error::NoDmaBufImport | Error::NotVulkan => {
+                StorageError::Unsupported("the device can't import a dma-buf")
+            }
+            other => StorageError::Device(other.to_string()),
+        };
+        // The device may need more memory than the buffer has bytes: V3D pads it.
+        let need = daedalus_vk_sys::memory::dma_buf_bytes_needed(&context.device, size)
+            .map_err(unsupported)?;
+        let buf = heap.allocate(need.max(size)).map_err(failed)?;
         let map = buf.as_ref().map().map_err(failed)?;
+        let have = buf.as_ref().len().map_err(failed)?;
         let fd = buf.try_clone().map_err(failed)?.into_fd();
-        let buffer = daedalus_vk_sys::memory::import_dma_buf(&context.device, fd, size, None)
-            .map_err(|error| match error {
-                Error::NoDmaBufImport | Error::NotVulkan => {
-                    StorageError::Unsupported("the device can't import a dma-buf")
-                }
-                other => StorageError::Device(other.to_string()),
-            })?;
+        let buffer = daedalus_vk_sys::memory::import_dma_buf(&context.device, fd, size, have, None)
+            .map_err(unsupported)?;
         Ok(Storage {
             buffer,
             size,

@@ -205,14 +205,22 @@ fn run(
     inputs: &[In<'_>],
     outputs: usize,
 ) -> (Vec<Vec<u32>>, u64, u64) {
+    // `put_inline` keeps a pointer to the bytes it is given, so they live until the run is over.
+    let held: Vec<[u8; 4]> = inputs
+        .iter()
+        .map(|input| match input {
+            In::Word(word) => word.to_le_bytes(),
+            In::Buffer(_) => [0; 4],
+        })
+        .collect();
     let mut cells = vec![Slot::EMPTY; inputs.len() + outputs];
-    for (cell, input) in cells.iter_mut().zip(inputs) {
+    for ((cell, input), word) in cells.iter_mut().zip(inputs).zip(&held) {
         match input {
             In::Buffer(storage) => {
                 put_typed(cell, TypeIndex(0), SpaceIndex(0), Arc::clone(storage))
             }
-            In::Word(word) => {
-                put_inline(cell, TypeIndex(0), SpaceIndex(0), &word.to_le_bytes()).expect("fits");
+            In::Word(_) => {
+                put_inline(cell, TypeIndex(0), SpaceIndex(0), word).expect("fits");
             }
         }
     }
@@ -555,12 +563,14 @@ fn draw(
     for (cell, texture) in cells.iter_mut().zip(textures) {
         put_typed(cell, TypeIndex(0), SpaceIndex(0), Arc::clone(texture));
     }
-    if let Some(word) = word {
+    // `put_inline` keeps a pointer to the bytes it is given, so they live until the run is over.
+    let word = word.map(u32::to_le_bytes);
+    if let Some(word) = &word {
         put_inline(
             &mut cells[textures.len()],
             TypeIndex(0),
             SpaceIndex(0),
-            &word.to_le_bytes(),
+            word,
         )
         .expect("fits");
     }
@@ -658,13 +668,8 @@ fn a_chain_given_a_texture_draws_one() {
         SpaceIndex(0),
         filled(&backend, &others),
     );
-    put_inline(
-        &mut cells[2],
-        TypeIndex(0),
-        SpaceIndex(0),
-        &mask.to_le_bytes(),
-    )
-    .expect("fits");
+    let mask_bytes = mask.to_le_bytes();
+    put_inline(&mut cells[2], TypeIndex(0), SpaceIndex(0), &mask_bytes).expect("fits");
     let mut cx = StepCx::new();
     let end = run_once(&mut unit.step, &mut Slots::of(&mut cells), &mut cx);
     assert!(matches!(end, StepEnd::Fault), "a mixed chain");
