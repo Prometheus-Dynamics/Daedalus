@@ -1,0 +1,16 @@
+[package]
+name = "daedalus-lang-node"
+description = "The Node worker SDK, and the check that runs the canonical fixtures through it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-backend-process = { path = "../../backends/process" }
+
+[dev-dependencies]
+daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance" }
+
+[lints]
+workspace = true

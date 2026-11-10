@@ -123,7 +123,7 @@ Dylib plugins carrying nodes and backends, the process backend, and an SDK per l
 - [x] [G3](docs/prs/G3.md) Plugin-owned values, shared bytes, plain-data types and conversions (wave 8; needs A8, G2)
 - [x] [G4](docs/prs/G4.md) Process backend: workers, supervision, the canonical worker fixtures (wave 7; needs A11, C2, G1; board run)
 - [x] [G5](docs/prs/G5.md) Python SDK: node declarations and worker loop (Python) (wave 8; needs G4)
-- [ ] [G6](docs/prs/G6.md) Node SDK: node declarations and worker loop (Node) (wave 8; needs G4)
+- [x] [G6](docs/prs/G6.md) Node SDK: node declarations and worker loop (Node) (wave 8; needs G4)
 - [ ] [G7](docs/prs/G7.md) Java SDK: annotated nodes and worker loop (Java) (wave 8; needs G4)
 - [ ] [G8](docs/prs/G8.md) C and C++ SDK: worker API, typed values, arena outputs (C and C++) (wave 8; needs G4)
 - [ ] [G9](docs/prs/G9.md) Rust SDK: worker serve loop, context, panic containment (wave 8; needs A9, G4)
