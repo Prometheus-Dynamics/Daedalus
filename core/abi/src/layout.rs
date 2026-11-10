@@ -4,7 +4,10 @@ use core::mem::{align_of, offset_of, size_of};
 
 use crate::foreign::{ForeignHandle, ForeignInterfaceInfo, ForeignOwner};
 
-use crate::{AbiVersion, Fence, FencePoll, Handle, Slot, Slots, Status, Step, StepCx, StepEnd};
+use crate::{
+    AbiVersion, BackendTable, BoundaryPort, Fence, FencePoll, Handle, NodeC, PluginEntry, PortC,
+    RegionView, Slot, Slots, Status, Step, StepCx, StepEnd, Text, UnitOut,
+};
 
 /// FNV-1a over the words, each as little-endian bytes.
 pub const fn layout_hash(words: &[u64]) -> u64 {
@@ -48,6 +51,14 @@ pub const SHAPES: &[u64] = &shape! {
     ForeignInterfaceInfo { key_ptr, key_len, version, layout_hash }
     ForeignOwner { ptr, retain, release }
     ForeignHandle { data, vtable, interface, owner }
+    Text { ptr, len }
+    PortC { name, key, optional }
+    NodeC { id, source, backend, text, inputs, input_count, outputs, output_count }
+    BoundaryPort { node, port, reserved, type_index, slot }
+    RegionView { nodes, node_count, inputs, input_count, outputs, output_count }
+    UnitOut { step, node, reserved }
+    BackendTable { id, can_take, compile }
+    PluginEntry { layout, name, nodes, node_count, backends, backend_count }
 };
 
 pub const LAYOUT_HASH: u64 = layout_hash(SHAPES);

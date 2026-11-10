@@ -12,6 +12,7 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+mod backend;
 #[cfg(feature = "count-alloc")]
 pub mod counting;
 mod features;
@@ -31,6 +32,10 @@ pub mod testing;
 mod version;
 mod word;
 
+pub use backend::{
+    BackendTable, BoundaryPort, CanTakeFn, CompileFn, ENTRY_SYMBOL, EntryFn, NodeC, PluginEntry,
+    PortC, RegionView, Text, UnitOut,
+};
 pub use features::Features;
 pub use fence::{Fence, FencePoll, FenceWord};
 pub use foreign::{
