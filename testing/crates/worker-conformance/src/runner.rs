@@ -97,11 +97,20 @@ pub fn registry() -> Registry {
 
 /// Runs every fixture through a worker started from `spec`, in two rounds each.
 pub fn run_all(spec: WorkerSpec) -> Result<Vec<Failure>, ProcessError> {
+    run_fixtures(spec, &[])
+}
+
+/// Runs the named fixtures (all of them when `names` is empty) through a worker started from
+/// `spec`, in two rounds each. A worker serving only some of the nodes is checked with those names.
+pub fn run_fixtures(spec: WorkerSpec, names: &[&str]) -> Result<Vec<Failure>, ProcessError> {
     let registry = registry();
     let mut backend = ProcessBackend::new();
     backend.add_worker(spec, &registry)?;
     let mut failures = Vec::new();
-    for fixture in fixtures() {
+    for fixture in fixtures()
+        .into_iter()
+        .filter(|fixture| names.is_empty() || names.contains(&fixture.name))
+    {
         for round in 0..2 {
             if let Err(reason) = run_round(&backend, &fixture, round) {
                 failures.push(Failure {
