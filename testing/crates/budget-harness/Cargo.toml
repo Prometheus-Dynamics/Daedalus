@@ -1,0 +1,31 @@
+[package]
+name = "daedalus-budget-harness"
+description = "The benchmarks the budget table is checked with: instruction counts, allocations and GPU submits."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi", features = ["count-alloc"] }
+daedalus-backend = { path = "../../../core/backend" }
+daedalus-cpu = { path = "../../../backends/cpu" }
+daedalus-cpu-author = { path = "../../../backends/cpu-author" }
+daedalus-graph = { path = "../../../core/graph" }
+daedalus-host = { path = "../../../core/host" }
+daedalus-loader = { path = "../../../core/loader" }
+daedalus-macros = { path = "../../../core/macros" }
+daedalus-planner = { path = "../../../core/planner" }
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-types = { path = "../../../core/types" }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "ticks"
+harness = false
+
+[lints]
+workspace = true

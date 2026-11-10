@@ -198,6 +198,23 @@ impl<'a> Host<'a> {
         })
     }
 
+    /// Stores up to 16 bytes of plain data in the input port `name`, in place, with the port's own
+    /// type and memory space: a number goes in as its little-endian bytes. Nothing is allocated.
+    /// More than 16 bytes are refused as [`HostError::Refused`].
+    pub fn feed_inline(&mut self, name: &str, bytes: &[u8]) -> Result<FeedOutcome, HostError> {
+        let spec = self.input(name)?;
+        let inline = daedalus_value::InlineBytes::from_slice(bytes).ok_or(HostError::Refused {
+            port: Label::new(name),
+            key: Label::new(spec.key.as_str()),
+        })?;
+        let value = Value {
+            ty: spec.ty,
+            space: spec.space,
+            owner: daedalus_value::Owner::Inline(inline),
+        };
+        self.feed(name, value)
+    }
+
     /// Stores a typed payload in the input port `name`, and wakes its consumers.
     pub fn feed_typed<T: Send + Sync + 'static>(
         &mut self,

@@ -1,0 +1,150 @@
+# The one table of budgets. `scripts/ci.sh budgets` measures every row it can on the machine it
+# runs on and fails on a row above its limit. testing/budgets/README.md says what each field is
+# and where each of the design's budgets is checked.
+#
+# To change a limit, change it here and give the reason in the commit message.
+
+# --- Instruction counts: valgrind's callgrind (Ir) on a release build. -------------------------
+# `command` is run twice, with {n} = 1000 and 3000, and the row's value is the difference in Ir
+# divided by 2000, so building the graph cancels out. `dev_callgrind` is dev measured the same
+# way and is the limit. `dev_perf` is dev's own figure, from `perf stat -e instructions:u`, kept
+# for reference only. `next` is this branch when the row was last set, and the row also fails
+# when it is more than `tolerance_percent` above that.
+
+[[row]]
+name = "idle_tick_16"
+measure = "instructions per idle tick of a 16-stage graph"
+tool = "callgrind"
+command = "idle {n} 16"
+dev_perf = 27064
+dev_callgrind = 25988
+limit = 25988
+next = 151
+tolerance_percent = 10
+
+[[row]]
+name = "plugin_node_tick"
+measure = "instructions per tick of a one-node graph whose node is a dylib plugin's: feed, tick, take"
+tool = "callgrind"
+command = "plugin {n} {fixture}"
+# Dev's figure is per stable-ABI node. The whole tick was 14,425 on the stable path and 10,655
+# with the same node installed statically, so the node itself was 3,770 under callgrind.
+dev_perf = 3100
+dev_callgrind = 14425
+limit = 14425
+next = 3141
+tolerance_percent = 10
+
+[[row]]
+name = "detector_frame"
+measure = "instructions per frame of the detector-shaped graph: five stages, the input fanned out to four"
+tool = "callgrind"
+command = "detector {n}"
+# Dev's figure for this graph is a time, about 7 us per frame, which is a board run. Its
+# instruction count under perf was 32,046 to 32,480.
+dev_perf = 32480
+dev_callgrind = 34395
+limit = 34395
+next = 7701
+tolerance_percent = 10
+board_run = "I2"
+
+[[row]]
+name = "fused_chain_16_tick"
+measure = "instructions per tick of 16 fused no-op stages with a value in them: feed, tick, take"
+tool = "callgrind"
+command = "chain {n} 16"
+# Dev has no fused chain of plain numbers. Its 16-stage chain of frames was 35,717 under perf,
+# which is the reference here and the limit.
+dev_perf = 35717
+limit = 35717
+next = 8351
+tolerance_percent = 10
+board_run = "I2"
+
+# --- Allocations: a counting global allocator in the harness. -----------------------------------
+# The value is allocations per steady-state tick, over 1,000 ticks after a warm-up. Planning is
+# not counted, and neither is making the value that is fed.
+
+[[row]]
+name = "alloc_fused_tick"
+measure = "allocations per tick of 16 fused stages"
+tool = "alloc"
+dev = 0
+limit = 0
+
+[[row]]
+name = "alloc_plugin_node_tick"
+measure = "allocations per tick of a dylib plugin's node"
+tool = "alloc"
+dev = 0
+limit = 0
+
+[[row]]
+name = "alloc_large_handle_tick"
+measure = "allocations per tick of a graph that passes a megabyte by handle to two readers"
+tool = "alloc"
+dev = 0
+limit = 0
+
+[[row]]
+name = "alloc_large_handle_moved_tick"
+measure = "allocations per tick when a node takes the megabyte and hands it on"
+tool = "alloc"
+dev = 0
+# Worse than dev. A CPU node's output that is not plain data of 16 bytes or less is published
+# in a new `Arc` every tick: one allocation an output.
+limit = 1
+
+[[row]]
+name = "alloc_detector_frame"
+measure = "allocations per frame of the detector-shaped graph"
+tool = "alloc"
+dev = 0
+# Worse than dev, for the same reason: the five stages have six struct outputs.
+limit = 6
+
+# --- Flash and static RAM: ELF section sizes of the five-node firmware. ---------------------------
+# Flash is .vector_table + .text + .rodata + .data. RAM is .data + .bss + .uninit. The design's
+# range, measured on dev, is 3 to 12 KiB of flash and 112 to 584 B of RAM across the three modes.
+# It is not known per mode, so the rows carry limits and no dev value.
+
+[[row]]
+name = "firmware_compiled"
+measure = "flash and RAM of the five-node firmware, compiled mode"
+tool = "elf"
+binary = "daedalus-chip-blink"
+targets = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi"]
+limit_flash = 12288
+limit_ram = 584
+
+[[row]]
+name = "firmware_tunable"
+measure = "flash and RAM of the five-node firmware, tunable mode"
+tool = "elf"
+binary = "daedalus-chip-blink-tunable"
+targets = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi"]
+limit_flash = 6144
+limit_ram = 512
+
+[[row]]
+name = "firmware_loaded"
+measure = "flash and RAM of the five-node firmware, loaded mode"
+tool = "elf"
+binary = "daedalus-chip-blink-loaded"
+targets = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi"]
+# Above the design's 12 KiB. docs/chips.md says what the space is, and D7 set this limit.
+limit_flash = 17920
+limit_ram = 584
+
+# --- GPU submits: counted on lavapipe, in the GPU workflow. ----------------------------------------
+
+[[row]]
+name = "gpu_region_submits"
+measure = "queue submits by a region of 8 shader nodes run as one step"
+tool = "gpu-lane"
+# Checked by scripts/gpu-lavapipe.sh (E12), which runs the counted budgets of
+# testing/crates/gpu-budgets: exactly one submit a region.
+dev = 1
+limit = 1
+board_run = "I2"
