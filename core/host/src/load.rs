@@ -654,6 +654,15 @@ impl LoadedHost {
             .cancel()
     }
 
+    /// The cancel word as a handle another thread can keep, to cancel a tick this one is running.
+    pub fn cancel_handle(&self) -> daedalus_runner::owned_run::CancelHandle {
+        self.host
+            .owned
+            .as_ref()
+            .expect("a loaded host owns its buffers")
+            .cancel_handle()
+    }
+
     /// Begins ticking on a worker, with every host port streamed. Stop the stream before a reload.
     pub fn start(self) -> crate::stream::StreamGraph<LoadedHost> {
         let (mut inputs, mut outputs) = (Vec::new(), Vec::new());

@@ -378,6 +378,15 @@ impl Client {
         self.inner.reconnect.store(on, Ordering::Relaxed);
     }
 
+    /// Closes the connection now, for every handle. Calls after this fail with `disconnected`,
+    /// every watch stream ends, and the client does not reconnect.
+    pub fn close(&self) {
+        self.inner.closing.store(true, Ordering::Relaxed);
+        if let Some(link) = self.inner.lock().link.take() {
+            (link.close)();
+        }
+    }
+
     /// Sends a request without waiting for its answer, so several can be in flight at once.
     pub fn send(&self, op: Op) -> Result<Pending, ClientError> {
         let (answer, wait) = channel();

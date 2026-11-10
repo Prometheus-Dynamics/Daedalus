@@ -5,6 +5,7 @@
 #![cfg(feature = "std")]
 
 use std::boxed::Box;
+use std::sync::Arc;
 use std::vec;
 use std::vec::Vec;
 
@@ -82,7 +83,7 @@ pub struct RunBuffers {
     _reuse_stored: Raw<Slot>,
     _reuse_inline: Raw<InlineCell>,
     _reuse_inputs: Raw<InputVersion>,
-    cancel: Raw<CancelWord>,
+    cancel: Arc<CancelWord>,
     _faults: Raw<StepFault>,
     probe: Option<Raw<TickProbe<'static>>>,
 }
@@ -90,12 +91,38 @@ pub struct RunBuffers {
 impl RunBuffers {
     /// The cancel word of this runner.
     pub fn cancel(&self) -> &CancelWord {
-        &self.cancel.shared()[0]
+        &self.cancel
+    }
+
+    /// The cancel word as a handle another thread can keep: a host that serves several callers
+    /// cancels a tick that one of them is running. It may outlive the runner.
+    pub fn cancel_handle(&self) -> CancelHandle {
+        CancelHandle(Arc::clone(&self.cancel))
     }
 
     /// The tick probe, when the runner was built with one.
     pub fn probe(&self) -> Option<&TickProbe<'static>> {
         self.probe.as_ref().map(|probe| &probe.shared()[0])
+    }
+}
+
+/// A runner's cancel word, shared. Cancelling through it is what [`RunBuffers::cancel`] does.
+#[derive(Clone)]
+pub struct CancelHandle(Arc<CancelWord>);
+
+impl CancelHandle {
+    /// Asks the run to stop at the next step boundary.
+    pub fn cancel(&self) {
+        self.0.cancel();
+    }
+
+    /// Clears the request.
+    pub fn clear(&self) {
+        self.0.clear();
+    }
+
+    pub fn is_set(&self) -> bool {
+        self.0.is_set()
     }
 }
 
@@ -147,7 +174,7 @@ pub fn build(
         _reuse_stored: Raw::new(vec![Slot::EMPTY; stored]),
         _reuse_inline: Raw::new(vec![[0; crate::owned::INLINE_BYTES]; stored]),
         _reuse_inputs: Raw::new(vec![InputVersion::default(); nslots]),
-        cancel: Raw::new(vec![CancelWord::new()]),
+        cancel: Arc::new(CancelWord::new()),
         _faults: Raw::new(vec![StepFault::EMPTY; count]),
         probe: clock.map(|clock| Raw::new(vec![TickProbe::new(clock)])),
     };
@@ -192,7 +219,9 @@ pub fn build(
         };
         runner.set_reuse(table, host_inputs)?;
     }
-    let word: &'static CancelWord = &buffers.cancel.shared()[0];
+    // SAFETY: the word lives in an `Arc` that `buffers` holds until it is dropped, which is
+    // after the runner, so the runner's borrow never outlives it.
+    let word: &'static CancelWord = unsafe { &*Arc::as_ptr(&buffers.cancel) };
     runner.set_cancel(word);
     // SAFETY: as above; this table is borrowed only here.
     runner.set_fault_log(unsafe { buffers._faults.borrow() })?;

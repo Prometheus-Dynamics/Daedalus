@@ -34,6 +34,8 @@ mod intern;
 mod introspect;
 mod io;
 mod label;
+#[cfg(feature = "listen")]
+pub mod listen;
 #[cfg(feature = "std")]
 mod load;
 #[cfg(feature = "std")]

@@ -1,0 +1,268 @@
+//! A backend, a registry and graphs for the listener tests. A core crate can't use a real
+//! backend, so this one is written here, without `unsafe`, on `OwnedStep`.
+
+#![allow(dead_code)] // Each test uses part of this module.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use daedalus_abi::{OwnedStep, Slots, Step, StepCx, StepEnd};
+use daedalus_backend::{
+    Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, SpaceKind,
+    StepUnit, Transfer, UnitInfo,
+};
+use daedalus_graph::{
+    EdgeDoc, EdgePolicyDoc, GraphBody, GraphDoc, NodeDoc, NodeKindDoc, PortRefDoc,
+};
+use daedalus_host::listen::{ListenOptions, PluginLoader, ServiceHost};
+use daedalus_registry::{OwnedBody, OwnedDecl, OwnedPort, Registry, TypeRef};
+use daedalus_runner::{put_typed, skip_cancelled, take_typed};
+use daedalus_types::{Scalar, SpaceIndex, TypeIndex, TypeKey};
+use daedalus_wire::service::{
+    ClientMsg, Op, PluginInfo, Request, ServerMsg, ServiceHello, TypedValue,
+};
+use daedalus_wire::{DEFAULT_CAP, Schema, WireType, WireValue, read_packet, write_packet};
+use std::net::{SocketAddr, TcpStream};
+
+/// Set when the waiting node's body is running.
+pub static WAITING: AtomicBool = AtomicBool::new(false);
+
+enum Kind {
+    Double,
+    Boom,
+    /// Runs until the run is cancelled.
+    Wait,
+}
+
+struct Body {
+    kind: Kind,
+    node: u32,
+}
+
+impl OwnedStep for Body {
+    fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
+        let Some(input) = slots.cell(0).and_then(take_typed::<u32>) else {
+            return StepEnd::Skipped;
+        };
+        match self.kind {
+            Kind::Double => {
+                let Some(cell) = slots.cell(1) else {
+                    return StepEnd::Fault;
+                };
+                put_typed(cell, TypeIndex(0), SpaceIndex(0), Arc::new(*input * 2));
+                StepEnd::Done
+            }
+            Kind::Boom => {
+                cx.fault(Some(self.node), "boom: the node failed on purpose");
+                StepEnd::Fault
+            }
+            Kind::Wait => {
+                WAITING.store(true, Ordering::SeqCst);
+                while !cx.cancelled() {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                skip_cancelled(cx)
+            }
+        }
+    }
+}
+
+pub struct TestBackend;
+
+impl Backend for TestBackend {
+    fn id(&self) -> &str {
+        "t"
+    }
+
+    fn memory(&self) -> Vec<MemorySpace> {
+        vec![MemorySpace {
+            id: "t.host".into(),
+            kind: SpaceKind::Host,
+            readable: true,
+        }]
+    }
+
+    fn transfers(&self) -> Vec<Transfer> {
+        Vec::new()
+    }
+
+    fn can_take(&self, offer: &Offer<'_>) -> Vec<NodeRef> {
+        offer
+            .nodes
+            .iter()
+            .map(|node| NodeRef {
+                node: node.node,
+                body: node.body,
+            })
+            .collect()
+    }
+
+    fn compile(&self, region: &Region<'_>, cx: &CompileCx<'_>) -> Result<Compiled, Refusal> {
+        let [node] = region.nodes else {
+            return Err(Refusal::new(Vec::new(), "one node a region"));
+        };
+        let id = cx
+            .bodies
+            .iter()
+            .find(|body| body.node == *node)
+            .map_or("", |body| body.id);
+        let kind = match id {
+            "t.double" | "t.blob" => Kind::Double,
+            "t.boom" => Kind::Boom,
+            _ => Kind::Wait,
+        };
+        let info = UnitInfo {
+            covers: region.nodes.to_vec(),
+            reads: region.inputs.to_vec(),
+            writes: region.outputs.to_vec(),
+            absorbed: Vec::new(),
+            may_pend: false,
+        };
+        let step = Step::boxed(Body { kind, node: node.0 });
+        Ok(Compiled::Steps(vec![StepUnit { step, info }]))
+    }
+}
+
+pub fn registry() -> Registry {
+    let mut registry = Registry::new();
+    let u32_ty = || TypeRef::Key(Scalar::U32.key());
+    let blob = || TypeRef::Key(TypeKey::shared("t:blob").unwrap());
+    for (id, ty) in [
+        ("t.double", u32_ty as fn() -> TypeRef),
+        ("t.boom", u32_ty),
+        ("t.wait", u32_ty),
+        ("t.blob", blob),
+    ] {
+        registry
+            .register_owned(OwnedDecl {
+                id: id.to_string(),
+                source: "listen test".to_string(),
+                inputs: vec![OwnedPort {
+                    name: "in".to_string(),
+                    ty: ty(),
+                    optional: false,
+                }],
+                outputs: vec![OwnedPort {
+                    name: "out".to_string(),
+                    ty: ty(),
+                    optional: false,
+                }],
+                body: OwnedBody {
+                    backend: "t".to_string(),
+                    text: id.to_string(),
+                },
+            })
+            .unwrap();
+    }
+    registry
+}
+
+/// A graph document: a host bridge with ports `in` and `out`, around one node.
+pub fn graph(node: &str) -> String {
+    graph_typed(node, "u32")
+}
+
+pub fn graph_typed(node: &str, key: &str) -> String {
+    let mut bridge = NodeDoc::new("host");
+    bridge.kind = NodeKindDoc::HostBridge;
+    bridge.label = Some("io".to_string());
+    for port in ["in", "out"] {
+        bridge.port_types.insert(port.to_string(), key.to_string());
+    }
+    let mut inner = NodeDoc::new(node);
+    inner.label = Some("work".to_string());
+    let edge = |from: u32, from_port: &str, to: u32, to_port: &str| EdgeDoc {
+        from: PortRefDoc {
+            node: from,
+            port: from_port.to_string(),
+        },
+        to: PortRefDoc {
+            node: to,
+            port: to_port.to_string(),
+        },
+        policy: EdgePolicyDoc::default(),
+    };
+    let body = GraphBody {
+        nodes: vec![bridge, inner],
+        edges: vec![edge(0, "in", 1, "in"), edge(1, "out", 0, "out")],
+        groups: Vec::new(),
+    };
+    GraphDoc::new(body).to_json().unwrap()
+}
+
+/// A loader that panics on the path `panic`, fails on `bad`, and otherwise reports a plugin
+/// named after the path.
+pub struct FakeLoader;
+
+impl PluginLoader for FakeLoader {
+    fn load(
+        &mut self,
+        path: &str,
+        _: &mut Registry,
+        _: &mut Vec<Arc<dyn Backend>>,
+    ) -> Result<PluginInfo, String> {
+        match path {
+            "panic" => panic!("the loader panicked on purpose"),
+            "bad" => Err("not a plugin".to_string()),
+            path => Ok(PluginInfo {
+                name: path.to_string(),
+                generation: 1,
+                nodes: Vec::new(),
+                backends: Vec::new(),
+            }),
+        }
+    }
+}
+
+pub fn host(options: ListenOptions) -> Arc<ServiceHost> {
+    ServiceHost::builder(registry())
+        .backend(Arc::new(TestBackend))
+        .plugins(Box::new(FakeLoader))
+        .options(options)
+        .build()
+}
+
+/// A raw connection that has said hello.
+pub fn raw(addr: SocketAddr) -> TcpStream {
+    let mut stream = TcpStream::connect(addr).expect("connect");
+    let hello = ClientMsg::Hello(ServiceHello::client())
+        .encode(&Schema::new())
+        .unwrap();
+    write_packet(&mut stream, &hello, DEFAULT_CAP).unwrap();
+    let mut buf = Vec::new();
+    read_packet(&mut stream, DEFAULT_CAP, &mut buf).unwrap();
+    assert!(matches!(
+        ServerMsg::decode(&buf, &Schema::new()),
+        Ok(ServerMsg::Hello(_))
+    ));
+    stream
+}
+
+pub fn request(id: u64, op: Op) -> Vec<u8> {
+    ClientMsg::Request(Request::new(id, op))
+        .encode(&Schema::new())
+        .unwrap()
+}
+
+/// A host listening on a loopback port, and how to reach it.
+pub fn serving(options: ListenOptions) -> (Arc<ServiceHost>, SocketAddr) {
+    let host = host(options);
+    let (_listener, addr) = host
+        .listen_tcp("127.0.0.1:0".parse().unwrap())
+        .expect("listen");
+    (host, addr)
+}
+
+pub fn u32_value(value: u32) -> TypedValue {
+    TypedValue::new(WireType::Scalar(Scalar::U32), WireValue::U32(value))
+}
+
+/// Waits for `done`, however slow the machine is. Fails only if it never happens.
+pub fn until(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(180);
+    while !done() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
