@@ -1,15 +1,17 @@
 //! An open device. Nothing outside this crate gets one.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use crate::adapter::{Options, choose};
 use crate::caps::{CapsRecord, OPTIONAL_FEATURES};
 use crate::copy_limiter::{CopyLimiter, MAX_INFLIGHT_COPIES};
 use crate::driver::{LockedInstance, driver_lock, open_device};
+use crate::inflight::InFlight;
 use crate::pool::TempPool;
 use crate::staging::StagingPool;
+use crate::wait::{PendingErrors, WaitError};
 
 /// Why no device opened. Opening is tried again the next time one is needed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +45,11 @@ pub(crate) struct Context {
     pub(crate) copies: CopyLimiter,
     staging: Mutex<StagingPool<wgpu::Buffer>>,
     shaders: Mutex<crate::shader::ShaderCache>,
+    /// What the device reported outside any call.
+    pub(crate) errors: Arc<PendingErrors>,
+    lost: AtomicBool,
+    wait_timeout: std::time::Duration,
+    inflight: Mutex<InFlight>,
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "shader nodes take their scratch here, from E4")
@@ -91,7 +98,16 @@ impl Context {
         options: &Options,
     ) -> Context {
         let limits = device.limits();
+        let errors = Arc::new(PendingErrors::default());
+        let record = Arc::clone(&errors);
+        device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
+            record.record(error.to_string());
+        }));
         Context {
+            errors,
+            lost: AtomicBool::new(false),
+            wait_timeout: options.wait_timeout,
+            inflight: Mutex::new(InFlight::new(options.max_in_flight)),
             record: CapsRecord::new(info, &limits, device.features()),
             limits,
             device,
@@ -107,6 +123,37 @@ impl Context {
 
     pub(crate) fn shaders(&self) -> MutexGuard<'_, crate::shader::ShaderCache> {
         self.shaders.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn inflight(&self) -> MutexGuard<'_, InFlight> {
+        self.inflight.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Lets the device run the callbacks of what has finished. Never blocks.
+    pub(crate) fn poll(&self) {
+        let _ = self.device.poll(wgpu::PollType::Poll);
+    }
+
+    /// Waits for everything submitted, up to the bound. A timeout marks the device lost.
+    pub(crate) fn wait(&self, what: &'static str) -> Result<(), WaitError> {
+        if crate::wait::wait_idle(&self.device, self.wait_timeout) {
+            Ok(())
+        } else {
+            Err(self.timed_out(what))
+        }
+    }
+
+    pub(crate) fn timed_out(&self, what: &'static str) -> WaitError {
+        self.lost.store(true, Ordering::Release);
+        WaitError::TimedOut {
+            what,
+            after: self.wait_timeout,
+        }
+    }
+
+    /// Whether a wait on this device has timed out. Its work can't be trusted to finish.
+    pub(crate) fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire)
     }
 
     /// A number no other buffer or texture in this process has.

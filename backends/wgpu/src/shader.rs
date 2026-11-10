@@ -4,7 +4,7 @@ mod dispatch;
 mod pipeline;
 mod spec;
 
-pub use dispatch::{Bound, Shader, ShaderError};
+pub use dispatch::{Bound, Run, Shader, ShaderError};
 pub use pipeline::ShaderStats;
 pub use spec::{BindingKind, BindingSpec, Dispatch, SampleKind, ShaderSpec, TextureAccess};
 

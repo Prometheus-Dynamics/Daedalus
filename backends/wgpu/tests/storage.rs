@@ -216,7 +216,13 @@ static COPY: daedalus_wgpu::shader::ShaderSpec = {
 
 #[test]
 fn a_dma_heap_buffer_is_one_memory_for_the_host_and_the_device() {
-    use daedalus_wgpu::shader::{Bound, Shader};
+    use daedalus_wgpu::shader::{Bound, Run, Shader};
+    let go = |shader: &Shader, bound: &[Bound<'_>]| loop {
+        match shader.run(bound).expect("runs") {
+            Run::Started(ticket) => break ticket.wait().expect("finishes"),
+            Run::Busy(oldest) => oldest.wait().expect("finishes"),
+        }
+    };
     let Some(backend) = private() else { return };
     let heap = match Storage::new_dma_heap(&backend, 1 << 16) {
         Ok(heap) => heap,
@@ -237,9 +243,7 @@ fn a_dma_heap_buffer_is_one_memory_for_the_host_and_the_device() {
     heap.write(0, &pattern(1 << 16)).expect("in range");
     let copy = Storage::new(&backend, 1 << 16).expect("a buffer");
     let shader = Shader::load(&backend, &COPY).expect("loads");
-    shader
-        .run(&[Bound::Storage(&heap), Bound::Storage(&copy)])
-        .expect("runs");
+    go(&shader, &[Bound::Storage(&heap), Bound::Storage(&copy)]);
     let mut seen = vec![0; 1 << 16];
     copy.read_into(0, &mut seen).expect("a readback");
     assert_eq!(seen, pattern(1 << 16));
@@ -248,9 +252,7 @@ fn a_dma_heap_buffer_is_one_memory_for_the_host_and_the_device() {
     let source = Storage::new(&backend, 1 << 16).expect("a buffer");
     let reversed: Vec<u8> = pattern(1 << 16).into_iter().rev().collect();
     source.write(0, &reversed).expect("in range");
-    shader
-        .run(&[Bound::Storage(&source), Bound::Storage(&heap)])
-        .expect("runs");
+    go(&shader, &[Bound::Storage(&source), Bound::Storage(&heap)]);
     source
         .read_into(0, &mut seen[..4])
         .expect("waits for the device's work");

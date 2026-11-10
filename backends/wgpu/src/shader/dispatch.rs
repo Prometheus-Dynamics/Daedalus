@@ -8,7 +8,9 @@ use super::spec::{BindingKind, Dispatch, ShaderSpec};
 use crate::WgpuBackend;
 use crate::buffer::Storage;
 use crate::context::{Context, OpenError};
+use crate::fence::{Ticket, TicketState};
 use crate::texture::Texture;
+use crate::timer::PassTimer;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShaderError {
@@ -24,15 +26,18 @@ pub enum ShaderError {
         count: u32,
         max: u32,
     },
+    /// The device reported an error since the last run, or was lost. Nothing was submitted.
+    Device(String),
 }
 
 impl fmt::Display for ShaderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ShaderError::Open(error) => error.fmt(f),
-            ShaderError::Limits(text) | ShaderError::Build(text) | ShaderError::Binding(text) => {
-                f.write_str(text)
-            }
+            ShaderError::Limits(text)
+            | ShaderError::Build(text)
+            | ShaderError::Binding(text)
+            | ShaderError::Device(text) => f.write_str(text),
             ShaderError::Shape { count, max } => {
                 write!(
                     f,
@@ -56,6 +61,15 @@ pub enum Bound<'a> {
     Sampler,
 }
 
+/// What a run did.
+pub enum Run {
+    /// Submitted. The ticket is done when the device has finished.
+    Started(Ticket),
+    /// Not submitted: the device already has as many submissions unfinished as it takes. The
+    /// ticket is the oldest of them. Run again once it is done.
+    Busy(Ticket),
+}
+
 /// A shader ready to run on one device. Loading builds its pipeline, or finds the one already
 /// built for the same content. Load at setup, not while a region runs.
 pub struct Shader {
@@ -64,6 +78,8 @@ pub struct Shader {
     pub(super) pipeline: Arc<Pipeline>,
     /// One per uniform or sampler binding, by position in the binding table.
     owned: Vec<Option<Owned>>,
+    /// For timing passes with the device's own timestamps. Empty unless asked for.
+    timers: Vec<Arc<PassTimer>>,
     context: Arc<Context>,
 }
 
@@ -139,8 +155,19 @@ impl Shader {
             key: spec.key(),
             pipeline,
             owned,
+            timers: Vec::new(),
             context,
         })
+    }
+
+    /// Times each pass with timestamps the device writes, where it can. Without this, or on a
+    /// device that can't, a ticket's time is from submit to done.
+    pub fn with_timestamps(mut self) -> Shader {
+        let wanted = self.context.inflight().limit();
+        self.timers = (0..wanted)
+            .filter_map(|_| PassTimer::new(&self.context).map(Arc::new))
+            .collect();
+        self
     }
 
     pub fn spec(&self) -> &'static ShaderSpec {
@@ -248,17 +275,30 @@ impl Shader {
         }
     }
 
-    /// Runs the shader once, as one compute pass, and submits it. The work is ordered after
-    /// everything submitted before it on this device. Reading a result back waits for it.
-    pub fn run(&self, bound: &[Bound<'_>]) -> Result<(), ShaderError> {
+    /// Runs the shader once, as one compute pass, and submits it. Never waits: the ticket says
+    /// when the work is done, and the work is ordered after everything submitted before it on
+    /// this device. When the device already has its limit of submissions unfinished, nothing is
+    /// submitted and the oldest of them comes back to wait on.
+    pub fn run(&self, bound: &[Bound<'_>]) -> Result<Run, ShaderError> {
+        let context = &self.context;
+        if let Some(reported) = context.errors.take() {
+            return Err(ShaderError::Device(reported));
+        }
+        if context.is_lost() {
+            return Err(ShaderError::Device("the device is lost".into()));
+        }
         let resources = self.resources(bound)?;
         let [x, y, z] = self.counts(bound)?;
+        context.poll();
+        if let Err(oldest) = context.inflight().admit() {
+            return Ok(Run::Busy(Ticket::new(oldest, Arc::clone(context), None)));
+        }
         let mut ids = [0; MAX_BINDINGS];
         for (id, (have, _)) in ids.iter_mut().zip(&resources) {
             *id = *have;
         }
         let key: GroupKey = (self.key, ids);
-        let kept = self.context.shaders().group(&key);
+        let kept = context.shaders().group(&key);
         let group = match kept {
             Some(group) => group,
             None => {
@@ -274,30 +314,50 @@ impl Shader {
                         })
                     })
                     .collect();
-                let group = self
-                    .context
+                let group = context
                     .device
                     .create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
                         layout: &self.pipeline.layout,
                         entries: &entries,
                     });
-                self.context.shaders().keep_group(key, group.clone());
+                context.shaders().keep_group(key, group.clone());
                 group
             }
         };
-        let mut encoder = self
-            .context
+        let timer = self.timers.iter().find(|timer| timer.claim());
+        let mut encoder = context
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: timer.map(|timer| timer.writes()),
+            });
             pass.set_pipeline(&self.pipeline.pipeline);
             pass.set_bind_group(0, &group, &[]);
             pass.dispatch_workgroups(x, y, z);
         }
-        let _held = self.context.submit.lock();
-        self.context.queue.submit([encoder.finish()]);
-        Ok(())
+        if let Some(timer) = timer {
+            timer.resolve(&mut encoder);
+        }
+        let state = TicketState::new();
+        let finished = Arc::clone(&state);
+        {
+            let _held = context.submit.lock();
+            context.queue.submit([encoder.finish()]);
+            context
+                .queue
+                .on_submitted_work_done(move || finished.finish());
+            if let Some(timer) = timer {
+                timer.map();
+            }
+        }
+        context.inflight().started(Arc::clone(&state));
+        Ok(Run::Started(Ticket::new(
+            state,
+            Arc::clone(context),
+            timer.cloned(),
+        )))
     }
 }

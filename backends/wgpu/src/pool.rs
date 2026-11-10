@@ -105,14 +105,11 @@ mod tests {
 
     #[test]
     fn scratch_is_reused_by_size_and_usage_and_the_oldest_goes_at_the_limit() {
-        let options = Options {
-            temp_pool: TempPoolLimits {
-                buffers: 2,
-                textures: 0,
-            },
-            ..Options::default()
+        let limits = TempPoolLimits {
+            buffers: 2,
+            textures: 0,
         };
-        let Ok(context) = Context::open(&options) else {
+        let Ok(context) = Context::open(&Options::default()) else {
             assert!(std::env::var_os("DAEDALUS_GPU_REQUIRED").is_none());
             return;
         };
@@ -124,7 +121,12 @@ mod tests {
                 mapped_at_creation: false,
             })
         };
-        let mut pool = context.temp.lock().expect("the pool");
+        // A pool of this test's own: the device's is shared with every other test here.
+        let mut pool = super::TempPool::new(limits);
+        assert_eq!(
+            context.temp.lock().expect("the device's pool").counts(),
+            (0, 0)
+        );
         pool.put_buffer(buffer(1024));
         assert!(
             pool.take_buffer(256, wgpu::BufferUsages::STORAGE).is_none(),
