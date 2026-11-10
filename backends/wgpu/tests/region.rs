@@ -550,3 +550,132 @@ fn a_lost_device_faults_the_region_then_is_reopened_and_the_region_runs_again() 
     backend.turn_on();
     assert!(backend.start().is_ok());
 }
+
+/// A recording body: copies its input to its output with a copy command of its own.
+fn record_copy(cx: &mut daedalus_wgpu::record::RecordCx<'_>) -> Result<(), String> {
+    let (from, to) = (
+        cx.input(0).ok_or("no input")?,
+        cx.output(0).ok_or("no output")?,
+    );
+    let bytes = from.size().min(to.size());
+    cx.encoder()
+        .copy_buffer_to_buffer(from.wgpu(), 0, to.wgpu(), 0, bytes);
+    Ok(())
+}
+
+fn record_refuses(_: &mut daedalus_wgpu::record::RecordCx<'_>) -> Result<(), String> {
+    Err("the author's recording said no".into())
+}
+
+static COPY_BODY: daedalus_wgpu::record::RecordBody =
+    daedalus_wgpu::record::RecordBody::new(record_copy);
+static HALF_BODY: daedalus_wgpu::record::RecordBody =
+    daedalus_wgpu::record::RecordBody::new(record_copy).sized(|inputs, _| inputs[0] / 2);
+static REFUSING_BODY: daedalus_wgpu::record::RecordBody =
+    daedalus_wgpu::record::RecordBody::new(record_refuses);
+
+fn recording(node: u32, record: &'static daedalus_wgpu::record::RecordBody) -> NodeBody<'static> {
+    NodeBody {
+        node: NodeIndex(node),
+        id: "recording",
+        body: BodyIndex(0),
+        inputs: 1,
+        outputs: 1,
+        merges: true,
+        fire_all: true,
+        label: None,
+        metadata: &NO_METADATA,
+        code: record as &(dyn Any + Send + Sync),
+        text: "",
+    }
+}
+
+#[test]
+fn a_recording_body_records_into_the_regions_one_submit() {
+    let Some(backend) = private() else { return };
+    // add(x, y) -> the author's copy -> triple, and the copy's output leaves the region too.
+    let made = |record| Chain {
+        bodies: vec![
+            body(0, &ADD, &NO_METADATA),
+            recording(1, record),
+            body(2, &TRIPLE, &NO_METADATA),
+        ],
+        edges: vec![(port(0, 0), port(1, 0)), (port(1, 0), port(2, 0))],
+        nodes: vec![NodeIndex(0), NodeIndex(1), NodeIndex(2)],
+        inputs: vec![port(0, 0), port(0, 1)],
+    };
+    let chain = made(&COPY_BODY);
+    let mut unit = compile(&backend, &chain, &[port(1, 0), port(2, 0)]);
+    let (x, y) = (
+        filled(&backend, &[1, 2, 3, 4]),
+        filled(&backend, &[10, 20, 30, 40]),
+    );
+    let before = backend.shader_stats().expect("open");
+    let out = run(&mut unit, 2, 2, &x, &y);
+    let after = backend.shader_stats().expect("open");
+    assert_eq!(
+        after.submits - before.submits,
+        1,
+        "the author never submits"
+    );
+    assert_eq!(
+        after.passes - before.passes,
+        2,
+        "the two shaders: the copy opens no pass"
+    );
+    assert_eq!(words(&out[0]), [11, 22, 33, 44]);
+    assert_eq!(words(&out[1]), [33, 66, 99, 132]);
+    release(unit.step);
+
+    // The body says how large its output is.
+    let chain = made(&HALF_BODY);
+    let mut unit = compile(&backend, &chain, &[port(1, 0), port(2, 0)]);
+    let out = run(&mut unit, 2, 2, &x, &y);
+    assert_eq!(words(&out[0]), [11, 22]);
+    assert_eq!(
+        words(&out[1]),
+        [33, 66],
+        "and what follows it is sized from that"
+    );
+    release(unit.step);
+
+    // An error from the body faults the step at that node, and nothing is submitted.
+    let chain = made(&REFUSING_BODY);
+    let mut unit = compile(&backend, &chain, &[port(2, 0)]);
+    let before = backend.shader_stats().expect("open");
+    let mut cells = vec![Slot::EMPTY; 3];
+    put_typed(&mut cells[0], TypeIndex(0), SpaceIndex(0), Arc::clone(&x));
+    put_typed(&mut cells[1], TypeIndex(0), SpaceIndex(0), Arc::clone(&y));
+    let mut cx = StepCx::new();
+    let end = run_once(&mut unit.step, &mut Slots::of(&mut cells), &mut cx);
+    assert!(matches!(end, StepEnd::Fault));
+    assert_eq!((cx.at, cx.reason()), (1, "the author's recording said no"));
+    assert_eq!(
+        backend.shader_stats().expect("open").submits,
+        before.submits
+    );
+    for cell in &mut cells {
+        drop(take_typed::<Storage>(cell));
+    }
+    release(unit.step);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_raw_submitter_is_made_on_the_backends_device() {
+    let Some(backend) = private() else { return };
+    let storage = Storage::new(&backend, 64).expect("a buffer");
+    match backend.raw_submitter(3) {
+        Ok(submitter) => {
+            assert_eq!(submitter.slots(), 3);
+            assert!(
+                storage.raw_buffer().is_some(),
+                "a Vulkan device has Vulkan buffers"
+            );
+            // The feature is a fact about the device, asked for without making a pipeline.
+            let _ = backend.storage_buffer_8bit();
+        }
+        // Off Vulkan there is no ring to make, and the error says so.
+        Err(error) => assert!(storage.raw_buffer().is_none(), "{error}"),
+    }
+}

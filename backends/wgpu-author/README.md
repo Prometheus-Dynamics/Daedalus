@@ -12,7 +12,7 @@ A GPU node is written at one of three levels. Pick the lowest that does the job.
 | Whole shader | A compute shader with its own bindings | Share a submit with other nodes, never merge |
 | Your own recording | Rust that records into the encoder | Order it, nothing more |
 
-This crate is the whole-shader level. The other two arrive with their own PRs.
+This crate covers the whole-shader level and your own recording. Per-pixel functions arrive with their own PR.
 
 ## A whole-shader node
 
@@ -90,6 +90,34 @@ device's own, larger limits are checked when the shader loads.
 - A compute entry point with no `@workgroup_size`.
 - A port that names no binding, or names a sampler.
 - A function. A shader node is a const.
+
+## Your own recording
+
+When a shader with fixed bindings isn't enough, the body is a function that records into the region's encoder. It can open any passes, with pipelines of its own, and it never submits: the region does, once, for every node in it.
+
+```rust
+use daedalus_macros::node;
+use daedalus_wgpu::record::{RecordBody, RecordCx};
+
+fn record_blur(cx: &mut RecordCx<'_>) -> Result<(), String> {
+    let (src, dst) = (cx.input(0).ok_or("no input")?, cx.output(0).ok_or("no output")?);
+    // Open passes on cx.encoder(), using src.wgpu() and dst.wgpu().
+    Ok(())
+}
+
+#[node(
+    id = "demo.blur",
+    inputs(src),
+    outputs(dst),
+    backend = daedalus_wgpu_author(record, src: Samples, dst: Samples),
+)]
+const BLUR: RecordBody = RecordBody::new(record_blur);
+```
+
+- Inputs and outputs are by port index, in the order the node declares them.
+- An output is as large as the first input. `RecordBody::new(f).sized(|inputs, output| ..)` says otherwise.
+- An error from the function faults the region's step at this node, and nothing is submitted.
+- `daedalus_wgpu::fragment::FragmentPass` is a ready-made pass for per-pixel work on tile-based GPUs: one WGSL fragment function, drawn over a whole target or over rectangles of it.
 
 ## What the macro makes
 

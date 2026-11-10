@@ -12,12 +12,16 @@ mod driver;
 mod fence;
 #[cfg(test)]
 mod fence_tests;
+pub mod fragment;
 mod inflight;
 mod loss;
 mod memory;
 mod pool;
 mod profile;
+#[cfg(target_os = "linux")]
+mod raw;
 mod readback;
+pub mod record;
 mod region;
 pub mod shader;
 mod staging;
@@ -39,6 +43,8 @@ pub use loss::{RETRY_CAP, RETRY_FIRST, retry_delay};
 pub use memory::{MemoryHints, SPACE_DEVICE, SPACE_DMA_HEAP, SPACE_HOST_CACHED, SPACE_HOST_MAPPED};
 pub use pool::TempPoolLimits;
 pub use profile::{DeviceProfile, Family, vendor_ids};
+#[cfg(target_os = "linux")]
+pub use raw::RawError;
 pub use staging::{StagingConfig, StagingStats};
 pub use storage_pool::{StoragePool, StoragePoolStats};
 pub use texture::{Format, Texture, TextureDesc, TextureError};

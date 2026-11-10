@@ -41,8 +41,8 @@ fn devices() -> Vec<(wgpu::Device, wgpu::Queue)> {
     found
 }
 
-fn spirv() -> Vec<u32> {
-    let module = naga::front::wgsl::parse_str(FILL).expect("the shader parses");
+fn spirv(wgsl: &str) -> Vec<u32> {
+    let module = naga::front::wgsl::parse_str(wgsl).expect("the shader parses");
     let info = naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::empty(),
@@ -66,19 +66,27 @@ struct Pipeline {
 
 impl Pipeline {
     fn new(device: &ash::Device, buffer: vk::Buffer) -> Pipeline {
-        let code = spirv();
-        let bindings = [vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)];
+        Pipeline::with(device, &spirv(FILL), &[buffer])
+    }
+
+    /// A pipeline from SPIR-V, with one storage buffer per binding from 0.
+    fn with(device: &ash::Device, code: &[u32], buffers: &[vk::Buffer]) -> Pipeline {
+        let bindings: Vec<vk::DescriptorSetLayoutBinding<'_>> = (0..buffers.len() as u32)
+            .map(|binding| {
+                vk::DescriptorSetLayoutBinding::default()
+                    .binding(binding)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .descriptor_count(1)
+                    .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            })
+            .collect();
         let sizes = [vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(1)];
+            .descriptor_count(buffers.len() as u32)];
         // SAFETY: valid create infos on a live device. Each object is destroyed in `Drop`.
         unsafe {
             let module = device
-                .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&code), None)
+                .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(code), None)
                 .expect("a shader module");
             let set_layout = device
                 .create_descriptor_set_layout(
@@ -121,17 +129,19 @@ impl Pipeline {
                         .set_layouts(&set_layouts),
                 )
                 .expect("a descriptor set")[0];
-            let buffers = [vk::DescriptorBufferInfo::default()
-                .buffer(buffer)
-                .range(vk::WHOLE_SIZE)];
-            device.update_descriptor_sets(
-                &[vk::WriteDescriptorSet::default()
-                    .dst_set(set)
-                    .dst_binding(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(&buffers)],
-                &[],
-            );
+            for (binding, &buffer) in buffers.iter().enumerate() {
+                let info = [vk::DescriptorBufferInfo::default()
+                    .buffer(buffer)
+                    .range(vk::WHOLE_SIZE)];
+                device.update_descriptor_sets(
+                    &[vk::WriteDescriptorSet::default()
+                        .dst_set(set)
+                        .dst_binding(binding as u32)
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(&info)],
+                    &[],
+                );
+            }
             Pipeline {
                 device: device.clone(),
                 module,
@@ -335,5 +345,227 @@ fn a_device_reports_what_it_was_opened_with() {
         if extras.eight_bit.uniform_and_storage_buffer {
             assert!(extras.eight_bit.storage_buffer);
         }
+    }
+}
+
+/// Adds one to every word.
+const BUMP: &str = "
+struct Out { words: array<u32> }
+@group(0) @binding(0) var<storage, read_write> out: Out;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x < arrayLength(&out.words) {
+        out.words[id.x] = out.words[id.x] + 1u;
+    }
+}
+";
+
+fn plus(base: &[u8], add: u32) -> Vec<u8> {
+    base.as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|word| (u32::from_le_bytes(*word) + add).to_le_bytes())
+        .collect()
+}
+
+#[test]
+fn raw_submits_interleave_with_wgpu_work_in_order() {
+    for (device, queue) in devices() {
+        let lock = SubmitLock::default();
+        let (buffer, _) =
+            memory::storage_buffer(&device, BYTES, Placement::Device, None).expect("a buffer");
+        let raw = Raw::of(&device).expect("a Vulkan device");
+        let handle = memory::handle(&buffer).expect("a handle");
+        let fill = Pipeline::new(&raw.device, handle);
+        let bump = Pipeline::with(&raw.device, &spirv(BUMP), &[handle]);
+        let submitter = Submitter::new(&device, &queue, &lock, 3).expect("a submitter");
+        let raw_run = |pipeline: &Pipeline| {
+            // SAFETY: the recording binds a pipeline and a set that outlive the test's waits.
+            let ticket = unsafe {
+                submitter.submit(|device, commands| pipeline.record(device, commands), &[])
+            };
+            let _ = ticket.expect("a submit");
+        };
+        // A copy of the buffer as it is at this point in the queue, made by wgpu.
+        let snapshot = || {
+            let copy = device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: BYTES,
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            encoder.copy_buffer_to_buffer(&buffer, 0, &copy, 0, BYTES);
+            let _held = lock.lock();
+            queue.submit([encoder.finish()]);
+            copy
+        };
+        // Raw, wgpu, raw, wgpu, raw: with nothing waited for in between.
+        raw_run(&fill);
+        let first = snapshot();
+        raw_run(&bump);
+        let second = snapshot();
+        raw_run(&bump);
+        assert_eq!(
+            read_through_wgpu(&device, &queue, &lock, &first),
+            expected()
+        );
+        assert_eq!(
+            read_through_wgpu(&device, &queue, &lock, &second),
+            plus(&expected(), 1)
+        );
+        assert_eq!(
+            read_through_wgpu(&device, &queue, &lock, &buffer),
+            plus(&expected(), 2)
+        );
+    }
+}
+
+#[test]
+fn ring_wrap_keeps_stale_tickets_apart_from_reused_slots() {
+    for (device, queue) in devices() {
+        let submitter =
+            Submitter::new(&device, &queue, &SubmitLock::default(), 2).expect("a submitter");
+        // SAFETY: nothing is recorded in any of these.
+        let submit = || unsafe { submitter.submit(|_, _| {}, &[]) }.expect("a submit");
+        let (first, second) = (submit(), submit());
+        // The third takes the first's slot, which means the first's work is done.
+        let third = submit();
+        assert!(first.is_done(), "a ticket whose slot was reused is done");
+        assert!(
+            first.wait(Duration::ZERO),
+            "and waiting on it returns at once"
+        );
+        for ticket in [&second, &third] {
+            assert!(ticket.wait(Duration::from_secs(30)));
+            assert!(ticket.is_done());
+        }
+    }
+}
+
+#[test]
+fn a_one_slot_ring_waits_for_each_previous_submission() {
+    for (device, queue) in devices() {
+        let lock = SubmitLock::default();
+        let (buffer, _) =
+            memory::storage_buffer(&device, BYTES, Placement::Device, None).expect("a buffer");
+        let raw = Raw::of(&device).expect("a Vulkan device");
+        let handle = memory::handle(&buffer).expect("a handle");
+        let fill = Pipeline::new(&raw.device, handle);
+        let bump = Pipeline::with(&raw.device, &spirv(BUMP), &[handle]);
+        // Zero slots is one slot.
+        let submitter = Submitter::new(&device, &queue, &lock, 0).expect("a submitter");
+        assert_eq!(submitter.slots(), 1);
+        // Each submit reuses the one command buffer, so it has to wait for the one before.
+        for pipeline in [&fill, &bump, &bump, &bump] {
+            // SAFETY: the recording binds a pipeline and a set that outlive the submitter.
+            let ticket = unsafe {
+                submitter.submit(|device, commands| pipeline.record(device, commands), &[])
+            };
+            let _ = ticket.expect("a submit");
+        }
+        assert_eq!(
+            read_through_wgpu(&device, &queue, &lock, &buffer),
+            plus(&expected(), 3)
+        );
+    }
+}
+
+#[test]
+fn dropping_a_submitter_waits_for_its_work() {
+    for (device, queue) in devices() {
+        let lock = SubmitLock::default();
+        let (buffer, mapping) =
+            memory::storage_buffer(&device, BYTES, Placement::HostMapped, None).expect("a buffer");
+        let mapping = mapping.expect("a mapping");
+        let raw = Raw::of(&device).expect("a Vulkan device");
+        let pipeline = Pipeline::new(&raw.device, memory::handle(&buffer).expect("a handle"));
+        {
+            let submitter = Submitter::new(&device, &queue, &lock, 2).expect("a submitter");
+            // SAFETY: the pipeline outlives the submitter, whose drop waits for the work.
+            let ticket = unsafe {
+                submitter.submit(|device, commands| pipeline.record(device, commands), &[])
+            };
+            let _ = ticket.expect("a submit");
+        }
+        // No wait of ours: the drop was the wait, so the host reads the finished work in place.
+        let mut seen = vec![0; BYTES as usize];
+        mapping.read(0, &mut seen).expect("in range");
+        assert_eq!(seen, expected());
+    }
+}
+
+#[test]
+fn a_raw_submit_allocates_nothing() {
+    use daedalus_abi::counting::counted;
+    for (device, queue) in devices() {
+        let lock = SubmitLock::default();
+        let (buffer, _) =
+            memory::storage_buffer(&device, BYTES, Placement::Device, None).expect("a buffer");
+        let raw = Raw::of(&device).expect("a Vulkan device");
+        let pipeline = Pipeline::new(&raw.device, memory::handle(&buffer).expect("a handle"));
+        let submitter = Submitter::new(&device, &queue, &lock, 3).expect("a submitter");
+        let frame = || {
+            // SAFETY: the recording binds a pipeline and a set that outlive the wait below.
+            let ticket = unsafe {
+                submitter.submit(|device, commands| pipeline.record(device, commands), &[])
+            }
+            .expect("a submit");
+            assert!(ticket.wait(Duration::from_secs(30)));
+        };
+        for _ in 0..8 {
+            frame();
+        }
+        // The driver may allocate on its own account now and then, so take the cheapest of
+        // several: what this crate adds is in every one of them.
+        let cheapest = (0..16).map(|_| counted(frame).1).min().unwrap_or(0);
+        assert_eq!(cheapest, 0, "record, submit and wait, with no allocation");
+    }
+}
+
+#[test]
+fn a_raw_kernel_reads_8_bit_storage() {
+    let words: Vec<u32> = ash::util::read_spv(&mut std::io::Cursor::new(
+        &include_bytes!("../fixtures/widen_u8.spv")[..],
+    ))
+    .expect("the fixture is SPIR-V");
+    for (device, queue) in devices() {
+        // The kernel needs 8-bit types in a storage buffer. A device opened without them
+        // would make the pipeline invalid, so ask before building it.
+        if !Extras::of(&device)
+            .expect("a Vulkan device")
+            .eight_bit
+            .storage_buffer
+        {
+            continue;
+        }
+        let lock = SubmitLock::default();
+        let (src, src_map) =
+            memory::storage_buffer(&device, WORDS, Placement::HostMapped, None).expect("a buffer");
+        let (dst, _) =
+            memory::storage_buffer(&device, BYTES, Placement::Device, None).expect("a buffer");
+        let bytes: Vec<u8> = (0..WORDS).map(|at| (at * 5 + 2) as u8).collect();
+        src_map
+            .expect("a mapping")
+            .write(0, &bytes)
+            .expect("in range");
+        let raw = Raw::of(&device).expect("a Vulkan device");
+        let handles = [
+            memory::handle(&src).expect("a handle"),
+            memory::handle(&dst).expect("a handle"),
+        ];
+        let pipeline = Pipeline::with(&raw.device, &words, &handles);
+        let submitter = Submitter::new(&device, &queue, &lock, 1).expect("a submitter");
+        // SAFETY: the recording binds a pipeline and a set that outlive the wait below.
+        let ticket =
+            unsafe { submitter.submit(|device, commands| pipeline.record(device, commands), &[]) }
+                .expect("a submit");
+        assert!(ticket.wait(Duration::from_secs(30)));
+        let want: Vec<u8> = bytes
+            .iter()
+            .flat_map(|&byte| (u32::from(byte) * 3).to_le_bytes())
+            .collect();
+        assert_eq!(read_through_wgpu(&device, &queue, &lock, &dst), want);
     }
 }

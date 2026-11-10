@@ -67,13 +67,17 @@ struct Args {
     entry: Option<LitStr>,
     count: Option<[u32; 3]>,
     per: Option<Ident>,
+    /// The body is the author's own recording, not a shader.
+    record: bool,
 }
 
 fn parse_args(input: ParseStream<'_>) -> Result<Args> {
     let mut args = Args::default();
     while !input.is_empty() {
         let name: Ident = input.parse()?;
-        if input.parse::<Token![:]>().is_ok() {
+        if name == "record" && (input.is_empty() || input.peek(Token![,])) {
+            args.record = true;
+        } else if input.parse::<Token![:]>().is_ok() {
             args.ports.push((name, input.parse()?));
         } else {
             input.parse::<Token![=]>()?;
@@ -167,6 +171,31 @@ fn kind_tokens(kind: &Kind) -> TokenStream {
     }
 }
 
+/// A body that is the author's own recording: the const is a `RecordBody`, and there is no
+/// WGSL to read. Its ports are its inputs and outputs in the order the node declares them.
+fn recording(name: &TokenStream, args: &Args) -> TokenStream {
+    let ports = args.ports.iter().map(|(port, ty)| {
+        let port = port.to_string();
+        quote!((
+            #port,
+            ::daedalus_registry::TypeRef::Key(<#ty as ::daedalus_types::Typed>::KEY),
+        ))
+    });
+    quote! {{
+        const BODY: ::daedalus_wgpu::record::RecordBody = #name;
+        ::daedalus_registry::BodyRecord {
+            backend: "wgpu",
+            at: ::daedalus_registry::SourceAt(::core::concat!(::core::file!(), ":", ::core::line!())),
+            needs: &[],
+            state: ::core::option::Option::None,
+            ports: &[#(#ports),*],
+            memory: &[],
+            code: &BODY,
+            text: "",
+        }
+    }}
+}
+
 pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
     let call: Call = syn::parse2(input)?;
     let name = call.name;
@@ -183,6 +212,9 @@ pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
         .decl
         .ok_or_else(|| Error::new_spanned(&name, "#[node] passed no declaration for this const"))?;
     let args = parse_args.parse2(call.args)?;
+    if args.record {
+        return Ok(recording(&name, &args));
+    }
     let (text, at) = source(init)?;
     let entry = args.entry.as_ref().map(LitStr::value);
     let shader = infer::read(&text, entry.as_deref()).map_err(|error| Error::new(at, error))?;

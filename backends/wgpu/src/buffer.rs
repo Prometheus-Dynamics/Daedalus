@@ -284,6 +284,12 @@ impl Storage {
         self.size
     }
 
+    /// The wgpu buffer, for a recording body or a fragment pass of your own to bind. It has
+    /// storage and copy usage.
+    pub fn wgpu(&self) -> &wgpu::Buffer {
+        &self.buffer
+    }
+
     /// The id of the memory space this buffer is in.
     pub fn space(&self) -> &'static str {
         if self.mapping.is_some() {
