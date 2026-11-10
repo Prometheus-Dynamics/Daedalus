@@ -12,7 +12,32 @@ A GPU node is written at one of three levels. Pick the lowest that does the job.
 | Whole shader | A compute shader with its own bindings | Share a submit with other nodes, never merge |
 | Your own recording | Rust that records into the encoder | Order it, nothing more |
 
-This crate covers the whole-shader level and your own recording. Per-pixel functions arrive with their own PR.
+This crate covers all three.
+
+## A per-pixel function
+
+The body is a const holding one WGSL function, `apply`, of the pixel it is given.
+
+```rust
+#[node(
+    id = "demo.normalize",
+    inputs(c, cfg),
+    outputs(out),
+    backend = daedalus_wgpu_author(pixel, c: Samples, cfg: Normalize, out: Samples),
+)]
+const NORMALIZE: &str = "
+    struct Config { mean: f32, scale: f32 }
+    fn apply(c: vec4<f32>, cfg: Config) -> vec4<f32> { return (c - cfg.mean) * cfg.scale; }
+";
+```
+
+- The first parameter is the pixel, and `apply` returns the pixel it makes. Each is a number, a vector of numbers, or a struct of them.
+- A parameter named `cfg` is the node's config: a struct, fed by the port of that name, and zeroes when nothing is connected.
+- Any other parameter is a side input, read at the same pixel from a buffer of its own.
+- A pixel body sees nothing else. A global, a binding, an entry point, an atomic, a barrier or workgroup memory makes it a whole shader, and the build says so.
+- The node has exactly one output.
+
+When the backend compiles a region, pixel bodies that feed each other, with nothing else reading the values between them, become one shader: one pass, one loop over the pixels, and no buffer in between. A second consumer of a value, or a node that isn't a pixel body, ends a chain. Helpers, structs and constants in different bodies can share names: each body's top-level names are prefixed when the bodies are put together.
 
 ## A whole-shader node
 

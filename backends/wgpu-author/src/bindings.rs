@@ -69,14 +69,19 @@ struct Args {
     per: Option<Ident>,
     /// The body is the author's own recording, not a shader.
     record: bool,
+    /// The body is a per-pixel function, which can merge with its neighbours.
+    pixel: bool,
 }
 
 fn parse_args(input: ParseStream<'_>) -> Result<Args> {
     let mut args = Args::default();
     while !input.is_empty() {
         let name: Ident = input.parse()?;
-        if name == "record" && (input.is_empty() || input.peek(Token![,])) {
+        let bare = input.is_empty() || input.peek(Token![,]);
+        if name == "record" && bare {
             args.record = true;
+        } else if name == "pixel" && bare {
+            args.pixel = true;
         } else if input.parse::<Token![:]>().is_ok() {
             args.ports.push((name, input.parse()?));
         } else {
@@ -196,6 +201,71 @@ fn recording(name: &TokenStream, args: &Args) -> TokenStream {
     }}
 }
 
+/// A per-pixel body: the record holds a `PixelSpec`, which the backend merges with the pixel
+/// bodies around it when it compiles a region.
+fn pixel_body(
+    name: &TokenStream,
+    decl: &Ident,
+    args: &Args,
+    pixel: &crate::pixel::Pixel,
+    text: &str,
+) -> TokenStream {
+    let ports = args.ports.iter().map(|(port, ty)| {
+        let port = port.to_string();
+        quote!((
+            #port,
+            ::daedalus_registry::TypeRef::Key(<#ty as ::daedalus_types::Typed>::KEY),
+        ))
+    });
+    let merge = quote!(::daedalus_wgpu::merge);
+    let label = name.to_token_stream().to_string();
+    let (names, params) = (&pixel.names, &pixel.params);
+    let (input, output) = (&pixel.input, &pixel.output);
+    let (input_stride, output_stride) = (pixel.input_stride, pixel.output_stride);
+    let config = match &pixel.config {
+        Some((ty, size)) => quote!(::core::option::Option::Some((#ty, #size))),
+        None => quote!(::core::option::Option::None),
+    };
+    let sides = pixel.sides.iter().map(|side| {
+        let (name, ty, stride) = (&side.name, &side.ty, side.stride);
+        quote!(#merge::PixelSide { name: #name, ty: #ty, stride: #stride })
+    });
+    let hash = crate::pixel::source_hash(text);
+    quote! {{
+        const PARAMS: &[&str] = &[#(#params),*];
+        // Which parameter each declared port feeds. A port with no parameter of its name
+        // fails here, and so does a node with more or fewer than one output.
+        const INPUTS: [u32; #decl.inputs.len()] = #merge::pixel_ports(#decl.inputs, PARAMS);
+        const _: () = ::core::assert!(
+            #decl.outputs.len() == 1,
+            "a pixel body has exactly one output: the pixel `apply` returns"
+        );
+        ::daedalus_registry::BodyRecord {
+            backend: "wgpu",
+            at: ::daedalus_registry::SourceAt(::core::concat!(::core::file!(), ":", ::core::line!())),
+            needs: &[],
+            state: ::core::option::Option::None,
+            ports: &[#(#ports),*],
+            memory: &[],
+            code: &#merge::PixelSpec {
+                name: #label,
+                source: #name,
+                names: &[#(#names),*],
+                input: #input,
+                output: #output,
+                input_stride: #input_stride,
+                output_stride: #output_stride,
+                config: #config,
+                sides: &[#(#sides),*],
+                params: PARAMS,
+                inputs: &INPUTS,
+                source_hash: #hash,
+            },
+            text: #name,
+        }
+    }}
+}
+
 pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
     let call: Call = syn::parse2(input)?;
     let name = call.name;
@@ -216,6 +286,10 @@ pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
         return Ok(recording(&name, &args));
     }
     let (text, at) = source(init)?;
+    if args.pixel {
+        let pixel = crate::pixel::read(&text).map_err(|error| Error::new(at, error))?;
+        return Ok(pixel_body(&name, &decl, &args, &pixel, &text));
+    }
     let entry = args.entry.as_ref().map(LitStr::value);
     let shader = infer::read(&text, entry.as_deref()).map_err(|error| Error::new(at, error))?;
 

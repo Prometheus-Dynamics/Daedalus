@@ -150,6 +150,134 @@ fn size_of(
     }
 }
 
+/// Where the value on an input port comes from: a cell of the step when the port is on the
+/// region's boundary, and a buffer the region owns when a node before it in the region made it.
+fn source_for(
+    here: PortRef,
+    uniform: bool,
+    region: &Region<'_>,
+    cx: &CompileCx<'_>,
+    made: &[(PortRef, usize)],
+) -> Result<Option<Source>, Refusal> {
+    if let Some(cell) = region.inputs.iter().position(|input| *input == here) {
+        return Ok(Some(if uniform {
+            Source::Bytes(cell)
+        } else {
+            Source::Cell(cell)
+        }));
+    }
+    let Some(edge) = cx.edges.iter().find(|edge| edge.to == here) else {
+        return Ok(None);
+    };
+    match made.iter().find(|(port, _)| *port == edge.from) {
+        Some(&(_, buffer)) => Ok(Some(Source::Buffer(buffer))),
+        None => Err(refuse(
+            here.node,
+            "an input comes from a node later in the region",
+        )),
+    }
+}
+
+/// One node for a whole chain of pixel bodies: a single shader, generated from their functions,
+/// that reads the first node's input and writes the last node's output. Nothing is written for
+/// the values in between.
+fn merged_node(
+    chain: &[NodeIndex],
+    region: &Region<'_>,
+    cx: &CompileCx<'_>,
+    context: &Arc<crate::context::Context>,
+    owned: &mut Vec<Owned>,
+    made: &mut Vec<(PortRef, usize)>,
+) -> Result<Node, Refusal> {
+    use crate::merge::{PixelSpec, Slot};
+    let (head, tail) = (chain[0], chain[chain.len() - 1]);
+    let mut specs: Vec<&PixelSpec> = Vec::with_capacity(chain.len());
+    for &node in chain {
+        let body = body_of(node, cx)?;
+        let Some(spec) = body.code.downcast_ref::<PixelSpec>() else {
+            return Err(refuse(node, "a chain holds a node that isn't a pixel body"));
+        };
+        if spec.inputs.len() != usize::from(body.inputs) || body.outputs != 1 {
+            return Err(refuse(
+                node,
+                "a pixel body has one output, and a port for each parameter",
+            ));
+        }
+        specs.push(spec);
+    }
+    let spec = crate::merge::merged(&specs);
+    let shader = Shader::load_on(Arc::clone(context), spec)
+        .map_err(|error| refuse(tail, format!("the merged shader was refused: {error}")))?;
+    // The port of the node at `at` that feeds its parameter `name`.
+    let port_of = |at: usize, name: &str| {
+        let param = specs[at].params.iter().position(|param| *param == name)?;
+        let port = specs[at]
+            .inputs
+            .iter()
+            .position(|&have| have as usize == param)?;
+        Some(PortRef {
+            node: chain[at],
+            port: PortIndex(port as u16),
+        })
+    };
+    let mut sources = Vec::new();
+    let mut makes = Vec::new();
+    for (position, (slot, _, _)) in crate::merge::layout(&specs).into_iter().enumerate() {
+        let named = |source: Option<Source>, what: &str| {
+            source.ok_or_else(|| refuse(tail, format!("nothing is connected to {what}")))
+        };
+        sources.push(match slot {
+            Slot::Input => {
+                let pixel = port_of(0, specs[0].params[0]);
+                let source = match pixel {
+                    Some(port) => source_for(port, false, region, cx, made)?,
+                    None => None,
+                };
+                named(source, "the chain's input")?
+            }
+            Slot::Output => {
+                let here = PortRef {
+                    node: tail,
+                    port: PortIndex(0),
+                };
+                owned.push(Owned {
+                    size: Size::Like {
+                        position: 0,
+                        of: specs[0].input_stride.max(1),
+                        stride: specs[specs.len() - 1].output_stride.max(1),
+                    },
+                    publish: region.outputs.iter().position(|output| *output == here),
+                    kept: Vec::new(),
+                    current: 0,
+                });
+                made.push((here, owned.len() - 1));
+                makes.push((position, owned.len() - 1));
+                Source::Buffer(owned.len() - 1)
+            }
+            // A config no port feeds is zeroes.
+            Slot::Config(at) => match port_of(at, "cfg") {
+                Some(port) => source_for(port, true, region, cx, made)?.unwrap_or(Source::Zeroes),
+                None => Source::Zeroes,
+            },
+            Slot::Side(at, side) => {
+                let name = specs[at].sides[side].name;
+                let source = match port_of(at, name) {
+                    Some(port) => source_for(port, false, region, cx, made)?,
+                    None => None,
+                };
+                named(source, &format!("`{name}` of `{}`", specs[at].name))?
+            }
+        });
+    }
+    let _ = head;
+    Ok(Node {
+        index: tail,
+        work: Work::Shader(shader),
+        sources,
+        makes,
+    })
+}
+
 /// Compiles `region` into one step that covers all of its nodes.
 pub(crate) fn compile(
     backend: &WgpuBackend,
@@ -164,8 +292,19 @@ pub(crate) fn compile(
     let mut made: Vec<(PortRef, usize)> = Vec::new();
     let mut nodes = Vec::with_capacity(region.nodes.len());
 
+    // Pixel bodies run as merged chains, each where its last node stands.
+    let chains = crate::merge::segments(region, cx, &context.record.compute)
+        .map_err(|(node, reason)| refuse(node, reason))?;
+
     for &index in region.nodes {
         let body = body_of(index, cx)?;
+        if let Some(chain) = chains.iter().find(|chain| chain.contains(&index)) {
+            if chain.last() == Some(&index) {
+                let node = merged_node(chain, region, cx, &context, &mut owned, &mut made)?;
+                nodes.push(node);
+            }
+            continue;
+        }
         if let Some(record) = body.code.downcast_ref::<RecordBody>() {
             // Its ports are its inputs and outputs by index: there is no binding table.
             let mut sources = Vec::with_capacity(usize::from(body.inputs));

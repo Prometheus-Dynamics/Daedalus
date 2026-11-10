@@ -101,7 +101,7 @@ wgpu as a backend: whole-shader nodes, shared submits, merged per-pixel function
 - [x] [E3](docs/prs/E3.md) CPU-to-GPU and GPU-to-CPU transfers (wave 15; needs D1, E2; board run)
 - [x] [E4](docs/prs/E4.md) Whole-shader nodes, WGSL inference, authoring crate (wave 7; needs A9, E2)
 - [x] [E5](docs/prs/E5.md) Shared submit across nodes in a region (wave 12; needs B8, E4; board run)
-- [ ] [E6](docs/prs/E6.md) Per-pixel functions merged into one shader (wave 13; needs E5, E7; board run)
+- [x] [E6](docs/prs/E6.md) Per-pixel functions merged into one shader (wave 13; needs E5, E7; board run)
 - [x] [E7](docs/prs/E7.md) Your own recording code (wave 8; needs E4, E13; board run)
 - [x] [E8](docs/prs/E8.md) Fences, bounded waits, uncaptured errors (wave 8; needs C2, E4; board run)
 - [x] [E9](docs/prs/E9.md) dma-sys: dma-buf kernel calls in one place (wave 7; needs E2; board run)
