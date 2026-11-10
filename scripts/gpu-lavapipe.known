@@ -1,0 +1,3 @@
+# Validation messages the lavapipe lane accepts, one fixed string a line. A message that
+# contains any of them is known. Each line needs its reason beside it, as a comment above.
+# dev's list was for RADV, which CI doesn't have: this one is for lavapipe, and starts empty.

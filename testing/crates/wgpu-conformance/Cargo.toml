@@ -1,0 +1,24 @@
+[package]
+name = "daedalus-wgpu-conformance"
+description = "The wgpu backend against the backend rules, on a real device: what the lavapipe lane runs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi", features = ["count-alloc", "test-run"] }
+daedalus-backend = { path = "../../../core/backend" }
+daedalus-graph = { path = "../../../core/graph" }
+daedalus-runner = { path = "../../../core/runner" }
+daedalus-types = { path = "../../../core/types" }
+daedalus-wgpu = { path = "../../../backends/wgpu" }
+
+[dev-dependencies]
+daedalus-conformance = { path = "../conformance" }
+daedalus-gpu-budgets = { path = "../gpu-budgets" }
+daedalus-kernels-sys = { path = "../../../backends/kernels-sys" }
+
+[lints]
+workspace = true
