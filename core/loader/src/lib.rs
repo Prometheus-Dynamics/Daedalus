@@ -9,10 +9,14 @@ mod entry;
 pub mod export;
 mod generation;
 mod open;
+mod owned;
+mod pod;
 mod records;
 mod retry;
 
 pub use entry::{Backend, Loader, Plugin, RegionIn};
 pub use generation::Generation;
 pub use open::LoadError;
+pub use owned::SharedBytes;
+pub use pod::{PodBlock, PodError};
 pub use retry::{Retry, load_with_retry};
