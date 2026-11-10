@@ -46,7 +46,7 @@ crate is making its directory.
 | `accel`, `accel-evidence` | The kernel matrix and its evidence are what the code says |
 | `gpu-async-blocking`, `gpu-driver-lock` | Two rules of the GPU backend |
 | `budgets` | The budget table: instructions, allocations, firmware sizes |
-| `capability` | The audit of `dev`'s capabilities |
+| `capability` | The audit of what the earlier branch could do |
 | `packaging` | The daemon's unit files and sample config |
 | `smoke` | The examples run and print what they should |
 | `doc` | The API docs build with no warning, and every link in `docs/` resolves |
@@ -66,7 +66,7 @@ runs to show it keeps the rules.
 
 `core/abi`, `core/types`, `core/value`, `core/graph`, `core/backend`, `core/registry`,
 `core/macros`, `core/derive` and `core/plan` are what everything else is built against. A change
-to one is a change of its own, with [design.md](design.md) updated in the same commit.
+to one is a change of its own, with the page under `docs/` that describes it updated in the same commit.
 
 ## Conventions
 

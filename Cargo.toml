@@ -75,7 +75,7 @@ tracing = { version = "0.1.44", default-features = false }
 wasm-bindgen = "0.2.129"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt", "std"] }
 
-# Crates that may use `unsafe` (see AGENTS.md) carry their own lint table.
+# Crates that may use `unsafe` carry their own lint table.
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unsafe_op_in_unsafe_fn = "deny"

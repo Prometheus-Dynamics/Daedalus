@@ -32,7 +32,7 @@ daedalus-runner = { path = ".", features = ["threads"] }
 daedalus-abi = { path = "../abi", features = ["count-alloc", "test-run", "std"] }
 daedalus-types = { path = "../types" }
 
-# This crate calls step bodies through `Step::run`, so it may use unsafe (see AGENTS.md).
+# This crate calls step bodies through `Step::run`, so it may use unsafe.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 unused_lifetimes = "deny"

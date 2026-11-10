@@ -1,5 +1,6 @@
 target/
 **/target/
-Cargo.lock
+# The root lockfile is committed. A fixture built on its own keeps its own, which isn't.
+testing/fixtures/**/Cargo.lock
 **/__pycache__/
 **/*.py[cod]

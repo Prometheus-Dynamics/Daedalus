@@ -52,8 +52,8 @@ out="${CARGO_TARGET_DIR:-target}"
 status=0
 for entry in "${TARGETS[@]}"; do
   IFS=: read -r target pin_flash pin_ram <<<"$entry"
-  cargo build -q --target "$target" --profile chip -p daedalus-chip-blink --bins
-  cargo check -q --target "$target" -p daedalus-cpu --no-default-features --features chip
+  cargo build --locked -q --target "$target" --profile chip -p daedalus-chip-blink --bins
+  cargo check --locked -q --target "$target" -p daedalus-cpu --no-default-features --features chip
   check_budget "$target" daedalus-chip-blink "$MAX_FLASH" "$MAX_RAM"
   check_budget "$target" daedalus-chip-blink-tunable "$TUNABLE_MAX_FLASH" "$TUNABLE_MAX_RAM"
   check_budget "$target" daedalus-chip-blink-loaded "$LOADED_MAX_FLASH" "$LOADED_MAX_RAM"
@@ -65,14 +65,14 @@ for entry in "${TARGETS[@]}"; do
 done
 
 # The Raspberry Pi Pico firmware: all three modes, the HAL and defmt.
-cargo build -q --target thumbv6m-none-eabi --profile chip -p daedalus-chip-board
+cargo build --locked -q --target thumbv6m-none-eabi --profile chip -p daedalus-chip-board
 check_budget thumbv6m-none-eabi daedalus-chip-pico "$PICO_MAX_FLASH" "$PICO_MAX_RAM"
 
 # One set of nodes for a host and a chip. A chip build must not pull the facade, and the full
 # host has to give the same outputs.
-cargo test -q -p daedalus-chip-shared --features host
-cargo build -q --target thumbv7em-none-eabihf -p daedalus-chip-shared
-if cargo tree -p daedalus-chip-shared --target thumbv7em-none-eabihf -e normal --prefix none |
+cargo test --locked -q -p daedalus-chip-shared --features host
+cargo build --locked -q --target thumbv7em-none-eabihf -p daedalus-chip-shared
+if cargo tree --locked -p daedalus-chip-shared --target thumbv7em-none-eabihf -e normal --prefix none |
   grep -qE '^daedalus v'; then
   echo "  daedalus-chip-shared: a chip build pulls the facade" >&2
   status=1

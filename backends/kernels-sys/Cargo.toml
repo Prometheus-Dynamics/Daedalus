@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["simd", "kernels", "base64"]
 categories = ["no-std", "encoding"]
 
-# This crate uses unsafe for the vector paths (see AGENTS.md), so it carries its own lint table.
+# This crate uses unsafe for the vector paths, so it carries its own lint table.
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 unused_lifetimes = "deny"

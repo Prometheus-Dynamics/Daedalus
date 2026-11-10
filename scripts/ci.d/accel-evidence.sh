@@ -7,13 +7,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 results=$(mktemp -d)
 export ACCEL_RESULTS_DIR="$results" ACCEL_REV="$(git rev-parse --short HEAD)"
-cargo test -q -p daedalus-kernels-sys
+cargo test --locked -q -p daedalus-kernels-sys
 
 NIGHTLY=${ACCEL_NIGHTLY:-nightly-2026-10-15}
 RUSTFLAGS="--cfg daedalus_portable_simd" CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}/portable" \
-  cargo "+$NIGHTLY" test -q -p daedalus-kernels-sys --test conformance portable
+  cargo "+$NIGHTLY" test --locked -q -p daedalus-kernels-sys --test conformance portable
 
-ACCEL_DUMP="$results/daedalus.json" cargo test -q -p daedalus-inventory --test registry registry_dump
+ACCEL_DUMP="$results/daedalus.json" cargo test --locked -q -p daedalus-inventory --test registry registry_dump
 mkdir -p "$results/out"
 scripts/accel.sh render --registry "$results/daedalus.json" --results "$results" \
   --results testing/board-runs/accel --baseline docs/backend-matrix.csv --scan . --out "$results/out"

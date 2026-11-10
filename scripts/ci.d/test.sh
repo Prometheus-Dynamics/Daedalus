@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cargo test --workspace --all-targets
+cargo test --locked --workspace --all-targets

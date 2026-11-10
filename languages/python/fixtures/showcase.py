@@ -1,6 +1,6 @@
 """The showcase's nodes that need neither a config, a state type beyond an i64, an adapter, a
-custom transport, nor an image or GPU type, ported from dev's examples/08_ffi/python/complex_plugin.
-The rest of the showcase is not ported (see docs/prs/G5.md)."""
+custom transport, nor an image or GPU type. The rest of the showcase the Python SDK once had
+is not here."""
 
 from daedalus import NodeError, T, node
 

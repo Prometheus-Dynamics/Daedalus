@@ -1,7 +1,7 @@
 //! A detector-shaped graph: five stages (mask prep into runs, quads from runs, decode, validate,
 //! refine), the input fanned out to four of them, constants on every stage, state on two, and
 //! struct outputs, with bodies that only touch their inputs. What remains is the graph's own cost
-//! per frame. It mirrors the detector graph `dev` is measured on.
+//! per frame. It mirrors the detector graph the baseline figures were measured on.
 
 use std::sync::Arc;
 

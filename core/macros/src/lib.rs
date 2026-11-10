@@ -10,7 +10,7 @@ mod transfer;
 
 use proc_macro::TokenStream;
 
-/// Declares a node on a function, or on a const holding its source. See `docs/design.md`.
+/// Declares a node on a function, or on a const holding its source. See `docs/node-authoring.md`.
 #[proc_macro_attribute]
 pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = syn::parse_macro_input!(args as args::NodeArgs);
@@ -20,7 +20,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Declares a memory handler on a function. See `docs/design.md`.
+/// Declares a memory handler on a function. See `docs/node-authoring.md`.
 #[proc_macro_attribute]
 pub fn transfer(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = syn::parse_macro_input!(args as transfer::TransferArgs);
