@@ -1,0 +1,17 @@
+[package]
+name = "daedalus-lang-cpp"
+description = "The C and C++ worker SDK, built with CMake, and the check that runs the fixtures through it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-backend-process = { path = "../../backends/process" }
+
+[dev-dependencies]
+daedalus-wire = { path = "../../core/wire" }
+daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance" }
+
+[lints]
+workspace = true
