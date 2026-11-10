@@ -215,6 +215,29 @@ impl<'a> Host<'a> {
         self.feed(name, value)
     }
 
+    /// The graph's host ports, sorted by name: what each is called, which way it goes, and
+    /// the key of its type. A port's position here is its index.
+    pub fn ports(&self) -> Ports<'a> {
+        self.ports
+    }
+
+    /// Stores a run of bytes in the input port `name`, shared and not copied, with the port's
+    /// own type and memory space. For a port whose values are bytes.
+    #[cfg(feature = "std")]
+    pub fn feed_shared(
+        &mut self,
+        name: &str,
+        bytes: std::sync::Arc<[u8]>,
+    ) -> Result<FeedOutcome, HostError> {
+        let spec = self.input(name)?;
+        let value = Value {
+            ty: spec.ty,
+            space: spec.space,
+            owner: daedalus_value::Owner::Shared(bytes),
+        };
+        self.feed(name, value)
+    }
+
     /// Stores a typed payload in the input port `name`, and wakes its consumers.
     pub fn feed_typed<T: Send + Sync + 'static>(
         &mut self,

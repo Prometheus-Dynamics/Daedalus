@@ -5,6 +5,7 @@
 
 pub use daedalus_abi as abi;
 
+mod adapter;
 mod entry;
 pub mod export;
 mod generation;
@@ -14,6 +15,7 @@ mod pod;
 mod records;
 mod retry;
 
+pub use adapter::{PLUGIN_SPACE, PluginBackend};
 pub use entry::{Backend, Loader, Plugin, RegionIn};
 
 /// Runs a step that a loaded plugin's backend compiled, on its cells.
