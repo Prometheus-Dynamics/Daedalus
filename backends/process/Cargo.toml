@@ -1,0 +1,22 @@
+[package]
+name = "daedalus-backend-process"
+description = "The process backend: nodes served by a worker process that speaks the wire protocol."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-abi = { path = "../../core/abi" }
+daedalus-backend = { path = "../../core/backend" }
+daedalus-registry = { path = "../../core/registry" }
+daedalus-types = { path = "../../core/types" }
+daedalus-value = { path = "../../core/value" }
+daedalus-wire = { path = "../../core/wire" }
+
+[dev-dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["count-alloc", "test-run"] }
+daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance" }
+
+[lints]
+workspace = true

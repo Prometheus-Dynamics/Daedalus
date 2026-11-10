@@ -15,6 +15,7 @@ mod packet;
 mod schema;
 mod value;
 mod worker;
+pub use worker::kind;
 
 pub use error::{PacketError, WireError};
 pub use hello::{Declaration, Hello, PortSpec};
