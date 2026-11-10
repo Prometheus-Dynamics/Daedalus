@@ -116,6 +116,9 @@ pub struct Options {
     /// Only adapters whose name contains this, ignoring case. Naming an adapter opens a device of
     /// this backend's own, not the one the process shares.
     pub adapter: Option<String>,
+    /// Only this one of the adapters that pass the rest, counted from 0 with the best first.
+    /// Like naming an adapter, this opens a device of this backend's own.
+    pub index: Option<usize>,
     /// What an earlier run learned about the adapter, so planning can use it before a device
     /// opens.
     pub known: Option<crate::CapsRecord>,
@@ -140,6 +143,7 @@ impl Default for Options {
             apis: Apis::default(),
             vendor: None,
             adapter: None,
+            index: None,
             known: None,
             hints: crate::MemoryHints::default(),
             staging: crate::StagingConfig::default(),
@@ -228,7 +232,10 @@ pub(crate) fn choose(mut adapters: Vec<wgpu::Adapter>, options: &Options) -> Vec
             copy: usages.contains(wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST),
         }))
     });
-    adapters
+    match options.index {
+        Some(index) => adapters.into_iter().skip(index).take(1).collect(),
+        None => adapters,
+    }
 }
 
 #[cfg(test)]

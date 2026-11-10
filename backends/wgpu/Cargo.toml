@@ -24,6 +24,8 @@ daedalus-dma-sys = { path = "../dma-sys" }
 [dev-dependencies]
 daedalus-abi = { path = "../../core/abi", features = ["count-alloc", "test-run"] }
 daedalus-value = { path = "../../core/value" }
+daedalus-planner = { path = "../../core/planner" }
+daedalus-planner-tests = { path = "../../testing/crates/planner" }
 
 [lints]
 workspace = true

@@ -1,9 +1,5 @@
 //! The memory spaces of this backend, and how its device sizes memory blocks.
 
-use std::borrow::Cow;
-
-use daedalus_backend::{MemorySpace, SpaceKind};
-
 use crate::adapter::DeviceKind;
 
 /// A buffer in device memory. Where this backend's outputs live.
@@ -20,21 +16,6 @@ pub const SPACE_DMA_HEAP: &str = "wgpu.dmaheap";
 
 /// A texture on the device: an imported image, or one a node made.
 pub const SPACE_TEXTURE: &str = "wgpu.texture";
-
-pub(crate) fn spaces() -> Vec<MemorySpace> {
-    let space = |id, kind| MemorySpace {
-        id: Cow::Borrowed(id),
-        kind,
-        readable: true,
-    };
-    vec![
-        space(SPACE_DEVICE, SpaceKind::Device),
-        space(SPACE_HOST_MAPPED, SpaceKind::Shared),
-        space(SPACE_HOST_CACHED, SpaceKind::Shared),
-        space(SPACE_DMA_HEAP, SpaceKind::Shared),
-        space(SPACE_TEXTURE, SpaceKind::Device),
-    ]
-}
 
 /// How the device sizes its memory blocks.
 ///

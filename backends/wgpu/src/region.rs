@@ -489,7 +489,13 @@ pub(crate) fn compile(
         });
     }
 
-    let step = RegionStep::new(backend.link(), context, nodes, owned, region.inputs.len());
+    let step = RegionStep::new(
+        Arc::clone(backend.link()),
+        context,
+        nodes,
+        owned,
+        region.inputs.len(),
+    );
     Ok(StepUnit {
         step: daedalus_abi::Step::boxed(step),
         info: UnitInfo {

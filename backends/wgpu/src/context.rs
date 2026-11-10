@@ -78,7 +78,7 @@ static LATEST: Mutex<Weak<Context>> = Mutex::new(Weak::new());
 impl Context {
     /// The shared device, opened if nobody holds it. A named adapter gets a device of its own.
     pub(crate) fn open(options: &Options) -> Result<Arc<Context>, OpenError> {
-        if options.adapter.is_some() {
+        if options.adapter.is_some() || options.index.is_some() {
             return Context::open_private(options).map(Arc::new);
         }
         let mut shared = SHARED.lock().unwrap_or_else(PoisonError::into_inner);
@@ -89,6 +89,11 @@ impl Context {
         let opened = Arc::new(Context::open_private(options)?);
         *shared = Arc::downgrade(&opened);
         Ok(opened)
+    }
+
+    /// A device of the caller's own, whatever the options name.
+    pub(crate) fn open_own(options: &Options) -> Result<Arc<Context>, OpenError> {
+        Context::open_private(options).map(Arc::new)
     }
 
     /// Notes `context` as the device uploads go to.
