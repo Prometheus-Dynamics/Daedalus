@@ -30,10 +30,15 @@ pub fn build(build_dir: &Path) -> io::Result<PathBuf> {
     if !build.success() {
         return Err(io::Error::other("cmake build failed"));
     }
-    Ok(build_dir.join("bin").join(format!(
-        "daedalus_cpp_worker{}",
-        std::env::consts::EXE_SUFFIX
-    )))
+    let name = format!("daedalus_cpp_worker{}", std::env::consts::EXE_SUFFIX);
+    let bin = build_dir.join("bin");
+    // A generator with several configurations, as Visual Studio's is, puts the binary in a
+    // folder named for the configuration.
+    ["", "Debug", "Release", "RelWithDebInfo", "MinSizeRel"]
+        .iter()
+        .map(|configuration| bin.join(configuration).join(&name))
+        .find(|worker| worker.is_file())
+        .ok_or_else(|| io::Error::other("cmake built no worker binary"))
 }
 
 /// A spec that starts the worker at `worker`.
