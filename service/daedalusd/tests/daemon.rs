@@ -37,7 +37,11 @@ fn check_config_accepts_a_good_file_and_rejects_a_bad_one_with_a_message() {
     let good = check(
         &dir,
         "good.toml",
-        "listen = [\"tcp:127.0.0.1:4100\", \"tcp:[::1]:4100\"]\nplugin_dir = \"/usr/lib/daedalusd/plugins\"\nmax_runs = 8\nlog_level = \"debug\"\n",
+        // The plugin directory is written as a literal string, so a Windows path needs no escapes.
+        &format!(
+            "listen = [\"tcp:127.0.0.1:4100\", \"tcp:[::1]:4100\"]\nplugin_dir = '{}'\nmax_runs = 8\nlog_level = \"debug\"\n",
+            dir.join("plugins").display()
+        ),
     );
     assert!(good.status.success(), "{good:?}");
     let shown = String::from_utf8_lossy(&good.stdout);
