@@ -10,6 +10,8 @@ repository.workspace = true
 default = ["std"]
 # Snapshots of the state store, which need std.
 std = ["daedalus-runner/std", "daedalus-value/std", "dep:serde", "dep:serde_json", "dep:daedalus-planner", "dep:daedalus-backend", "dep:daedalus-graph", "dep:daedalus-abi", "dep:daedalus-plan", "dep:daedalus-registry"]
+# The service listener: one host shared by many clients over a unix socket, loopback TCP or stdio.
+listen = ["std", "dep:daedalus-wire"]
 # Allocation attribution through the counting allocator. Feature only.
 alloc-probe = ["std", "dep:daedalus-abi", "daedalus-abi/count-alloc"]
 
@@ -25,10 +27,20 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 daedalus-types = { path = "../types" }
 daedalus-value = { path = "../value", default-features = false, features = ["alloc"] }
+daedalus-wire = { path = "../wire", optional = true }
 
 [dev-dependencies]
+daedalus-client = { path = "../client" }
 daedalus-abi = { path = "../abi", features = ["count-alloc"] }
 daedalus-plan = { path = "../plan" }
+
+[[test]]
+name = "listen"
+required-features = ["listen"]
+
+[[test]]
+name = "listen_wire"
+required-features = ["listen"]
 
 [lints]
 workspace = true
