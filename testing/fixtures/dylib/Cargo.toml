@@ -1,0 +1,16 @@
+[package]
+name = "daedalus-dylib-fixture"
+description = "A plugin library the loader tests open: one passing node, one panicking node."
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+daedalus-loader = { path = "../../../core/loader" }
+daedalus-abi = { path = "../../../core/abi" }
+
+# Builds on its own, outside the root workspace.
+[workspace]

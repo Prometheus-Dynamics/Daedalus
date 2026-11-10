@@ -1,0 +1,30 @@
+[package]
+name = "daedalus-loader"
+description = "Plugins as dynamic libraries: open and check them, join their nodes, run their steps, retry until they load."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-abi = { path = "../abi" }
+daedalus-backend = { path = "../backend" }
+daedalus-registry = { path = "../registry" }
+daedalus-types = { path = "../types" }
+libloading = { workspace = true }
+
+[dev-dependencies]
+daedalus-abi = { path = "../abi", features = ["count-alloc", "test-run"] }
+
+# This crate may use unsafe (see AGENTS.md), so it carries its own lint table.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "deny"
+unused_attributes = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"
