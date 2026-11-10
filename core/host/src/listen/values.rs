@@ -8,9 +8,8 @@ use std::string::String;
 use std::sync::Arc;
 use std::vec::Vec;
 
-use daedalus_runner::{INLINE_BYTES, value_of};
 use daedalus_types::{Scalar, TypeKey};
-use daedalus_value::{Owner, Value};
+use daedalus_value::{InlineBytes, Owner, Value};
 use daedalus_wire::{WireType, WireValue};
 
 use crate::{FeedOutcome, Host, HostError};
@@ -54,22 +53,49 @@ impl WireCodec {
         }
     }
 
-    /// A codec for a plain `Copy` type. A node may write one in place, as bytes, so reading also
-    /// accepts that form.
-    pub fn copy<T: Copy + Send + Sync + 'static>(
+    /// A codec for a type whose values are at most 16 bytes and travel in place, as plain data
+    /// does: a number is its little-endian bytes. `to_wire` reads those bytes back.
+    pub fn inline(
         ty: WireType,
-        to_wire: impl Fn(T) -> WireValue + Send + Sync + 'static,
-        from_wire: impl Fn(&WireValue) -> Option<T> + Send + Sync + 'static,
+        to_wire: impl Fn(&[u8]) -> Option<WireValue> + Send + Sync + 'static,
+        from_wire: impl Fn(&WireValue) -> Option<InlineBytes<16>> + Send + Sync + 'static,
     ) -> WireCodec {
         WireCodec {
             ty,
             feed: Box::new(move |host, port, value| {
-                let payload = from_wire(value).ok_or(FeedRefusal::Shape)?;
-                host.feed_typed(port, Arc::new(payload))
-                    .map_err(FeedRefusal::Host)
+                let bytes = from_wire(value).ok_or(FeedRefusal::Shape)?;
+                feed_owner(host, port, Owner::Inline(bytes))
             }),
-            read: Box::new(move |value| read_copy::<T>(value).map(&to_wire)),
+            read: Box::new(move |value| to_wire(value.bytes()?)),
         }
+    }
+
+    /// A codec for a type whose values are a run of bytes that is shared, not copied, as a
+    /// backend that reads a cell's bytes expects: a plugin, or a worker.
+    pub fn shared(
+        ty: WireType,
+        to_wire: impl Fn(&[u8]) -> Option<WireValue> + Send + Sync + 'static,
+        from_wire: impl Fn(&WireValue) -> Option<Arc<[u8]>> + Send + Sync + 'static,
+    ) -> WireCodec {
+        WireCodec {
+            ty,
+            feed: Box::new(move |host, port, value| {
+                let bytes = from_wire(value).ok_or(FeedRefusal::Shape)?;
+                feed_owner(host, port, Owner::Shared(bytes))
+            }),
+            read: Box::new(move |value| to_wire(value.bytes()?)),
+        }
+    }
+
+    /// Also reads a value held the other way: `other` is tried when this codec's own reading
+    /// finds nothing. A graph's nodes decide how they hold an output, and a take accepts both.
+    fn or_read(
+        mut self,
+        other: impl Fn(&Value) -> Option<WireValue> + Send + Sync + 'static,
+    ) -> WireCodec {
+        let own = self.read;
+        self.read = Box::new(move |value| own(value).or_else(|| other(value)));
+        self
     }
 
     /// The wire type this codec's values travel as.
@@ -78,44 +104,49 @@ impl WireCodec {
     }
 }
 
-/// A `Copy` value however it is held: typed, or as its bytes.
-fn read_copy<T: Copy + 'static>(value: &Value) -> Option<T> {
-    if let Owner::Typed(payload) = &value.owner
-        && let Some(typed) = payload.downcast_ref::<T>()
-    {
-        return Some(*typed);
-    }
-    let bytes = value.bytes()?;
-    let mut cell = [0; INLINE_BYTES];
-    cell.get_mut(..bytes.len())?.copy_from_slice(bytes);
-    value_of::<T>(&cell, bytes.len())
-}
-
-/// A bool however it is held. Its byte form is read as a number, since not every byte is a bool.
-fn read_bool(value: &Value) -> Option<bool> {
-    if let Some(typed) = value.typed::<bool>() {
-        return Some(*typed);
-    }
-    match value.bytes()? {
-        [byte] => Some(*byte != 0),
-        _ => None,
-    }
+/// Feeds a value made of bytes into `port`, with the port's own type and memory space.
+fn feed_owner(
+    host: &mut Host<'static>,
+    port: &str,
+    owner: Owner,
+) -> Result<FeedOutcome, FeedRefusal> {
+    let spec = host.input(port).map_err(FeedRefusal::Host)?;
+    let value = Value {
+        ty: spec.ty,
+        space: spec.space,
+        owner,
+    };
+    host.feed(port, value).map_err(FeedRefusal::Host)
 }
 
 macro_rules! number {
     ($codecs:ident, $($scalar:ident, $ty:ty, $wire:ident, $back:ty);* $(;)?) => {$(
         $codecs.insert(
             &Scalar::$scalar.key(),
-            WireCodec::copy::<$ty>(
+            WireCodec::inline(
                 WireType::Scalar(Scalar::$scalar),
-                |value| WireValue::$wire(value as $back),
+                |bytes| {
+                    let value = <$ty>::from_le_bytes(bytes.try_into().ok()?);
+                    Some(WireValue::$wire(value as $back))
+                },
                 |value| match value {
-                    WireValue::$wire(value) => <$ty>::try_from(*value).ok(),
+                    WireValue::$wire(value) => {
+                        let value = <$ty>::try_from(*value).ok()?;
+                        InlineBytes::from_slice(&value.to_le_bytes())
+                    }
                     _ => None,
                 },
-            ),
+            )
+            // A node may also hand a number out as a typed payload.
+            .or_read(|value| value.typed::<$ty>().map(|value| WireValue::$wire(*value as $back))),
         );
     )*};
+}
+
+fn text(bytes: &[u8]) -> Option<WireValue> {
+    core::str::from_utf8(bytes)
+        .ok()
+        .map(|text| WireValue::String(String::from(text)))
 }
 
 /// The codecs of one host, by type key.
@@ -130,48 +161,11 @@ impl WireCodecs {
         WireCodecs::default()
     }
 
-    /// The codecs of every scalar: the numbers, bool, unit, strings and bytes.
+    /// The codecs of every scalar. Numbers, bool and unit travel in place, as their bytes, which
+    /// every backend reads. Text and bytes are fed as the typed payloads (`String`, `Vec<u8>`)
+    /// that nodes written as Rust functions take. A take reads either form.
     pub fn scalars() -> WireCodecs {
-        let mut codecs = WireCodecs::new();
-        number!(codecs,
-            I8, i8, I8, i8; I16, i16, I16, i16; I32, i32, I32, i32; Int, i64, I64, i64;
-            ISize, isize, ISize, i64; U8, u8, U8, u8; U16, u16, U16, u16; U32, u32, U32, u32;
-            U64, u64, U64, u64; USize, usize, USize, u64;
-        );
-        codecs.insert(
-            &Scalar::F32.key(),
-            WireCodec::copy::<f32>(WireType::Scalar(Scalar::F32), WireValue::F32, |value| {
-                match value {
-                    WireValue::F32(value) => Some(*value),
-                    _ => None,
-                }
-            }),
-        );
-        codecs.insert(
-            &Scalar::Float.key(),
-            WireCodec::copy::<f64>(WireType::Scalar(Scalar::Float), WireValue::F64, |value| {
-                match value {
-                    WireValue::F64(value) => Some(*value),
-                    _ => None,
-                }
-            }),
-        );
-        let mut bool_codec =
-            WireCodec::copy::<bool>(WireType::Scalar(Scalar::Bool), WireValue::Bool, |value| {
-                match value {
-                    WireValue::Bool(value) => Some(*value),
-                    _ => None,
-                }
-            });
-        bool_codec.read = Box::new(|value| read_bool(value).map(WireValue::Bool));
-        codecs.insert(&Scalar::Bool.key(), bool_codec);
-        let mut unit_codec = WireCodec::typed::<()>(
-            WireType::Scalar(Scalar::Unit),
-            |()| WireValue::Unit,
-            |value| matches!(value, WireValue::Unit).then_some(()),
-        );
-        unit_codec.read = Box::new(|_| Some(WireValue::Unit));
-        codecs.insert(&Scalar::Unit.key(), unit_codec);
+        let mut codecs = WireCodecs::plain();
         codecs.insert(
             &Scalar::String.key(),
             WireCodec::typed::<String>(
@@ -181,7 +175,8 @@ impl WireCodecs {
                     WireValue::String(text) => Some(text.clone()),
                     _ => None,
                 },
-            ),
+            )
+            .or_read(|value| text(value.bytes()?)),
         );
         codecs.insert(
             &Scalar::Bytes.key(),
@@ -192,7 +187,84 @@ impl WireCodecs {
                     WireValue::Bytes(bytes) => Some(bytes.clone()),
                     _ => None,
                 },
-            ),
+            )
+            .or_read(|value| Some(WireValue::Bytes(value.bytes()?.to_vec()))),
+        );
+        codecs
+    }
+
+    /// As [`scalars`](WireCodecs::scalars), with text and bytes fed as shared bytes: the form a
+    /// backend that reads a cell's bytes takes, as a plugin's and a worker's do.
+    pub fn byte_form() -> WireCodecs {
+        let mut codecs = WireCodecs::plain();
+        codecs.insert(
+            &Scalar::String.key(),
+            WireCodec::shared(
+                WireType::Scalar(Scalar::String),
+                text,
+                |value| match value {
+                    WireValue::String(text) => Some(Arc::from(text.as_bytes())),
+                    _ => None,
+                },
+            )
+            .or_read(|value| {
+                value
+                    .typed::<String>()
+                    .map(|text| WireValue::String(text.clone()))
+            }),
+        );
+        codecs.insert(
+            &Scalar::Bytes.key(),
+            WireCodec::shared(
+                WireType::Scalar(Scalar::Bytes),
+                |bytes| Some(WireValue::Bytes(bytes.to_vec())),
+                |value| match value {
+                    WireValue::Bytes(bytes) => Some(Arc::from(bytes.as_slice())),
+                    _ => None,
+                },
+            )
+            .or_read(|value| {
+                value
+                    .typed::<Vec<u8>>()
+                    .map(|bytes| WireValue::Bytes(bytes.clone()))
+            }),
+        );
+        codecs
+    }
+
+    /// The scalars that are plain data: the numbers, bool and unit.
+    fn plain() -> WireCodecs {
+        let mut codecs = WireCodecs::new();
+        number!(codecs,
+            I8, i8, I8, i8; I16, i16, I16, i16; I32, i32, I32, i32; Int, i64, I64, i64;
+            ISize, isize, ISize, i64; U8, u8, U8, u8; U16, u16, U16, u16; U32, u32, U32, u32;
+            U64, u64, U64, u64; USize, usize, USize, u64; F32, f32, F32, f32;
+            Float, f64, F64, f64;
+        );
+        codecs.insert(
+            &Scalar::Bool.key(),
+            WireCodec::inline(
+                WireType::Scalar(Scalar::Bool),
+                // Not every byte is a bool, so the byte is read as a number.
+                |bytes| match bytes {
+                    [byte] => Some(WireValue::Bool(*byte != 0)),
+                    _ => None,
+                },
+                |value| match value {
+                    WireValue::Bool(value) => InlineBytes::from_slice(&[u8::from(*value)]),
+                    _ => None,
+                },
+            )
+            .or_read(|value| value.typed::<bool>().map(|value| WireValue::Bool(*value))),
+        );
+        codecs.insert(
+            &Scalar::Unit.key(),
+            WireCodec::inline(
+                WireType::Scalar(Scalar::Unit),
+                |_| Some(WireValue::Unit),
+                |value| matches!(value, WireValue::Unit).then(InlineBytes::new),
+            )
+            .or_read(|_| Some(WireValue::Unit)),
         );
         codecs
     }

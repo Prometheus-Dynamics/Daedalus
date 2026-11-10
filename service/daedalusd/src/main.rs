@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use daedalus_host::listen::{ListenOptions, Listener, ServiceHost};
+use daedalus_host::listen::{ListenOptions, Listener, ServiceHost, WireCodecs};
 use daedalus_registry::Registry;
 
 use config::{Config, DEFAULT_CONFIG, Listen};
@@ -151,6 +151,8 @@ fn run(args: &Args, config: &Config) -> Result<bool, String> {
     };
     let host = ServiceHost::builder(Registry::new())
         .plugins(Box::new(Plugins::new(Arc::clone(&probes))))
+        // Every backend here is a plugin's, and a plugin reads a cell's bytes.
+        .codecs(WireCodecs::byte_form())
         .options(options)
         .build();
 

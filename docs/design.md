@@ -506,7 +506,11 @@ documents the patch and refresh JSON.
   client past that, or one a write has blocked on for 10 s, is disconnected. A watch holds 64
   events and reports `lagged`. Nothing that runs a graph writes to a client.
 - A port is fed and taken through a `WireCodec` for its type key. Every scalar has one. A port
-  whose type has none is refused with `unsupported`.
+  whose type has none is refused with `unsupported`. A number, a bool and unit are fed in place,
+  as little-endian bytes, never as a typed payload: a plugin node may forward its input cell,
+  which is only sound for a value with no reference count. Text and bytes are fed as typed
+  payloads by `WireCodecs::scalars()` and as shared bytes by `WireCodecs::byte_form()`, which the
+  daemon uses.
 - A runner built by `owned_run` owns its steps and releases them when its buffers are dropped,
   which is what lets a plugin's library close once the last run that used it is gone. Its cancel
   word is in an `Arc`, so another thread can hold a `CancelHandle` to it.

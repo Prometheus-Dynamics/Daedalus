@@ -3,11 +3,12 @@
 mod listen_support;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::thread;
 
 use daedalus_client::{Client, ClientError, Endpoint, Options};
-use daedalus_host::listen::ListenOptions;
+use daedalus_host::listen::{ListenOptions, ServiceHost, WireCodecs};
 use daedalus_types::Scalar;
 use daedalus_wire::service::{
     EndReason, ErrorCode, EventBody, EventKinds, InspectTarget, Inspection, Op, OpKind,
@@ -563,4 +564,91 @@ fn a_run_that_is_reloaded_or_stopped_releases_its_steps() {
     assert_eq!(live(), 1);
     host.shutdown();
     until("the last run to be released", || live() == 0);
+}
+
+/// Feeds `value` into a run of the one-node graph around `node`, and takes what comes out.
+fn through(client: &Client, node: &str, key: &str, value: &TypedValue) -> TypedValue {
+    client.put_graph(node, &graph_typed(node, key)).unwrap();
+    let run = client.start(node, StartConfig::default()).unwrap();
+    client.feed(run, "in", value.clone()).unwrap();
+    let summary = client.step(run, 1).unwrap();
+    assert_eq!(
+        (summary.step_calls, summary.skipped, summary.faults),
+        (1, 0, 0),
+        "{node}"
+    );
+    let taken = client
+        .take(run, "out")
+        .unwrap()
+        .unwrap_or_else(|| panic!("{node} gave no value for {value:?}"));
+    client.stop(run, StopMode::Immediate).unwrap();
+    taken
+}
+
+#[test]
+fn every_scalar_crosses_the_wire_in_the_form_its_backend_reads() {
+    let scalar =
+        |scalar: Scalar, value: WireValue| TypedValue::new(WireType::Scalar(scalar), value);
+    let long = "a string longer than sixteen bytes, héllo".to_string();
+    let values = [
+        scalar(Scalar::Unit, WireValue::Unit),
+        scalar(Scalar::Bool, WireValue::Bool(true)),
+        scalar(Scalar::I8, WireValue::I8(-7)),
+        scalar(Scalar::Int, WireValue::I64(i64::MIN)),
+        scalar(Scalar::U64, WireValue::U64(u64::MAX)),
+        scalar(Scalar::F32, WireValue::F32(1.5)),
+        scalar(Scalar::Float, WireValue::F64(-0.25)),
+        scalar(Scalar::String, WireValue::String(long.clone())),
+        scalar(Scalar::String, WireValue::String("short".to_string())),
+        scalar(Scalar::Bytes, WireValue::Bytes((0..=255).collect())),
+        scalar(Scalar::Bytes, WireValue::Bytes(Vec::new())),
+    ];
+
+    // A host whose backends read a cell's bytes, as a plugin's do: everything is fed as bytes.
+    let bytes = ServiceHost::builder(listen_support::registry())
+        .backend(Arc::new(listen_support::TestBackend))
+        .codecs(WireCodecs::byte_form())
+        .build();
+    let (_listener, addr) = bytes.listen_tcp("127.0.0.1:0".parse().unwrap()).unwrap();
+    let client = connect(addr);
+    for value in &values {
+        let WireType::Scalar(kind) = &value.ty else {
+            unreachable!();
+        };
+        let key = kind.key();
+        let node = format!("t.echo.{}", key.as_str());
+        assert_eq!(
+            &through(&client, &node, key.as_str(), value),
+            value,
+            "{node}"
+        );
+    }
+    // A value of another type than the port's is refused, and so is one out of range for it.
+    client
+        .put_graph("i8", &graph_typed("t.echo.i8", "i8"))
+        .unwrap();
+    let run = client.start("i8", StartConfig::default()).unwrap();
+    assert_eq!(
+        code(client.feed(run, "in", u32_value(1))),
+        ErrorCode::ValueType
+    );
+    bytes.shutdown();
+
+    // The default codecs feed text and bytes as the typed payloads a Rust node takes, and feed
+    // plain numbers in place all the same.
+    let (typed, addr) = serving(ListenOptions::default());
+    let client = connect(addr);
+    let text = scalar(Scalar::String, WireValue::String(long.clone()));
+    assert_eq!(
+        through(&client, "t.typed.string", "string", &text).value,
+        WireValue::String(format!("{long}!"))
+    );
+    let raw = scalar(Scalar::Bytes, WireValue::Bytes(vec![1, 2, 3]));
+    assert_eq!(
+        through(&client, "t.typed.bytes", "bytes", &raw).value,
+        WireValue::Bytes(vec![3, 2, 1])
+    );
+    let number = scalar(Scalar::Int, WireValue::I64(-5));
+    assert_eq!(through(&client, "t.echo.i64", "i64", &number), number);
+    typed.shutdown();
 }

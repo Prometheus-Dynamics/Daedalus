@@ -17,7 +17,10 @@ use daedalus_graph::{
 };
 use daedalus_host::listen::{ListenOptions, PluginLoader, ServiceHost};
 use daedalus_registry::{OwnedBody, OwnedDecl, OwnedPort, Registry, TypeRef};
-use daedalus_runner::{put_typed, skip_cancelled, take_typed};
+use daedalus_runner::{
+    INLINE_BYTES, put_inline, put_shared, put_typed, read_inline, skip_cancelled, take_typed,
+    write_inline,
+};
 use daedalus_types::{Scalar, SpaceIndex, TypeIndex, TypeKey};
 use daedalus_wire::service::{
     ClientMsg, Op, PluginInfo, Request, ServerMsg, ServiceHello, TypedValue,
@@ -36,12 +39,19 @@ enum Kind {
     Boom,
     /// Runs until the run is cancelled.
     Wait,
+    /// Copies its input's bytes to its output, whatever the type: the way a backend that
+    /// reads a cell's bytes works.
+    Echo,
+    /// Hands a typed `String` or `Vec<u8>` on, the way a node written as a Rust function does.
+    Typed,
 }
 
 struct Body {
     kind: Kind,
     node: u32,
     probe: bool,
+    /// Where the output's bytes are kept until the runner has taken them.
+    out: [u8; INLINE_BYTES],
 }
 
 impl Drop for Body {
@@ -54,7 +64,13 @@ impl Drop for Body {
 
 impl OwnedStep for Body {
     fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
-        let Some(input) = slots.cell(0).and_then(take_typed::<u32>) else {
+        // A number arrives in place, as its bytes, and leaves the same way.
+        match self.kind {
+            Kind::Echo => return self.echo(slots),
+            Kind::Typed => return typed(slots),
+            _ => {}
+        }
+        let Some(input) = slots.cell(0).and_then(|cell| read_inline::<u32>(cell)) else {
             return StepEnd::Skipped;
         };
         match self.kind {
@@ -62,13 +78,14 @@ impl OwnedStep for Body {
                 let Some(cell) = slots.cell(1) else {
                     return StepEnd::Fault;
                 };
-                put_typed(cell, TypeIndex(0), SpaceIndex(0), Arc::new(*input * 2));
+                write_inline(&(input * 2), &mut self.out, cell);
                 StepEnd::Done
             }
             Kind::Boom => {
                 cx.fault(Some(self.node), "boom: the node failed on purpose");
                 StepEnd::Fault
             }
+            Kind::Echo | Kind::Typed => StepEnd::Fault,
             Kind::Wait => {
                 WAITING.store(true, Ordering::SeqCst);
                 while !cx.cancelled() {
@@ -78,6 +95,55 @@ impl OwnedStep for Body {
             }
         }
     }
+}
+
+impl Body {
+    fn echo(&mut self, slots: &mut Slots) -> StepEnd {
+        let Some(bytes) = slots
+            .cell(0)
+            .and_then(|cell| cell.bytes().map(<[u8]>::to_vec))
+        else {
+            return StepEnd::Skipped;
+        };
+        let Some(cell) = slots.cell(1) else {
+            return StepEnd::Fault;
+        };
+        if bytes.len() <= INLINE_BYTES {
+            self.out[..bytes.len()].copy_from_slice(&bytes);
+            let kept = &self.out[..bytes.len()];
+            put_inline(cell, TypeIndex(0), SpaceIndex(0), kept);
+        } else {
+            put_shared(cell, TypeIndex(0), SpaceIndex(0), Arc::from(bytes));
+        }
+        StepEnd::Done
+    }
+}
+
+fn typed(slots: &mut Slots) -> StepEnd {
+    let Some(input) = slots.cell(0) else {
+        return StepEnd::Fault;
+    };
+    if let Some(text) = take_typed::<String>(input) {
+        let Some(cell) = slots.cell(1) else {
+            return StepEnd::Fault;
+        };
+        put_typed(
+            cell,
+            TypeIndex(0),
+            SpaceIndex(0),
+            Arc::new(format!("{text}!")),
+        );
+        return StepEnd::Done;
+    }
+    let Some(bytes) = slots.cell(0).and_then(take_typed::<Vec<u8>>) else {
+        return StepEnd::Skipped;
+    };
+    let Some(cell) = slots.cell(1) else {
+        return StepEnd::Fault;
+    };
+    let reversed: Vec<u8> = bytes.iter().rev().copied().collect();
+    put_typed(cell, TypeIndex(0), SpaceIndex(0), Arc::new(reversed));
+    StepEnd::Done
 }
 
 pub struct TestBackend;
@@ -122,6 +188,8 @@ impl Backend for TestBackend {
         let kind = match id {
             "t.double" | "t.blob" | "t.probe" => Kind::Double,
             "t.boom" => Kind::Boom,
+            id if id.starts_with("t.echo.") => Kind::Echo,
+            id if id.starts_with("t.typed.") => Kind::Typed,
             _ => Kind::Wait,
         };
         let info = UnitInfo {
@@ -139,22 +207,52 @@ impl Backend for TestBackend {
             kind,
             node: node.0,
             probe,
+            out: [0; INLINE_BYTES],
         });
         Ok(Compiled::Steps(vec![StepUnit { step, info }]))
     }
 }
 
+/// The scalars the echo node is registered for, as `t.echo.<type key>`.
+pub const ECHOED: [Scalar; 9] = [
+    Scalar::Unit,
+    Scalar::Bool,
+    Scalar::I8,
+    Scalar::Int,
+    Scalar::U64,
+    Scalar::F32,
+    Scalar::Float,
+    Scalar::String,
+    Scalar::Bytes,
+];
+
 pub fn registry() -> Registry {
     let mut registry = Registry::new();
     let u32_ty = || TypeRef::Key(Scalar::U32.key());
     let blob = || TypeRef::Key(TypeKey::shared("t:blob").unwrap());
-    for (id, ty) in [
-        ("t.double", u32_ty as fn() -> TypeRef),
-        ("t.boom", u32_ty),
-        ("t.wait", u32_ty),
-        ("t.probe", u32_ty),
-        ("t.blob", blob),
-    ] {
+    let scalar = |scalar: Scalar| move || TypeRef::Key(scalar.key());
+    let nodes: Vec<(String, Box<dyn Fn() -> TypeRef>)> = vec![
+        ("t.double".to_string(), Box::new(u32_ty)),
+        ("t.boom".to_string(), Box::new(u32_ty)),
+        ("t.wait".to_string(), Box::new(u32_ty)),
+        ("t.probe".to_string(), Box::new(u32_ty)),
+        ("t.blob".to_string(), Box::new(blob)),
+        (
+            "t.typed.string".to_string(),
+            Box::new(scalar(Scalar::String)),
+        ),
+        ("t.typed.bytes".to_string(), Box::new(scalar(Scalar::Bytes))),
+    ];
+    let echoes = ECHOED
+        .iter()
+        .map(|kind| -> (String, Box<dyn Fn() -> TypeRef>) {
+            (
+                format!("t.echo.{}", kind.key().as_str()),
+                Box::new(scalar(*kind)),
+            )
+        });
+    for (id, ty) in nodes.into_iter().chain(echoes) {
+        let id = id.as_str();
         registry
             .register_owned(OwnedDecl {
                 id: id.to_string(),
