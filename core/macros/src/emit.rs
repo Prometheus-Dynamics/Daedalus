@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, quote_spanned};
+use quote::{ToTokens, format_ident, quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{Error, Expr, Ident, Item, ItemConst, ItemFn, LitStr, Result, Type};
 
@@ -77,6 +77,8 @@ struct Parts<'a> {
     upper: String,
     body_name: TokenStream,
     kind: TokenStream,
+    /// A const body's initializer, which only a const has.
+    init: Option<TokenStream>,
     shape: Shape,
 }
 
@@ -194,6 +196,7 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
         upper,
         body_name,
         kind,
+        init,
         shape,
     } = parts;
     check_rules(args, &shape)?;
@@ -233,6 +236,7 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
     let bind = bind_tokens(args.state.as_ref(), args.config.as_ref(), &shape);
     let decl = format_ident!("{upper}_DECL");
     let node = format_ident!("{upper}_NODE");
+    let init = init.map(|init| quote!(, init = (#init)));
     Ok(quote! {
         const _: ::daedalus_registry::__private::TypeKey =
             ::daedalus_registry::__private::TypeKey::new(#id);
@@ -267,7 +271,7 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
                     params = (#params),
                     ret = #ret,
                     bind = #bind,
-                    decl = #decl
+                    decl = #decl #init
                 );
                 __DAEDALUS_BODY.with_node(#state, &[#(#memory),*])
             },
@@ -355,6 +359,7 @@ fn expand_fn(args: NodeArgs, item: ItemFn) -> Result<TokenStream> {
             upper: upper(name),
             body_name: quote!(#name),
             kind: quote!(fn),
+            init: None,
             shape,
         })?);
         return Ok(out);
@@ -404,6 +409,7 @@ fn expand_fn(args: NodeArgs, item: ItemFn) -> Result<TokenStream> {
             upper: format!("{}_{tail}", upper(name)),
             body_name: quote!(#name::<#ty>),
             kind: quote!(fn),
+            init: None,
             shape,
         })?);
     }
@@ -445,6 +451,7 @@ fn expand_const(args: NodeArgs, item: ItemConst) -> Result<TokenStream> {
         error: None,
         modifies: false,
     };
+    let init = item.expr.to_token_stream();
     let mut out = quote!(#item);
     out.extend(records(Parts {
         args: &args,
@@ -452,6 +459,7 @@ fn expand_const(args: NodeArgs, item: ItemConst) -> Result<TokenStream> {
         upper: upper(name),
         body_name: quote!(#name),
         kind: quote!(const),
+        init: Some(init),
         shape,
     })?);
     Ok(out)
