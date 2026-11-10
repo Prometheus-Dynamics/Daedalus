@@ -10,9 +10,15 @@ node scripts/wasm-smoke.mjs "$out/wasm32-unknown-unknown/debug/daedalus_wasm_smo
 cargo build -q --target wasm32-wasip1 -p daedalus-wasm-smoke --bin daedalus-wasi-smoke
 echo "wasi smoke: $(node --no-warnings scripts/wasi-smoke.mjs "$out/wasm32-wasip1/debug/daedalus-wasi-smoke.wasm")"
 
-# The CLI has to match the library, or its output won't load. Cargo.lock isn't committed, so a
-# fresh checkout can resolve a newer library than the CLI that's installed.
-cargo update -q -p wasm-bindgen --precise "$(wasm-bindgen --version | awk '{ print $2 }')"
+# The CLI has to match the library, or its output won't load. Cargo.lock isn't committed, and
+# other dependencies pin the library, so the CLI follows the library: CI installs the version
+# `scripts/wasm-bindgen-version.sh` prints.
+wanted=$(scripts/wasm-bindgen-version.sh)
+found=$(wasm-bindgen --version | awk '{ print $2 }')
+if [[ "$wanted" != "$found" ]]; then
+  echo "wasm-bindgen CLI is $found and the build uses $wanted: cargo install wasm-bindgen-cli --version $wanted" >&2
+  exit 1
+fi
 cargo rustc -q --target wasm32-unknown-unknown -p daedalus-wasm-bindgen-host --lib --crate-type cdylib
 bindings=$(mktemp -d)
 trap 'rm -rf "$bindings"' EXIT
