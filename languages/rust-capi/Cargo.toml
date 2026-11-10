@@ -1,0 +1,18 @@
+[package]
+name = "daedalus-capi-rust"
+description = "A safe Rust host over the C surface: load the shared library, compile a graph, push, tick and take."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-abi = { path = "../../core/abi" }
+daedalus-capi-sys = { path = "../rust-capi-sys" }
+
+[dev-dependencies]
+# Built beside the tests, as the shared library they load.
+daedalus-capi = { path = "../../core/capi" }
+
+[lints]
+workspace = true
