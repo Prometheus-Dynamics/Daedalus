@@ -111,6 +111,7 @@ fn handoff_allocations() {
         for (shape, name) in [
             (handoff::Shape::Readers(8), "read"),
             (handoff::Shape::Chain(8), "chain"),
+            (handoff::Shape::Handed(8), "handed"),
         ] {
             let cost = handoff::cost(path, shape, 1 << 20, 200);
             println!(
@@ -197,7 +198,7 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("plugin: {ticks} ticks, sum {sum}");
         }
         "handoff" => {
-            // handoff <ticks> <handle|shared|vec> <chain|readers> [stages]
+            // handoff <ticks> <handle|shared|vec> <chain|handed|readers> [stages]
             let ticks = number(args.get(1), 0)?;
             let path = args
                 .get(2)
@@ -206,8 +207,9 @@ fn run(args: &[String]) -> Result<(), String> {
             let stages = number(args.get(4), 8)? as u32;
             let shape = match args.get(3).map(String::as_str) {
                 Some("chain") => handoff::Shape::Chain(stages),
+                Some("handed") => handoff::Shape::Handed(stages),
                 Some("readers") => handoff::Shape::Readers(stages),
-                _ => return Err("handoff needs a shape: chain or readers".to_owned()),
+                _ => return Err("handoff needs a shape: chain, handed or readers".to_owned()),
             };
             let mut host = handoff::graph(path, shape);
             let kept = handoff::value(path, HANDOFF_BYTES);

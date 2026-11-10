@@ -47,12 +47,11 @@ fn shared_bytes_steady_state_allocates_nothing() {
     );
 }
 
-/// The design's goal is that a value handed on costs nothing, and it isn't met: a CPU node
-/// that takes a value and returns it has the result put behind a new handle, once a stage.
-/// The bytes are never copied. When this fails because the count fell, lower it here and in
-/// `testing/budgets/budgets.toml`.
+/// A stage that takes the value itself, `T`, and returns one, has the result put behind a
+/// new handle: one allocation a stage. The bytes are never copied. That is what taking a value
+/// out of its handle means. A stage that hands a value on takes the handle, as the test above.
 #[test]
-fn a_value_handed_on_allocates_once_a_stage_today() {
+fn a_value_taken_out_of_its_handle_and_returned_allocates_once_a_stage() {
     let _turn = turn();
     let handed_on = Cost {
         allocations: u64::from(STAGES),
@@ -70,6 +69,57 @@ fn a_value_handed_on_allocates_once_a_stage_today() {
     // It is a cost of each stage, not of the graph.
     let one = cost(Path::Handle, Shape::Chain(1), LEN, TICKS);
     assert_eq!(one.allocations, 1);
+}
+
+#[test]
+fn a_value_handed_on_by_its_handle_costs_nothing() {
+    let _turn = turn();
+    // A stage that takes `Arc<T>` and returns it hands the same handle on: no allocation, no
+    // copy, no count raised, through one stage or eight, whatever the value is.
+    for path in Path::ALL {
+        for stages in [1, STAGES] {
+            assert_eq!(
+                cost(path, Shape::Handed(stages), LEN, TICKS),
+                NOTHING,
+                "{path:?}, {stages} stages"
+            );
+        }
+    }
+    // Taking the handle is still taking: two stages can't each take one value's handle, and
+    // the planner says so. Stages that share a value read it through a reference.
+    let refused = plans(Path::Handle, Shape::HandTakers(2)).expect_err("two takers");
+    assert!(refused.contains("CopyMissing"), "{refused}");
+    assert_eq!(
+        cost(Path::Handle, Shape::HandTakers(1), LEN, TICKS),
+        NOTHING
+    );
+}
+
+#[test]
+fn a_value_is_changed_in_place_through_its_handle() {
+    use daedalus_handoff_bench::{feed, graph, tick, touched, value};
+    let _turn = turn();
+    // Eight stages each change the value through `Arc::make_mut` and hand it on, and the last
+    // node reads it through a borrowed handle. Nobody else holds it, so nothing is copied, and
+    // every stage's change is there at the end.
+    let shape = Shape::Edited(STAGES);
+    let mut host = graph(Path::Handle, shape);
+    let before = touched();
+    for _ in 0..4 {
+        feed(&mut host, value(Path::Handle, LEN));
+        assert_eq!(tick(&mut host), 3 + u64::from(STAGES));
+    }
+    assert_eq!(touched(), before, "changed in place: no copy of the bytes");
+    // Held by the host as well, the value is copied by the first stage that changes it, once,
+    // and the host's own is untouched.
+    let kept = value(Path::Handle, LEN);
+    feed(&mut host, kept.again());
+    assert_eq!(tick(&mut host), 3 + u64::from(STAGES));
+    assert_eq!(touched().0 - before.0, 1, "one copy, by the first stage");
+    let daedalus_handoff_bench::Fed::Frame(kept) = kept else {
+        panic!("a frame");
+    };
+    assert_eq!(kept.bytes[1], 0, "the host's value is as it was");
 }
 
 #[test]

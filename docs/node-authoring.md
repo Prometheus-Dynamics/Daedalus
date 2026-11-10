@@ -28,6 +28,7 @@ A crate that writes CPU nodes depends on `daedalus`, on `daedalus-cpu-author` an
 |---|---|
 | `x: T` | The node takes the value. A `Copy` type is read, since taking it changes nothing for others. |
 | `x: &T` | The node reads it. Any number of readers share one value. |
+| `x: Arc<T>` | The node takes the value's handle. The port's type is `T`. Returning the same `Arc<T>` hands the value on with no copy and no allocation. |
 | `x: &mut T` | The node changes it in place. The planner gives it a copy if someone else also reads it. |
 | `x: Option<T>` | The port is optional: the node runs with or without it. |
 | `items: FanIn<'_, T>` | Any number of edges, on ports `items0`, `items1` and so on, in number order. |
@@ -52,7 +53,10 @@ belongs to whoever wrote the nodes that use it.
 
 A value of 16 bytes or less that is `Copy` travels in place. Anything else travels behind a
 handle and is never copied on the way. An output that is not plain data costs one allocation on
-each tick, for its handle.
+each tick, for its handle, unless the node returns a handle it already has: a node that takes
+`Arc<T>` and returns it, or returns an `Arc<T>` it keeps, allocates nothing. To change a large
+value in place and hand it on, take `Arc<T>` and use `Arc::make_mut`, which copies only when
+someone else still holds the value.
 
 ## Constants and config
 

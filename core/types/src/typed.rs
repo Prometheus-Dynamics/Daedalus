@@ -24,3 +24,11 @@ scalar!(
 
 #[cfg(feature = "alloc")]
 scalar!(alloc::string::String => String, alloc::vec::Vec<u8> => Bytes);
+
+/// A handle to a value is of the value's type: a node that takes or returns `Arc<T>` has a
+/// port of type `T`, and what moves is the handle.
+#[cfg(feature = "alloc")]
+impl<T: Typed> Typed for alloc::sync::Arc<T> {
+    const KEY: TypeKey = T::KEY;
+    const EXPR: TypeExpr = T::EXPR;
+}
