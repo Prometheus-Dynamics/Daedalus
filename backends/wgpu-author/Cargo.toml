@@ -1,0 +1,26 @@
+[package]
+name = "daedalus-wgpu-author"
+description = "What #[node] expands to for a shader body: the WGSL is read here, at expansion."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+naga = { workspace = true }
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+
+[dev-dependencies]
+daedalus-macros = { path = "../../core/macros" }
+daedalus-registry = { path = "../../core/registry" }
+daedalus-types = { path = "../../core/types" }
+daedalus-wgpu = { path = "../wgpu" }
+trybuild = { workspace = true }
+
+[lints]
+workspace = true

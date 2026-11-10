@@ -61,6 +61,8 @@ pub struct Storage {
     pub(crate) buffer: wgpu::Buffer,
     /// The size asked for. The buffer behind it may be larger, when it came from a pool.
     pub(crate) size: u64,
+    /// Unique to this buffer, for the bind group cache.
+    pub(crate) id: u64,
     space: &'static str,
     mapping: Option<Mapping>,
     pub(crate) context: Arc<Context>,
@@ -106,6 +108,7 @@ impl Storage {
         Ok(Storage {
             buffer,
             size,
+            id: Context::next_id(),
             space: SPACE_DEVICE,
             mapping: None,
             context,
@@ -151,6 +154,7 @@ impl Storage {
             Ok((buffer, mapping)) => Ok(Storage {
                 buffer,
                 size,
+                id: Context::next_id(),
                 space,
                 mapping,
                 context,

@@ -12,6 +12,7 @@ mod driver;
 mod memory;
 mod pool;
 mod profile;
+pub mod shader;
 mod staging;
 mod storage_pool;
 mod texture;
@@ -28,3 +29,7 @@ pub use profile::{DeviceProfile, Family, vendor_ids};
 pub use staging::{StagingConfig, StagingStats};
 pub use storage_pool::{StoragePool, StoragePoolStats};
 pub use texture::{Format, Texture, TextureDesc, TextureError};
+
+#[cfg(test)]
+#[global_allocator]
+static ALLOC: daedalus_abi::counting::CountingAlloc = daedalus_abi::counting::CountingAlloc;

@@ -1,0 +1,11 @@
+error: the shader has no binding named `out`: it has dst
+ --> tests/ui/fail_unknown_port.rs:3:69
+  |
+3 | #[node(id = "ui.port", outputs(out), backend = daedalus_wgpu_author(out: u32))]
+  |                                                                     ^^^
+
+error: a shader node is a const holding WGSL, not a function
+  --> tests/ui/fail_unknown_port.rs:10:4
+   |
+10 | fn function(x: u32) -> u32 {
+   |    ^^^^^^^^

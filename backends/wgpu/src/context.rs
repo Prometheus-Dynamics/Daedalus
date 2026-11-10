@@ -42,6 +42,7 @@ pub(crate) struct Context {
     pub(crate) key: u64,
     pub(crate) copies: CopyLimiter,
     staging: Mutex<StagingPool<wgpu::Buffer>>,
+    shaders: Mutex<crate::shader::ShaderCache>,
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "shader nodes take their scratch here, from E4")
@@ -99,8 +100,18 @@ impl Context {
             key: NEXT_KEY.fetch_add(1, Ordering::Relaxed),
             copies: CopyLimiter::new(MAX_INFLIGHT_COPIES),
             staging: Mutex::new(StagingPool::new(options.staging)),
+            shaders: Mutex::default(),
             temp: Mutex::new(TempPool::new(options.temp_pool)),
         }
+    }
+
+    pub(crate) fn shaders(&self) -> MutexGuard<'_, crate::shader::ShaderCache> {
+        self.shaders.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A number no other buffer or texture in this process has.
+    pub(crate) fn next_id() -> u64 {
+        NEXT_KEY.fetch_add(1, Ordering::Relaxed)
     }
 
     pub(crate) fn staging(&self) -> MutexGuard<'_, StagingPool<wgpu::Buffer>> {

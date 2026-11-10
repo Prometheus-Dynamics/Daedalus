@@ -1,0 +1,12 @@
+error: the shader binds 9 storage buffers, and a device only has to allow 8
+  --> tests/ui/fail_nine_storage_buffers.rs:4:20
+   |
+ 4 |   const NINE: &str = "
+   |  ____________________^
+ 5 | |     @group(0) @binding(0) var<storage, read_write> b0: array<u32>;
+ 6 | |     @group(0) @binding(1) var<storage, read_write> b1: array<u32>;
+ 7 | |     @group(0) @binding(2) var<storage, read_write> b2: array<u32>;
+...  |
+14 | |     @compute @workgroup_size(1) fn main() {}
+15 | | ";
+   | |_^

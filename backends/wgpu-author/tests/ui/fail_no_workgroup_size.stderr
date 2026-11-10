@@ -1,0 +1,13 @@
+error: workgroup size is missing on compute shader entry point
+         ┌─ wgsl:3:6
+         │
+       3 │     @compute fn main() { dst[0] = 1u; }
+         │      ^^^^^^^ must be paired with a `@workgroup_size` attribute
+ --> tests/ui/fail_no_workgroup_size.rs:4:23
+  |
+4 |   const UNSIZED: &str = "
+  |  _______________________^
+5 | |     @group(0) @binding(0) var<storage, read_write> dst: array<u32>;
+6 | |     @compute fn main() { dst[0] = 1u; }
+7 | | ";
+  | |_^
