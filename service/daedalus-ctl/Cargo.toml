@@ -1,0 +1,18 @@
+[package]
+name = "daedalus-ctl"
+description = "The command line client for daedalusd."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-client = { path = "../../core/client" }
+daedalus-types = { path = "../../core/types" }
+serde_json = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+daedalus-graph = { path = "../../core/graph" }
+
+[lints]
+workspace = true
