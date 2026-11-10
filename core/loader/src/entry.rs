@@ -150,6 +150,11 @@ impl Plugin {
         self.backends.iter().find(|backend| backend.id == id)
     }
 
+    /// A value of this plugin's generation holding `bytes`. The value keeps the library open.
+    pub fn share(&self, bytes: &[u8]) -> crate::SharedBytes {
+        crate::SharedBytes::from_plugin(&self.generation, bytes)
+    }
+
     /// Joins this plugin's nodes into `registry`, under the rules for a compiled-in record.
     pub fn join(&self, registry: &mut Registry) -> Result<(), LoadError> {
         join(&self.nodes, self.generation.path(), registry)
