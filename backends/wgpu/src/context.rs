@@ -50,6 +50,8 @@ pub(crate) struct Context {
     lost: AtomicBool,
     wait_timeout: std::time::Duration,
     inflight: Mutex<InFlight>,
+    submits: AtomicU64,
+    passes: AtomicU64,
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "shader nodes take their scratch here, from E4")
@@ -108,6 +110,8 @@ impl Context {
             lost: AtomicBool::new(false),
             wait_timeout: options.wait_timeout,
             inflight: Mutex::new(InFlight::new(options.max_in_flight)),
+            submits: AtomicU64::new(0),
+            passes: AtomicU64::new(0),
             record: CapsRecord::new(info, &limits, device.features()),
             limits,
             device,
@@ -123,6 +127,23 @@ impl Context {
 
     pub(crate) fn shaders(&self) -> MutexGuard<'_, crate::shader::ShaderCache> {
         self.shaders.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn count_submit(&self) {
+        self.submits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn count_pass(&self) {
+        self.passes.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The shader cache's counters, with the submits and passes this device has seen.
+    pub(crate) fn shader_stats(&self) -> crate::shader::ShaderStats {
+        crate::shader::ShaderStats {
+            submits: self.submits.load(Ordering::Relaxed),
+            passes: self.passes.load(Ordering::Relaxed),
+            ..self.shaders().stats()
+        }
     }
 
     pub(crate) fn inflight(&self) -> MutexGuard<'_, InFlight> {

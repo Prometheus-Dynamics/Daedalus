@@ -51,6 +51,8 @@ static GRIND: ShaderSpec = ShaderSpec {
         binding: 0,
         stride: 4,
     },
+    inputs: &[],
+    outputs: &[],
 };
 
 /// A shader and a buffer, with a fixed, small amount of work. Nothing here depends on how long

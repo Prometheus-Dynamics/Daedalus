@@ -42,6 +42,8 @@ static DOUBLE: ShaderSpec = ShaderSpec {
         binding: 1,
         stride: 4,
     },
+    inputs: &[],
+    outputs: &[],
 };
 
 #[test]

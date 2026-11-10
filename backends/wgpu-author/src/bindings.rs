@@ -14,6 +14,7 @@ struct Call {
     name: TokenStream,
     args: TokenStream,
     init: Option<TokenStream>,
+    decl: Option<Ident>,
 }
 
 impl Parse for Call {
@@ -23,6 +24,7 @@ impl Parse for Call {
             name: TokenStream::new(),
             args: TokenStream::new(),
             init: None,
+            decl: None,
         };
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -47,7 +49,7 @@ impl Parse for Call {
                 "init" => call.init = Some(group(input)?),
                 "params" | "bind" => drop(group(input)?),
                 "ret" => drop(input.parse::<Type>()?),
-                "decl" => drop(input.parse::<Ident>()?),
+                "decl" => call.decl = Some(input.parse()?),
                 _ => return Err(Error::new(key.span(), "not a key #[node] passes")),
             }
             if !input.is_empty() {
@@ -177,6 +179,9 @@ pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
     let init = call
         .init
         .ok_or_else(|| Error::new_spanned(&name, "#[node] passed no initializer for this const"))?;
+    let decl = call
+        .decl
+        .ok_or_else(|| Error::new_spanned(&name, "#[node] passed no declaration for this const"))?;
     let args = parse_args.parse2(call.args)?;
     let (text, at) = source(init)?;
     let entry = args.entry.as_ref().map(LitStr::value);
@@ -270,7 +275,12 @@ pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
     ];
     let entry = &shader.entry;
     let label = name.to_token_stream().to_string();
-    Ok(quote! {
+    Ok(quote! {{
+        const BINDINGS: &[#shader_path::BindingSpec] = &[#(#bindings),*];
+        // Which binding each declared port feeds. A port with no binding of its name fails here.
+        const INPUTS: [u32; #decl.inputs.len()] = #shader_path::port_bindings(#decl.inputs, BINDINGS);
+        const OUTPUTS: [u32; #decl.outputs.len()] =
+            #shader_path::port_bindings(#decl.outputs, BINDINGS);
         ::daedalus_registry::BodyRecord {
             backend: "wgpu",
             at: ::daedalus_registry::SourceAt(::core::concat!(::core::file!(), ":", ::core::line!())),
@@ -283,10 +293,12 @@ pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
                 entry: #entry,
                 source: #name,
                 workgroup: [#x, #y, #z],
-                bindings: &[#(#bindings),*],
+                bindings: BINDINGS,
                 dispatch: #dispatch,
+                inputs: &INPUTS,
+                outputs: &OUTPUTS,
             },
             text: #name,
         }
-    })
+    }})
 }

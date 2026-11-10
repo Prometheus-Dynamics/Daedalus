@@ -81,7 +81,7 @@ impl WgpuBackend {
     /// How much the device's shader cache has built. `None` while no device is open.
     pub fn shader_stats(&self) -> Option<crate::shader::ShaderStats> {
         let own = self.context.lock().unwrap_or_else(PoisonError::into_inner);
-        own.as_ref().map(|context| context.shaders().stats())
+        own.as_ref().map(|context| context.shader_stats())
     }
 
     pub(crate) fn context(&self) -> Result<Arc<Context>, OpenError> {
@@ -139,9 +139,8 @@ impl Backend for WgpuBackend {
             .collect()
     }
 
-    fn compile(&self, _: &Region<'_>, _: &CompileCx<'_>) -> Result<Compiled, Refusal> {
-        Err(Refusal::whole_region(
-            "the wgpu backend compiles nothing yet",
-        ))
+    /// One step for the whole region: every node's pass in one encoder, and one submit.
+    fn compile(&self, region: &Region<'_>, cx: &CompileCx<'_>) -> Result<Compiled, Refusal> {
+        crate::region::compile(self, region, cx).map(|unit| Compiled::Steps(vec![unit]))
     }
 }

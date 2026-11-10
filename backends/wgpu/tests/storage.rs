@@ -211,6 +211,8 @@ static COPY: daedalus_wgpu::shader::ShaderSpec = {
             binding: 1,
             stride: 4,
         },
+        inputs: &[],
+        outputs: &[],
     }
 };
 

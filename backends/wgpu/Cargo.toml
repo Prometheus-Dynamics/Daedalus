@@ -9,6 +9,10 @@ repository.workspace = true
 [dependencies]
 daedalus-abi = { path = "../../core/abi" }
 daedalus-backend = { path = "../../core/backend" }
+daedalus-graph = { path = "../../core/graph" }
+daedalus-registry = { path = "../../core/registry" }
+daedalus-runner = { path = "../../core/runner" }
+daedalus-types = { path = "../../core/types" }
 daedalus-vk-sys = { path = "../vk-sys" }
 pollster = { workspace = true }
 wgpu = { workspace = true }
@@ -17,8 +21,7 @@ wgpu = { workspace = true }
 daedalus-dma-sys = { path = "../dma-sys" }
 
 [dev-dependencies]
-daedalus-abi = { path = "../../core/abi", features = ["count-alloc"] }
-daedalus-types = { path = "../../core/types" }
+daedalus-abi = { path = "../../core/abi", features = ["count-alloc", "test-run"] }
 daedalus-value = { path = "../../core/value" }
 
 [lints]

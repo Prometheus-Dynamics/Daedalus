@@ -73,7 +73,7 @@ pub enum Run {
 /// A shader ready to run on one device. Loading builds its pipeline, or finds the one already
 /// built for the same content. Load at setup, not while a region runs.
 pub struct Shader {
-    spec: &'static ShaderSpec,
+    spec: ShaderSpec,
     key: u64,
     pub(super) pipeline: Arc<Pipeline>,
     /// One per uniform or sampler binding, by position in the binding table.
@@ -89,7 +89,7 @@ enum Owned {
 }
 
 impl Shader {
-    pub fn load(backend: &WgpuBackend, spec: &'static ShaderSpec) -> Result<Shader, ShaderError> {
+    pub fn load(backend: &WgpuBackend, spec: &ShaderSpec) -> Result<Shader, ShaderError> {
         let context = backend.context().map_err(ShaderError::Open)?;
         let caps = &context.record.compute;
         let (buffers, textures) = spec.counts();
@@ -151,7 +151,7 @@ impl Shader {
             })
             .collect();
         Ok(Shader {
-            spec,
+            spec: *spec,
             key: spec.key(),
             pipeline,
             owned,
@@ -170,8 +170,8 @@ impl Shader {
         self
     }
 
-    pub fn spec(&self) -> &'static ShaderSpec {
-        self.spec
+    pub fn spec(&self) -> &ShaderSpec {
+        &self.spec
     }
 
     fn mismatch(&self, at: usize, what: &str) -> ShaderError {
@@ -275,24 +275,16 @@ impl Shader {
         }
     }
 
-    /// Runs the shader once, as one compute pass, and submits it. Never waits: the ticket says
-    /// when the work is done, and the work is ordered after everything submitted before it on
-    /// this device. When the device already has its limit of submissions unfinished, nothing is
-    /// submitted and the oldest of them comes back to wait on.
-    pub fn run(&self, bound: &[Bound<'_>]) -> Result<Run, ShaderError> {
+    /// Records this shader's pass into `encoder`: its bind group, found or made, and one
+    /// dispatch.
+    fn pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        resources: [(u64, Option<wgpu::BindingResource<'_>>); MAX_BINDINGS],
+        [x, y, z]: [u32; 3],
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
+    ) {
         let context = &self.context;
-        if let Some(reported) = context.errors.take() {
-            return Err(ShaderError::Device(reported));
-        }
-        if context.is_lost() {
-            return Err(ShaderError::Device("the device is lost".into()));
-        }
-        let resources = self.resources(bound)?;
-        let [x, y, z] = self.counts(bound)?;
-        context.poll();
-        if let Err(oldest) = context.inflight().admit() {
-            return Ok(Run::Busy(Ticket::new(oldest, Arc::clone(context), None)));
-        }
         let mut ids = [0; MAX_BINDINGS];
         for (id, (have, _)) in ids.iter_mut().zip(&resources) {
             *id = *have;
@@ -325,19 +317,57 @@ impl Shader {
                 group
             }
         };
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes,
+        });
+        pass.set_pipeline(&self.pipeline.pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(x, y, z);
+        context.count_pass();
+    }
+
+    /// Checks `bound` and records one pass of this shader into `encoder`, for a region that
+    /// submits several passes together. Nothing is submitted here.
+    pub(crate) fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bound: &[Bound<'_>],
+    ) -> Result<(), ShaderError> {
+        let resources = self.resources(bound)?;
+        let counts = self.counts(bound)?;
+        self.pass(encoder, resources, counts, None);
+        Ok(())
+    }
+
+    /// Runs the shader once, as one compute pass, and submits it. Never waits: the ticket says
+    /// when the work is done, and the work is ordered after everything submitted before it on
+    /// this device. When the device already has its limit of submissions unfinished, nothing is
+    /// submitted and the oldest of them comes back to wait on.
+    pub fn run(&self, bound: &[Bound<'_>]) -> Result<Run, ShaderError> {
+        let context = &self.context;
+        if let Some(reported) = context.errors.take() {
+            return Err(ShaderError::Device(reported));
+        }
+        if context.is_lost() {
+            return Err(ShaderError::Device("the device is lost".into()));
+        }
+        let resources = self.resources(bound)?;
+        let [x, y, z] = self.counts(bound)?;
+        context.poll();
+        if let Err(oldest) = context.inflight().admit() {
+            return Ok(Run::Busy(Ticket::new(oldest, Arc::clone(context), None)));
+        }
         let timer = self.timers.iter().find(|timer| timer.claim());
         let mut encoder = context
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
-                timestamp_writes: timer.map(|timer| timer.writes()),
-            });
-            pass.set_pipeline(&self.pipeline.pipeline);
-            pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(x, y, z);
-        }
+        self.pass(
+            &mut encoder,
+            resources,
+            [x, y, z],
+            timer.map(|timer| timer.writes()),
+        );
         if let Some(timer) = timer {
             timer.resolve(&mut encoder);
         }
@@ -346,6 +376,7 @@ impl Shader {
         {
             let _held = context.submit.lock();
             context.queue.submit([encoder.finish()]);
+            context.count_submit();
             context
                 .queue
                 .on_submitted_work_done(move || finished.finish());

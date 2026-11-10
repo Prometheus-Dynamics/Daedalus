@@ -18,6 +18,10 @@ pub struct ShaderStats {
     pub bind_groups: u64,
     /// Bind groups dropped to stay within the limit.
     pub evicted: u64,
+    /// Queue submits of shader work.
+    pub submits: u64,
+    /// Compute passes recorded.
+    pub passes: u64,
 }
 
 pub(crate) struct Pipeline {

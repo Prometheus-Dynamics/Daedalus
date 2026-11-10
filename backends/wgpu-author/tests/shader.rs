@@ -273,6 +273,8 @@ fn pipelines_and_bind_groups_are_kept_by_content() {
             binding: 1,
             stride: 4,
         },
+        inputs: &[],
+        outputs: &[],
     };
     assert!(!std::ptr::eq(&FIRST, &SECOND));
     let first = Shader::load(&backend, &FIRST).expect("loads");

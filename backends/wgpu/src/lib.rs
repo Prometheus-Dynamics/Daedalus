@@ -16,6 +16,7 @@ mod inflight;
 mod memory;
 mod pool;
 mod profile;
+mod region;
 pub mod shader;
 mod staging;
 mod storage_pool;
