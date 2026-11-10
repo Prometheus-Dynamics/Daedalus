@@ -16,6 +16,7 @@ mod fence_tests;
 pub mod fragment;
 pub mod image;
 mod inflight;
+pub mod kernels;
 mod loss;
 mod memory;
 pub mod merge;

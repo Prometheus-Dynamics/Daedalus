@@ -108,6 +108,28 @@ pub const fn pixel_ports<const N: usize>(
     out
 }
 
+/// A chain of pixel bodies as one compute shader on `backend`'s device, for a chain run by
+/// hand: in a graph, a region merges the chains it finds. It binds the input buffer, the output
+/// buffer, then each body's config and side inputs in chain order.
+pub fn chain_shader(
+    backend: &crate::WgpuBackend,
+    chain: &[&PixelSpec],
+) -> Result<crate::shader::Shader, crate::shader::ShaderError> {
+    use crate::shader::ShaderError;
+    if chain.is_empty() {
+        return Err(ShaderError::Build("a chain of no bodies".into()));
+    }
+    for pair in chain.windows(2) {
+        if !generate::same_type(pair[0].output, pair[1].input) {
+            return Err(ShaderError::Build(format!(
+                "`{}` returns `{}`, and `{}` takes `{}`",
+                pair[0].name, pair[0].output, pair[1].name, pair[1].input
+            )));
+        }
+    }
+    crate::shader::Shader::load(backend, merged(chain))
+}
+
 /// The two forms a chain is generated in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Form {

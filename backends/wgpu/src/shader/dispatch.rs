@@ -381,6 +381,24 @@ impl Shader {
         Ok(())
     }
 
+    /// [`Shader::encode`] with the workgroup counts given, for a shader whose run is sized by
+    /// something other than its table says.
+    pub(crate) fn encode_sized(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bound: &[Bound<'_>],
+        counts: [u32; 3],
+    ) -> Result<(), ShaderError> {
+        let resources = self.resources(bound)?;
+        let max = self.context.record.compute.max_workgroups_per_dimension;
+        if let Some(&count) = counts.iter().find(|&&count| count > max) {
+            return Err(ShaderError::Shape { count, max });
+        }
+        self.copy_uniforms(encoder, bound);
+        self.pass(encoder, resources, counts, None);
+        Ok(())
+    }
+
     /// Runs the shader once, as one compute pass, and submits it. Never waits: the ticket says
     /// when the work is done, and the work is ordered after everything submitted before it on
     /// this device. When the device already has its limit of submissions unfinished, nothing is

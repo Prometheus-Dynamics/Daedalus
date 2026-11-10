@@ -9,6 +9,7 @@ use crate::buffer::Storage;
 /// What a recording body is given for one run.
 pub struct RecordCx<'a> {
     pub(crate) device: &'a wgpu::Device,
+    pub(crate) context: &'a std::sync::Arc<crate::context::Context>,
     pub(crate) encoder: &'a mut wgpu::CommandEncoder,
     pub(crate) inputs: &'a [Option<&'a Storage>],
     pub(crate) outputs: &'a [Option<&'a Storage>],
