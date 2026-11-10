@@ -6,6 +6,7 @@ The only crate that calls the kernel's dma-buf, dma-heap and sync_file interface
 | --- | --- |
 | `DmaHeap::open`, `open_path` | Opens `/dev/dma_heap/<name>` |
 | `DmaHeap::allocate` | `DMA_HEAP_IOCTL_ALLOC`, which returns a dma-buf fd |
+| `DmaBuf::memfd` | `memfd_create` and `ftruncate`: memory that maps and shares like a dma-buf, with no device |
 | `DmaBuf::from_fd`, `into_fd` | Wraps or releases an owned fd |
 | `DmaBufRef::len` | `lseek` to the end and back |
 | `DmaBufRef::identity` | `fstat`: the device and inode, which name the buffer however many fds it has |

@@ -46,6 +46,23 @@ impl DmaBuf {
         DmaBuf { fd }
     }
 
+    /// An anonymous file in memory of `len` bytes, which maps and shares like a dma-buf and
+    /// needs no device. It has no fences and takes no CPU access brackets.
+    pub fn memfd(name: &str, len: u64) -> Result<DmaBuf, Error> {
+        let name = std::ffi::CString::new(name).map_err(|_| Error::Range)?;
+        let len = libc::off_t::try_from(len).map_err(|_| Error::Range)?;
+        if len == 0 {
+            return Err(Error::Range);
+        }
+        // SAFETY: the name is a NUL-terminated string that lives through the call.
+        let fd = check(unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC) })?;
+        // SAFETY: `memfd_create` just returned this fd, and nothing else owns it.
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        // SAFETY: `ftruncate` on an fd this function owns touches no memory.
+        check(unsafe { libc::ftruncate(fd.as_raw_fd(), len) })?;
+        Ok(DmaBuf { fd })
+    }
+
     pub fn into_fd(self) -> OwnedFd {
         self.fd
     }

@@ -112,7 +112,7 @@ wgpu as a backend: whole-shader nodes, shared submits, merged per-pixel function
 - [ ] [E14](docs/prs/E14.md) GPU import: external memory as a sampled texture (wave 8; needs A15, E9, E13; board run)
 - [ ] [E15](docs/prs/E15.md) images into storage and sampled textures (wave 9; needs E14; board run)
 - [ ] [E16](docs/prs/E16.md) GPU kernel ops on device-resident data (wave 8; needs D8, E4; board run)
-- [ ] [E17](docs/prs/E17.md) dmabuf memory backend: a memory space, a pool, no nodes (wave 8; needs A7, E9; board run)
+- [x] [E17](docs/prs/E17.md) dmabuf memory backend: a memory space, a pool, no nodes (wave 8; needs A7, E9; board run)
 
 ## G. Plugins and languages
 
