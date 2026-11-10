@@ -13,6 +13,7 @@ daedalus-backend = { path = "../../../core/backend" }
 daedalus-cpu = { path = "../../../backends/cpu" }
 daedalus-cpu-author = { path = "../../../backends/cpu-author" }
 daedalus-graph = { path = "../../../core/graph" }
+daedalus-handoff-bench = { path = "../handoff-bench" }
 daedalus-host = { path = "../../../core/host" }
 daedalus-loader = { path = "../../../core/loader" }
 daedalus-macros = { path = "../../../core/macros" }

@@ -24,6 +24,7 @@ use daedalus_budget_harness::plugin::{plugin_node, plugin_tick};
 use daedalus_budget_harness::{
     Stage, big, chain, chain_tick, idle_tick, large_feed, large_handle, large_step,
 };
+use daedalus_handoff_bench as handoff;
 
 #[global_allocator]
 static ALLOC: CountingAlloc = CountingAlloc;
@@ -94,6 +95,31 @@ fn allocations(planted: bool) {
         }
     });
     println!("alloc_detector_frame {}", count as u64 / TICKS);
+    if !planted {
+        handoff_allocations();
+    }
+}
+
+/// The size of the value the handoff rows pass: large enough that a copy shows, small enough
+/// that making one each tick doesn't drown the rest.
+const HANDOFF_BYTES: usize = 4096;
+
+/// Allocations per tick of each way to pass a large value, read by eight nodes and handed on
+/// through eight stages.
+fn handoff_allocations() {
+    for path in handoff::Path::ALL {
+        for (shape, name) in [
+            (handoff::Shape::Readers(8), "read"),
+            (handoff::Shape::Chain(8), "chain"),
+        ] {
+            let cost = handoff::cost(path, shape, 1 << 20, 200);
+            println!(
+                "alloc_handoff_{}_{name}_tick {}",
+                path.name(),
+                cost.allocations
+            );
+        }
+    }
 }
 
 fn plugin_allocations(library: &Path) {
@@ -169,6 +195,37 @@ fn run(args: &[String]) -> Result<(), String> {
                 sum += u64::from(black_box(plugin_tick(&mut host, value as u32)));
             }
             println!("plugin: {ticks} ticks, sum {sum}");
+        }
+        "handoff" => {
+            // handoff <ticks> <handle|shared|vec> <chain|readers> [stages]
+            let ticks = number(args.get(1), 0)?;
+            let path = args
+                .get(2)
+                .and_then(|text| handoff::Path::parse(text))
+                .ok_or("handoff needs a path: handle, shared or vec")?;
+            let stages = number(args.get(4), 8)? as u32;
+            let shape = match args.get(3).map(String::as_str) {
+                Some("chain") => handoff::Shape::Chain(stages),
+                Some("readers") => handoff::Shape::Readers(stages),
+                _ => return Err("handoff needs a shape: chain or readers".to_owned()),
+            };
+            let mut host = handoff::graph(path, shape);
+            let kept = handoff::value(path, HANDOFF_BYTES);
+            let mut sum = 0u64;
+            for _ in 0..ticks {
+                // A chain takes the value, so it is fed a new one each tick: that is in the
+                // count for every path alike.
+                let fed = match shape {
+                    handoff::Shape::Readers(_) => kept.again(),
+                    _ => handoff::value(path, HANDOFF_BYTES),
+                };
+                handoff::feed(&mut host, fed);
+                sum += black_box(handoff::tick(&mut host));
+            }
+            println!(
+                "handoff: {} {shape:?}, {ticks} ticks, sum {sum}",
+                path.name()
+            );
         }
         "allocations" => allocations(args.get(1).map(String::as_str) == Some("planted")),
         other => return Err(format!("unknown benchmark `{other}`")),

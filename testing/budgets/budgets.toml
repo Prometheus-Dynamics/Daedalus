@@ -137,6 +137,115 @@ targets = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi"]
 limit_flash = 17920
 limit_ram = 584
 
+# --- Large-value handoff (I3): three ways to pass a large value, on the same graphs. --------------
+# `read` is the host's value read through a reference by 8 nodes. `chain` is the value taken and
+# handed on by 8 stages, then read once. The paths are a struct that owns its bytes (handle),
+# reference-counted bytes (shared) and a stage that makes its own vector (vec), in
+# testing/crates/handoff-bench. Dev has no figure for these under callgrind: its handoff numbers
+# are times, which are a board run. So each instruction row's limit is this branch plus 10%.
+# A chain row is fed a new 4 KiB value each tick, since its stages take the value, and making
+# it is in the count for every path alike.
+
+[[row]]
+name = "handoff_handle_read_tick"
+measure = "instructions per tick: a 4 KiB value passed as a handle, read by 8 nodes"
+tool = "callgrind"
+command = "handoff {n} handle readers"
+limit = 10033
+next = 9121
+tolerance_percent = 10
+board_run = "I3"
+
+[[row]]
+name = "handoff_handle_chain_tick"
+measure = "instructions per tick: a 4 KiB value passed as a handle, handed on through 8 stages"
+tool = "callgrind"
+command = "handoff {n} handle chain"
+limit = 12893
+next = 11721
+tolerance_percent = 10
+board_run = "I3"
+
+[[row]]
+name = "handoff_shared_read_tick"
+measure = "instructions per tick: a 4 KiB value passed as a shared, read by 8 nodes"
+tool = "callgrind"
+command = "handoff {n} shared readers"
+limit = 10079
+next = 9163
+tolerance_percent = 10
+board_run = "I3"
+
+[[row]]
+name = "handoff_shared_chain_tick"
+measure = "instructions per tick: a 4 KiB value passed as a shared, handed on through 8 stages"
+tool = "callgrind"
+command = "handoff {n} shared chain"
+limit = 13957
+next = 12689
+tolerance_percent = 10
+board_run = "I3"
+
+[[row]]
+name = "handoff_vec_read_tick"
+measure = "instructions per tick: a 4 KiB value passed as a vec, read by 8 nodes"
+tool = "callgrind"
+command = "handoff {n} vec readers"
+limit = 10033
+next = 9121
+tolerance_percent = 10
+board_run = "I3"
+
+[[row]]
+name = "handoff_vec_chain_tick"
+measure = "instructions per tick: a 4 KiB value passed as a vec, handed on through 8 stages"
+tool = "callgrind"
+command = "handoff {n} vec chain"
+limit = 19162
+next = 17420
+tolerance_percent = 10
+board_run = "I3"
+
+[[row]]
+name = "alloc_handoff_handle_read_tick"
+measure = "allocations per tick: a megabyte passed as a handle, read by 8 nodes"
+tool = "alloc"
+limit = 0
+
+[[row]]
+name = "alloc_handoff_handle_chain_tick"
+measure = "allocations per tick: a megabyte passed as a handle, handed on through 8 stages"
+tool = "alloc"
+# Not the design's zero. A CPU node that takes a value and returns it has the result put behind
+# a new handle: one allocation a stage. The bytes are never copied.
+limit = 8
+
+[[row]]
+name = "alloc_handoff_shared_read_tick"
+measure = "allocations per tick: a megabyte passed as a shared, read by 8 nodes"
+tool = "alloc"
+limit = 0
+
+[[row]]
+name = "alloc_handoff_shared_chain_tick"
+measure = "allocations per tick: a megabyte passed as a shared, handed on through 8 stages"
+tool = "alloc"
+# The same allocation a stage as the handle. The bytes' own count is never raised.
+limit = 8
+
+[[row]]
+name = "alloc_handoff_vec_read_tick"
+measure = "allocations per tick: a megabyte passed as a vec, read by 8 nodes"
+tool = "alloc"
+limit = 0
+
+[[row]]
+name = "alloc_handoff_vec_chain_tick"
+measure = "allocations per tick: a megabyte passed as a vec, handed on through 8 stages"
+tool = "alloc"
+# The contrast: each stage allocates its vector and the handle around it, and copies the bytes.
+limit = 16
+
 # --- GPU submits: counted on lavapipe, in the GPU workflow. ----------------------------------------
 
 [[row]]
