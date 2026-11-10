@@ -12,6 +12,9 @@ daedalus-vk-sys = { path = "../vk-sys" }
 pollster = { workspace = true }
 wgpu = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+daedalus-dma-sys = { path = "../dma-sys" }
+
 [dev-dependencies]
 daedalus-abi = { path = "../../core/abi", features = ["count-alloc"] }
 daedalus-types = { path = "../../core/types" }

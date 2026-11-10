@@ -25,6 +25,8 @@ pub enum StorageError {
     },
     /// The device couldn't give the memory, or lost the readback.
     Device(String),
+    /// This machine can't make that kind of buffer. The text says what is missing.
+    Unsupported(&'static str),
 }
 
 impl fmt::Display for StorageError {
@@ -44,16 +46,65 @@ impl fmt::Display for StorageError {
                 )
             }
             StorageError::Device(reason) => f.write_str(reason),
+            StorageError::Unsupported(what) => f.write_str(what),
         }
     }
 }
 
 impl std::error::Error for StorageError {}
 
+/// How the host reaches a buffer's memory in place.
 #[cfg(target_os = "linux")]
-type Mapping = daedalus_vk_sys::memory::HostMapping;
+enum Mapping {
+    /// The device's own memory, mapped.
+    Device(daedalus_vk_sys::memory::HostMapping),
+    /// A dma-buf, which wants to be told around each host access.
+    Heap {
+        buf: daedalus_dma_sys::DmaBuf,
+        map: daedalus_dma_sys::Mapping,
+    },
+}
 #[cfg(not(target_os = "linux"))]
 enum Mapping {}
+
+#[cfg(target_os = "linux")]
+impl Mapping {
+    fn write(&self, offset: u64, bytes: &[u8]) -> Result<(), StorageError> {
+        use daedalus_dma_sys::Access;
+        let failed = |error: daedalus_dma_sys::Error| StorageError::Device(error.to_string());
+        match self {
+            Mapping::Device(map) => map
+                .write(offset, bytes)
+                .map_err(|error| StorageError::Device(error.to_string())),
+            Mapping::Heap { buf, map } => {
+                buf.as_ref()
+                    .begin_cpu_access(Access::Write)
+                    .map_err(failed)?;
+                let wrote = map.write(offset, bytes);
+                buf.as_ref().end_cpu_access(Access::Write).map_err(failed)?;
+                wrote.map_err(failed)
+            }
+        }
+    }
+
+    fn read(&self, offset: u64, out: &mut [u8]) -> Result<(), StorageError> {
+        use daedalus_dma_sys::Access;
+        let failed = |error: daedalus_dma_sys::Error| StorageError::Device(error.to_string());
+        match self {
+            Mapping::Device(map) => map
+                .read(offset, out)
+                .map_err(|error| StorageError::Device(error.to_string())),
+            Mapping::Heap { buf, map } => {
+                buf.as_ref()
+                    .begin_cpu_access(Access::Read)
+                    .map_err(failed)?;
+                let read = map.read(offset, out);
+                buf.as_ref().end_cpu_access(Access::Read).map_err(failed)?;
+                read.map_err(failed)
+            }
+        }
+    }
+}
 
 /// A storage buffer on the backend's device. Made at load or setup: nothing here is called while
 /// a region runs except [`Storage::write`] and the reads.
@@ -128,10 +179,57 @@ impl Storage {
         Storage::placed(backend, size, SPACE_HOST_MAPPED)
     }
 
-    /// Host-mapped in cached memory, for buffers the host reads a lot. A device with no such
-    /// memory gives plain host-mapped memory.
+    /// Host-mapped in cached memory, for buffers the host reads a lot. A device with no cached
+    /// memory of its own gets a buffer from the system dma-heap, and failing that plain
+    /// host-mapped memory.
     pub fn new_host_cached(backend: &WgpuBackend, size: u64) -> Result<Storage, StorageError> {
+        #[cfg(target_os = "linux")]
+        {
+            let context = backend.context().map_err(StorageError::Open)?;
+            if !daedalus_vk_sys::memory::has_host_cached(&context.device)
+                && let Ok(storage) = Storage::new_dma_heap(backend, size)
+            {
+                return Ok(storage);
+            }
+        }
         Storage::placed(backend, size, SPACE_HOST_CACHED)
+    }
+
+    /// A buffer whose memory is a dma-buf from the system heap: mapped cached for the host,
+    /// imported for the device with no copy. `Unsupported` where there is no heap to open or the
+    /// device can't import a dma-buf.
+    #[cfg(target_os = "linux")]
+    pub fn new_dma_heap(backend: &WgpuBackend, size: u64) -> Result<Storage, StorageError> {
+        use daedalus_vk_sys::Error;
+        let context = backend.context().map_err(StorageError::Open)?;
+        check_size(&context, size)?;
+        let failed = |error: daedalus_dma_sys::Error| StorageError::Device(error.to_string());
+        let heap = daedalus_dma_sys::DmaHeap::open("system")
+            .map_err(|_| StorageError::Unsupported("no /dev/dma_heap/system to allocate from"))?;
+        let buf = heap.allocate(size).map_err(failed)?;
+        let map = buf.as_ref().map().map_err(failed)?;
+        let fd = buf.try_clone().map_err(failed)?.into_fd();
+        let buffer = daedalus_vk_sys::memory::import_dma_buf(&context.device, fd, size, None)
+            .map_err(|error| match error {
+                Error::NoDmaBufImport | Error::NotVulkan => {
+                    StorageError::Unsupported("the device can't import a dma-buf")
+                }
+                other => StorageError::Device(other.to_string()),
+            })?;
+        Ok(Storage {
+            buffer,
+            size,
+            id: Context::next_id(),
+            space: crate::memory::SPACE_DMA_HEAP,
+            mapping: Some(Mapping::Heap { buf, map }),
+            context,
+        })
+    }
+
+    /// A dma-heap buffer. There are none off Linux.
+    #[cfg(not(target_os = "linux"))]
+    pub fn new_dma_heap(_: &WgpuBackend, _: u64) -> Result<Storage, StorageError> {
+        Err(StorageError::Unsupported("dma-heaps are a Linux interface"))
     }
 
     #[cfg(target_os = "linux")]
@@ -156,7 +254,7 @@ impl Storage {
                 size,
                 id: Context::next_id(),
                 space,
-                mapping,
+                mapping: mapping.map(Mapping::Device),
                 context,
             }),
             Err(Error::NotVulkan) => Storage::zeroed(context, size),
@@ -209,9 +307,7 @@ impl Storage {
         self.range(offset, bytes.len() as u64)?;
         #[cfg(target_os = "linux")]
         if let Some(mapping) = &self.mapping {
-            return mapping
-                .write(offset, bytes)
-                .map_err(|error| StorageError::Device(error.to_string()));
+            return mapping.write(offset, bytes);
         }
         self.context.queue.write_buffer(&self.buffer, offset, bytes);
         Ok(())
@@ -225,9 +321,7 @@ impl Storage {
         self.range(offset, out.len() as u64)?;
         #[cfg(target_os = "linux")]
         if let Some(mapping) = &self.mapping {
-            return mapping
-                .read(offset, out)
-                .map_err(|error| StorageError::Device(error.to_string()));
+            return mapping.read(offset, out);
         }
         self.read_staged(offset, out)
     }

@@ -214,6 +214,25 @@ fn wrap(
     }
 }
 
+/// Whether the device has host-visible memory that is also cached. V3D has none, and reading
+/// its uncached memory from the host is slow.
+pub fn has_host_cached(device: &wgpu::Device) -> bool {
+    let Some(raw) = Raw::of(device) else {
+        return false;
+    };
+    // SAFETY: a property query on the device's own physical device.
+    let memory = unsafe {
+        raw.instance
+            .get_physical_device_memory_properties(raw.physical)
+    };
+    let wanted = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_CACHED;
+    memory
+        .memory_types
+        .iter()
+        .take(memory.memory_type_count as usize)
+        .any(|ty| ty.property_flags.contains(wanted))
+}
+
 /// Which memory types of the device could hold the dma-buf behind `fd`, as a bit per type.
 pub fn dma_buf_memory_types(device: &wgpu::Device, fd: BorrowedFd<'_>) -> Result<u32, Error> {
     let raw = Raw::of(device).ok_or(Error::NotVulkan)?;

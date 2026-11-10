@@ -163,5 +163,97 @@ fn the_backend_names_its_memory_spaces() {
     use daedalus_backend::Backend;
     let spaces = WgpuBackend::open(Options::default()).memory();
     let ids: Vec<&str> = spaces.iter().map(|space| &*space.id).collect();
-    assert_eq!(ids, [SPACE_DEVICE, SPACE_HOST_MAPPED, "wgpu.cached"]);
+    assert_eq!(
+        ids,
+        [
+            SPACE_DEVICE,
+            SPACE_HOST_MAPPED,
+            "wgpu.cached",
+            "wgpu.dmaheap"
+        ]
+    );
+}
+
+/// Copies `src` to `dst` on the device.
+static COPY: daedalus_wgpu::shader::ShaderSpec = {
+    use daedalus_wgpu::shader::{BindingKind, BindingSpec, Dispatch, ShaderSpec};
+    ShaderSpec {
+        name: "copy",
+        entry: "main",
+        source: "
+            @group(0) @binding(0) var<storage, read> src: array<u32>;
+            @group(0) @binding(1) var<storage, read_write> dst: array<u32>;
+            @compute @workgroup_size(64)
+            fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+                if id.x < arrayLength(&dst) { dst[id.x] = src[id.x]; }
+            }
+        ",
+        workgroup: [64, 1, 1],
+        bindings: &[
+            BindingSpec {
+                index: 0,
+                name: "src",
+                kind: BindingKind::Storage {
+                    read_only: true,
+                    stride: 4,
+                },
+            },
+            BindingSpec {
+                index: 1,
+                name: "dst",
+                kind: BindingKind::Storage {
+                    read_only: false,
+                    stride: 4,
+                },
+            },
+        ],
+        dispatch: Dispatch::PerElement {
+            binding: 1,
+            stride: 4,
+        },
+    }
+};
+
+#[test]
+fn a_dma_heap_buffer_is_one_memory_for_the_host_and_the_device() {
+    use daedalus_wgpu::shader::{Bound, Shader};
+    let Some(backend) = private() else { return };
+    let heap = match Storage::new_dma_heap(&backend, 1 << 16) {
+        Ok(heap) => heap,
+        // No heap on this machine, or a device like lavapipe that can't import one. A board run
+        // sets the variable to make that a failure.
+        Err(StorageError::Unsupported(what)) => {
+            assert!(
+                std::env::var_os("DAEDALUS_DMA_HEAP_REQUIRED").is_none(),
+                "{what}"
+            );
+            return;
+        }
+        Err(other) => panic!("a dma-heap buffer: {other}"),
+    };
+    assert_eq!(heap.space(), daedalus_wgpu::SPACE_DMA_HEAP);
+    assert!(heap.is_host_mapped());
+    // The host writes, the device reads it in place and copies it out.
+    heap.write(0, &pattern(1 << 16)).expect("in range");
+    let copy = Storage::new(&backend, 1 << 16).expect("a buffer");
+    let shader = Shader::load(&backend, &COPY).expect("loads");
+    shader
+        .run(&[Bound::Storage(&heap), Bound::Storage(&copy)])
+        .expect("runs");
+    let mut seen = vec![0; 1 << 16];
+    copy.read_into(0, &mut seen).expect("a readback");
+    assert_eq!(seen, pattern(1 << 16));
+
+    // The device writes, and the host reads it in place once the work is done.
+    let source = Storage::new(&backend, 1 << 16).expect("a buffer");
+    let reversed: Vec<u8> = pattern(1 << 16).into_iter().rev().collect();
+    source.write(0, &reversed).expect("in range");
+    shader
+        .run(&[Bound::Storage(&source), Bound::Storage(&heap)])
+        .expect("runs");
+    source
+        .read_into(0, &mut seen[..4])
+        .expect("waits for the device's work");
+    heap.read_into(0, &mut seen).expect("in range");
+    assert_eq!(seen, reversed);
 }

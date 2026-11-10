@@ -14,6 +14,10 @@ pub const SPACE_HOST_MAPPED: &str = "wgpu.mapped";
 /// Host-mapped, in cached memory, for buffers the host reads a lot.
 pub const SPACE_HOST_CACHED: &str = "wgpu.cached";
 
+/// A buffer whose memory is a dma-buf from the system heap: mapped cached for the host and
+/// imported for the device. What host-cached means on a device with no cached memory of its own.
+pub const SPACE_DMA_HEAP: &str = "wgpu.dmaheap";
+
 pub(crate) fn spaces() -> Vec<MemorySpace> {
     let space = |id, kind| MemorySpace {
         id: Cow::Borrowed(id),
@@ -24,6 +28,7 @@ pub(crate) fn spaces() -> Vec<MemorySpace> {
         space(SPACE_DEVICE, SpaceKind::Device),
         space(SPACE_HOST_MAPPED, SpaceKind::Shared),
         space(SPACE_HOST_CACHED, SpaceKind::Shared),
+        space(SPACE_DMA_HEAP, SpaceKind::Shared),
     ]
 }
 
