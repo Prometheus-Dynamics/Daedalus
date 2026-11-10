@@ -171,6 +171,8 @@ pub(crate) trait Env<'t> {
     /// Keeps `step` dirty for the next tick.
     fn carry(&mut self, step: usize);
     fn register_pending(&mut self, entry: Pending) -> bool;
+    /// Whether `step` started work whose fence hasn't resolved.
+    fn is_pending(&mut self, step: usize) -> bool;
 }
 
 /// Calls step `index` once, or runs its recovery, and applies what it returned.
@@ -198,6 +200,13 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
             return Ok(());
         }
         env.health(index).backing_off = false;
+    }
+    if meta.may_pend && env.is_pending(index) {
+        // Its last run is still going. One run at a time: stay dirty, and run again once the
+        // fence has resolved. Without this a second run would publish over outputs nobody has
+        // been woken for yet, and take a second place in the pending list.
+        env.carry(index);
+        return Ok(());
     }
     if env.any_blocking() && output_blocked(env, meta) {
         env.counters().backpressure_deferrals += 1;
@@ -504,5 +513,9 @@ impl<'a> Env<'a> for Runner<'a> {
     #[inline]
     fn register_pending(&mut self, entry: Pending) -> bool {
         insert_pending(self.pending, &mut self.pending_len, entry)
+    }
+    #[inline]
+    fn is_pending(&mut self, step: usize) -> bool {
+        crate::fence::holds(&self.pending[..self.pending_len], step)
     }
 }

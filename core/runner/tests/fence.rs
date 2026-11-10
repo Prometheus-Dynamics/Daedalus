@@ -138,6 +138,64 @@ fn consumers_wait_for_ready() {
     assert_eq!(runner.pending(), 0);
 }
 
+/// Counts its runs under its word, and starts work whose fence is that word.
+struct CountedStart;
+
+impl StepWord for CountedStart {
+    fn run(word: usize, _: &mut Slots, _: &mut StepCx) -> StepEnd {
+        RUNS[word].fetch_add(1, Ordering::Relaxed);
+        StepEnd::Pending(Fence::of::<Poller>(word))
+    }
+}
+
+#[test]
+fn a_step_is_not_run_again_while_its_fence_is_pending() {
+    reset(7, 3);
+    let mut fixture = {
+        let mut wiring = Wiring::default();
+        wiring.pending_step(&[], &[], &[]);
+        Fixture::new(vec![Step::of::<CountedStart>(7)], wiring, Vec::new())
+    };
+    let mut runner = fixture.load().unwrap();
+    let runs = || RUNS[7].load(Ordering::Relaxed);
+    runner.wake(0);
+    runner.tick().unwrap();
+    assert_eq!((runs(), runner.pending()), (1, 1));
+
+    // Woken again while its work is still going: it stays dirty and isn't called, however many
+    // ticks pass, and it never takes a second place in the pending list.
+    runner.wake(0);
+    let held = runner.tick().unwrap();
+    assert_eq!((held.step_calls, runs(), runner.pending()), (0, 1, 1));
+    runner.wake(0);
+    let held = runner.tick().unwrap();
+    assert_eq!((held.step_calls, runs(), runner.pending()), (0, 1, 1));
+
+    // Once the work is done, the step it held back runs again: once, for all the times it was
+    // woken meanwhile, and its new work takes the one place the old work gave up.
+    ready_on_next_poll(7);
+    let mut calls = 0;
+    for _ in 0..3 {
+        calls += runner.tick().unwrap().step_calls;
+        if runs() == 2 {
+            break;
+        }
+    }
+    assert_eq!((calls, runs(), runner.pending()), (1, 2, 1));
+    let after = runner.tick().unwrap();
+    assert_eq!(
+        (after.step_calls, runs()),
+        (0, 2),
+        "and then it's held again"
+    );
+}
+
+/// Makes the fence ready at its next poll and pending for a while after, keeping the run count.
+fn ready_on_next_poll(word: usize) {
+    let polls = POLLS[word].load(Ordering::Relaxed);
+    READY_AFTER[word].store(polls + 1, Ordering::Relaxed);
+}
+
 #[test]
 fn ready_fences_wake_in_index_order() {
     reset(2, 1);

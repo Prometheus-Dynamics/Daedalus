@@ -24,6 +24,11 @@ pub(crate) fn insert_pending(list: &mut [Pending], len: &mut usize, entry: Pendi
     true
 }
 
+/// Whether the list has an entry for `step`.
+pub(crate) fn holds(list: &[Pending], step: usize) -> bool {
+    list.iter().any(|entry| entry.step as usize == step)
+}
+
 impl Runner<'_> {
     /// Polls every registered fence once, in step index order. Ready steps wake their consumers,
     /// and a failed step is counted as a fault. Nothing is woken for a fence that is still

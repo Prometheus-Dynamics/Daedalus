@@ -302,6 +302,14 @@ impl<'t> Env<'t> for Lane<'t> {
         // SAFETY: as above.
         insert_pending(list, unsafe { &mut *self.view.pending_len }, entry)
     }
+    fn is_pending(&mut self, step: usize) -> bool {
+        let _guard = locked(&self.view.lanes.pending_lock);
+        // SAFETY: the pending lock is held, and the first `pending_len` entries of the list are
+        // the live ones.
+        let list =
+            unsafe { core::slice::from_raw_parts(self.view.pending, *self.view.pending_len) };
+        crate::fence::holds(list, step)
+    }
 }
 
 /// One worker's part of a tick: take a ready step, run it, release the steps waiting on it.

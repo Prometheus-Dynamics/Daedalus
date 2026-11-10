@@ -453,6 +453,9 @@ documents the patch and refresh JSON.
   control backend shares the first host memory space any backend declares.
 - `for_each` reads and writes `daedalus_runner::SlotList`, a list of cells of any one type. A
   wrapper for a node that makes or takes a list builds on it (D1).
+- A step that returned `Pending` isn't run again until its fence has resolved. It stays dirty
+  meanwhile, so being woken any number of times makes one later run. A step therefore has at most
+  one piece of work unfinished, and what backs up behind it is its input edges' business.
 - A step's `Slots` is its own: the cells for `UnitInfo.reads` in order, then `UnitInfo.writes` in
   order, so index 0 is the first input. A compiled step holds no slot numbers, and the plan's slot
   lists connect those positions to the graph. A port with no edge is `NO_SLOT` in those lists: an
