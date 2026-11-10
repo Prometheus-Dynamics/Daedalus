@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-wgpu"
+description = "The wgpu backend: one device, opened on first use, behind the process-wide driver lock."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-backend = { path = "../../core/backend" }
+pollster = { workspace = true }
+wgpu = { workspace = true }
+
+[dev-dependencies]
+daedalus-types = { path = "../../core/types" }
+daedalus-value = { path = "../../core/value" }
+
+[lints]
+workspace = true
