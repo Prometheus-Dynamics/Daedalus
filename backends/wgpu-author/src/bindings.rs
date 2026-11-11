@@ -183,7 +183,7 @@ fn recording(name: &TokenStream, args: &Args) -> TokenStream {
         let port = port.to_string();
         quote!((
             #port,
-            ::daedalus_registry::TypeRef::Key(<#ty as ::daedalus_types::Typed>::KEY),
+            ::daedalus_registry::port_type::<#ty>(),
         ))
     });
     quote! {{
@@ -214,7 +214,7 @@ fn pixel_body(
         let port = port.to_string();
         quote!((
             #port,
-            ::daedalus_registry::TypeRef::Key(<#ty as ::daedalus_types::Typed>::KEY),
+            ::daedalus_registry::port_type::<#ty>(),
         ))
     });
     let merge = quote!(::daedalus_wgpu::merge);
@@ -317,7 +317,7 @@ pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
         let port = port.to_string();
         ports.push(quote!((
             #port,
-            ::daedalus_registry::TypeRef::Key(<#ty as ::daedalus_types::Typed>::KEY),
+            ::daedalus_registry::port_type::<#ty>(),
         )));
     }
 

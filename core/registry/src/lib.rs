@@ -26,7 +26,7 @@ pub use offer::OfferData;
 pub use owned::{OwnedBody, OwnedDecl, OwnedPort, promoted_declarations};
 pub use record::{
     BodyRecord, ConfigDecl, Conversion, FanInDecl, FieldRule, Fire, NoCode, NodeDecl, NodeRecord,
-    PortDecl, SourceAt, StateDecl, TransferClass, TransferRecord, TypeRef,
+    PortDecl, SourceAt, StateDecl, TransferClass, TransferRecord, TypeRef, port_type,
 };
 #[cfg(feature = "std")]
 pub use registry::{ConversionEntry, Entry, Registry};

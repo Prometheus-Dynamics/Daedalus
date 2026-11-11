@@ -47,7 +47,7 @@ macro_rules! __daedalus_body {
             state: ::core::option::Option::None,
             ports: &[$((
                 ::core::stringify!($port),
-                $crate::__registry::TypeRef::Key(<$ty as $crate::__types::Typed>::KEY),
+                $crate::__registry::port_type::<$ty>(),
             )),*],
             memory: &[],
             code: &$crate::__registry::NoCode,

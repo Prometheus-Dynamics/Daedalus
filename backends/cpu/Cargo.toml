@@ -47,6 +47,7 @@ defmt = { workspace = true, optional = true }
 daedalus-abi = { path = "../../core/abi", features = ["test-run", "count-alloc"] }
 daedalus-cpu-author = { path = "../cpu-author" }
 daedalus-macros = { path = "../../core/macros" }
+daedalus-graph = { path = "../../core/graph" }
 daedalus-host = { path = "../../core/host" }
 daedalus-plan = { path = "../../core/plan" }
 daedalus-planner = { path = "../../core/planner" }

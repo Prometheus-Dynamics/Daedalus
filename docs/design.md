@@ -332,6 +332,15 @@ call, and an idle tick does almost nothing. Steady-state running allocates nothi
 These were worked out while planning the PRs. Where a brief and this section disagree, this section
 wins.
 
+**Types made of others.** `Typed` has `STRUCTURAL`, false for a type with a key. `Vec<T>`,
+`Option<T>`, tuples of two to four and `BTreeMap<K, V>` are `Typed` with it true: they have no key
+of their own (`KEY` is the placeholder `structural`) and are compared by `EXPR`. `Vec<u8>` is the
+bytes scalar and keeps its key. `daedalus_registry::port_type::<T>()` gives the `TypeRef` a port of
+Rust type `T` declares, a key or an expression, and every authoring macro and derive goes through
+it. A host bridge names such a type in a graph document as text, `list<f32>`, parsed back into the
+same expression. `#[node]` reads a `&[T]` parameter out of a `Vec<T>` and a `&str` out of a
+`String`.
+
 **Handles in CPU nodes.** `Arc<T>` has `T`'s type key, so a parameter or a result written as
 `Arc<T>` is a port of type `T`. A CPU node that takes `Arc<T>` gets the cell's handle as it is, and
 one that returns `Arc<T>` has it put in the output cell as it is: a value handed on is neither

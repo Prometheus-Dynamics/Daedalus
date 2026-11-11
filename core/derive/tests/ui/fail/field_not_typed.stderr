@@ -13,9 +13,9 @@ help: the trait `daedalus_registry::__private::Typed` is not implemented for `No
             &'static [u8]
             &'static str
             ()
+            (A, B)
+            (A, B, C)
+            (A, B, C, D)
             Arc<T>
-            Outer
-            String
-            Vec<u8>
-            bool
+            BTreeMap<K, V>
           and $N others

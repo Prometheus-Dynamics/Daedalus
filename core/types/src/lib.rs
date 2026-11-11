@@ -28,4 +28,4 @@ pub use id::{
 pub use key::TypeKey;
 pub use literal::{FromLiteral, Literal};
 pub use scalar::Scalar;
-pub use typed::Typed;
+pub use typed::{STRUCTURAL_KEY, Typed};
