@@ -1,0 +1,18 @@
+[package]
+name = "daedalus-process-timings"
+description = "The process backend's one-node round trip through a worker, which G4 records on a board. Run by hand, not in the gate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi", features = ["count-alloc", "test-run"] }
+daedalus-backend = { path = "../../../core/backend" }
+daedalus-backend-process = { path = "../../../backends/process" }
+daedalus-types = { path = "../../../core/types" }
+daedalus-worker-conformance = { path = "../worker-conformance" }
+
+[lints]
+workspace = true
