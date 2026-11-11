@@ -66,6 +66,7 @@ fn examples_use_only_the_facade() {
         let exempt = path.components().any(|part| {
             let part = part.as_os_str().to_str().unwrap_or("");
             part == "08_ffi"
+                || part.starts_with("08_ffi_")
                 || part.starts_with("nostd")
                 || part.starts_with("chip_")
                 || part.starts_with("wasm_")

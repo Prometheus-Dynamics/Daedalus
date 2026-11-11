@@ -777,6 +777,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-example-rust-worker"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus",
+ "daedalus-backend-process",
+ "daedalus-lang-rust",
+ "daedalus-registry",
+ "daedalus-types",
+ "daedalus-wire",
+]
+
+[[package]]
 name = "daedalus-fake-npu"
 version = "3.0.1-dev"
 dependencies = [

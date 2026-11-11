@@ -45,7 +45,8 @@ macro_rules! __daedalus_body {
         decl = $decl:ident
     ) => {
         $crate::registry::BodyRecord {
-            backend: "rust",
+            // A worker's node is served by the process backend, which is the backend the planner places it on.
+            backend: "process",
             at: $crate::registry::SourceAt(::core::concat!(::core::file!(), ":", ::core::line!())),
             needs: &[],
             state: ::core::option::Option::None,

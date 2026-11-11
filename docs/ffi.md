@@ -44,6 +44,14 @@ let planned = plan(&graph, &registry, &[&workers, &CpuBackend], &Config::default
 - Nodes with equal specs share one worker process.
 - A run has an optional deadline. When it passes, the worker is sent a cancel, given a grace
   period, and then killed. Only the process the backend itself started is ever killed.
+- A host's cancel of a tick is sent to the worker as well: the backend checks the step's cancel
+  word every few milliseconds while it waits for the worker's outputs. The worker's node sees it
+  through `cancelled()` and ends its run cancelled, and the step is reported as a fault with the
+  reason "the run was cancelled".
+- A node's progress is read back by the host: `LoadedHost::node_progress(node)` gives the
+  `(done, total)` the node's step last reported, out of 1000 for a node that reports a fraction.
+- The example `examples/08_ffi_rust_worker` runs a graph whose node is served by a Rust worker,
+  with the host feeding it, reading its progress, and cancelling a run.
 
 ## The wire
 

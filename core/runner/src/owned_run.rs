@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::vec;
 use std::vec::Vec;
 
-use daedalus_abi::{Slot, Step};
+use daedalus_abi::{Progress, Slot, Step};
 
 use crate::bits::words_for;
 use crate::cancel::CancelWord;
@@ -85,6 +85,7 @@ pub struct RunBuffers {
     _reuse_inputs: Raw<InputVersion>,
     cancel: Arc<CancelWord>,
     _faults: Raw<StepFault>,
+    _progress: Raw<Progress>,
     probe: Option<Raw<TickProbe<'static>>>,
 }
 
@@ -192,6 +193,7 @@ pub fn build(
         _reuse_inputs: Raw::new(vec![InputVersion::default(); nslots]),
         cancel: Arc::new(CancelWord::new()),
         _faults: Raw::new(vec![StepFault::EMPTY; count]),
+        _progress: Raw::new((0..count).map(|_| Progress::new()).collect()),
         probe: clock.map(|clock| Raw::new(vec![TickProbe::new(clock)])),
     };
     // SAFETY: each buffer is borrowed exactly once here, and `RunBuffers` keeps them alive until
@@ -222,6 +224,8 @@ pub fn build(
     let mut runner = Runner::load(plan, memory)?;
     // SAFETY: as above; this table is borrowed only here.
     runner.set_stamps(unsafe { buffers._stamps.borrow() })?;
+    // SAFETY: as above; the progress cells are borrowed only here, one per step.
+    runner.set_progress(unsafe { buffers._progress.borrow() })?;
     if stamps + stored > 0 {
         // SAFETY: as above; these five are borrowed only here.
         let table = unsafe {
