@@ -39,7 +39,11 @@ let doubled = host.take_copy::<i64>("doubled")?;
   is the one thing left, starting at 50 µs and never sleeping more than 2 ms. `pending()` counts the
   held steps, and `is_settled()` says whether the host has nothing held and nothing woken.
 - **Take.** `take::<T>(port)` and `take_copy::<T>(port)` take the oldest value out of an output
-  port, and `None` when it is empty. `drain` takes them all.
+  port, and `None` when it is empty. `drain` takes them all. An output a step is still working on
+  counts as empty: `take`, `take_value` and the C surface's takes give nothing for it, and the
+  value is there from the tick or wait that resolves the step's fence. A value is taken once.
+  If the fence fails, the step's outputs are taken back, nothing is handed out, and the tick
+  reports a fault.
 
 The host port names are the ports of the graph's host bridge nodes.
 

@@ -52,9 +52,32 @@ impl Runner<'_> {
                         self.wake(to);
                     }
                 }
-                FencePoll::Failed => report.faults += 1,
+                FencePoll::Failed => {
+                    report.faults += 1;
+                    self.take_back(entry);
+                }
             }
         }
         self.pending_len = kept;
+    }
+
+    /// Removes what a failed step published, so no reader ever sees its work. The step's newest
+    /// value in each output it stored is the one it put there: nothing else writes that slot while
+    /// the step is pending.
+    fn take_back(&mut self, entry: Pending) {
+        let meta = self.meta[entry.step as usize];
+        for (at, &slot) in crate::spanned(self.table, meta.outputs).iter().enumerate() {
+            if slot == daedalus_abi::NO_SLOT || at >= 32 || entry.kept & (1 << at) == 0 {
+                continue;
+            }
+            let Some(queue) = self.queues.get_mut(slot as usize) else {
+                continue;
+            };
+            if let Some(index) = queue.take_tail() {
+                // SAFETY: the queue owned this entry, and `take_tail` removed it from the queue, so
+                // its reference is released exactly once here.
+                unsafe { crate::owned::release(&self.storage[index]) };
+            }
+        }
     }
 }

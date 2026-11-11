@@ -31,7 +31,15 @@ fn a_plugin_declares_its_nodes_and_backend() {
     let plugin = loader.open(copy_fixture("declares")).expect("opens");
     assert_eq!(plugin.name(), "dylib-fixture");
     let ids: Vec<&str> = plugin.nodes().iter().map(|node| node.id.as_str()).collect();
-    assert_eq!(ids, ["fixture.pass", "fixture.boom", "fixture.abort"]);
+    assert_eq!(
+        ids,
+        [
+            "fixture.pass",
+            "fixture.boom",
+            "fixture.abort",
+            "fixture.gated"
+        ]
+    );
     assert_eq!(plugin.backends().len(), 1);
     assert!(plugin.backend("fixture.cpu").is_some());
 }

@@ -92,6 +92,17 @@ impl Queue {
         self.len == self.cap
     }
 
+    /// The index of the newest value, removed from the queue without being released. The caller
+    /// releases it. None when the queue is empty.
+    pub(crate) fn take_tail(&mut self) -> Option<usize> {
+        if self.len == 0 {
+            return None;
+        }
+        self.len -= 1;
+        self.unconsumed = self.unconsumed.min(self.len);
+        Some((self.base + (self.head + self.len) % self.cap) as usize)
+    }
+
     /// Drops the oldest value from the queue without releasing it, as a take does.
     pub(crate) fn pop_head(&mut self) {
         if self.len > 0 {

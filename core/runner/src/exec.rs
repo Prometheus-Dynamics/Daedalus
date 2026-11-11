@@ -285,9 +285,9 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         StepEnd::Pending(fence) => {
             // The outputs are stored now. Consumers wait for the fence to be Ready.
             commit_inputs(env, meta);
-            publish(env, meta)?;
+            let kept = publish(env, meta)?;
             let step = index as u32;
-            if !env.register_pending(Pending { step, fence }) {
+            if !env.register_pending(Pending { step, fence, kept }) {
                 return Err(RunError::PendingFull { step });
             }
             env.counters().pending += 1;
@@ -371,8 +371,11 @@ pub(crate) fn commit_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
 
 /// Stores every output the body wrote, moving each one's reference into its queue. A cell the
 /// body left empty stores nothing. On overflow, the rest of the outputs are released.
-fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<(), RunError> {
+/// Publishes a step's outputs. Returns a mask with bit `at` set for each output that was stored,
+/// so a pending step can take back what it published if its fence fails.
+fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<u32, RunError> {
     let mut overflow = None;
+    let mut kept = 0u32;
     for (at, &slot) in spanned(env.table(), meta.outputs).iter().enumerate() {
         let mut cell = core::mem::replace(&mut env.parts().0[output_at(meta, at)], Slot::EMPTY);
         if cell.state != SlotState::Full as u32 {
@@ -409,6 +412,9 @@ fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<(), RunError> 
                 env.counters().backpressure_events += 1;
             }
         }
+        if stored == Stored::Kept && at < 32 {
+            kept |= 1 << at;
+        }
         if stored == Stored::Full {
             // SAFETY: the cell is Full and this step wrote it, so the reference is still the
             // cell's, and it is released once here.
@@ -418,7 +424,7 @@ fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<(), RunError> 
     }
     match overflow {
         Some(slot) => Err(RunError::Overflow { slot }),
-        None => Ok(()),
+        None => Ok(kept),
     }
 }
 

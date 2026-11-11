@@ -1,8 +1,38 @@
 //! A plugin the loader tests open. `pass` forwards its input cell to its output cell. `boom`
 //! panics, to prove a panic in a node is a fault. `abort` ends the process.
 
-use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use daedalus_abi::{Fence, FencePoll, FenceWord, Slot, SlotState, Slots, StepCx, StepEnd};
 use daedalus_loader::export::{NodeDef, PluginDef, PortDef};
+
+/// How many polls the gated node's fence waits for before it is ready. The runner polls once a
+/// tick, so its output appears on the fourth tick after the node ran.
+const POLLS_TO_READY: u32 = 3;
+static POLLS: AtomicU32 = AtomicU32::new(0);
+
+/// The fence `gated` returns: ready once it has been polled enough times.
+struct Polls;
+
+impl FenceWord for Polls {
+    fn poll(_: usize) -> FencePoll {
+        if POLLS.fetch_add(1, Ordering::SeqCst) + 1 >= POLLS_TO_READY {
+            FencePoll::Ready
+        } else {
+            FencePoll::Pending
+        }
+    }
+}
+
+/// Forwards its input, as `pass` does, but its work is still running on a device: it returns
+/// `Pending` until the fence has been polled enough times.
+fn gated(slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
+    POLLS.store(0, Ordering::SeqCst);
+    match pass(slots, cx) {
+        StepEnd::Done => StepEnd::Pending(Fence::of::<Polls>(0)),
+        other => other,
+    }
+}
 
 fn pass(slots: &mut Slots, _cx: &mut StepCx) -> StepEnd {
     let Some(input) = slots.cell(0).map(|cell| *cell) else {
@@ -40,7 +70,7 @@ static PASS_OUT: [PortDef; 1] = [PortDef {
     optional: false,
 }];
 
-static NODES: [NodeDef; 3] = [
+static NODES: [NodeDef; 4] = [
     NodeDef {
         id: "fixture.pass",
         source: "dylib-fixture",
@@ -67,6 +97,15 @@ static NODES: [NodeDef; 3] = [
         inputs: &PASS_IN,
         outputs: &PASS_OUT,
         run: abort,
+    },
+    NodeDef {
+        id: "fixture.gated",
+        source: "dylib-fixture",
+        backend: "fixture.cpu",
+        text: "gated",
+        inputs: &PASS_IN,
+        outputs: &PASS_OUT,
+        run: gated,
     },
 ];
 
