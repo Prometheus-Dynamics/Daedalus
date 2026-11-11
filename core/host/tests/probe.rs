@@ -167,3 +167,96 @@ fn the_allocation_probe_attributes_to_a_scope() {
     assert_eq!(counts()[1], 1);
     assert_eq!(counts()[0], 0);
 }
+
+/// A probe timing every `every`th tick, on a chain of two steps.
+fn sampled(every: u32) -> &'static TickProbe<'static> {
+    Box::leak(Box::new(TickProbe::sampled(ticking_clock, every)))
+}
+
+#[test]
+fn one_times_every_tick_and_a_window_of_them_is_all_timed() {
+    let probe = sampled(1);
+    let mut runner = runner(2);
+    runner.set_probe(probe);
+    let mut window = TickOverheadWindow::new(8);
+    for _ in 0..5 {
+        runner.tick().unwrap();
+        window.record(probe);
+    }
+    let report = window.report();
+    assert_eq!((report.ticks, report.timed_ticks, report.steps), (5, 5, 10));
+    assert!(report.p50_ns > 0);
+}
+
+#[test]
+fn above_one_times_every_kth_tick_and_counts_every_tick() {
+    let probe = sampled(4);
+    let mut runner = runner(2);
+    runner.set_probe(probe);
+    let mut window = TickOverheadWindow::new(16);
+    for n in 0..12 {
+        runner.tick().unwrap();
+        let mut sample = TickSample::default();
+        probe.peek_tick(&mut sample);
+        // Tick n is timed when n is a multiple of 4, and an untimed tick has no time, only steps.
+        assert_eq!(sample.timed, n % 4 == 0, "tick {n}");
+        if !sample.timed {
+            assert_eq!((sample.tick_ns, sample.body_ns), (0, 0), "tick {n}");
+        }
+        assert_eq!(sample.steps, 2, "tick {n}: every tick counts its steps");
+        window.record(probe);
+    }
+    let report = window.report();
+    assert_eq!((report.ticks, report.timed_ticks), (12, 3));
+    assert_eq!(report.steps, 24, "the step count is exact over every tick");
+    assert!(report.p50_ns > 0 && report.mean_overhead_ns >= 0.0);
+}
+
+#[test]
+fn a_window_with_no_timed_tick_reports_counts_and_no_times() {
+    let probe = sampled(1000);
+    let mut runner = runner(2);
+    runner.set_probe(probe);
+    // Tick 0 is timed. Take it out of the probe, so the window starts with untimed ticks only.
+    runner.tick().unwrap();
+    let mut first = TickSample::default();
+    probe.take_tick(&mut first);
+    assert!(first.timed);
+    let mut window = TickOverheadWindow::new(8);
+    for _ in 0..5 {
+        runner.tick().unwrap();
+        window.record(probe);
+    }
+    let report = window.report();
+    assert_eq!((report.ticks, report.timed_ticks, report.steps), (5, 0, 10));
+    assert_eq!(
+        (report.p50_ns, report.p99_ns, report.max_ns),
+        (0, 0, 0),
+        "no timed tick, no timing figures"
+    );
+    assert_eq!((report.mean_ns, report.mean_overhead_ns), (0.0, 0.0));
+}
+
+#[test]
+fn changing_k_between_windows_applies_from_the_next_tick() {
+    let probe = sampled(1);
+    let mut runner = runner(2);
+    runner.set_probe(probe);
+    let mut first = TickOverheadWindow::new(8);
+    for _ in 0..3 {
+        runner.tick().unwrap();
+        first.record(probe);
+    }
+    assert_eq!(first.report().timed_ticks, 3);
+
+    // The next window times every second tick, counting on from tick 3: 4 and 6 are timed.
+    probe.set_every(2);
+    assert_eq!(probe.every(), 2);
+    let mut second = TickOverheadWindow::new(8);
+    for _ in 0..4 {
+        runner.tick().unwrap();
+        second.record(probe);
+    }
+    let report = second.report();
+    assert_eq!((report.ticks, report.timed_ticks, report.steps), (4, 2, 8));
+}
