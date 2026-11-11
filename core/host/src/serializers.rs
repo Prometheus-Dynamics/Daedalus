@@ -32,17 +32,6 @@ impl ValueSerializers {
         ValueSerializers::default()
     }
 
-    /// Registers the serializer for `key`. A later entry for the same key replaces it.
-    pub fn insert_for_key(&mut self, key: &TypeKey, to_value: ValueSerializer) {
-        self.entries.insert(
-            String::from(key.as_str()),
-            SerializerEntry {
-                to_value,
-                from_value: None,
-            },
-        );
-    }
-
     /// Registers a serializer and a deserializer for `key`, so `push_value` can build a payload.
     pub fn insert_both_for_key(
         &mut self,

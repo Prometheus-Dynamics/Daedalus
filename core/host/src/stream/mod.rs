@@ -18,7 +18,7 @@ pub use input::{GraphInput, InputStats, StreamFeed};
 pub use output::{GraphOutput, OutputStats, OutputSubscription};
 pub use worker::{StreamGraphWorker, StreamWorkerDiagnostics, StreamWorkerStopError, WorkerStop};
 
-use crate::{FeedOutcome, Host, HostError, InboundSignal, PortPolicy};
+use crate::{FeedOutcome, Host, HostError, InboundSignal};
 use input::InputPort;
 use output::OutputPort;
 
@@ -204,11 +204,6 @@ impl<H: StreamHost> StreamGraph<H> {
     pub fn output(&self, port: &str) -> Option<GraphOutput> {
         let port = self.shared.outputs.iter().find(|(name, _)| name == port)?;
         Some(GraphOutput::new(Arc::clone(&port.1)))
-    }
-
-    /// Sets the policy of `input`. Allowed at any time; takes effect on the next feed.
-    pub fn set_input_policy(&self, port: &str, policy: PortPolicy) -> Option<()> {
-        self.input(port).map(|input| input.set_policy(policy))
     }
 
     pub fn state(&self) -> StreamGraphState {

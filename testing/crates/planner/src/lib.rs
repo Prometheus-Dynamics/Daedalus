@@ -88,11 +88,6 @@ impl Decl {
         self
     }
 
-    pub fn input_with(mut self, port: PortDecl) -> Decl {
-        self.inputs.push(port);
-        self
-    }
-
     pub fn optional(mut self, name: &str, ty: TypeRef) -> Decl {
         self.inputs.push(PortDecl {
             optional: true,

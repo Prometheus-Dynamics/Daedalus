@@ -70,11 +70,6 @@ impl DomainGraphStats {
         self.avoided_node_runs += avoided * self.nodes as u64;
         self.saved_ns += avoided * nanos;
     }
-
-    /// The mean time of one run.
-    pub fn mean_run_ns(&self) -> u64 {
-        self.run_ns.checked_div(self.runs).unwrap_or(0)
-    }
 }
 
 /// The domain's totals, and each graph's.
