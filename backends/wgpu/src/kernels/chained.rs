@@ -73,7 +73,7 @@ pub(crate) fn add(
     let Some((params, counts)) = kernels.plan(kernel, src, dst, n)? else {
         return Ok(());
     };
-    let whole = |storage: &Storage| Some((storage.buffer.clone(), storage.size));
+    let whole = |storage: &Storage| Some((storage.buffer().clone(), storage.size));
     ops.push(Op {
         kernel,
         buffers: [

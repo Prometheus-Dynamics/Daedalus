@@ -62,7 +62,7 @@ impl OwnedStep for ReadbackStep {
         let mut encoder = context
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.copy_buffer_to_buffer(&source.buffer, 0, &target.buffer, 0, size);
+        encoder.copy_buffer_to_buffer(source.buffer(), 0, target.buffer(), 0, size);
         let state = TicketState::new();
         let finished = Arc::clone(&state);
         {

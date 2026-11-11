@@ -102,7 +102,7 @@ impl StoragePool {
     /// Gives a buffer back. The work that used it must have finished, or be ordered before any
     /// later use on the same queue. A buffer from another device, or beyond the cap, is dropped.
     pub fn give(&self, mut storage: Storage) {
-        let class = storage.buffer.size();
+        let class = storage.capacity();
         let mut state = self.state();
         let foreign = storage.context.key != self.context.key;
         if foreign || state.stats.pooled_bytes + class > self.cap_bytes {

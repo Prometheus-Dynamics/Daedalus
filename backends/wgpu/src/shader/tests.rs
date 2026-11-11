@@ -66,11 +66,11 @@ fn a_kernel_dispatch_allocates_no_more_than_raw_wgpu() {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: src.buffer.as_entire_binding(),
+                    resource: src.buffer().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: dst.buffer.as_entire_binding(),
+                    resource: dst.buffer().as_entire_binding(),
                 },
             ],
         });

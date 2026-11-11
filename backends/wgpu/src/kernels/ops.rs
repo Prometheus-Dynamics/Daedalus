@@ -335,7 +335,7 @@ impl Kernels {
             return Err(KernelError::Size("a buffer is on another device".into()));
         }
         if n > 0 {
-            encoder.copy_buffer_to_buffer(&src.buffer, 0, &dst.buffer, 0, n);
+            encoder.copy_buffer_to_buffer(src.buffer(), 0, dst.buffer(), 0, n);
         }
         Ok(())
     }

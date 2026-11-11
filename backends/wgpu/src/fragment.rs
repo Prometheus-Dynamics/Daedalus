@@ -197,7 +197,7 @@ impl FragmentPass {
             .chain(
                 buffers
                     .iter()
-                    .map(|storage| storage.buffer.as_entire_binding()),
+                    .map(|storage| storage.buffer().as_entire_binding()),
             )
             .enumerate()
             .map(|(binding, resource)| wgpu::BindGroupEntry {

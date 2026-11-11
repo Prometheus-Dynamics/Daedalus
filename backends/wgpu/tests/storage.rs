@@ -76,6 +76,45 @@ fn uninit_storage_is_handed_out_again_once_the_device_is_idle() {
     assert_ne!(next.wgpu(), &was);
 }
 
+/// A new buffer reads as zeroes wherever nothing was written, however it was first touched:
+/// read, written in part, written in full, or handed out again after an earlier holder.
+#[test]
+fn a_new_buffer_is_zeroes_where_nothing_was_written() {
+    let Some(backend) = private() else { return };
+    let size = (1 << 14) + 520;
+    let read = |storage: &Storage| {
+        let mut seen = vec![0xaa; size as usize];
+        storage.read_into(0, &mut seen).expect("a readback");
+        seen
+    };
+    // An earlier holder leaves its bytes behind, so a buffer handed out again has them.
+    for round in 0..3 {
+        let untouched = Storage::new(&backend, size).expect("a buffer");
+        assert!(read(&untouched).iter().all(|byte| *byte == 0), "{round}");
+        drop(untouched);
+
+        let part = Storage::new(&backend, size).expect("a buffer");
+        part.write(256, &pattern(512)).expect("in range");
+        part.write(1024, &pattern(64)).expect("in range");
+        let seen = read(&part);
+        assert_eq!(&seen[256..768], pattern(512), "{round}");
+        assert_eq!(&seen[1024..1088], pattern(64), "{round}");
+        let rest = seen[..256]
+            .iter()
+            .chain(&seen[768..1024])
+            .chain(&seen[1088..]);
+        assert!(rest.copied().all(|byte| byte == 0), "{round}");
+        // Once the device has it, a write goes in order with the device's work.
+        part.write(0, &pattern(256)).expect("in range");
+        assert_eq!(&read(&part)[..256], pattern(256), "{round}");
+        drop(part);
+
+        let whole = Storage::new(&backend, size).expect("a buffer");
+        whole.write(0, &pattern(size as usize)).expect("in range");
+        assert_eq!(read(&whole), pattern(size as usize), "{round}");
+    }
+}
+
 #[test]
 fn uninit_storage_takes_kernel_output() {
     let Some(backend) = private() else { return };

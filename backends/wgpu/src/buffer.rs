@@ -3,6 +3,8 @@
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "linux")]
+use std::sync::{Mutex, PoisonError};
 
 use crate::WgpuBackend;
 use crate::context::{Context, OpenError};
@@ -109,25 +111,42 @@ impl Mapping {
 /// A storage buffer on the backend's device. Made at load or setup: nothing here is called while
 /// a region runs except [`Storage::write`] and the reads.
 pub struct Storage {
-    pub(crate) buffer: wgpu::Buffer,
+    /// The buffer. Outside this module it is reached through [`Storage::buffer`], which first
+    /// settles what a new buffer still owes.
+    raw: wgpu::Buffer,
     /// The size asked for. The buffer behind it may be larger, when it came from a pool.
     pub(crate) size: u64,
     /// Unique to this buffer, for the bind group cache.
     pub(crate) id: u64,
     space: &'static str,
     mapping: Option<Mapping>,
-    /// Whether the buffer goes back to its device when this is dropped, to be handed out
-    /// again: device memory nothing cleared, which the next holder doesn't expect cleared.
+    /// Set for device memory this backend allocated itself.
     #[cfg(target_os = "linux")]
-    spare: bool,
+    fresh: Option<Fresh>,
     pub(crate) context: Arc<Context>,
+}
+
+/// Device memory of this backend's own, which wgpu neither clears nor tracks. Until the device
+/// is first shown the buffer, the host has it to itself: a write goes straight into its memory
+/// where that is mapped, and zeroes are only written if something would see what was there.
+/// When its `Storage` is dropped the buffer goes back to the device, to be handed out again.
+#[cfg(target_os = "linux")]
+struct Fresh {
+    /// Set once the device has been shown the buffer. From then on it is written through the
+    /// queue, in order with the device's work.
+    seen: AtomicBool,
+    /// Whether every byte has been written since the buffer was handed out. Zeroes are owed
+    /// while it is false. Held while the host writes.
+    filled: Mutex<bool>,
+    /// The buffer's memory, where the device's memory is the host's too.
+    map: Option<daedalus_vk_sys::memory::HostMapping>,
 }
 
 #[cfg(target_os = "linux")]
 impl Drop for Storage {
     fn drop(&mut self) {
-        if self.spare {
-            self.context.keep_spare(self.buffer.clone());
+        if let Some(fresh) = self.fresh.take() {
+            self.context.keep_spare((self.raw.clone(), fresh.map));
         }
     }
 }
@@ -161,7 +180,14 @@ impl Storage {
 
     pub(crate) fn zeroed(context: Arc<Context>, size: u64) -> Result<Storage, StorageError> {
         check_size(&context, size)?;
-        let buffer = context.device.create_buffer(&wgpu::BufferDescriptor {
+        #[cfg(target_os = "linux")]
+        match Storage::fresh(&context, size, false) {
+            Ok(storage) => return Ok(storage),
+            Err(daedalus_vk_sys::Error::NotVulkan) => {}
+            Err(error) => return Err(StorageError::Device(error.to_string())),
+        }
+        // Off Vulkan the buffer is wgpu's, which clears it before its first use.
+        let raw = context.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size,
             usage: wgpu::BufferUsages::STORAGE
@@ -169,39 +195,115 @@ impl Storage {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // Cleared now, and not when wgpu first uses it: work recorded with Vulkan itself may
-        // write the buffer first, and a clear after that would undo it.
-        let mut encoder = context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.clear_buffer(&buffer, 0, None);
-        {
-            let _held = context.submit.lock();
-            context.queue.submit([encoder.finish()]);
-        }
         Ok(Storage {
-            buffer,
+            raw,
             size,
             id: Context::next_id(),
             space: SPACE_DEVICE,
             mapping: None,
             #[cfg(target_os = "linux")]
-            spare: false,
+            fresh: None,
             context,
         })
+    }
+
+    /// Device memory of this backend's own: a buffer that was let go, or a new one. `filled`
+    /// says whether its holder takes it as it is, or is owed zeroes.
+    #[cfg(target_os = "linux")]
+    fn fresh(
+        context: &Arc<Context>,
+        size: u64,
+        filled: bool,
+    ) -> Result<Storage, daedalus_vk_sys::Error> {
+        use daedalus_vk_sys::memory::{Placement, storage_buffer};
+        let (raw, map) = match context.take_spare(size) {
+            Some(kept) => kept,
+            None => storage_buffer(&context.device, size, Placement::DeviceReachable, None)?,
+        };
+        Ok(Storage {
+            raw,
+            size,
+            id: Context::next_id(),
+            space: SPACE_DEVICE,
+            mapping: None,
+            fresh: Some(Fresh {
+                seen: AtomicBool::new(false),
+                filled: Mutex::new(filled),
+                map,
+            }),
+            context: Arc::clone(context),
+        })
+    }
+
+    /// The buffer, for the device to use. The first call for a new buffer writes the zeroes it
+    /// still owes.
+    pub(crate) fn buffer(&self) -> &wgpu::Buffer {
+        #[cfg(target_os = "linux")]
+        if let Some(fresh) = &self.fresh
+            && !fresh.seen.load(Ordering::Acquire)
+        {
+            self.show(fresh);
+        }
+        &self.raw
+    }
+
+    /// How large the buffer behind this is, which is the size asked for or more.
+    pub(crate) fn capacity(&self) -> u64 {
+        self.raw.size()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn show(&self, fresh: &Fresh) {
+        let mut filled = fresh.filled.lock().unwrap_or_else(PoisonError::into_inner);
+        if !*filled {
+            let context = &self.context;
+            let mut encoder = context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            encoder.clear_buffer(&self.raw, 0, None);
+            let _held = context.submit.lock();
+            context.queue.submit([encoder.finish()]);
+            *filled = true;
+        }
+        fresh.seen.store(true, Ordering::Release);
+    }
+
+    /// Writes into a new buffer the device hasn't been shown, and says whether that is all of
+    /// the write: where the buffer's memory is mapped the bytes go straight in. A write of the
+    /// whole buffer leaves no zeroes owed either way.
+    #[cfg(target_os = "linux")]
+    fn write_unseen(&self, offset: u64, bytes: &[u8]) -> Result<bool, StorageError> {
+        let Some(fresh) = &self.fresh else {
+            return Ok(false);
+        };
+        let mut filled = fresh.filled.lock().unwrap_or_else(PoisonError::into_inner);
+        if fresh.seen.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        let whole = offset == 0 && bytes.len() as u64 == self.size;
+        let failed = |error: daedalus_vk_sys::Error| StorageError::Device(error.to_string());
+        let Some(map) = &fresh.map else {
+            *filled |= whole;
+            return Ok(false);
+        };
+        if !*filled && !whole {
+            map.zero(0, self.size as usize).map_err(failed)?;
+        }
+        map.write(offset, bytes).map_err(failed)?;
+        *filled = true;
+        Ok(true)
     }
 
     /// A buffer whose memory was imported from outside. The device reads it where it is.
     #[cfg(target_os = "linux")]
     pub(crate) fn imported(context: Arc<Context>, buffer: wgpu::Buffer, size: u64) -> Storage {
         Storage {
-            buffer,
+            raw: buffer,
             size,
             id: Context::next_id(),
             space: SPACE_DEVICE,
             mapping: None,
-            #[cfg(target_os = "linux")]
-            spare: false,
+            fresh: None,
             context,
         }
     }
@@ -263,13 +365,13 @@ impl Storage {
         let buffer = daedalus_vk_sys::memory::import_dma_buf(&context.device, fd, size, have, None)
             .map_err(unsupported)?;
         Ok(Storage {
-            buffer,
+            raw: buffer,
             size,
             id: Context::next_id(),
             space: crate::memory::SPACE_DMA_HEAP,
             mapping: Some(Mapping::Heap { buf, map }),
             #[cfg(target_os = "linux")]
-            spare: false,
+            fresh: None,
             context,
         })
     }
@@ -300,34 +402,26 @@ impl Storage {
         use daedalus_vk_sys::memory::{Placement, storage_buffer};
 
         check_size(&context, size)?;
-        if !matches!(space, SPACE_HOST_MAPPED | SPACE_HOST_CACHED)
-            && let Some(buffer) = context.take_spare(size)
-        {
-            return Ok(Storage {
-                buffer,
-                size,
-                id: Context::next_id(),
-                space,
-                mapping: None,
-                #[cfg(target_os = "linux")]
-                spare: true,
-                context,
-            });
-        }
         let placement = match space {
             SPACE_HOST_MAPPED => Placement::HostMapped,
             SPACE_HOST_CACHED => Placement::HostCached,
-            _ => Placement::Device,
+            // Nothing cleared, and nothing owed: its holder writes all of it.
+            _ => {
+                return match Storage::fresh(&context, size, true) {
+                    Ok(storage) => Ok(storage),
+                    Err(Error::NotVulkan) => Storage::zeroed(context, size),
+                    Err(error) => Err(StorageError::Device(error.to_string())),
+                };
+            }
         };
         match storage_buffer(&context.device, size, placement, None) {
-            Ok((buffer, mapping)) => Ok(Storage {
-                buffer,
+            Ok((raw, mapping)) => Ok(Storage {
+                raw,
                 size,
                 id: Context::next_id(),
                 space,
-                #[cfg(target_os = "linux")]
-                spare: mapping.is_none(),
                 mapping: mapping.map(Mapping::Device),
+                fresh: None,
                 context,
             }),
             Err(Error::NotVulkan) => Storage::zeroed(context, size),
@@ -352,7 +446,7 @@ impl Storage {
     /// storage and copy usage. Don't keep it past this `Storage`: its memory may be handed to
     /// another one.
     pub fn wgpu(&self) -> &wgpu::Buffer {
-        &self.buffer
+        self.buffer()
     }
 
     /// The id of the memory space this buffer is in.
@@ -393,7 +487,13 @@ impl Storage {
         if let Some(mapping) = &self.mapping {
             return mapping.write(offset, bytes);
         }
-        self.context.queue.write_buffer(&self.buffer, offset, bytes);
+        #[cfg(target_os = "linux")]
+        if self.write_unseen(offset, bytes)? {
+            return Ok(());
+        }
+        self.context
+            .queue
+            .write_buffer(self.buffer(), offset, bytes);
         self.context.note_write(bytes.len() as u64);
         Ok(())
     }
@@ -428,7 +528,7 @@ impl Storage {
         let mut encoder = context
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.copy_buffer_to_buffer(&self.buffer, offset, &staging, 0, len);
+        encoder.copy_buffer_to_buffer(self.buffer(), offset, &staging, 0, len);
         let mapped = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&mapped);
         {
