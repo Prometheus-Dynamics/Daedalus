@@ -68,7 +68,7 @@ const fn spec(
 }
 
 /// In the order of [`Kernel`].
-const SPECS: [ShaderSpec; 8] = [
+pub(super) const SPECS: [ShaderSpec; 8] = [
     spec("kernels.f32_from_le", "f32_from_le", PLAIN),
     spec("kernels.f16_to_f32", "f16_to_f32", PLAIN),
     spec("kernels.f32_to_unorm8", "f32_to_unorm8", PLAIN),
@@ -78,6 +78,9 @@ const SPECS: [ShaderSpec; 8] = [
     spec("kernels.base64_decode", "base64_decode", DECODE),
     spec("kernels.crc32_chunks", "crc32_chunks", CRC),
 ];
+
+/// One op, checked: its counts on the device, and how many workgroups it dispatches.
+pub(super) type Planned = (Arc<Storage>, [u32; 3]);
 
 /// Distinct counts whose parameter buffers are kept.
 const PARAMS_KEPT: usize = 64;
@@ -93,6 +96,9 @@ pub struct Kernels {
     /// nothing is copied before a pass.
     params: Mutex<HashMap<[u32; 3], Arc<Storage>>>,
     pub(super) table: OnceLock<Storage>,
+    /// Ops run with Vulkan itself, where the device is on Vulkan.
+    #[cfg(target_os = "linux")]
+    pub(super) chains: super::chained::Chains,
 }
 
 impl Kernels {
@@ -112,6 +118,8 @@ impl Kernels {
             shaders: [const { OnceLock::new() }; 8],
             params: Mutex::new(HashMap::new()),
             table: OnceLock::new(),
+            #[cfg(target_os = "linux")]
+            chains: super::chained::Chains::default(),
         }
     }
 
@@ -179,18 +187,17 @@ impl Kernels {
         )
     }
 
-    /// Records one op into `into`: the pass kept open, and the encoder it is in.
-    pub(super) fn encode_with(
+    /// Checks one op against its buffers, and gives its counts on the device and how many
+    /// workgroups it dispatches. `None` when there is nothing to run.
+    pub(super) fn plan(
         &self,
-        (open, encoder): (&mut OpenPass, &mut wgpu::CommandEncoder),
         kernel: Kernel,
         src: &Storage,
         dst: &Storage,
         n: u64,
-        extra: Option<&Storage>,
-    ) -> Result<(), KernelError> {
+    ) -> Result<Option<Planned>, KernelError> {
         if n == 0 {
-            return Ok(());
+            return Ok(None);
         }
         let (need_in, need_out) = (
             kernel.input_len(n).next_multiple_of(4),
@@ -218,6 +225,22 @@ impl Kernels {
             )));
         }
         let params = self.params([n as u32, threads as u32, kernel.output_len(n) as u32])?;
+        Ok(Some((params, [x as u32, y as u32, 1])))
+    }
+
+    /// Records one op into `into`: the pass kept open, and the encoder it is in.
+    pub(super) fn encode_with(
+        &self,
+        (open, encoder): (&mut OpenPass, &mut wgpu::CommandEncoder),
+        kernel: Kernel,
+        src: &Storage,
+        dst: &Storage,
+        n: u64,
+        extra: Option<&Storage>,
+    ) -> Result<(), KernelError> {
+        let Some((params, counts)) = self.plan(kernel, src, dst, n)? else {
+            return Ok(());
+        };
         let shader = self.shader(kernel)?;
         let plain = [
             Bound::Storage(src),
@@ -230,16 +253,25 @@ impl Kernels {
             None => &plain,
         };
         shader
-            .encode_sized_in(open, encoder, bound, [x as u32, y as u32, 1])
+            .encode_sized_in(open, encoder, bound, counts)
             .map_err(KernelError::Shader)
     }
 
     /// Several ops recorded together: one pass for all of them, and one submit. This is the
     /// cheapest way to run more than one op, on every device.
     pub fn batch(&self) -> Batch<'_> {
+        #[cfg(target_os = "linux")]
+        if let Some(ops) = self.chains.begin(self) {
+            return Batch {
+                encoded: None,
+                chained: Some(ops),
+                kernels: self,
+            };
+        }
         Batch {
-            open: OpenPass::default(),
-            encoder: self.encoder(),
+            encoded: Some((OpenPass::default(), self.encoder())),
+            #[cfg(target_os = "linux")]
+            chained: None,
             kernels: self,
         }
     }
@@ -276,9 +308,9 @@ impl Kernels {
         dst: &Storage,
         n: u64,
     ) -> Result<Ticket, KernelError> {
-        let mut encoder = self.encoder();
-        self.encode(&mut encoder, kernel, src, dst, n)?;
-        Ok(self.submit(encoder))
+        let mut batch = self.batch();
+        batch.add(kernel, src, dst, n)?;
+        Ok(batch.submit())
     }
 
     /// Records a copy of `n` bytes from the start of `src` to the start of `dst` with the
@@ -312,9 +344,12 @@ impl Kernels {
 /// Ops being recorded together. They share one compute pass, and [`Batch::submit`] submits
 /// them all at once.
 pub struct Batch<'k> {
-    /// Declared before the encoder: the pass ends before the encoder is finished or dropped.
-    open: OpenPass,
-    encoder: wgpu::CommandEncoder,
+    /// Through wgpu's encoder: the pass kept open, and the encoder it is in. The pass is first,
+    /// so it ends before the encoder is finished or dropped.
+    encoded: Option<(OpenPass, wgpu::CommandEncoder)>,
+    /// With Vulkan itself: the ops are listed, and recorded when the batch is submitted.
+    #[cfg(target_os = "linux")]
+    chained: Option<Vec<super::chained::Op>>,
     kernels: &'k Kernels,
 }
 
@@ -328,27 +363,40 @@ impl Batch<'_> {
         dst: &Storage,
         n: u64,
     ) -> Result<(), KernelError> {
-        match kernel {
-            Kernel::Base64Decode => Err(KernelError::Size(
-                "base64 decode reports a length: run it with `base64_decode`".into(),
-            )),
-            Kernel::Crc32Chunks => {
-                let table = self.kernels.crc_table()?;
-                let (open, encoder) = (&mut self.open, &mut self.encoder);
-                self.kernels
-                    .encode_with((open, encoder), kernel, src, dst, n, Some(table))
+        let extra = match kernel {
+            Kernel::Base64Decode => {
+                return Err(KernelError::Size(
+                    "base64 decode reports a length: run it with `base64_decode`".into(),
+                ));
             }
-            _ => {
-                let (open, encoder) = (&mut self.open, &mut self.encoder);
+            Kernel::Crc32Chunks => Some(self.kernels.crc_table()?),
+            _ => None,
+        };
+        #[cfg(target_os = "linux")]
+        if let Some(ops) = &mut self.chained {
+            return super::chained::add(self.kernels, ops, kernel, [src, dst], n, extra);
+        }
+        match &mut self.encoded {
+            Some((open, encoder)) => {
                 self.kernels
-                    .encode_with((open, encoder), kernel, src, dst, n, None)
+                    .encode_with((open, encoder), kernel, src, dst, n, extra)
             }
+            None => Ok(()),
         }
     }
 
     /// Submits everything recorded and gives the ticket for it. Never waits.
-    pub fn submit(mut self) -> Ticket {
-        self.open.close();
-        self.kernels.submit(self.encoder)
+    pub fn submit(self) -> Ticket {
+        #[cfg(target_os = "linux")]
+        if let Some(ops) = self.chained {
+            return self.kernels.chains.submit(self.kernels, ops);
+        }
+        match self.encoded {
+            Some((mut open, encoder)) => {
+                open.close();
+                self.kernels.submit(encoder)
+            }
+            None => Ticket::done(Arc::clone(&self.kernels.context)),
+        }
     }
 }

@@ -2,9 +2,10 @@
 
 use daedalus_abi::counting::CountingAlloc;
 use daedalus_gpu_budgets::{
-    ALLOCATIONS_PER_STEP, DISPATCHES_PER_MERGED_CHAIN, DISPATCHES_PER_SHADER_NODE,
-    DOWNLOADS_PER_BOUNDARY, Miss, PIPELINES_PER_MERGED_CHAIN, SUBMITS_PER_REGION,
-    UPLOADS_PER_BOUNDARY, boundaries, exactly, merged_chain, region, shader_line,
+    ALLOCATIONS_PER_KERNEL_BATCH, ALLOCATIONS_PER_STEP, DISPATCHES_PER_MERGED_CHAIN,
+    DISPATCHES_PER_SHADER_NODE, DOWNLOADS_PER_BOUNDARY, Miss, PIPELINES_PER_MERGED_CHAIN,
+    SUBMITS_PER_REGION, UPLOADS_PER_BOUNDARY, boundaries, exactly, kernel_batch, merged_chain,
+    region, shader_line,
 };
 use daedalus_wgpu_conformance::{Counted, private};
 
@@ -73,6 +74,15 @@ fn the_allocation_budget_is_what_is_measured() {
     for nodes in [1, 8] {
         let measured = shader_line(&backend, nodes, 4096).allocations;
         assert_eq!(measured, ALLOCATIONS_PER_STEP, "{nodes} shaders");
+    }
+}
+
+#[test]
+fn a_kernel_batch_allocates_nothing_once_its_ops_have_run() {
+    let Some(backend) = private() else { return };
+    for ops in [1, 8, 40] {
+        let measured = kernel_batch(&backend, ops);
+        assert_eq!(measured, ALLOCATIONS_PER_KERNEL_BATCH, "{ops} ops");
     }
 }
 

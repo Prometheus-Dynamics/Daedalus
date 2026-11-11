@@ -11,6 +11,9 @@ use crate::context::Context;
 use crate::timer::{PassTimer, TimeSource};
 use crate::wait::WaitError;
 
+#[cfg(target_os = "linux")]
+pub(crate) type Chain = Mutex<daedalus_vk_sys::chain::Chain>;
+
 /// What a submission's callback and its pollers share.
 pub(crate) struct TicketState {
     done: AtomicBool,
@@ -19,13 +22,35 @@ pub(crate) struct TicketState {
     took: AtomicU64,
 }
 
+/// A ticket's state: shared with the device's callback, or the ticket's own when nothing
+/// else needs it, which costs no allocation.
+enum Held {
+    Shared(Arc<TicketState>),
+    Own(TicketState),
+}
+
+impl std::ops::Deref for Held {
+    type Target = TicketState;
+
+    fn deref(&self) -> &TicketState {
+        match self {
+            Held::Shared(state) => state,
+            Held::Own(state) => state,
+        }
+    }
+}
+
 impl TicketState {
     pub(crate) fn new() -> Arc<TicketState> {
-        Arc::new(TicketState {
+        Arc::new(TicketState::own())
+    }
+
+    fn own() -> TicketState {
+        TicketState {
             done: AtomicBool::new(false),
             started: Instant::now(),
             took: AtomicU64::new(0),
-        })
+        }
     }
 
     /// Called by the device when the submission has finished.
@@ -42,9 +67,24 @@ impl TicketState {
 
 /// One submission on a device. Done when the device has finished its work.
 pub struct Ticket {
-    state: Arc<TicketState>,
+    state: Held,
     context: Arc<Context>,
     timer: Option<Arc<PassTimer>>,
+    /// Set for work a chain recorded with Vulkan itself, which has no callback: the state is
+    /// finished by whoever first sees the run done.
+    #[cfg(target_os = "linux")]
+    chained: Option<(Arc<Chain>, u64)>,
+}
+
+/// The ticket for run `run` of `chain`. Making one allocates nothing.
+#[cfg(target_os = "linux")]
+pub(crate) fn chain_ticket(chain: Arc<Chain>, run: u64, context: Arc<Context>) -> Ticket {
+    Ticket {
+        state: Held::Own(TicketState::own()),
+        context,
+        timer: None,
+        chained: Some((chain, run)),
+    }
 }
 
 impl Ticket {
@@ -54,10 +94,38 @@ impl Ticket {
         timer: Option<Arc<PassTimer>>,
     ) -> Ticket {
         Ticket {
-            state,
+            state: Held::Shared(state),
             context,
             timer,
+            #[cfg(target_os = "linux")]
+            chained: None,
         }
+    }
+
+    /// A ticket for work that is already done: there was nothing to run.
+    pub(crate) fn done(context: Arc<Context>) -> Ticket {
+        let state = TicketState::own();
+        state.finish();
+        Ticket {
+            state: Held::Own(state),
+            context,
+            timer: None,
+            #[cfg(target_os = "linux")]
+            chained: None,
+        }
+    }
+
+    /// Lets the device say what has finished. Never blocks.
+    fn look(&self) {
+        #[cfg(target_os = "linux")]
+        if let Some((chain, run)) = &self.chained {
+            // A chain that is busy recording another run isn't asked now.
+            if chain.try_lock().is_ok_and(|chain| chain.is_done(*run)) {
+                self.state.finish();
+            }
+            return;
+        }
+        self.context.poll();
     }
 
     /// Whether the work has finished. Lets the device run its callbacks, and never blocks.
@@ -65,7 +133,7 @@ impl Ticket {
         if self.state.finished() {
             return true;
         }
-        self.context.poll();
+        self.look();
         self.state.finished()
     }
 
@@ -74,6 +142,7 @@ impl Ticket {
     pub fn wait(&self) -> Result<(), WaitError> {
         if !self.is_done() {
             self.context.wait("a submission")?;
+            self.look();
             if !self.state.finished() {
                 // The device went idle without calling back, which only a lost device does.
                 return Err(self.context.timed_out("a submission"));
@@ -109,8 +178,15 @@ impl Ticket {
     pub fn into_fence(self) -> Fence {
         let word = NEXT_WORD.fetch_add(1, Ordering::Relaxed);
         let waiting = Waiting {
-            state: self.state,
+            state: match self.state {
+                Held::Shared(state) => state,
+                Held::Own(state) => Arc::new(state),
+            },
             context: Arc::downgrade(&self.context),
+            #[cfg(target_os = "linux")]
+            chained: self
+                .chained
+                .map(|(chain, run)| (Arc::downgrade(&chain), run)),
         };
         table().insert(word, waiting);
         Fence::of::<Polled>(word)
@@ -121,6 +197,8 @@ impl Ticket {
 struct Waiting {
     state: Arc<TicketState>,
     context: Weak<Context>,
+    #[cfg(target_os = "linux")]
+    chained: Option<(Weak<Chain>, u64)>,
 }
 
 static NEXT_WORD: AtomicUsize = AtomicUsize::new(1);
@@ -154,6 +232,16 @@ impl FenceWord for Polled {
             map.remove(&word);
             return FencePoll::Failed;
         };
+        #[cfg(target_os = "linux")]
+        if let Some((chain, run)) = &waiting.chained {
+            // A chain that is gone waited for its runs as it went.
+            let done = chain
+                .upgrade()
+                .is_none_or(|chain| chain.try_lock().is_ok_and(|chain| chain.is_done(*run)));
+            if done {
+                waiting.state.finish();
+            }
+        }
         if !waiting.state.finished() {
             context.poll();
         }
@@ -177,9 +265,6 @@ pub(crate) struct ChainPlace {
     slot: usize,
     generation: usize,
 }
-
-#[cfg(target_os = "linux")]
-type Chain = Mutex<daedalus_vk_sys::chain::Chain>;
 
 #[cfg(target_os = "linux")]
 struct ChainEntry {

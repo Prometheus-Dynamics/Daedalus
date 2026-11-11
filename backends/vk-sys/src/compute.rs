@@ -61,8 +61,8 @@ pub struct ComputePipeline {
     pub(crate) keep: wgpu::Device,
 }
 
-/// Translates `source` for its compute entry point `entry`, and reads its bindings. Anything
-/// but storage and uniform buffers in group 0 is [`Error::Unsupported`].
+/// Translates `source` for its compute entry point `entry`, and reads the bindings it uses.
+/// Anything but storage and uniform buffers in group 0 is [`Error::Unsupported`].
 fn translate(source: &str, entry: &str) -> Result<(Vec<u32>, Vec<Slot>), Error> {
     let module = naga::front::wgsl::parse_str(source).map_err(|_| Error::Unsupported)?;
     // No optional capability: a shader that needs one is left to wgpu, which knows the device.
@@ -72,18 +72,22 @@ fn translate(source: &str, entry: &str) -> Result<(Vec<u32>, Vec<Slot>), Error> 
     )
     .validate(&module)
     .map_err(|_| Error::Unsupported)?;
-    let found = module
+    let point = module
         .entry_points
         .iter()
-        .any(|point| point.name == entry && point.stage == naga::ShaderStage::Compute);
-    if !found {
-        return Err(Error::Unsupported);
-    }
+        .position(|point| point.name == entry && point.stage == naga::ShaderStage::Compute)
+        .ok_or(Error::Unsupported)?;
+    // A shader's bindings are the ones its entry point uses: a source with several entry
+    // points declares more.
+    let uses = info.get_entry_point(point);
     let mut slots = Vec::new();
-    for (_, global) in module.global_variables.iter() {
+    for (handle, global) in module.global_variables.iter() {
         let Some(binding) = &global.binding else {
             continue;
         };
+        if uses[handle].is_empty() {
+            continue;
+        }
         let kind = match global.space {
             naga::AddressSpace::Storage { .. } => Binding::Storage,
             naga::AddressSpace::Uniform => Binding::Uniform,

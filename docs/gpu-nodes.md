@@ -76,6 +76,8 @@ backend opens the device again and the region runs again: it is not turned off.
   allocates nothing, and the lavapipe lane holds it to that.
 - A region that is given a texture, draws to one, or holds a recording body goes through wgpu's
   encoder, which allocates when it records a pass. So does every region off Vulkan.
+- The kernel ops run by `Kernels::run` and `Batch` are recorded the same way, and allocate
+  nothing once the same ops have run before.
 
 The counted budgets are checked on Mesa's software Vulkan in the `GPU` workflow
 (`scripts/gpu-lavapipe.sh`). Timings are board runs.
