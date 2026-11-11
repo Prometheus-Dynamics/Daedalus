@@ -309,7 +309,9 @@ impl Backend {
                 reads,
                 writes,
                 absorbed: Vec::new(),
-                may_pend: false,
+                // A plugin's step may return `Pending`, and the plugin ABI doesn't say which do,
+                // so every plugin unit can.
+                may_pend: true,
             },
         }
     }

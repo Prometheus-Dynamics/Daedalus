@@ -80,7 +80,12 @@ fn take(graph: Handle, name: &str) -> Result<Option<i64>, Status> {
 fn tick(graph: Handle) -> TickInfo {
     let mut info = TickInfo::default();
     // SAFETY: `info` is a tick struct to write.
-    assert_eq!(unsafe { daedalus_tick(graph, &mut info) }, OK);
+    assert_eq!(
+        unsafe { daedalus_tick(graph, &mut info) },
+        OK,
+        "{}",
+        last_error()
+    );
     info
 }
 
@@ -443,4 +448,27 @@ fn a_thousand_calls_leave_nothing_behind() {
     assert_eq!(highest, 0, "one place, a thousand generations");
     assert_eq!(daedalus_host_release(host), OK);
     assert_eq!(live_handles(), (0, 0));
+}
+
+#[test]
+fn a_value_whose_fence_is_pending_is_not_taken_until_the_fence_resolves() {
+    let _turn = turn();
+    let host = host();
+    let graph = compile(host, &graph_json("fixture.gated")).expect("compiles");
+    assert_eq!(push(graph, "in", 7), OK);
+
+    // The node does its work on the first tick and returns a pending fence, so nothing is taken
+    // while the fence waits. Each later tick polls it once, and it resolves on the fourth tick.
+    tick(graph);
+    assert_eq!(take(graph, "out"), Ok(None), "the fence is pending");
+    tick(graph);
+    assert_eq!(take(graph, "out"), Ok(None), "the fence is still pending");
+    tick(graph);
+    assert_eq!(take(graph, "out"), Ok(None), "the fence is still pending");
+    tick(graph);
+    assert_eq!(take(graph, "out"), Ok(Some(7)), "the fence resolved");
+    assert_eq!(take(graph, "out"), Ok(None), "the value is taken once");
+
+    assert_eq!(daedalus_graph_release(graph), OK);
+    assert_eq!(daedalus_host_release(host), OK);
 }

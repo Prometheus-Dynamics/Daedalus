@@ -52,8 +52,12 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// Takes the oldest value out of `slot`'s queue, and hands its ownership to the caller.
+    /// Takes the oldest value out of `slot`'s queue, and hands its ownership to the caller. A slot
+    /// a pending step writes gives nothing until that step's fence resolves.
     pub fn take_value(&mut self, slot: u32) -> Option<Value> {
+        if self.held_back(slot) {
+            return None;
+        }
         let index = self.queue_index(slot).ok()?;
         let queue = self.queues[index];
         if queue.len == 0 {
@@ -89,8 +93,12 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// The type of the oldest value in `slot`, without taking it.
+    /// The type of the oldest value in `slot`, without taking it. None while a pending step
+    /// writes the slot, as for an empty slot.
     pub fn peek_type(&self, slot: u32) -> Option<TypeIndex> {
+        if self.held_back(slot) {
+            return None;
+        }
         let index = self.queue_index(slot).ok()?;
         let queue = self.queues[index];
         (queue.len > 0).then(|| TypeIndex(self.storage[queue.head_index()].type_index))

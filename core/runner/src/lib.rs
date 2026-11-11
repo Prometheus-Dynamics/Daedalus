@@ -109,12 +109,15 @@ use bits::words_for;
 pub struct Pending {
     pub step: u32,
     pub fence: Fence,
+    /// Bit `n` is set when the step's output `n` was stored, so a failed fence can take it back.
+    pub kept: u32,
 }
 
 impl Pending {
     pub const EMPTY: Pending = Pending {
         step: 0,
         fence: Fence::NONE,
+        kept: 0,
     };
 }
 
@@ -402,6 +405,15 @@ impl<'a> Runner<'a> {
     /// How many fences are registered and not yet finished.
     pub fn pending(&self) -> usize {
         self.pending_len
+    }
+
+    /// Whether a pending step writes `slot`. Its value is not there yet: a host reads nothing
+    /// from the slot until the fence resolves.
+    pub fn held_back(&self, slot: u32) -> bool {
+        self.pending[..self.pending_len].iter().any(|entry| {
+            let meta = self.meta[entry.step as usize];
+            crate::spanned(self.table, meta.outputs).contains(&slot)
+        })
     }
 
     /// Whether a step is woken for a tick that hasn't run yet.
