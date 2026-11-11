@@ -71,11 +71,20 @@ fn f32_to_unorm8(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_wor
     dst[t] = word;
 }
 
+// Eight words an invocation, not one: a word-a-thread copy of 4 MiB is a million invocations, and
+// the device spends its time starting them. `threads` counts the invocations, and the last of
+// them may have fewer words to write.
 @compute @workgroup_size(64)
 fn copy_words(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    dst[t] = tail_mask(t, src[t]);
+    let words = (params.out_len + 3u) / 4u;
+    for (var k = 0u; k < 8u; k++) {
+        let w = t * 8u + k;
+        if (w < words) {
+            dst[w] = tail_mask(w, src[w]);
+        }
+    }
 }
 
 @compute @workgroup_size(64)
