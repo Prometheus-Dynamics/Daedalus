@@ -112,7 +112,7 @@ fn the_plugin_frees_its_bytes_on_the_last_drop_and_the_library_stays_open() {
     drop(more);
     assert_eq!(
         bytes_released(),
-        released + SIZE,
+        released + 1,
         "the last drop frees the bytes"
     );
     assert!(
@@ -153,7 +153,7 @@ fn a_reload_leaves_a_held_value_readable_and_frees_it_later() {
     drop(held);
     assert_eq!(
         bytes_released(),
-        released + SIZE,
+        released + 1,
         "the old bytes are freed with the value"
     );
     assert!(

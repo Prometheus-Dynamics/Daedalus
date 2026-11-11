@@ -42,8 +42,36 @@ from it, and the error names both hashes. There are no version symbols and no ne
 - Only `repr(C)` data. A plugin's strings are copied into host storage at load.
 - A node's inputs and outputs are cells. Plain data of 16 bytes or less is in place, and anything
   larger is bytes behind a shared handle. A plugin never hands the host memory to free.
+- A plugin's node can hand bytes to the host without a copy. See "Handing bytes over" below.
 - A panic in a plugin's node does not cross. It is a fault of that step: the tick goes on and the
   host keeps running.
+
+## Handing bytes over
+
+A node hands bytes over by marking one of its output cells and describing the bytes in
+`StepCx::handover`, which has one `BytesC` for each of the first two outputs:
+
+- Set `handover[k]` to the bytes: `ptr` and `len` are valid, and stay unchanged, until `release` is
+  called with `data`. `release` is the plugin's own function.
+- Set output cell `k` to `state` full, `owner` to `OWNER_HANDED` (6), and `reserved` to
+  `HANDOVER_PENDING` (1). The cell's `data` and `len` are the bytes, and `cap` is not read.
+
+When the step returns, the loader turns the cell into a counted record that the host holds. A
+record comes from a pool made when the backend loaded. When the pool has none to spare, the host
+copies the bytes, calls the plugin's `release` straight away, and counts the copy. Either way the
+host sees the bytes at the same address the plugin gave, and reads them without a copy.
+
+**The release may be called from any thread.** The host calls it once, on whichever thread drops
+the last count on the bytes: a graph's step, the host, or a backend's thread. A plugin's release
+must therefore be safe to call from any thread, and must not depend on the step that made the
+bytes still running.
+
+The bytes keep the plugin's library open. A count on a record holds the plugin's generation, so a
+graph reload or a plugin reload to a new generation leaves a held value readable, and the library
+closes after the last count is gone.
+
+A C or C++ plugin in the same process hands bytes over the same way, with the same `repr(C)`
+layouts. A C or C++ worker in a separate process does not: its outputs are copied over the wire.
 
 ## Loading and loading again
 

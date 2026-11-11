@@ -192,6 +192,14 @@ pub struct BytesC {
     pub release: Option<BytesReleaseFn>,
 }
 
+/// Bytes that are none: the value a hand-over slot starts from.
+pub const NO_BYTES: BytesC = BytesC {
+    ptr: core::ptr::null(),
+    len: 0,
+    data: core::ptr::null_mut(),
+    release: None,
+};
+
 /// Makes the bytes for `index`, into `out`, which the host owns. Writes `out` only on OK. A plugin
 /// returns NOT_SUPPORTED for an index it does not make.
 pub type ProduceBytesFn = unsafe extern "C" fn(index: u32, out: *mut BytesC) -> Status;

@@ -87,6 +87,9 @@ pub struct StepCx {
     pub code: u32,
     /// The host's clock, in nanoseconds. The runner never reads a clock itself.
     pub now_ns: u64,
+    /// The bytes a step hands over, for output cells marked `HANDOVER_PENDING`: cell `k` of the
+    /// outputs reads `handover[k]`. The loader turns each into a record right after the step returns.
+    pub handover: [crate::BytesC; 2],
 }
 
 // SAFETY: `cancel` and `progress` point at `Word`s, which are `Sync`, and are only ever read
@@ -104,6 +107,7 @@ impl StepCx {
             flags: 0,
             code: 0,
             now_ns: 0,
+            handover: [crate::NO_BYTES; 2],
         }
     }
 

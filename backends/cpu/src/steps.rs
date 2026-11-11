@@ -90,7 +90,13 @@ pub struct Kind<T: 'static> {
     /// Set when `T` is `Arc<U>`: the handle itself is what a parameter takes and a result
     /// gives, so a value handed on is neither copied nor put behind a new handle.
     pub handle: Option<Handle<T>>,
+    /// Set when `T` can be made from bytes a cell holds, by copying them: a `Vec<u8>` is. A handed
+    /// value reaches a parameter of such a type through this, which is the one copy it makes.
+    pub from_bytes: Option<FromBytes<T>>,
 }
+
+/// How a `T` is copied out of bytes a cell holds.
+pub type FromBytes<T> = fn(&[u8]) -> Option<T>;
 
 /// How a handle type goes in and out of a cell.
 pub struct Handle<T: 'static> {
@@ -112,6 +118,30 @@ impl<T> Copy for Handle<T> {}
 
 /// Whether `T` is a handle, `Arc<U>`.
 pub struct HandleOf<T>(PhantomData<T>);
+
+/// Whether `T` is `SharedBytes`, the bytes a plugin handed over: a handle, taken by move.
+impl HandleOf<daedalus_abi::SharedBytes> {
+    pub const HANDLE: Option<Handle<daedalus_abi::SharedBytes>> = Some(Handle {
+        take: ports::take_handed_bytes,
+        share: ports::share_handed_bytes,
+        put: ports::put_handed_bytes,
+    });
+}
+
+/// Whether `T` can be copied out of bytes. A `Vec<u8>` can.
+pub struct BytesOf<T>(PhantomData<T>);
+
+#[cfg(feature = "alloc")]
+impl BytesOf<alloc::vec::Vec<u8>> {
+    pub const FROM: Option<FromBytes<alloc::vec::Vec<u8>>> = Some(|bytes| Some(bytes.to_vec()));
+}
+
+/// The answer for a `T` that can't be copied out of bytes.
+pub trait NotBytes<T: 'static> {
+    const FROM: Option<FromBytes<T>> = None;
+}
+
+impl<T: 'static> NotBytes<T> for BytesOf<T> {}
 
 #[cfg(feature = "alloc")]
 impl<U: Send + Sync + 'static> HandleOf<alloc::sync::Arc<U>> {

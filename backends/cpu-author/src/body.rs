@@ -327,7 +327,9 @@ macro_rules! __is_fanin {
 macro_rules! __kind {
     ($ty:ty) => {{
         #[allow(unused_imports)]
-        use $crate::__cpu::{NotClone as _, NotCopy as _, NotHandle as _, NotLit as _};
+        use $crate::__cpu::{
+            NotBytes as _, NotClone as _, NotCopy as _, NotHandle as _, NotLit as _,
+        };
         $crate::__cpu::Kind::<$ty> {
             read: $crate::__cpu::CopyOf::<$ty>::READ,
             write: $crate::__cpu::CopyOf::<$ty>::WRITE,
@@ -335,6 +337,7 @@ macro_rules! __kind {
             copy: $crate::__cpu::CopyOf::<$ty>::IS,
             decode: $crate::__cpu::LitOf::<$ty>::DECODE,
             handle: $crate::__cpu::HandleOf::<$ty>::HANDLE,
+            from_bytes: $crate::__cpu::BytesOf::<$ty>::FROM,
         }
     }};
 }

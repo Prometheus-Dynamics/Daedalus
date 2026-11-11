@@ -16,8 +16,8 @@ readonly LOADED_MAX_RAM=584
 readonly PICO_MAX_FLASH=20480
 readonly PICO_MAX_RAM=2048
 readonly TARGETS=(
-  "thumbv7em-none-eabihf:2120:112"
-  "thumbv6m-none-eabi:2664:112"
+  "thumbv7em-none-eabihf:2128:112"
+  "thumbv6m-none-eabi:2672:112"
 )
 
 size_of() {

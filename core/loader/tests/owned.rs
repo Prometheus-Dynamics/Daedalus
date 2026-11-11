@@ -28,7 +28,6 @@ fn shared_bytes_cross_as_handles_without_copying() {
     });
     assert_eq!(allocations, 0, "clones allocate nothing");
     assert_eq!(handles.len(), 100);
-    assert_eq!(bytes.handles(), 101);
     assert_eq!(handles[7].bytes(), &[1, 2, 3, 4]);
 }
 

@@ -18,7 +18,7 @@ message.
 | 8 GPU ops, V3D | 1.30 ms with 8 submits, 1.32 ms with 1 | Board run `I2`. |
 | Five-node firmware | 3-12 KiB flash, 112-584 B RAM | `firmware_compiled`, `firmware_tunable` and `firmware_loaded`, from ELF section sizes on `thumbv7em-none-eabihf` and `thumbv6m-none-eabi`. |
 
-Steady-state running allocates nothing: `alloc_fused_tick`, `alloc_plugin_node_tick`,
+Steady-state running allocates nothing: `alloc_fused_tick`, `alloc_plugin_node_tick`, `alloc_plugin_handover_tick`,
 `alloc_large_handle_tick`, `alloc_large_handle_moved_tick`, `alloc_detector_frame` and the handoff
 chains passed by handle or as shared bytes are all zero. A CPU output is kept for reuse by its
 producer, as `docs/design.md` says, host-read outputs included.

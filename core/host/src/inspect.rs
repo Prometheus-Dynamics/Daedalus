@@ -65,6 +65,7 @@ fn owner_name(owner: &Owner) -> &'static str {
         Owner::Host(_) => "host",
         Owner::Shared(_) => "shared",
         Owner::Typed(_) => "typed",
+        Owner::Handed(_) => "handed",
     }
 }
 

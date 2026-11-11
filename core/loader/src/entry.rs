@@ -7,8 +7,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 use daedalus_abi::{
-    BackendTable, BoundaryPort, CanTakeFn, CompileFn, OwnedStep, PluginEntry, RegionView, Slots,
-    Status, Step, StepCx, StepEnd, Text, UnitOut,
+    BackendTable, BoundaryPort, CanTakeFn, CompileFn, HANDOVER_PENDING, OWNER_HANDED, OwnedStep,
+    PluginEntry, RegionView, SharedBytes, Slot, SlotState, Slots, Status, Step, StepCx, StepEnd,
+    Text, UnitOut,
 };
 use daedalus_backend::{PortRef, StepUnit, UnitInfo};
 use daedalus_registry::{OwnedDecl, Registry};
@@ -17,6 +18,7 @@ use daedalus_types::{NodeIndex, PortIndex};
 use crate::codec::{Codec, read_codecs};
 use crate::generation::Generation;
 use crate::open::{LoadError, open_library};
+use crate::owned::Holder;
 use crate::records::{join, read_node};
 
 /// The regions a backend is asked about: node ids in order, and boundary ports.
@@ -65,6 +67,7 @@ impl Loader {
         release_tables(&opened.entry);
         let (nodes, backends) = read?;
         let (codecs, conversions) = codec_read?;
+        let holder = Holder::new(generation.clone(), 0);
         Ok(Plugin {
             name,
             generation,
@@ -73,6 +76,7 @@ impl Loader {
             codecs,
             conversions,
             produce: opened.entry.produce,
+            holder,
         })
     }
 }
@@ -149,6 +153,8 @@ pub struct Plugin {
     conversions: Vec<OwnedDecl>,
     /// The plugin's way of making bytes without a copy. Its code belongs to `generation`.
     produce: Option<daedalus_abi::ProduceBytesFn>,
+    /// The records `share` and `produce` make. It has no pool: each is made when it is asked for.
+    holder: Arc<Holder>,
 }
 
 impl std::fmt::Debug for Plugin {
@@ -192,13 +198,13 @@ impl Plugin {
     }
 
     /// A value of this plugin's generation holding `bytes`. The value keeps the library open.
-    pub fn share(&self, bytes: &[u8]) -> crate::SharedBytes {
-        crate::SharedBytes::from_plugin(&self.generation, bytes)
+    pub fn share(&self, bytes: &[u8]) -> SharedBytes {
+        Holder::handle(self.holder.copy(bytes))
     }
 
     /// The bytes the plugin makes for `index`, handed over without a copy. The value keeps the
     /// library open, and the plugin frees the bytes when the last value of them is dropped.
-    pub fn produce(&self, index: u32) -> Result<crate::SharedBytes, LoadError> {
+    pub fn produce(&self, index: u32) -> Result<SharedBytes, LoadError> {
         let produce = self.produce.ok_or_else(|| LoadError::Produce {
             plugin: self.name.clone(),
             status: Status::NOT_SUPPORTED,
@@ -229,9 +235,9 @@ impl Plugin {
                 status: Status::from_errno(22),
             });
         }
-        // SAFETY: the plugin wrote `made` on OK, with bytes valid until its release, which the value
-        // calls once. `self.generation` keeps the library, and so the release, loaded.
-        Ok(unsafe { crate::SharedBytes::adopt(&self.generation, made) })
+        // The record takes the plugin's bytes as they are, with no copy: its last release calls the
+        // plugin's release, and it keeps the generation open.
+        Ok(Holder::handle(self.holder.wrap(made)))
     }
 
     /// Joins this plugin's nodes into `registry`, under the rules for a compiled-in record.
@@ -247,7 +253,12 @@ pub struct Backend {
     can_take: CanTakeFn,
     compile: CompileFn,
     generation: Arc<Generation>,
+    /// The pool of hand-over records this backend's steps use, made when it loaded.
+    holder: Arc<Holder>,
 }
+
+/// How many hand-over records a backend's pool holds. A hand-over past that copies its bytes.
+const POOL_RECORDS: usize = 16;
 
 impl Backend {
     fn from_table(
@@ -268,6 +279,7 @@ impl Backend {
             can_take: table.can_take,
             compile: table.compile,
             generation: generation.clone(),
+            holder: Holder::new(generation.clone(), POOL_RECORDS),
         })
     }
 
@@ -335,7 +347,7 @@ impl Backend {
 
     fn unit(&self, unit: UnitOut, region: &RegionIn<'_>) -> StepUnit {
         let node = unit.node;
-        let reads = region
+        let reads: Vec<PortRef> = region
             .inputs
             .iter()
             .filter(|port| port.node == node)
@@ -344,7 +356,7 @@ impl Backend {
                 port: PortIndex(port.port),
             })
             .collect();
-        let writes = region
+        let writes: Vec<PortRef> = region
             .outputs
             .iter()
             .filter(|port| port.node == node)
@@ -357,6 +369,9 @@ impl Backend {
             step: Step::boxed(Pinned {
                 step: unit.step,
                 _generation: self.generation.clone(),
+                holder: self.holder.clone(),
+                inputs: reads.len(),
+                outputs: writes.len(),
             }),
             info: UnitInfo {
                 covers: vec![NodeIndex(node)],
@@ -404,13 +419,70 @@ impl Backend {
 struct Pinned {
     step: Step,
     _generation: Arc<Generation>,
+    holder: Arc<Holder>,
+    /// The frame's inputs come first, so output `k` is cell `inputs + k`.
+    inputs: usize,
+    outputs: usize,
 }
 
 impl OwnedStep for Pinned {
     fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
         // SAFETY: the step's `run` and `data` belong together, and `_generation` keeps the code
         // loaded. The runner passes exclusive `slots` and `cx` for this call.
-        unsafe { (self.step.run)(self.step.data, slots, cx) }
+        let end = unsafe { (self.step.run)(self.step.data, slots, cx) };
+        self.settle_handovers(slots, cx);
+        end
+    }
+}
+
+impl Pinned {
+    /// Turns each output cell the step marked as a hand-over into a record. Every marked cell is
+    /// settled, even when the step faulted, so no marked cell reaches the runner.
+    fn settle_handovers(&self, slots: &mut Slots, cx: &StepCx) {
+        for k in 0..self.outputs {
+            let Some(cell) = slots.cell(self.inputs + k) else {
+                break;
+            };
+            if cell.owner != OWNER_HANDED || cell.reserved != HANDOVER_PENDING {
+                continue;
+            }
+            let Some(bytes) = cx
+                .handover
+                .get(k)
+                .copied()
+                .filter(|b| !b.ptr.is_null() || b.len == 0)
+            else {
+                *cell = Slot::EMPTY;
+                continue;
+            };
+            let record = match self.holder.take(bytes) {
+                Some(record) => record,
+                None => {
+                    // The pool has no record to spare: copy the bytes, and let the plugin free its own.
+                    let plugin = if bytes.len == 0 {
+                        &[][..]
+                    } else {
+                        // SAFETY: the plugin's bytes are `len` valid bytes until its release, which
+                        // runs below, after the copy.
+                        unsafe { std::slice::from_raw_parts(bytes.ptr, bytes.len) }
+                    };
+                    let record = self.holder.copy(plugin);
+                    if let Some(release) = bytes.release {
+                        // SAFETY: the plugin handed `data` out with this release, and this is its one call.
+                        unsafe { release(bytes.data) };
+                    }
+                    record
+                }
+            };
+            cell.state = SlotState::Full as u32;
+            cell.owner = OWNER_HANDED;
+            cell.reserved = 0;
+            // SAFETY: `record` holds one count for the cell, and the handle reads only that record.
+            let fields = unsafe { record.as_ref() };
+            cell.data = fields.bytes.ptr.cast_mut();
+            cell.len = fields.bytes.len;
+            cell.cap = record.as_ptr().expose_provenance();
+        }
     }
 }
 

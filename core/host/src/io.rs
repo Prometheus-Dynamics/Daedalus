@@ -238,6 +238,23 @@ impl<'a> Host<'a> {
         self.feed(name, value)
     }
 
+    /// Stores bytes a plugin handed over in the input port `name`. The handle's count moves into the
+    /// port, so the bytes are read where the plugin put them, and nothing is copied.
+    #[cfg(feature = "std")]
+    pub fn feed_handed(
+        &mut self,
+        name: &str,
+        bytes: daedalus_abi::SharedBytes,
+    ) -> Result<FeedOutcome, HostError> {
+        let spec = self.input(name)?;
+        let value = Value {
+            ty: spec.ty,
+            space: spec.space,
+            owner: daedalus_value::Owner::Handed(bytes),
+        };
+        self.feed(name, value)
+    }
+
     /// Stores a typed payload in the input port `name`, and wakes its consumers.
     pub fn feed_typed<T: Send + Sync + 'static>(
         &mut self,

@@ -5,8 +5,9 @@ use core::mem::{align_of, offset_of, size_of};
 use crate::foreign::{ForeignHandle, ForeignInterfaceInfo, ForeignOwner};
 
 use crate::{
-    AbiVersion, BackendTable, BoundaryPort, BytesC, CodecC, Fence, FencePoll, Handle, NodeC,
-    PluginEntry, PortC, RegionView, Slot, Slots, Status, Step, StepCx, StepEnd, Text, UnitOut,
+    AbiVersion, BackendTable, BoundaryPort, BytesC, CodecC, Fence, FencePoll, HandedRecord, Handle,
+    NodeC, PluginEntry, PortC, RegionView, Slot, Slots, Status, Step, StepCx, StepEnd, Text,
+    UnitOut,
 };
 
 /// FNV-1a over the words, each as little-endian bytes.
@@ -44,7 +45,7 @@ pub const SHAPES: &[u64] = &shape! {
     Fence { poll, data }
     Slot { state, space, type_index, owner, version, reserved, data, len, cap }
     Slots { cells, len, reserved }
-    StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns }
+    StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns, handover }
     StepEnd { }
     Step { run, data, release }
     AbiVersion { struct_size, major, minor, layout }
@@ -60,6 +61,7 @@ pub const SHAPES: &[u64] = &shape! {
     BackendTable { id, can_take, compile }
     CodecC { key, value_key, wire_key, backend, layout, cost, lossy, to_value, from_value, to_bytes, from_bytes }
     BytesC { ptr, len, data, release }
+    HandedRecord { refs, bytes, keep, keep_drop, recycle, home }
     PluginEntry { layout, name, nodes, node_count, backends, backend_count, codecs, codec_count, produce, release }
 };
 

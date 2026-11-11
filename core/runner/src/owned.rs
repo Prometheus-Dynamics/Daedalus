@@ -5,9 +5,11 @@
 //! step's view of an input is a copy that owns nothing; the queue still owns the entry until the
 //! step consumes it. Bytes of an inline value live in the runner's inline buffer for that entry.
 
-use core::ptr;
+use core::ptr::{self, NonNull};
 
-use daedalus_abi::{Handle, Slot, SlotState};
+use daedalus_abi::{
+    HandedRecord, Handle, SharedBytes, Slot, SlotState, handed_release, handed_retain,
+};
 use daedalus_types::{SlotIndex, SpaceIndex, TypeIndex};
 use daedalus_value::{InlineBytes, Owner, OwnerKind, Value};
 
@@ -39,6 +41,18 @@ pub fn encode(value: Value, buf: &mut InlineCell) -> Result<Slot, Untyped> {
             (buf.as_mut_ptr(), bytes.len(), bytes.len())
         }
         Owner::Slot(index) => (ptr::null_mut(), index.0 as usize, 0),
+        Owner::Handed(bytes) => {
+            // The count moves into the cell. The cell's `data` and `len` are the bytes, and `cap`
+            // is the record that holds the count.
+            let record = bytes.into_record();
+            // SAFETY: the count just moved here keeps the record live, so its bytes are valid.
+            let fields = unsafe { record.as_ref() };
+            (
+                fields.bytes.ptr.cast_mut(),
+                fields.bytes.len,
+                record.as_ptr().expose_provenance(),
+            )
+        }
         Owner::Host(handle) => (
             ptr::without_provenance_mut(handle.index() as usize),
             handle.generation() as usize,
@@ -100,6 +114,15 @@ pub unsafe fn decode(slot: &Slot) -> Value {
             Owner::Inline(InlineBytes::from_slice(bytes).unwrap_or_default())
         }
         x if x == kind_word(OwnerKind::Slot) => Owner::Slot(SlotIndex(slot.len as u32)),
+        x if x == kind_word(OwnerKind::Handed) => {
+            // SAFETY: a handed cell's `cap` is the record it holds one count on, so it is
+            // non-null, and the cell's count moves into the returned value.
+            let record = unsafe {
+                NonNull::new_unchecked(ptr::with_exposed_provenance_mut::<HandedRecord>(slot.cap))
+            };
+            // SAFETY: the count `record` names moves from the cell into the value.
+            Owner::Handed(unsafe { SharedBytes::from_record(record) })
+        }
         x if x == kind_word(OwnerKind::Host) => {
             Owner::Host(Handle::new(slot.data.addr() as u32, slot.len as u32))
         }
@@ -144,6 +167,11 @@ pub(crate) fn is_typed(slot: &Slot) -> bool {
 /// `slot` must be a `Full` entry that owns its reference, and nothing else may release it.
 // SAFETY: the caller upholds the `# Safety` contract documented above.
 pub unsafe fn release(slot: &Slot) {
+    if slot.owner == kind_word(OwnerKind::Handed) {
+        // SAFETY: the slot owns the count on its record, and the caller releases it only once.
+        unsafe { handed_release(ptr::with_exposed_provenance_mut::<HandedRecord>(slot.cap)) };
+        return;
+    }
     #[cfg(feature = "alloc")]
     {
         if slot.owner == kind_word(OwnerKind::Shared) {
@@ -271,6 +299,11 @@ mod typed {
 ///
 /// `slot` must be a `Full` queue entry or a cell the caller owns.
 pub unsafe fn retain(slot: &Slot) {
+    if slot.owner == kind_word(OwnerKind::Handed) {
+        // SAFETY: the slot owns a count on a live record, and `retain` takes another.
+        unsafe { handed_retain(ptr::with_exposed_provenance::<HandedRecord>(slot.cap)) };
+        return;
+    }
     #[cfg(feature = "alloc")]
     {
         if slot.owner == kind_word(OwnerKind::Shared) {

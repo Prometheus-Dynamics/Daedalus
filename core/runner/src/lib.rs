@@ -99,6 +99,7 @@ pub use step::{Queue, SlotKind, SlotSpec, SlotStamp, StepMeta};
 pub use telemetry::Counters;
 pub use tick::TickReport;
 pub use values::{put, put_inline, put_static};
+pub use values::{put_handed, share_handed, take_handed};
 #[cfg(feature = "alloc")]
 pub use values::{put_shared, put_typed};
 

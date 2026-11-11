@@ -20,6 +20,7 @@ impl Value {
             Owner::Inline(inline) => Some(inline.as_slice()),
             #[cfg(feature = "alloc")]
             Owner::Shared(bytes) => Some(bytes),
+            Owner::Handed(bytes) => Some(bytes),
             _ => None,
         }
     }

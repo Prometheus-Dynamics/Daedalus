@@ -81,6 +81,25 @@ dev = 0
 limit = 0
 
 [[row]]
+name = "plugin_handover_tick"
+measure = "instructions per tick of a plugin node that hands a megabyte to the host without a copy: feed, tick, take, drop"
+tool = "callgrind"
+command = "plugin {n} {fixture} handover"
+# A new row, so it has no dev figure. This branch measured 3,083 under callgrind, over 1,000 and
+# 3,000 ticks, and the limit leaves room for the host's take to grow a little without a copy.
+dev_callgrind = 3083
+limit = 4000
+next = 3083
+tolerance_percent = 10
+
+[[row]]
+name = "alloc_plugin_handover_tick"
+measure = "allocations per tick of a plugin node that hands a megabyte to the host, taken each tick"
+tool = "alloc"
+dev = 0
+limit = 0
+
+[[row]]
 name = "alloc_large_handle_tick"
 measure = "allocations per tick of a graph that passes a megabyte by handle to two readers"
 tool = "alloc"

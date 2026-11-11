@@ -22,6 +22,7 @@ use daedalus_abi::Slot;
 
 /// Most values a pool keeps. A pool that is full drops one of its references, so a consumer that
 /// keeps every value cannot make the producer's pool grow without bound.
+#[cfg(feature = "alloc")]
 const POOL_LIMIT: usize = 8;
 
 /// What a producer does with an output, from the planner's answer.

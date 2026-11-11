@@ -958,8 +958,12 @@ version = "3.0.1-dev"
 dependencies = [
  "daedalus-abi",
  "daedalus-backend",
+ "daedalus-graph",
+ "daedalus-host",
+ "daedalus-planner",
  "daedalus-registry",
  "daedalus-types",
+ "daedalus-value",
  "libloading 0.9.0",
 ]
 

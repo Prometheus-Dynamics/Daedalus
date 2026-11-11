@@ -94,14 +94,14 @@ impl Slots {
 }
 
 impl Slot {
-    /// The bytes a full cell holds, for the owners made of bytes: static, inline and shared.
+    /// The bytes a full cell holds, for the owners made of bytes: static, inline, shared and handed.
     /// `None` for an empty cell, for a slot, host or typed owner, and for a cell with no data.
     pub fn bytes(&self) -> Option<&[u8]> {
         if self.state != SlotState::Full as u32 {
             return None;
         }
-        // The owner codes are `OwnerKind` in daedalus-value: Static 0, Inline 1, Shared 4.
-        if !matches!(self.owner, 0 | 1 | 4) {
+        // The owner codes are `OwnerKind` in daedalus-value: Static 0, Inline 1, Shared 4, Handed 6.
+        if !matches!(self.owner, 0 | 1 | 4 | 6) {
             return None;
         }
         if self.len == 0 {
