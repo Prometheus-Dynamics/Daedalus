@@ -32,6 +32,12 @@ let doubled = host.take_copy::<i64>("doubled")?;
   puts plain data of 16 bytes or less in place, with no allocation. A feed never runs a tick.
 - **Step.** `step()` runs one tick: every step whose inputs changed, in order. A tick with
   nothing to do reads a few words and returns.
+- **Wait.** A step can finish a tick with work still running on a device. It is held on a fence
+  until the work is done, and its consumers wait with it. `step_until_settled(timeout)` ticks until
+  nothing is held and nothing is woken, or until `timeout` passes, and returns a `Waited` with the
+  outcome, the ticks it ran and the steps still held. Between two ticks it sleeps only when a fence
+  is the one thing left, starting at 50 µs and never sleeping more than 2 ms. `pending()` counts the
+  held steps, and `is_settled()` says whether the host has nothing held and nothing woken.
 - **Take.** `take::<T>(port)` and `take_copy::<T>(port)` take the oldest value out of an output
   port, and `None` when it is empty. `drain` takes them all.
 
@@ -67,7 +73,8 @@ A step that fails is contained: the tick goes on, and the step backs off and is 
 Nothing is turned off automatically.
 
 - `loaded.fault_reports()`: the most recent failures, each with the step, every node it covers,
-  the node at fault when known, the reason, and how many times in a row.
+  the node at fault when known, the reason, and how many times in a row. A failing transfer has the
+  transfer's id in `transfer` and covers no node.
 - `Telemetry`: counters (ticks, idle ticks, steps called, faults, skips), one row per step at the
   detailed level, and an event per tick at the trace level.
   [`examples/03_metrics`](../examples/03_metrics) prints them.
