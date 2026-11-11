@@ -77,7 +77,12 @@ pub fn run(backend: &WgpuBackend) {
         INPUT
     );
     for kernel in Kernel::ALL {
-        let n = INPUT / kernel.input_len(1);
+        // Base64 encode takes whole groups of 48 bytes on its vector shape: its count is the largest
+        // multiple of 48 under 4 MiB, 16 bytes less than the others.
+        let n = match kernel {
+            Kernel::Base64Encode => (INPUT / 48) * 48,
+            _ => INPUT / kernel.input_len(1),
+        };
         let input = if kernel == Kernel::Base64Decode {
             // A base64 text of 4 MiB: 3 MiB of bytes, encoded.
             cpu::base64_encode(&pattern(3 * MIB as usize, 9)).into_bytes()
@@ -135,6 +140,24 @@ pub fn run(backend: &WgpuBackend) {
             "{kernel:?}: device {:.3} ms (submit to done), {device_line}; cpu {:.3} ms; faster: {winner}",
             ms(gpu),
             ms(cpu_time)
+        );
+    }
+    // Diagnostic: a decode of one invocation, to see the host path's share of the 4 MiB decode.
+    {
+        let text = cpu::base64_encode(&pattern(48, 9)).into_bytes();
+        let src = Storage::new(backend, word_size(text.len() as u64)).expect("a buffer");
+        src.write(0, &text).expect("in range");
+        let dst = Storage::new(backend, 64).expect("a buffer");
+        let small = median(WARM, RUNS, || {
+            kernels
+                .base64_decode(&src, &dst, 64)
+                .expect("runs")
+                .wait()
+                .expect("finishes");
+        });
+        println!(
+            "Base64Decode one invocation (64 symbols): {:.4} ms",
+            ms(small)
         );
     }
     chain(backend, &kernels);

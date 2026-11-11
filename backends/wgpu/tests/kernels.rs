@@ -457,3 +457,88 @@ fn a_chain_of_two_per_pixel_kernels_is_one_shader() {
     ticket.wait().expect("finishes");
     assert_eq!(read(&dst, words.len()), f32_bytes(&r::f16_to_f32(&all)));
 }
+
+/// The vector base64 shapes, at lengths that fill whole invocations, against the CPU: valid text
+/// in both directions, padded last groups, and invalid symbols and stray bits at group and chunk
+/// boundaries, where the first invalid position is reported as the CPU reports it.
+#[test]
+fn base64_vector_shapes_match_the_cpu_at_group_and_chunk_boundaries() {
+    use daedalus_kernels_sys::Base64Error::{InvalidByte, InvalidLastSymbol};
+    let Some(backend) = private() else { return };
+    let kernels = Kernels::new(&backend).expect("a device");
+    for symbols in [64usize, 128, 4096, 65_536] {
+        let data = bytes(symbols / 4 * 3, symbols as u32);
+        let text = r::base64_encode(&data);
+        let (src, dst) = (
+            on_device(&backend, &text),
+            output(&backend, data.len() as u64),
+        );
+        let got = kernels
+            .base64_decode(&src, &dst, text.len() as u64)
+            .expect("runs")
+            .wait();
+        assert_eq!(got, Ok(data.len() as u64), "decode {symbols}");
+        assert_eq!(read(&dst, data.len()), data, "decode bytes {symbols}");
+
+        let src = on_device(&backend, &data);
+        let dst = output(&backend, text.len() as u64);
+        kernels
+            .run(Kernel::Base64Encode, &src, &dst, data.len() as u64)
+            .expect("runs")
+            .wait()
+            .expect("finishes");
+        assert_eq!(read(&dst, text.len()), text, "encode {symbols}");
+
+        // Padded last groups: one '=' and two.
+        for pad_bytes in [data.len() - 1, data.len() - 2] {
+            let short = &data[..pad_bytes];
+            let padded = r::base64_encode(short);
+            assert_eq!(padded.len(), symbols);
+            let src = on_device(&backend, &padded);
+            let dst = output(&backend, short.len() as u64);
+            let got = kernels
+                .base64_decode(&src, &dst, padded.len() as u64)
+                .expect("runs")
+                .wait();
+            assert_eq!(got, Ok(short.len() as u64), "pad {pad_bytes}");
+            assert_eq!(read(&dst, short.len()), short, "pad bytes {pad_bytes}");
+        }
+
+        // Invalid symbols, and a last group with bits no byte takes, at the boundaries: the device
+        // reports the first invalid position, and the CPU reports the same offset.
+        let mut cases: Vec<Vec<u8>> = Vec::new();
+        for at in [0usize, 3, 4, 63, 64, 65, 127, 128, symbols - 2] {
+            if at < symbols {
+                let mut bad = text.clone();
+                bad[at] = b'*';
+                if at + 10 < symbols {
+                    bad[at + 10] = b'!';
+                }
+                cases.push(bad);
+            }
+        }
+        let mut stray = text.clone();
+        let tail = symbols - 4;
+        stray[tail..].copy_from_slice(b"TWF=");
+        cases.push(stray);
+        for input in cases {
+            let src = on_device(&backend, &input);
+            let dst = output(&backend, (symbols / 4 * 3) as u64);
+            let got = kernels
+                .base64_decode(&src, &dst, input.len() as u64)
+                .expect("runs")
+                .wait();
+            let mut host = vec![0u8; symbols];
+            let want = match daedalus_kernels_sys::base64_decode_into(&input, &mut host) {
+                Ok(_) => panic!("the CPU accepted a bad input of {symbols}"),
+                Err(InvalidByte { offset, .. } | InvalidLastSymbol { offset, .. }) => offset,
+                Err(error) => panic!("{error}"),
+            };
+            assert_eq!(
+                got,
+                Err(KernelError::InvalidSymbol { at: want as u64 }),
+                "{symbols} symbols"
+            );
+        }
+    }
+}

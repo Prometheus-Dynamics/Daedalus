@@ -39,6 +39,12 @@ const COPY_SOURCE: &str = include_str!("copy.wgsl");
 /// The vector entry points of the other ops, with the common text they call.
 const WIDE_SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("wide.wgsl"));
 
+/// The base64 vector entry points, generated (see `scripts/gen-base64-wide.py`).
+const BASE64_SOURCE: &str = concat!(
+    include_str!("common.wgsl"),
+    include_str!("wide_base64.wgsl")
+);
+
 /// The copy's bindings: the input and output as vectors of four words, so one invocation's
 /// loads and stores are vectors. A binding is at least one element, so a copy this shape is
 /// used for is at least a vector on both sides.
@@ -60,6 +66,28 @@ const COPY: &[BindingSpec] = &[
         },
     },
     PARAMS,
+];
+
+/// The vector decode's bindings: the status is the same buffer the word decode reports into.
+const DECODE_WIDE: &[BindingSpec] = &[
+    BindingSpec {
+        index: 0,
+        name: "src",
+        kind: BindingKind::Storage {
+            read_only: true,
+            stride: 16,
+        },
+    },
+    BindingSpec {
+        index: 1,
+        name: "dst",
+        kind: BindingKind::Storage {
+            read_only: false,
+            stride: 16,
+        },
+    },
+    PARAMS,
+    storage(3, "status", false),
 ];
 
 /// What most ops bind: the input, the output and their counts.
@@ -101,9 +129,11 @@ pub(super) const WIDE_COPY: usize = 8;
 pub(super) const WIDE_F16: usize = 9;
 pub(super) const WIDE_UNORM8: usize = 10;
 pub(super) const WIDE_HEX: usize = 11;
+pub(super) const WIDE_B64_ENC: usize = 12;
+pub(super) const WIDE_B64_DEC: usize = 13;
 
 /// In the order of [`Kernel`], then the vector entry points above.
-pub(super) const SPECS: [ShaderSpec; 12] = [
+pub(super) const SPECS: [ShaderSpec; 14] = [
     spec("kernels.f32_from_le", "f32_from_le", PLAIN),
     spec("kernels.f16_to_f32", "f16_to_f32", PLAIN),
     spec("kernels.f32_to_unorm8", "f32_to_unorm8", PLAIN),
@@ -152,6 +182,26 @@ pub(super) const SPECS: [ShaderSpec; 12] = [
         inputs: &[],
         outputs: &[],
     },
+    ShaderSpec {
+        name: "kernels.base64_encode.wide",
+        entry: "base64_encode_wide",
+        source: BASE64_SOURCE,
+        workgroup: [WORKGROUP, 1, 1],
+        bindings: COPY,
+        dispatch: Dispatch::Counts([1, 1, 1]),
+        inputs: &[],
+        outputs: &[],
+    },
+    ShaderSpec {
+        name: "kernels.base64_decode.wide",
+        entry: "base64_decode_wide",
+        source: BASE64_SOURCE,
+        workgroup: [WORKGROUP, 1, 1],
+        bindings: DECODE_WIDE,
+        dispatch: Dispatch::Counts([1, 1, 1]),
+        inputs: &[],
+        outputs: &[],
+    },
 ];
 
 /// One op, checked: its counts on the device, and how many workgroups it dispatches.
@@ -166,7 +216,7 @@ const PARAMS_KEPT: usize = 64;
 /// keeps answering with the device's error.
 pub struct Kernels {
     pub(super) context: Arc<Context>,
-    shaders: [OnceLock<Shader>; 12],
+    shaders: [OnceLock<Shader>; 14],
     /// The counts of a run, on the device, by what they are: one small buffer for each
     /// distinct set, bound as it is. Two runs of an op in one encoder each bind their own, and
     /// nothing is copied before a pass.
@@ -191,7 +241,7 @@ impl Kernels {
     fn on(context: Arc<Context>) -> Kernels {
         Kernels {
             context,
-            shaders: [const { OnceLock::new() }; 12],
+            shaders: [const { OnceLock::new() }; 14],
             params: Mutex::new(HashMap::new()),
             table: OnceLock::new(),
             #[cfg(target_os = "linux")]
@@ -300,6 +350,8 @@ impl Kernels {
             Kernel::F16ToF32 if n >= 8 && n.is_multiple_of(8) => (WIDE_F16, n / 8),
             Kernel::F32ToUnorm8 if n >= 16 && n.is_multiple_of(16) => (WIDE_UNORM8, n / 16),
             Kernel::HexLower if n >= 16 && n.is_multiple_of(16) => (WIDE_HEX, n / 16),
+            Kernel::Base64Encode if n >= 48 && n.is_multiple_of(48) => (WIDE_B64_ENC, n / 48),
+            Kernel::Base64Decode if n >= 64 && n.is_multiple_of(64) => (WIDE_B64_DEC, n / 64),
             _ => (kernel.index(), kernel.threads(n)),
         };
         let groups = threads.div_ceil(u64::from(WORKGROUP));
