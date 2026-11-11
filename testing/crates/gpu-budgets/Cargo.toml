@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 daedalus-abi = { path = "../../../core/abi", features = ["count-alloc", "test-run"] }
 daedalus-backend = { path = "../../../core/backend" }
+daedalus-kernels-sys = { path = "../../../backends/kernels-sys" }
 daedalus-runner = { path = "../../../core/runner" }
 daedalus-types = { path = "../../../core/types" }
 daedalus-wgpu = { path = "../../../backends/wgpu" }
@@ -17,3 +18,6 @@ daedalus-wgpu-conformance = { path = "../wgpu-conformance" }
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+daedalus-dma-sys = { path = "../../../backends/dma-sys" }
