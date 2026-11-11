@@ -65,15 +65,30 @@ fn a_frame_reaches_the_shader_by_the_route_the_device_can_run() {
 /// A device with only the byte moves: the frame is uploaded, whatever the device can import, and
 /// the shader's words are the CPU's.
 #[test]
-fn a_frame_is_uploaded_where_the_import_is_not_offered() {
+fn a_frame_is_uploaded_on_a_device_planned_without_a_dma_heap() {
     let Some(_turn) = has_gpu() else { return };
-    let device = dmabuf::gpu_bytes_only().expect("a device");
+    let device = dmabuf::gpu_without_dma_heap().expect("a device");
+    assert!(
+        !device.caps().expect("open").dma_heap,
+        "the device is planned without a heap"
+    );
     for count in [4u32, 4096, 65_536] {
         let uploads_before = device.transfer_stats().map_or(0, |stats| stats.uploads);
+        let imported_before = device
+            .storage_import_stats()
+            .map_or(0, |stats| stats.imports);
         let (words, route) = dmabuf::through_the_graph_on(&device, count).expect("runs");
         assert_eq!(words, dmabuf::on_cpu(count), "{count} bytes");
         assert_eq!(route, ["wgpu.upload:gpu:frame"], "{count} bytes");
         let uploads = device.transfer_stats().map_or(0, |stats| stats.uploads) - uploads_before;
-        assert_eq!(uploads, 1, "{count} bytes: one upload");
+        let imported = device
+            .storage_import_stats()
+            .map_or(0, |stats| stats.imports)
+            - imported_before;
+        assert_eq!(
+            (uploads, imported),
+            (1, 0),
+            "{count} bytes: one upload, no import"
+        );
     }
 }

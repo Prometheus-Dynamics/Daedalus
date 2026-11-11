@@ -138,12 +138,19 @@ pub fn through_the_graph(count: u32) -> Result<(Vec<u32>, Vec<String>), String> 
     through_the_graph_on(&gpu()?, count)
 }
 
-/// A device that has only the byte moves for a frame: no import is offered, so the frame is
-/// uploaded. Opened the way `gpu` is, and checked the same way.
-pub fn gpu_bytes_only() -> Result<daedalus_wgpu::WgpuBackend, String> {
-    let backend = daedalus_wgpu::WgpuBackend::open(daedalus_wgpu::Options::default())
-        .with_bytes::<Words>()
-        .with_bytes::<Frame>();
+/// A private device planned as one that can't import dma-bufs (`no_dma_heap`), on any machine: the
+/// import is declared as it is on the other device, and the planner doesn't offer it. It is
+/// opened the way `gpu` is, and checked the same way.
+pub fn gpu_without_dma_heap() -> Result<daedalus_wgpu::WgpuBackend, String> {
+    let backend = daedalus_wgpu::WgpuBackend::open(daedalus_wgpu::Options {
+        no_dma_heap: true,
+        // A device of this backend's own, not the one the process shares.
+        index: Some(0),
+        ..daedalus_wgpu::Options::default()
+    })
+    .with_bytes::<Words>()
+    .with_bytes::<Frame>()
+    .with_dmabuf::<Frame>();
     backend
         .start()
         .map_err(|error| format!("this example needs a GPU: {error}"))?;
