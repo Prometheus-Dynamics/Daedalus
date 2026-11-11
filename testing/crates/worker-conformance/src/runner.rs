@@ -170,6 +170,7 @@ fn run_round(backend: &ProcessBackend, fixture: &Fixture, round: usize) -> Resul
         fifo_capacity: 64,
         merge_allowed: false,
         freeze_params: false,
+        sharing: &[],
     };
     let compiled = backend
         .compile(&region, &cx)

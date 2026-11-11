@@ -18,11 +18,10 @@ message.
 | 8 GPU ops, V3D | 1.30 ms with 8 submits, 1.32 ms with 1 | Board run `I2`. |
 | Five-node firmware | 3-12 KiB flash, 112-584 B RAM | `firmware_compiled`, `firmware_tunable` and `firmware_loaded`, from ELF section sizes on `thumbv7em-none-eabihf` and `thumbv6m-none-eabi`. |
 
-Steady-state running allocates nothing: `alloc_fused_tick`, `alloc_plugin_node_tick` and
-`alloc_large_handle_tick` are zero. Two rows are not, and are worse than `dev`:
-`alloc_large_handle_moved_tick` (1) and `alloc_detector_frame` (6). A CPU node's output that is
-not plain data of 16 bytes or less is published in a new `Arc` on every tick, one allocation an
-output. Their limits hold that cost where it is until the CPU backend reuses those allocations.
+Steady-state running allocates nothing: `alloc_fused_tick`, `alloc_plugin_node_tick`,
+`alloc_large_handle_tick`, `alloc_large_handle_moved_tick`, `alloc_detector_frame` and the handoff
+chains passed by handle or as shared bytes are all zero. A CPU output is kept for reuse by its
+producer, as `docs/design.md` says, host-read outputs included.
 
 ## The fields of a row
 
@@ -89,6 +88,7 @@ count are board runs.
 
 The `handoff_*` and `alloc_handoff_*` rows are three ways to pass a large value on the same
 graphs, from `testing/crates/handoff-bench`. A value read through a reference costs no
-allocation on any path. A value handed on through 8 stages allocates 8 times as a handle or as
-shared bytes, which is not the design's zero and is held where it is, and 16 times as a vector
-each stage makes for itself. `docs/prs/I3.md` has the table.
+allocation on any path. A value taken and handed on through 8 stages costs no allocation once
+warm, as a handle or as shared bytes: each stage refills cells of its own. A
+vector chain allocates the one vector each stage makes for itself, 8 a tick. `docs/prs/I3.md`
+has the table.

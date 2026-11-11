@@ -75,6 +75,7 @@ fn cx<'a>() -> CompileCx<'a> {
         fifo_capacity: 4,
         merge_allowed: true,
         freeze_params: false,
+        sharing: &[],
     }
 }
 

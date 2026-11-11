@@ -11,6 +11,7 @@ use daedalus_runner::{UNSTAMPED, put_typed, take_typed, typed_view};
 
 use daedalus_value::OwnerKind;
 
+use super::keep::{Keep, Keeper, take_carried};
 use super::{ConstTable, Kind};
 
 const INLINE: u32 = OwnerKind::Inline as u32;
@@ -84,6 +85,10 @@ pub fn take<T: 'static, C: ConstTable>(
     if cell.owner == INLINE {
         return (kind.read?)(cell);
     }
+    // A value the planner kept in a carrier is moved out of it, whatever its type's `Clone`.
+    if let Some(taken) = take_carried::<T>(cell) {
+        return taken;
+    }
     if kind.copy {
         return typed_view::<T>(cell).and_then(|value| kind.clone.map(|clone| clone(value)));
     }
@@ -103,11 +108,14 @@ fn take_shared<T: 'static>(_: &mut Slot, _: Kind<T>) -> Option<T> {
     None
 }
 
-/// Stores `value` in `slot`: in `buf` if it's small, otherwise behind a reference.
+/// Stores `value` in `slot`: in `buf` if it's small, otherwise behind a reference that `held`
+/// keeps as `keep` says.
 #[inline]
-pub fn encode<T: Send + Sync + 'static>(
+pub fn encode<T: Send + Sync + 'static, S: Keeper<T>>(
     value: T,
     kind: Kind<T>,
+    keep: Keep,
+    held: &mut S,
     buf: &mut InlineCell,
     slot: &mut Slot,
 ) {
@@ -116,14 +124,17 @@ pub fn encode<T: Send + Sync + 'static>(
     }
     match kind.write {
         Some(write) => write(&value, buf, slot),
-        None => put_shared_value(value, slot),
+        None => held.publish(value, keep, slot),
     }
 }
 
-/// Takes the handle a cell holds.
+/// Takes the handle a cell holds. A value kept in a carrier is moved into a new handle.
 #[cfg(feature = "alloc")]
 pub fn take_handle<U: Send + Sync + 'static>(cell: &mut Slot) -> Option<Arc<U>> {
-    take_typed::<U>(cell)
+    if let Some(handle) = take_typed::<U>(cell) {
+        return Some(handle);
+    }
+    take_carried::<U>(cell)?.map(Arc::new)
 }
 
 /// Another handle to what a cell holds, leaving the cell's own where it is.
@@ -137,15 +148,6 @@ pub fn share_handle<U: Send + Sync + 'static>(cell: &Slot) -> Option<Arc<U>> {
 pub fn put_handle<U: Send + Sync + 'static>(value: Arc<U>, slot: &mut Slot) {
     put_typed(slot, UNSTAMPED.0, UNSTAMPED.1, value);
 }
-
-#[cfg(feature = "alloc")]
-fn put_shared_value<T: Send + Sync + 'static>(value: T, slot: &mut Slot) {
-    put_typed(slot, UNSTAMPED.0, UNSTAMPED.1, Arc::new(value));
-}
-
-/// Never reached: a node whose values need the heap has no arena body in this build.
-#[cfg(not(feature = "alloc"))]
-fn put_shared_value<T>(_: T, _: &mut Slot) {}
 
 /// Records why a step's input was there but unusable.
 #[cold]

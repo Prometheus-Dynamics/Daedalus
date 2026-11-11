@@ -10,11 +10,11 @@ use alloc::vec::Vec;
 use daedalus_abi::{NO_NODE, Step};
 use daedalus_backend::{
     Backend, CompileCx, Compiled, MemorySpace, NodeBody, NodeRef, Offer, PortRef, Refusal, Region,
-    SpaceKind, StepUnit, Transfer, UnitInfo,
+    Sharing, SpaceKind, StepUnit, Transfer, UnitInfo,
 };
 use daedalus_types::{NodeIndex, PortIndex};
 
-use crate::steps::{CpuBody, Setup};
+use crate::steps::{CpuBody, Keep, Setup};
 
 pub const BACKEND_ID: &str = "cpu";
 pub const HOST_SPACE: &str = "cpu.host";
@@ -41,12 +41,36 @@ pub(crate) fn step_of(
     let Some(cpu) = body.code.downcast_ref::<CpuBody>() else {
         return Err(Refusal::new(vec![node], "this body isn't a CPU function"));
     };
+    let keep: Vec<Keep> = (0..body.outputs)
+        .map(|port| {
+            keep_of(
+                cx,
+                PortRef {
+                    node,
+                    port: PortIndex(port),
+                },
+            )
+        })
+        .collect();
     let setup = Setup {
         node,
         inputs: body.inputs,
         consts: cx.consts,
+        keep: &keep,
     };
     (cpu.make)(&setup).map_err(|reason| Refusal::new(vec![node], &reason))
+}
+
+/// What the planner says an output keeps between ticks.
+fn keep_of(cx: &CompileCx<'_>, port: PortRef) -> Keep {
+    match cx.sharing.iter().find(|one| one.port == port) {
+        Some(one) => match one.sharing {
+            Sharing::Fresh => Keep::Fresh,
+            Sharing::Readers => Keep::Readers,
+            Sharing::Taker => Keep::Taker,
+        },
+        None => Keep::Fresh,
+    }
 }
 
 pub(crate) fn body_of<'a>(
@@ -128,6 +152,7 @@ impl Backend for CpuBackend {
             node: NodeIndex(NO_NODE),
             inputs: 1,
             consts: cx.consts,
+            keep: &[],
         };
         Some((cpu.make)(&setup).map_err(|reason| Refusal::whole_region(&reason)))
     }

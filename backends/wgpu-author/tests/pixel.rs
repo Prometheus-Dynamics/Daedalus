@@ -143,6 +143,7 @@ impl Net {
             fifo_capacity: 1,
             merge_allowed: true,
             freeze_params: false,
+            sharing: &[],
         };
         let Compiled::Steps(mut units) = backend.compile(&region, &cx).expect("compiles") else {
             panic!("steps");

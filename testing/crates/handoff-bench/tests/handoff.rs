@@ -47,28 +47,22 @@ fn shared_bytes_steady_state_allocates_nothing() {
     );
 }
 
-/// A stage that takes the value itself, `T`, and returns one, has the result put behind a
-/// new handle: one allocation a stage. The bytes are never copied. That is what taking a value
-/// out of its handle means. A stage that hands a value on takes the handle, as the test above.
+/// A stage that takes the value itself, `T`, and returns one allocates nothing once warm. The
+/// value moves from the stage that made it to the next, and each stage refills the memory the
+/// value was kept in, so a chain of stages costs no allocation a tick. The first tick makes the
+/// memory, and that is not counted here: the cost is taken from a warm graph.
 #[test]
-fn a_value_taken_out_of_its_handle_and_returned_allocates_once_a_stage() {
+fn a_value_taken_out_of_its_handle_and_returned_allocates_nothing_once_warm() {
     let _turn = turn();
-    let handed_on = Cost {
-        allocations: u64::from(STAGES),
-        copies: 0,
-        retains: 0,
-    };
-    assert_eq!(
-        cost(Path::Handle, Shape::Chain(STAGES), LEN, TICKS),
-        handed_on
-    );
-    assert_eq!(
-        cost(Path::Shared, Shape::Chain(STAGES), LEN, TICKS),
-        handed_on
-    );
-    // It is a cost of each stage, not of the graph.
-    let one = cost(Path::Handle, Shape::Chain(1), LEN, TICKS);
-    assert_eq!(one.allocations, 1);
+    for path in [Path::Handle, Path::Shared] {
+        for stages in [1, STAGES] {
+            assert_eq!(
+                cost(path, Shape::Chain(stages), LEN, TICKS),
+                NOTHING,
+                "{path:?}, {stages} stages"
+            );
+        }
+    }
 }
 
 #[test]
@@ -125,10 +119,10 @@ fn a_value_is_changed_in_place_through_its_handle() {
 #[test]
 fn vec_path_allocates_per_tick() {
     let _turn = turn();
-    // Each stage makes its own vector: at least the vector and its handle, and the bytes are
-    // copied once a stage. The contrast with the two paths above is real.
+    // Each stage makes its own vector, so one allocation a stage at least, and the bytes are
+    // copied once a stage. The handle paths above allocate nothing: the contrast is real.
     let vec = cost(Path::Vec, Shape::Chain(STAGES), LEN, TICKS);
-    assert!(vec.allocations >= 2 * u64::from(STAGES), "{vec:?}");
+    assert!(vec.allocations >= u64::from(STAGES), "{vec:?}");
     assert_eq!(vec.copies, u64::from(STAGES));
     let handle = cost(Path::Handle, Shape::Chain(STAGES), LEN, TICKS);
     assert!(vec.allocations > handle.allocations && handle.copies == 0);

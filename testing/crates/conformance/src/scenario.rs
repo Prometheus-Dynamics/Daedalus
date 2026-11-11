@@ -112,6 +112,7 @@ impl Scenario {
             fifo_capacity: 4,
             merge_allowed: true,
             freeze_params: false,
+            sharing: &[],
         };
         body(&region, &cx)
     }

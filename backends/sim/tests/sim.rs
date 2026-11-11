@@ -58,6 +58,7 @@ fn compile(
         fifo_capacity: 4,
         merge_allowed: true,
         freeze_params: false,
+        sharing: &[],
     };
     backend.compile(&region, &cx)
 }
@@ -124,6 +125,7 @@ fn merging_is_off_when_the_planner_says_so() {
         fifo_capacity: 4,
         merge_allowed: false,
         freeze_params: false,
+        sharing: &[],
     };
     assert_eq!(units(backend.compile(&region, &cx).unwrap()).len(), 2);
 }
@@ -274,6 +276,7 @@ fn an_import_is_absorbed_by_the_step_that_reads_it() {
         fifo_capacity: 4,
         merge_allowed: true,
         freeze_params: false,
+        sharing: &[],
     };
     let done = units(SimBackend::default().compile(&region, &cx).unwrap());
     assert!(done[0].info.absorbed.is_empty(), "a copy is not absorbed");

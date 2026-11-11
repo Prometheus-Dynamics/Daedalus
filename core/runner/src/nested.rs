@@ -182,6 +182,9 @@ impl Nested {
         // SAFETY: `slots` and `cx` are valid and exclusive for this call, and a `Step`'s `run` and
         // `data` belong together, as they do for every step the runner calls.
         let end = unsafe { (step.run)(step.data, &mut slots, cx) };
+        // A value the body took is consumed whatever the end, since the body has let go of it.
+        // Only a finished step hands its outputs on.
+        self.consume(at);
         if matches!(end, StepEnd::Done) {
             self.publish(at, inputs);
         } else {
@@ -193,7 +196,9 @@ impl Nested {
         end
     }
 
-    fn publish(&mut self, at: usize, inputs: usize) {
+    /// Forgets the inputs this step took. Each one's reference went to the body, or was released
+    /// by it, so the cell it was copied from must not release it again.
+    fn consume(&mut self, at: usize) {
         for (from, &read) in self.steps[at].reads.iter().enumerate() {
             let consumed = self.scratch[from].state == SlotState::Moved as u32;
             if !consumed || read == NO_SLOT {
@@ -203,10 +208,13 @@ impl Nested {
                 // Whoever lent this has to know it's gone.
                 self.cells[read as usize].state = SlotState::Moved as u32;
             } else {
-                // The reference went to one of this step's outputs, so it's only forgotten.
+                // The reference went to the body, which has let go of it, so it's only forgotten.
                 self.cells[read as usize] = Slot::EMPTY;
             }
         }
+    }
+
+    fn publish(&mut self, at: usize, inputs: usize) {
         for from in 0..self.steps[at].writes.len() {
             let (write, value) = (self.steps[at].writes[from], self.scratch[inputs + from]);
             if write == NO_SLOT {

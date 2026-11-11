@@ -3,12 +3,13 @@
 use std::collections::BTreeSet;
 
 use daedalus_backend::{
-    Backend, CompileCx, Compiled, ConstOf, HostBinding, Incoming, InnerEdge, NodeBody, PortRef,
-    Refusal, Region, UnitInfo,
+    Backend, CompileCx, Compiled, ConstOf, HostBinding, Incoming, InnerEdge, NodeBody,
+    OutputSharing, PortRef, Refusal, Region, Sharing, UnitInfo,
 };
 use daedalus_graph::{EdgePolicyDoc, Lit, NodeDoc};
 use daedalus_registry::Registry;
-use daedalus_types::{NodeIndex, PortIndex};
+use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
+use daedalus_value::Access;
 
 use super::Formed;
 use super::RegionError;
@@ -66,6 +67,7 @@ pub(super) fn compile_region(
         }
     }
     let edges = inner_edges(cx.graph, &formed.nodes);
+    let sharing = output_sharing(cx, formed);
     let (host_inputs, host_outputs) = host_bindings(cx.graph, cx.assignment, &formed.nodes);
     let spaces = backend.memory();
     let region = Region {
@@ -89,8 +91,66 @@ pub(super) fn compile_region(
             fifo_capacity: cx.fifo_capacity,
             merge_allowed: cx.merge_allowed,
             freeze_params: cx.freeze_params,
+            sharing: &sharing,
         },
     )
+}
+
+/// How each output of the region's nodes is consumed. An output with one consumer that takes it by
+/// value, on this backend, is `Taker`. One that every consumer reads, on this backend, is `Readers`.
+/// Anything else, such as a consumer on another backend, stays `Fresh`.
+fn output_sharing(cx: &Compiling<'_>, formed: &Formed) -> Vec<OutputSharing> {
+    let mut out = Vec::new();
+    for &node in &formed.nodes {
+        let solved = &cx.graph.nodes[node as usize];
+        for (at, output) in solved.outputs.iter().enumerate() {
+            let consumers: Vec<(&str, u32)> = cx
+                .graph
+                .edges
+                .iter()
+                .filter(|edge| edge.from.node == node && edge.from.port == output.name)
+                .map(|edge| (edge.to.port.as_str(), edge.to.node))
+                .collect();
+            let sharing = sharing_of(cx, formed.backend, &consumers);
+            if sharing != Sharing::Fresh {
+                out.push(OutputSharing {
+                    port: PortRef {
+                        node: NodeIndex(node),
+                        port: PortIndex(at as u16),
+                    },
+                    sharing,
+                });
+            }
+        }
+    }
+    out
+}
+
+fn sharing_of(cx: &Compiling<'_>, backend: BackendIndex, consumers: &[(&str, u32)]) -> Sharing {
+    let mut by_value = Vec::with_capacity(consumers.len());
+    for &(port, node) in consumers {
+        match cx.assignment.placed[node as usize] {
+            // The host reads the value as a shared handle. Its typed take copies a value that another
+            // holder still has, so a host typed take of such an output copies it each tick.
+            Placed::Host => by_value.push(false),
+            // Another backend may take the value in its own way, so the value is not kept.
+            Placed::Backend(at) if at != backend => return Sharing::Fresh,
+            Placed::Backend(_) => {
+                let access = cx.graph.nodes[node as usize]
+                    .inputs
+                    .iter()
+                    .find(|input| input.name == port)
+                    .map(|input| input.access);
+                by_value.push(matches!(access, Some(Access::Move | Access::Modify)));
+            }
+        }
+    }
+    match by_value.as_slice() {
+        [true] => Sharing::Taker,
+        [] => Sharing::Fresh,
+        values if values.iter().all(|taken| !taken) => Sharing::Readers,
+        _ => Sharing::Fresh,
+    }
 }
 
 /// Node metadata that forbids merging the node with its neighbours.
