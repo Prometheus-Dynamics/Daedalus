@@ -55,11 +55,6 @@ impl StreamWorkerConfig {
         self.idle_sleep = normalize_idle_sleep(idle_sleep);
         self
     }
-
-    pub fn with_error_policy(mut self, on_error: StreamErrorPolicy) -> Self {
-        self.on_error = on_error;
-        self
-    }
 }
 
 impl Default for StreamWorkerConfig {
