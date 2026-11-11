@@ -1,6 +1,6 @@
 //! The CPU timings a board run records. It runs on boards and by hand, not in the gate:
 //! `cargo run --release -p daedalus-cpu-timings -- SECTION [BATCHES] [LIBRARY]`, with the
-//! sections `host_round_trip`, `host_idle_step`, `probe_off`, `probe_on` and `plugin_tick`.
+//! sections `host_round_trip`, `host_idle_step`, `probe_off`, `probe_on`, `clock_read` and `plugin_tick`.
 //!
 //! Each section warms up, then times BATCHES batches of operations and prints the median of the
 //! per-operation times of the batches, in nanoseconds. A batch is 1,000 operations, so the clock's
@@ -172,6 +172,14 @@ fn probe_on(batches: usize) {
     );
 }
 
+/// One read of the probe's clock, as a probe takes it: the cost of a step boundary.
+fn clock_read(batches: usize) {
+    let times = per_call(batches, || {
+        std::hint::black_box(clock());
+    });
+    report("clock_read", &times);
+}
+
 fn plugin_tick_section(batches: usize, library: &Path) {
     let mut host = plugin_node(library);
     let mut value = 0_u32;
@@ -196,6 +204,7 @@ fn main() {
         "host_idle_step" => idle_step(batches),
         "probe_off" => probe_off(batches),
         "probe_on" => probe_on(batches),
+        "clock_read" => clock_read(batches),
         "plugin_tick" => {
             let library = args.get(2).expect("plugin_tick needs the library's path");
             plugin_tick_section(batches, Path::new(library));

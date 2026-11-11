@@ -33,7 +33,11 @@ impl Runner<'_> {
             ..TickReport::default()
         };
         let probe = self.probe;
-        let start = probe.map_or(0, |probe| probe.now());
+        let start = probe.map_or(0, |probe| {
+            let now = probe.now();
+            probe.begin_tick(now);
+            now
+        });
         let result = self.run_tick(&mut report);
         if let Some(probe) = probe {
             probe.finish_tick(probe.now().saturating_sub(start));
