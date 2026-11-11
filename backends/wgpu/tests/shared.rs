@@ -45,12 +45,21 @@ fn shared_context_opens_one_device_per_process() {
         adapter: Some("no such adapter".into()),
         ..Options::default()
     });
+    let started = std::time::Instant::now();
     assert_eq!(missing.start(), Err(daedalus_wgpu::OpenError::NoAdapter));
     // The attempt failed, so the next is held back: 250 ms at first, doubling to 8 s, for ever.
-    assert!(matches!(
-        missing.start(),
-        Err(daedalus_wgpu::OpenError::Backoff(_))
-    ));
+    // The wait counts from the failure, which came after `started`, so a call made less than the
+    // first wait after `started` must be held back. A later call may be a new attempt, if the
+    // machine was slow to get here.
+    let again = missing.start();
+    if started.elapsed() < daedalus_wgpu::RETRY_FIRST {
+        assert!(matches!(again, Err(daedalus_wgpu::OpenError::Backoff(_))));
+    } else {
+        assert!(matches!(
+            again,
+            Err(daedalus_wgpu::OpenError::Backoff(_) | daedalus_wgpu::OpenError::NoAdapter)
+        ));
+    }
     assert!(
         missing
             .retry_in()
