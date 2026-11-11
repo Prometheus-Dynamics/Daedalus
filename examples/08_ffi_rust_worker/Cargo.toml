@@ -1,0 +1,27 @@
+[package]
+name = "daedalus-example-rust-worker"
+description = "A graph whose node runs in a Rust worker process: fed, stepped, cancelled, with the worker's progress read back."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus = { path = "../../core/daedalus", features = ["std"] }
+daedalus-backend-process = { path = "../../backends/process" }
+daedalus-lang-rust = { path = "../../languages/rust" }
+daedalus-registry = { path = "../../core/registry" }
+daedalus-types = { path = "../../core/types" }
+daedalus-wire = { path = "../../core/wire" }
+
+[[bin]]
+name = "daedalus-example-rust-worker"
+path = "src/main.rs"
+
+[[bin]]
+name = "daedalus-example-rust-worker-serve"
+path = "src/bin/serve.rs"
+
+[lints]
+workspace = true

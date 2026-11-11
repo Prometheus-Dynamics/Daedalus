@@ -372,7 +372,12 @@ impl WorkerStep {
         let mut deadline = shared.spec.deadline.map(|limit| Instant::now() + limit);
         let mut cancelled = false;
         loop {
-            let timeout = deadline.map(|at| at.saturating_duration_since(Instant::now()));
+            // The wait wakes at least this often, so a cancel the host asks for is sent promptly.
+            let poll = Duration::from_millis(5);
+            let timeout = Some(match deadline {
+                Some(at) => at.saturating_duration_since(Instant::now()).min(poll),
+                None => poll,
+            });
             let Link::Up(worker) = &mut sup.link else {
                 return Outcome::Gone("the link is down".into());
             };
@@ -412,6 +417,23 @@ impl WorkerStep {
                 }
                 Got::Broken(error) => return Outcome::Gone(error.to_string()),
                 Got::Timeout => {
+                    let due = deadline.is_some_and(|at| Instant::now() >= at);
+                    if !due {
+                        // Nothing is due. A cancel the host asked for is sent to the worker now.
+                        if !cancelled && cx.cancelled() {
+                            cancelled = true;
+                            let Link::Up(worker) = &mut sup.link else {
+                                return Outcome::Gone("the link is down".into());
+                            };
+                            if let Err(error) = worker.send(&Worker::cancel_body(run)) {
+                                return Outcome::Gone(format!(
+                                    "could not send the cancel: {error}"
+                                ));
+                            }
+                            deadline = Some(Instant::now() + shared.spec.grace);
+                        }
+                        continue;
+                    }
                     if cancelled {
                         let Link::Up(worker) = &mut sup.link else {
                             return Outcome::Gone("the link is down".into());

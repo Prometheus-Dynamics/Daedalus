@@ -685,6 +685,13 @@ impl LoadedHost {
         report
     }
 
+    /// The `(done, total)` the step running `node` last reported, as its body set it. `None` when no
+    /// step runs the node, or the runner has no progress cells.
+    pub fn node_progress(&self, node: &str) -> Option<(u32, u32)> {
+        let step = self.covers.iter().position(|names| names.contains(&node))?;
+        self.host.runner.progress(step as u32)
+    }
+
     /// The tick overhead over the recent window, when the probe is on.
     pub fn tick_overhead(&self) -> Option<TickOverheadReport> {
         self.overhead.as_ref().map(TickOverheadWindow::report)

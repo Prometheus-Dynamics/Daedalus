@@ -74,7 +74,7 @@ const fn record(decl: &'static NodeDecl, body: &'static RustBody) -> NodeRecord 
     NodeRecord {
         decl,
         body: BodyRecord {
-            backend: "rust",
+            backend: "process",
             at: decl.at,
             needs: &[],
             state: None,
