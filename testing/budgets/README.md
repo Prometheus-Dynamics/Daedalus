@@ -16,7 +16,7 @@ message.
 | Detector mirror graph | about 7 µs per frame | Board run `I2` for the time. `detector_frame` for its instruction count, and `alloc_detector_frame` for its allocations. |
 | 8 GPU ops, RX 6800 XT | 0.37 ms with 8 submits, 0.15 ms with 1 | Board run `I2` for the times. The submit count is `gpu_region_submits`, counted on lavapipe by `scripts/gpu-lavapipe.sh` in the GPU workflow. |
 | 8 GPU ops, V3D | 1.30 ms with 8 submits, 1.32 ms with 1 | Board run `I2`. |
-| Five-node firmware | 3-12 KiB flash, 112-584 B RAM | `firmware_compiled`, `firmware_tunable` and `firmware_loaded`, from ELF section sizes on `thumbv7em-none-eabihf` and `thumbv6m-none-eabi`. |
+| Five-node firmware | pinned at 2,128 B and 2,672 B flash, 112 B RAM; gate limits 12,288 B flash and 584 B RAM (compiled) | `firmware_compiled`, `firmware_tunable` and `firmware_loaded`, from ELF section sizes on `thumbv7em-none-eabihf` and `thumbv6m-none-eabi`. |
 
 Steady-state running allocates nothing: `alloc_fused_tick`, `alloc_plugin_node_tick`, `alloc_plugin_handover_tick`,
 `alloc_large_handle_tick`, `alloc_large_handle_moved_tick`, `alloc_detector_frame` and the handoff

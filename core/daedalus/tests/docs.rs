@@ -274,3 +274,53 @@ fn a_planted_pointer_is_caught_and_what_only_looks_like_one_is_not() {
     assert!(names_a_planning_file("# (see AGENTS.md)"));
     assert!(!names_a_planning_file("see docs/node-authoring.md"));
 }
+
+/// The Rust blocks of `text`: the lines of each fence that opens with `rust`, without the fences.
+fn rust_blocks(text: &str) -> Vec<String> {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut inside = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            if inside {
+                inside = false;
+            } else if line.trim() == "```rust" {
+                inside = true;
+                blocks.push(String::new());
+            }
+            continue;
+        }
+        if inside {
+            let block = blocks.last_mut().expect("a block is open");
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    blocks
+}
+
+/// The Rust the foreign-values doc quotes is in the test file that compiles it, word for word.
+#[test]
+fn the_foreign_values_doc_quotes_code_that_compiles() {
+    let doc = fs::read_to_string(docs().join("foreign-values.md")).expect("the doc");
+    let code_path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "foreign_values.rs"]
+        .iter()
+        .collect();
+    let code = fs::read_to_string(&code_path).expect("the example's test file");
+    let blocks = rust_blocks(&doc);
+    assert!(!blocks.is_empty(), "the doc quotes no Rust");
+    for block in &blocks {
+        assert!(
+            code.contains(block.as_str()),
+            "a Rust block of docs/foreign-values.md is not in {}:\n{block}",
+            code_path.display()
+        );
+    }
+}
+
+#[test]
+fn a_planted_quote_is_read_and_other_fences_are_not() {
+    let text =
+        "prose\n```rust\nlet x = 1;\n```\n```text\nnot code\n```\n```rust\nlet y = 2;\n```\n";
+    assert_eq!(rust_blocks(text), ["let x = 1;\n", "let y = 2;\n"]);
+    assert!(rust_blocks("no fence here").is_empty());
+}

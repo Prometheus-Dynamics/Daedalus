@@ -14,12 +14,12 @@ has the same thing by capability, one row each, and is checked by the gate.
 | `crates/registry` | `core/registry` (one entry a node id, several bodies) | A8 |
 | `crates/macros` | `core/macros` (`#[node]`, `#[transfer]`), `core/derive` (`NodeConfig`, `Type`) | A9, A13, A15 |
 | `crates/planner` | `core/planner`, and `core/plan` for the stored step list | B1 to B15, A10 |
-| `crates/runtime` | `core/runner` (walks the step list, no heap), `core/host` (feed, step, take, reload, telemetry) | C1 to C24 |
+| `crates/runtime` | `core/runner` (walks the step list, no heap), `core/host` (feed, step, take, reload, telemetry) | C1 to C24, with no C19 |
 | `crates/engine` | `core/host`: `LoadedHost`, with the planner called directly | C10 |
 | `crates/daedalus` | `core/daedalus`, the facade | C14 |
 | `crates/host-wrapper` | `core/host`, and the C surface that is planned | C10, G10, G11 |
 | `crates/transport` | Gone. Values are `core/value`, and values between processes are `core/wire` | A5, G1 |
-| `crates/gpu` | `backends/wgpu`, `backends/wgpu-author`, `backends/vk-sys`, `backends/dma-sys` | E1 to E16 |
+| `crates/gpu` | `backends/wgpu`, `backends/wgpu-author`, `backends/vk-sys`, `backends/dma-sys` | E1 to E15 |
 | `crates/wgsl-infer` | Inside `backends/wgpu-author` | E4 |
 | `crates/accelerator` | Gone. The `Backend` trait in `core/backend` is the interface | A7, I1 |
 | `crates/accel`, `crates/kernels` | Gone. Nothing in Daedalus calls a byte kernel: a node that needs one brings it | |
@@ -36,7 +36,9 @@ has the same thing by capability, one row each, and is checked by the gate.
 - A frame type, a frame library, colorimetry and pixel conversions. A type belongs to whoever
   wrote the nodes that use it.
 - A CUDA backend.
-- Presets and configuration from environment variables.
+- Presets. Settings that were environment variables are in the daemon's config file
+  (`/etc/daedalusd/daedalusd.toml`, or the file `--config` names). The environment still sets one
+  thing: the socket's directory, from `RUNTIME_DIRECTORY` (set by systemd), then `XDG_RUNTIME_DIR`.
 - The Rust-ABI plugin path, plugin fingerprints, and every versioned plugin handshake. A plugin
   and a host compare one layout hash.
 - JSON and base64 on the worker path, and the payload handles and leases that went with them.

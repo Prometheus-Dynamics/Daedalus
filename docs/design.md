@@ -53,8 +53,9 @@ Planning allocates. Running does not. Everything needed to run a solved graph wo
 ```text
 core/        abi, types, value, graph, backend, registry, plan, planner, runner, macros, derive,
              host, wire, client, loader, capi, daedalus (the facade)
-backends/    cpu, cpu-author, wgpu, wgpu-author, dmabuf, process, sim, and *-sys crates
+backends/    cpu, cpu-author, wgpu, wgpu-author, process, sim, and *-sys crates
 languages/   python, node, java, cpp, rust: SDKs for writing nodes run by the process backend
+             rust-capi (a safe Rust host over the C surface) and rust-capi-sys (its loader)
 service/     daedalusd, daedalus-ctl
 testing/     crates/* (conformance suite, benches, budgets), board-runs/, fixtures/ (outside the
              workspace globs)
@@ -290,8 +291,9 @@ frees only what was not taken.
 ### Memory backends
 
 A backend doesn't have to run nodes. A memory backend declares memory spaces and the handlers
-between them, and offers no nodes. `backends/dmabuf` is one: it holds blocks of memory with an fd
-and a length, and knows nothing about what's stored in them.
+between them, and offers no nodes. There is no production memory-only backend on `next`:
+`backends/dmabuf` was removed in #194, and `backends/sim` has `SimMemory`, a memory-only fake for
+the tests.
 
 ## GPU setup
 
@@ -356,12 +358,12 @@ PR that makes a number worse says so and doesn't merge without a reason.
 |---|---|
 | Per-stage overhead, CM5, unfused | 655 ns |
 | Per-stage overhead, CM5, fused | 498 ns |
-| 16-stage idle tick | 27,064 instructions |
-| Stable-ABI node | about 3,100 instructions per tick |
+| 16-stage idle tick | 27,064 instructions under perf (reference); gate limit 25,988 under callgrind (`testing/budgets/budgets.toml`, `idle_tick_16`) |
+| Stable-ABI node | about 3,100 instructions per node under perf (reference); gate limit 14,425 for a whole one-node tick under callgrind (`budgets.toml`, `plugin_node_tick`) |
 | Detector mirror graph | about 7 µs per frame |
 | 8 GPU ops, RX 6800 XT | 0.37 ms with 8 submits, 0.15 ms with 1 |
 | 8 GPU ops, V3D | 1.30 ms with 8 submits, 1.32 ms with 1 |
-| Five-node firmware | 3-12 KiB flash, 112-584 B RAM |
+| Five-node firmware | pinned at 2,128 B (thumbv7em) and 2,672 B (thumbv6m) flash, 112 B RAM (`scripts/ci.d/chip.sh`); gate limits 12,288 B flash and 584 B RAM compiled, 6,144 B and 512 B tunable, 17,920 B and 584 B loaded (`scripts/ci.d/chip.sh` and `testing/budgets/budgets.toml`) |
 
 The goal is a solved graph that is close to a straight pipe: steps that are merged cost a direct
 call, and an idle tick does almost nothing. Steady-state running allocates nothing.
@@ -371,8 +373,11 @@ call, and an idle tick does almost nothing. Steady-state running allocates nothi
 - `core/*` may not depend on `backends/*`, `languages/*` or `service/*`.
 - No type or module in `core/` is named after hardware or media: gpu, wgpu, shader, texture, npu,
   frame, image, pixel, camera, mcu.
-- `unsafe` only in `core/abi`, `core/capi`, `core/loader`, `core/runner`, and crates named
-  `backends/*-sys` or `languages/*-sys`, with a `SAFETY` comment on each block.
+- `unsafe` only in `core/abi`, `core/capi`, `core/loader`, `core/runner`, the `*-sys` crates under
+  `backends/` and `languages/`, and three examples: `examples/wasm_smoke` and
+  `examples/wasm_bindgen_host` (a WebAssembly export needs `no_mangle` on each function), and
+  `examples/chip_board` (the RP2040 boot sector and the stack probe). Each block has a `SAFETY`
+  comment.
 - `core/{abi,types,value,graph,plan,runner}` build for `thumbv7em-none-eabihf`,
   `thumbv6m-none-eabi` and `riscv32imac-unknown-none-elf` with no allocator.
 - No dependency on Lemnos anywhere.
@@ -424,7 +429,8 @@ against these. `Blob` and `Source` carry the same information as a covers table.
 - A rate change is a declared ratio on a node.
 - `until` needs a declared maximum iteration count.
 - Overloads are not carried. Nothing writes them on `dev`.
-- A FIFO edge with no declared capacity gets 64 slots on a host, set by the planner. Chip builds set
+- A FIFO edge with no declared capacity gets 4 slots from the planner (`DEFAULT_FIFO_CAPACITY` in
+  `core/planner/src/config.rs`). The host's loader sets 64 (`core/host/src/load.rs`). Chip builds set
   their own default through planner config.
 
 **Running.** "Running allocates nothing" holds for a GPU region of shaders that bind buffers, on
@@ -446,7 +452,8 @@ owned declarations that a worker sends when it starts.
 - There is no library of byte kernels (copy, hex, base64, CRC, float conversions) and no
   acceleration matrix for one. Nothing in Daedalus calls such functions: a node that needs one
   brings it.
-- There is no memory-only backend. A backend that runs nodes names its own memory spaces.
+- There is no memory-only backend that a graph can use. A backend that runs nodes names its own
+  memory spaces.
 - The generic foreign-owner and layout-hash code is `core/value`'s `foreign` module (A14).
 - Bytes in graph JSON use a small hex encoder inside `core/graph`. Speed doesn't matter while
   planning, and the worker and service wires are binary.
@@ -491,7 +498,7 @@ build on them.
   only into test binaries.
 - The sim's `SimConfig` has the knobs planner tests need: `refuse`, `merge`, `form`, `faults`,
   `absorb`, `no_transfers`, `pending`, `drop_output`, `omit_covers`. A sim body's `text` is its node's id.
-  `SimMemory` is the memory-only backend, and it has the absorbable `sim.import`.
+  `SimMemory` is a memory-only fake for the tests, and it has the absorbable `sim.import`.
 
 **The planner as built (B1 to B15).** `core/planner` is the reference, and `core/planner/README.md`
 documents the patch and refresh JSON.

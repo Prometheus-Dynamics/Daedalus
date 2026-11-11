@@ -89,8 +89,6 @@ The first backend, merging, the Blob and Source forms, chips, the kernels, wasm 
 - [x] [D12](docs/prs/D12.md) Chip board example: Raspberry Pi Pico (RP2040) (wave 19; needs D7; board run)
 - [x] [D13](docs/prs/D13.md) Shared nodes: one #[node] for the host and the chip (wave 17; needs C14, D3, D4, D5)
 - [x] [D14](docs/prs/D14.md) Acceleration matrix: generator, asm check and gate (wave 3; needs D11)
-- [x] [D15](docs/prs/D15.md) CPU kernel inventory rows, evidence and backend matrix (wave 4; needs D8, D14, D16; board run)
-- [x] [D16](docs/prs/D16.md) CRC-32 kernels: slice-by-8, carry-less and CRC-instruction paths (wave 3; needs D8; board run)
 
 ## E. GPU backend
 
@@ -111,7 +109,6 @@ wgpu as a backend: whole-shader nodes, shared submits, merged per-pixel function
 - [x] [E13](docs/prs/E13.md) Raw Vulkan boundary: backends/vk-sys (wave 6; needs E1; board run)
 - [x] [E14](docs/prs/E14.md) GPU import: external memory as a sampled texture (wave 8; needs A15, E9, E13; board run)
 - [x] [E15](docs/prs/E15.md) images into storage and sampled textures (wave 9; needs E14; board run)
-- [x] [E16](docs/prs/E16.md) GPU kernel ops on device-resident data (wave 8; needs D8, E4; board run)
 - [x] [E17](docs/prs/E17.md) dmabuf memory backend: a memory space, a pool, no nodes (wave 8; needs A7, E9; board run)
 
 ## G. Plugins and languages
@@ -125,8 +122,8 @@ Dylib plugins carrying nodes and backends, the process backend, and an SDK per l
 - [x] [G5](docs/prs/G5.md) Python SDK: node declarations and worker loop (Python) (wave 8; needs G4)
 - [x] [G6](docs/prs/G6.md) Node SDK: node declarations and worker loop (Node) (wave 8; needs G4)
 - [x] [G7](docs/prs/G7.md) Java SDK: annotated nodes and worker loop (Java) (wave 8; needs G4)
-- [ ] [G8](docs/prs/G8.md) C and C++ SDK: worker API, typed values, arena outputs (C and C++) (wave 8; needs G4)
-- [ ] [G9](docs/prs/G9.md) Rust SDK: worker serve loop, context, panic containment (wave 8; needs A9, G4)
+- [x] [G8](docs/prs/G8.md) C and C++ SDK: worker API, typed values, arena outputs (C and C++) (wave 8; needs G4)
+- [x] [G9](docs/prs/G9.md) Rust SDK: worker serve loop, context, panic containment (wave 8; needs A9, G4)
 - [x] [G10](docs/prs/G10.md) C surface: core/capi, run a graph from a shared library (wave 15; needs C10, G2)
 - [x] [G11](docs/prs/G11.md) Rust host over the C surface, safe crate over a sys crate (wave 16; needs G10)
 - [x] [G12](docs/prs/G12.md) Plugin worker: isolate a dylib plugin's nodes in the process backend (wave 8; needs G2, G4)
@@ -152,5 +149,5 @@ A third-party backend that proves the interface, the budget harness, examples, d
 - [x] [I4](docs/prs/I4.md) CPU and host examples (wave 16; needs C11, C14, D1)
 - [x] [I5](docs/prs/I5.md) Documentation and the doc gate (wave 16; needs C14)
 - [x] [I6](docs/prs/I6.md) Capability audit against dev (wave 1; needs nothing)
-- [x] [I7](docs/prs/I7.md) Finish: package surface, semver, lockfile, ready for other repositories (wave 20; needs A2, A13, B3, B5, B10, B11, B12, B14, B15, C6, C7, C8, C12, C13, C16, C17, C18, C20, C21, C22, C23, C24, D2, D9, D10, D12, D13, D15, E10, E11, E12, E15, E16, E17, G3, G5, G6, G7, G8, G9, G11, G12, H5, H6, I1, I3, I5, I8)
+- [x] [I7](docs/prs/I7.md) Finish: package surface, semver, lockfile, ready for other repositories (wave 20; needs A2, A13, B3, B5, B10, B11, B12, B14, B15, C6, C7, C8, C12, C13, C16, C17, C18, C20, C21, C22, C23, C24, D2, D9, D10, D12, D13, E10, E11, E12, E15, E17, G3, G5, G6, G7, G8, G9, G11, G12, H5, H6, I1, I3, I5, I8)
 - [x] [I8](docs/prs/I8.md) GPU examples on lavapipe (wave 17; needs E3, E6, I4)

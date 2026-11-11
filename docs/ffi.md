@@ -25,7 +25,7 @@ declarations, and each is run against the same thirteen canonical fixtures:
 | JavaScript (Node) | `languages/node/sdk` | all thirteen fixtures |
 | Java | `languages/java/sdk` | all thirteen fixtures |
 | C and C++ | `languages/cpp/sdk` | all thirteen fixtures |
-| Rust | `languages/rust` | three of thirteen: compound port types cannot be declared yet |
+| Rust | `languages/rust` | all thirteen fixtures |
 
 The Status section of each language's brief in [`prs/`](prs) (`G5` to `G9`) says exactly what is
 served and what is not.
