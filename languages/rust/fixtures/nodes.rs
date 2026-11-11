@@ -1,17 +1,13 @@
-//! The canonical fixture nodes this SDK serves, in the shapes the conformance fixtures declare.
-//! Most are declared with `#[node]`. A node that returns an error, and a stateful node, are declared
-//! by hand, because `#[node]` does not yet pass a fallible result or a state to its body.
+//! The canonical fixture nodes this SDK serves, in the shapes the conformance fixtures declare. All
+//! are declared with `#[node]`.
 
 #![allow(non_camel_case_types)]
 
 use std::collections::BTreeMap;
 
-use daedalus_lang_rust::codec::input;
-use daedalus_lang_rust::{Context, NodeError, Pack, Pair, RustBody, Wire, state_type};
+use daedalus_lang_rust::{Fault, Pair, Wire};
 use daedalus_macros::node;
-use daedalus_registry::{
-    BodyRecord, Fire, NodeDecl, NodeRecord, PortDecl, SourceAt, StateDecl, TypeRef,
-};
+use daedalus_registry::NodeRecord;
 use daedalus_types::{Field, Scalar, TypeExpr, TypeKey, Typed, Variant};
 use daedalus_wire::{FaultCode, WireValue};
 
@@ -198,100 +194,38 @@ pub fn custom_type_key(r#in: Custom) -> Custom {
     r#in
 }
 
-/// A node that always fails with `node_error`, and says why.
-fn failure_run(
-    inputs: &[(&'static str, WireValue)],
-    _cx: &mut Context,
-) -> Result<Vec<WireValue>, NodeError> {
-    let value: i64 = input(inputs, "value")?;
-    Err(NodeError::new(
-        FaultCode::NodeError,
-        format!("value {value} is refused"),
-    ))
+/// The running total a stateful counter keeps: its state. The host declares it as an integer.
+#[derive(Default)]
+pub struct Count(pub i64);
+
+impl Typed for Count {
+    const KEY: TypeKey = Scalar::Int.key();
+    const EXPR: TypeExpr = TypeExpr::Scalar(Scalar::Int);
 }
 
-static FAILURE_RUN: RustBody = RustBody {
-    run: failure_run,
-    state: None,
-};
-
-static FAILURE_IN: [PortDecl; 1] = [PortDecl::new("value", TypeRef::Key(Scalar::Int.key()))];
-static FAILURE_OUT: [PortDecl; 1] = [PortDecl::new("out", TypeRef::Key(Scalar::Int.key()))];
-static FAILURE_DECL: NodeDecl = decl("fixture.failure_diagnostic", &FAILURE_IN, &FAILURE_OUT);
-pub static FAILURE_NODE: NodeRecord = record(&FAILURE_DECL, &FAILURE_RUN, None);
-
-/// A stateful counter: each run adds its input to a running total, which is the node's state. The
-/// hello declares the state as an `i64`, and the host can export it and import another.
-fn counter_run(
-    inputs: &[(&'static str, WireValue)],
-    cx: &mut Context,
-) -> Result<Vec<WireValue>, NodeError> {
-    let delta: i64 = input(inputs, "delta")?;
-    let total = cx.state().and_then(i64::from_wire).unwrap_or(0) + delta;
-    cx.set_state(total.to_wire());
-    Ok(total.pack())
-}
-
-static COUNTER_RUN: RustBody = RustBody {
-    run: counter_run,
-    state: Some(state_type::<i64>),
-};
-
-static COUNTER_IN: [PortDecl; 1] = [PortDecl::new("delta", TypeRef::Key(Scalar::Int.key()))];
-static COUNTER_OUT: [PortDecl; 1] = [PortDecl::new("total", TypeRef::Key(Scalar::Int.key()))];
-static COUNTER_DECL: NodeDecl = decl("fixture.stateful_counter", &COUNTER_IN, &COUNTER_OUT);
-pub static COUNTER_NODE: NodeRecord = record(
-    &COUNTER_DECL,
-    &COUNTER_RUN,
-    Some(StateDecl {
-        size: std::mem::size_of::<i64>(),
-        align: std::mem::align_of::<i64>(),
-        name: "i64",
-    }),
-);
-
-/// A declaration with no optional parts, for a node written by hand.
-const fn decl(
-    id: &'static str,
-    inputs: &'static [PortDecl],
-    outputs: &'static [PortDecl],
-) -> NodeDecl {
-    NodeDecl {
-        id,
-        at: SourceAt(concat!(file!(), ":", line!())),
-        summary: "",
-        description: "",
-        inputs,
-        outputs,
-        config: &[],
-        fanin: &[],
-        fire: Fire::All,
-        reusable: false,
-        shareable: false,
-        conversion: None,
-        group: None,
+impl Wire for Count {
+    fn to_wire(&self) -> WireValue {
+        self.0.to_wire()
+    }
+    fn from_wire(value: &WireValue) -> Option<Count> {
+        i64::from_wire(value).map(Count)
     }
 }
 
-/// A record for a node written by hand: its body is the Rust body given, with the state it declares.
-const fn record(
-    decl: &'static NodeDecl,
-    body: &'static RustBody,
-    state: Option<StateDecl>,
-) -> NodeRecord {
-    NodeRecord {
-        decl,
-        body: BodyRecord {
-            backend: "rust",
-            at: decl.at,
-            needs: &[],
-            state,
-            ports: &[],
-            memory: &[],
-            code: body,
-            text: "",
-        },
-    }
+/// Each run adds its input to a running total, which is the node's state.
+#[node(id = "fixture.stateful_counter", inputs(delta), outputs(total), state(Count), backend = daedalus_lang_rust)]
+pub fn stateful_counter(delta: i64, state: &mut Count) -> i64 {
+    state.0 += delta;
+    state.0
+}
+
+/// Always fails with `node_error`, and says why.
+#[node(id = "fixture.failure_diagnostic", inputs(value), outputs(out), backend = daedalus_lang_rust)]
+pub fn failure_diagnostic(value: i64) -> Result<i64, Fault> {
+    Err(Fault {
+        code: FaultCode::NodeError,
+        reason: format!("value {value} is refused"),
+    })
 }
 
 /// The nodes this worker serves: the thirteen canonical fixtures.
@@ -307,6 +241,6 @@ pub const NODES: &[&NodeRecord] = &[
     &TUPLE_PAIR_NODE,
     &MAP_PAIRS_NODE,
     &CUSTOM_TYPE_KEY_NODE,
-    &FAILURE_NODE,
-    &COUNTER_NODE,
+    &FAILURE_DIAGNOSTIC_NODE,
+    &STATEFUL_COUNTER_NODE,
 ];
