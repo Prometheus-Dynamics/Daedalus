@@ -116,7 +116,20 @@ pub struct Storage {
     pub(crate) id: u64,
     space: &'static str,
     mapping: Option<Mapping>,
+    /// Whether the buffer goes back to its device when this is dropped, to be handed out
+    /// again: device memory nothing cleared, which the next holder doesn't expect cleared.
+    #[cfg(target_os = "linux")]
+    spare: bool,
     pub(crate) context: Arc<Context>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Storage {
+    fn drop(&mut self) {
+        if self.spare {
+            self.context.keep_spare(self.buffer.clone());
+        }
+    }
 }
 
 impl fmt::Debug for Storage {
@@ -172,6 +185,8 @@ impl Storage {
             id: Context::next_id(),
             space: SPACE_DEVICE,
             mapping: None,
+            #[cfg(target_os = "linux")]
+            spare: false,
             context,
         })
     }
@@ -185,12 +200,15 @@ impl Storage {
             id: Context::next_id(),
             space: SPACE_DEVICE,
             mapping: None,
+            #[cfg(target_os = "linux")]
+            spare: false,
             context,
         }
     }
 
     /// A buffer in device memory that nothing has cleared. Only for a buffer its producer writes
-    /// in full before anything reads it: skipping the clear is the point. Off Vulkan this is
+    /// in full before anything reads it: skipping the clear is the point. It may be a buffer an
+    /// earlier holder let go, with that holder's bytes still in it. Off Vulkan this is
     /// [`Storage::new`].
     pub fn new_uninit(backend: &WgpuBackend, size: u64) -> Result<Storage, StorageError> {
         Storage::placed(backend, size, SPACE_DEVICE)
@@ -250,6 +268,8 @@ impl Storage {
             id: Context::next_id(),
             space: crate::memory::SPACE_DMA_HEAP,
             mapping: Some(Mapping::Heap { buf, map }),
+            #[cfg(target_os = "linux")]
+            spare: false,
             context,
         })
     }
@@ -280,6 +300,20 @@ impl Storage {
         use daedalus_vk_sys::memory::{Placement, storage_buffer};
 
         check_size(&context, size)?;
+        if !matches!(space, SPACE_HOST_MAPPED | SPACE_HOST_CACHED)
+            && let Some(buffer) = context.take_spare(size)
+        {
+            return Ok(Storage {
+                buffer,
+                size,
+                id: Context::next_id(),
+                space,
+                mapping: None,
+                #[cfg(target_os = "linux")]
+                spare: true,
+                context,
+            });
+        }
         let placement = match space {
             SPACE_HOST_MAPPED => Placement::HostMapped,
             SPACE_HOST_CACHED => Placement::HostCached,
@@ -291,6 +325,8 @@ impl Storage {
                 size,
                 id: Context::next_id(),
                 space,
+                #[cfg(target_os = "linux")]
+                spare: mapping.is_none(),
                 mapping: mapping.map(Mapping::Device),
                 context,
             }),
@@ -313,7 +349,8 @@ impl Storage {
     }
 
     /// The wgpu buffer, for a recording body or a fragment pass of your own to bind. It has
-    /// storage and copy usage.
+    /// storage and copy usage. Don't keep it past this `Storage`: its memory may be handed to
+    /// another one.
     pub fn wgpu(&self) -> &wgpu::Buffer {
         &self.buffer
     }

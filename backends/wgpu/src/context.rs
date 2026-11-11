@@ -71,6 +71,10 @@ pub(crate) struct Context {
     /// Bytes given to the queue to write since its last submit. Their staging memory is only freed
     /// by a submit, so past [`WRITE_BUDGET`] the queue is submitted.
     unsent_bytes: AtomicU64,
+    /// Buffers of device memory nothing has cleared, let go by their last holder and kept to be
+    /// handed out again: allocating device memory is slow on some devices.
+    #[cfg(target_os = "linux")]
+    spare: Mutex<Vec<wgpu::Buffer>>,
     /// Regions that record with Vulkan itself, for a wait to cover their work too.
     #[cfg(target_os = "linux")]
     chains: Mutex<Vec<Weak<Mutex<daedalus_vk_sys::chain::Chain>>>>,
@@ -79,6 +83,12 @@ pub(crate) struct Context {
 /// Bytes the queue may hold for writing before it is submitted. A 16 MiB write alone is over the
 /// budget, so it is submitted with the write that made it.
 const WRITE_BUDGET: u64 = 8 << 20;
+
+/// The most buffers kept to hand out again, and the most bytes they hold together.
+#[cfg(target_os = "linux")]
+const SPARE_BUFFERS: usize = 4;
+#[cfg(target_os = "linux")]
+const SPARE_BYTES: u64 = 64 << 20;
 
 static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
 
@@ -184,6 +194,8 @@ impl Context {
             unsent: AtomicBool::new(false),
             unsent_bytes: AtomicU64::new(0),
             #[cfg(target_os = "linux")]
+            spare: Mutex::default(),
+            #[cfg(target_os = "linux")]
             chains: Mutex::default(),
         }
     }
@@ -257,6 +269,37 @@ impl Context {
         }
     }
 
+    /// Keeps a buffer of uncleared device memory that its last holder let go.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn keep_spare(&self, buffer: wgpu::Buffer) {
+        if self.is_lost() {
+            return;
+        }
+        let mut spare = self.spare.lock().unwrap_or_else(PoisonError::into_inner);
+        let held: u64 = spare.iter().map(wgpu::Buffer::size).sum();
+        if spare.len() < SPARE_BUFFERS && held + buffer.size() <= SPARE_BYTES {
+            spare.push(buffer);
+        }
+    }
+
+    /// A kept buffer of exactly `size` bytes, if there is one and the device has finished
+    /// everything it was given: then nothing still reads or writes a buffer that was let go.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn take_spare(&self, size: u64) -> Option<wgpu::Buffer> {
+        let mut spare = self.spare.lock().unwrap_or_else(PoisonError::into_inner);
+        let at = spare.iter().position(|buffer| buffer.size() == size)?;
+        let idle = self
+            .device
+            .poll(wgpu::PollType::Poll)
+            .is_ok_and(|status| status.is_queue_empty());
+        let chains = self.chains.lock().unwrap_or_else(PoisonError::into_inner);
+        let chains_idle = chains
+            .iter()
+            .filter_map(Weak::upgrade)
+            .all(|chain| chain.try_lock().is_ok_and(|chain| chain.is_idle()));
+        (idle && chains_idle).then(|| spare.swap_remove(at))
+    }
+
     /// Notes a region's chain, so a wait on this device covers it.
     #[cfg(target_os = "linux")]
     pub(crate) fn note_chain(&self, chain: &Arc<Mutex<daedalus_vk_sys::chain::Chain>>) {
@@ -310,6 +353,11 @@ impl Context {
         *self.temp.lock().unwrap_or_else(PoisonError::into_inner) =
             TempPool::new(crate::TempPoolLimits::default());
         *self.shaders() = crate::shader::ShaderCache::default();
+        #[cfg(target_os = "linux")]
+        self.spare
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     /// Whether the driver lost the device or a wait on it timed out. Its work can't be trusted
