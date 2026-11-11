@@ -4,6 +4,7 @@
 pub mod allocations;
 pub mod chains;
 pub mod fences;
+pub mod gaps;
 #[cfg(target_os = "linux")]
 pub mod images;
 pub mod kernels;
