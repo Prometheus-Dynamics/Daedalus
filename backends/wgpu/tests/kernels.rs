@@ -131,7 +131,7 @@ fn float_kernels_match_the_references() {
     let Some(backend) = private() else { return };
     let kernels = Kernels::new(&backend).expect("a device");
 
-    for n in [1usize, 3, 4, 5, 1023, 4099] {
+    for n in [1usize, 3, 4, 5, 8, 16, 1023, 1024, 4099] {
         let input = bytes(n * 4, n as u32);
         let got = run(&backend, &kernels, Kernel::F32FromLe, &input, n as u64);
         assert_eq!(got, f32_bytes(&r::f32_from_le(&input)), "f32_from_le {n}");
@@ -164,7 +164,28 @@ fn float_kernels_match_the_references() {
 fn copy_and_codec_kernels_match_the_references() {
     let Some(backend) = private() else { return };
     let kernels = Kernels::new(&backend).expect("a device");
-    for n in [1usize, 2, 3, 4, 5, 6, 7, 63, 64, 65, 4095, 4096, 12_289] {
+    for n in [
+        1usize,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        15,
+        16,
+        17,
+        31,
+        32,
+        48,
+        63,
+        64,
+        65,
+        4095,
+        4096,
+        12_289,
+        1 << 20,
+    ] {
         let input = bytes(n, n as u32 + 11);
         let n64 = n as u64;
         assert_eq!(

@@ -34,6 +34,31 @@ const PARAMS: BindingSpec = BindingSpec {
     },
 };
 
+const COPY_SOURCE: &str = include_str!("copy.wgsl");
+
+/// The copy's bindings: the input and output as vectors of four words, so one invocation's
+/// loads and stores are vectors. A binding is at least one element, so a copy this shape is
+/// used for is at least a vector on both sides.
+const COPY: &[BindingSpec] = &[
+    BindingSpec {
+        index: 0,
+        name: "src",
+        kind: BindingKind::Storage {
+            read_only: true,
+            stride: 16,
+        },
+    },
+    BindingSpec {
+        index: 1,
+        name: "dst",
+        kind: BindingKind::Storage {
+            read_only: false,
+            stride: 16,
+        },
+    },
+    PARAMS,
+];
+
 /// What most ops bind: the input, the output and their counts.
 const PLAIN: &[BindingSpec] = &[storage(0, "src", true), storage(1, "dst", false), PARAMS];
 const DECODE: &[BindingSpec] = &[
@@ -67,8 +92,12 @@ const fn spec(
     }
 }
 
-/// In the order of [`Kernel`].
-pub(super) const SPECS: [ShaderSpec; 8] = [
+/// The index in [`SPECS`] of the copy that moves whole vectors. Copies whose buffers and count are
+/// at least a vector use it; the others use the word copy.
+pub(super) const WIDE_COPY: usize = 8;
+
+/// In the order of [`Kernel`], then the wide copy at [`WIDE_COPY`].
+pub(super) const SPECS: [ShaderSpec; 9] = [
     spec("kernels.f32_from_le", "f32_from_le", PLAIN),
     spec("kernels.f16_to_f32", "f16_to_f32", PLAIN),
     spec("kernels.f32_to_unorm8", "f32_to_unorm8", PLAIN),
@@ -77,10 +106,21 @@ pub(super) const SPECS: [ShaderSpec; 8] = [
     spec("kernels.base64_encode", "base64_encode", PLAIN),
     spec("kernels.base64_decode", "base64_decode", DECODE),
     spec("kernels.crc32_chunks", "crc32_chunks", CRC),
+    ShaderSpec {
+        name: "kernels.copy.wide",
+        entry: "copy_quads",
+        source: COPY_SOURCE,
+        workgroup: [WORKGROUP, 1, 1],
+        bindings: COPY,
+        dispatch: Dispatch::Counts([1, 1, 1]),
+        inputs: &[],
+        outputs: &[],
+    },
 ];
 
 /// One op, checked: its counts on the device, and how many workgroups it dispatches.
-pub(super) type Planned = (Arc<Storage>, [u32; 3]);
+/// The params buffer, the counts, and the index in [`SPECS`] of the shader that runs.
+pub(super) type Planned = (Arc<Storage>, [u32; 3], usize);
 
 /// Distinct counts whose parameter buffers are kept.
 const PARAMS_KEPT: usize = 64;
@@ -90,7 +130,7 @@ const PARAMS_KEPT: usize = 64;
 /// keeps answering with the device's error.
 pub struct Kernels {
     pub(super) context: Arc<Context>,
-    shaders: [OnceLock<Shader>; 8],
+    shaders: [OnceLock<Shader>; 9],
     /// The counts of a run, on the device, by what they are: one small buffer for each
     /// distinct set, bound as it is. Two runs of an op in one encoder each bind their own, and
     /// nothing is copied before a pass.
@@ -115,7 +155,7 @@ impl Kernels {
     fn on(context: Arc<Context>) -> Kernels {
         Kernels {
             context,
-            shaders: [const { OnceLock::new() }; 8],
+            shaders: [const { OnceLock::new() }; 9],
             params: Mutex::new(HashMap::new()),
             table: OnceLock::new(),
             #[cfg(target_os = "linux")]
@@ -128,13 +168,14 @@ impl Kernels {
         self.context.key
     }
 
-    fn shader(&self, kernel: Kernel) -> Result<&Shader, KernelError> {
-        let slot = &self.shaders[kernel.index()];
+    /// The shader of spec `at` in [`SPECS`], loaded on first use.
+    pub(super) fn shader(&self, at: usize) -> Result<&Shader, KernelError> {
+        let slot = &self.shaders[at];
         if let Some(shader) = slot.get() {
             return Ok(shader);
         }
-        let loaded = Shader::load_on(Arc::clone(&self.context), &SPECS[kernel.index()])
-            .map_err(KernelError::Shader)?;
+        let loaded =
+            Shader::load_on(Arc::clone(&self.context), &SPECS[at]).map_err(KernelError::Shader)?;
         Ok(slot.get_or_init(|| loaded))
     }
 
@@ -210,7 +251,19 @@ impl Kernels {
                 dst.size()
             )));
         }
-        let threads = kernel.threads(n);
+        // The vector copy takes whole vectors: a count that is a whole number of them, so no
+        // vector is partly past the output. A device clamps a storage index past a buffer's end
+        // onto its last element, so a partial vector at the end would overwrite a whole one. The
+        // other counts are the word copy.
+        // F32FromLe is a copy of its bits, so it takes the same shader.
+        let copies_bits = matches!(kernel, Kernel::Copy | Kernel::F32FromLe);
+        let wide =
+            copies_bits && kernel.output_len(n) >= 16 && kernel.output_len(n).is_multiple_of(16);
+        let (spec, threads) = if wide {
+            (WIDE_COPY, kernel.output_len(n).div_ceil(16))
+        } else {
+            (kernel.index(), kernel.threads(n))
+        };
         let groups = threads.div_ceil(u64::from(WORKGROUP));
         let max = u64::from(self.context.record.compute.max_workgroups_per_dimension);
         let (x, y) = match groups <= max {
@@ -225,7 +278,7 @@ impl Kernels {
             )));
         }
         let params = self.params([n as u32, threads as u32, kernel.output_len(n) as u32])?;
-        Ok(Some((params, [x as u32, y as u32, 1])))
+        Ok(Some((params, [x as u32, y as u32, 1], spec)))
     }
 
     /// Records one op into `into`: the pass kept open, and the encoder it is in.
@@ -238,10 +291,10 @@ impl Kernels {
         n: u64,
         extra: Option<&Storage>,
     ) -> Result<(), KernelError> {
-        let Some((params, counts)) = self.plan(kernel, src, dst, n)? else {
+        let Some((params, counts, spec)) = self.plan(kernel, src, dst, n)? else {
             return Ok(());
         };
-        let shader = self.shader(kernel)?;
+        let shader = self.shader(spec)?;
         let plain = [
             Bound::Storage(src),
             Bound::Storage(dst),
