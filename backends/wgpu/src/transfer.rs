@@ -15,6 +15,9 @@ pub const UPLOAD: &str = "wgpu.upload";
 pub const UPLOAD_MAPPED: &str = "wgpu.upload.mapped";
 /// A device buffer into a host-mapped one, which the host then reads in place.
 pub const READBACK: &str = "wgpu.readback";
+/// A device buffer into dma-heap memory, which the host reads through its cache. Offered only on
+/// a device that imports dma-bufs, and only where the system dma-heap opens.
+pub const READBACK_HEAP: &str = "wgpu.readback.heap";
 /// A host-mapped buffer handed to the host as it is.
 pub const MAP: &str = "wgpu.map";
 /// The same for a host-cached buffer.

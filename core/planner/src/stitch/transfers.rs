@@ -513,3 +513,71 @@ pub fn route(
     }
     Ok(router.routing)
 }
+
+#[cfg(test)]
+mod tests {
+    use daedalus_backend::TransferCost;
+
+    use super::{MoveEntry, MoveOwner, Routing, find_path};
+
+    fn entry(id: &str, from: usize, to: usize, cost: TransferCost) -> MoveEntry {
+        MoveEntry {
+            id: id.into(),
+            key: None,
+            from,
+            to,
+            cost,
+            owner: MoveOwner::Backend {
+                backend: 0,
+                index: 0,
+            },
+        }
+    }
+
+    /// Device memory reaches the host two ways: a readback into host-mapped memory, which the
+    /// host reads uncached, or a readback into dma-heap memory, which it reads through its cache.
+    /// Each then maps to the host. The planner takes the heap route, by cost.
+    #[test]
+    fn the_cached_readback_route_beats_the_mapped_one() {
+        let routing = Routing {
+            spaces: vec![
+                "wgpu.buffer".into(),
+                "wgpu.mapped".into(),
+                "wgpu.dmaheap".into(),
+                "cpu.host".into(),
+            ],
+            table: vec![
+                entry("wgpu.readback", 0, 1, TransferCost::Copy),
+                entry("wgpu.readback.heap", 0, 2, TransferCost::CopyCached),
+                entry("wgpu.map", 1, 3, TransferCost::Import),
+                entry("wgpu.map.dmaheap", 2, 3, TransferCost::Import),
+            ],
+            ..Routing::default()
+        };
+        let (_, path) = find_path(&routing, None, 0, &[3]).expect("a route");
+        let ids: Vec<&str> = path
+            .iter()
+            .map(|&at| routing.table[at].id.as_str())
+            .collect();
+        assert_eq!(ids, ["wgpu.readback.heap", "wgpu.map.dmaheap"]);
+    }
+
+    /// Without the heap move, the mapped route is the only one.
+    #[test]
+    fn without_the_heap_move_the_mapped_route_is_taken() {
+        let routing = Routing {
+            spaces: vec![
+                "wgpu.buffer".into(),
+                "wgpu.mapped".into(),
+                "cpu.host".into(),
+            ],
+            table: vec![
+                entry("wgpu.readback", 0, 1, TransferCost::Copy),
+                entry("wgpu.map", 1, 2, TransferCost::Import),
+            ],
+            ..Routing::default()
+        };
+        let (_, path) = find_path(&routing, None, 0, &[2]).expect("a route");
+        assert_eq!(path.len(), 2);
+    }
+}

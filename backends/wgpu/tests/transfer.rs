@@ -11,8 +11,9 @@ use daedalus_backend::{Backend, CompileCx, TransferCost, find_transfer};
 use daedalus_runner::{drop_owned, put_inline, put_shared, put_typed, take_typed};
 use daedalus_types::{SpaceIndex, TypeIndex, TypeKey};
 use daedalus_wgpu::{
-    Format, HOST_SPACE, MAP, Options, READBACK, SPACE_DEVICE, SPACE_HOST_MAPPED, Storage, Texture,
-    TextureDesc, TextureError, UPLOAD, UPLOAD_MAPPED, WgpuBackend,
+    Format, HOST_SPACE, MAP, Options, READBACK, READBACK_HEAP, SPACE_DEVICE, SPACE_DMA_HEAP,
+    SPACE_HOST_MAPPED, Storage, Texture, TextureDesc, TextureError, UPLOAD, UPLOAD_MAPPED,
+    WgpuBackend,
 };
 
 const TY: TypeIndex = TypeIndex(0);
@@ -252,4 +253,55 @@ fn integer_formats_round_trip_exactly() {
         let ragged = texture.write(&bytes, row + 1);
         assert!(ragged.is_err(), "{format:?}");
     }
+}
+
+/// The heap readback is offered by an open device that imports dma-bufs, and by no other: a
+/// backend that is not open offers the host-mapped readback alone, and so does a device that
+/// can't import (lavapipe, in the lane that has no dma-buf import).
+#[test]
+fn the_heap_readback_is_offered_only_by_an_open_device_that_imports() {
+    let unopened = WgpuBackend::open(Options::default());
+    assert!(unopened.transfers().iter().all(|t| t.id != READBACK_HEAP));
+    let Some(backend) = private() else { return };
+    let imports = backend.caps().expect("open").dma_heap;
+    let offered = backend
+        .transfers()
+        .into_iter()
+        .find(|t| t.id == READBACK_HEAP);
+    assert_eq!(offered.is_some(), imports);
+    if let Some(offered) = offered {
+        assert_eq!(
+            (&*offered.from, &*offered.to),
+            (SPACE_DEVICE, SPACE_DMA_HEAP)
+        );
+        assert_eq!(offered.cost, TransferCost::CopyCached);
+    }
+}
+
+/// The heap readback copies a device buffer into dma-heap memory: the output is in the space the
+/// move declares, and the host reads the same bytes back.
+#[test]
+fn the_heap_readback_lands_in_dma_heap_memory() {
+    let Some(backend) = private() else { return };
+    if !backend.caps().expect("open").dma_heap {
+        return;
+    }
+    let (mut upload, mut readback) = (step(&backend, UPLOAD), step(&backend, READBACK_HEAP));
+    let bytes = pattern(4004);
+    let mut cell = Slot::EMPTY;
+    put_shared(&mut cell, TY, SPACE, Arc::from(bytes.as_slice()));
+    let (end, mut uploaded, why) = through(&mut upload, cell);
+    assert!(matches!(end, StepEnd::Done), "{why}");
+    let on_device = take_typed::<Storage>(&mut uploaded).expect("a buffer");
+    let mut cell = Slot::EMPTY;
+    put_typed(&mut cell, TY, SPACE, on_device);
+    let (end, mut out, why) = through(&mut readback, cell);
+    assert!(matches!(end, StepEnd::Pending(_)), "{why}");
+    let heap = take_typed::<Storage>(&mut out).expect("a buffer");
+    assert_eq!(heap.space(), SPACE_DMA_HEAP);
+    let mut seen = vec![0u8; 4004];
+    heap.read_into(0, &mut seen).expect("a readback");
+    assert_eq!(seen, bytes);
+    release(upload);
+    release(readback);
 }

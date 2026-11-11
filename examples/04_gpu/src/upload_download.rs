@@ -34,6 +34,24 @@ const GRAPH: &str = r#"{
   }
 }"#;
 
+/// The transfers the planner chose for the squared values' way back to the host, planned on the
+/// open `gpu` the way the round trip plans.
+pub fn readback_route(gpu: &daedalus_wgpu::WgpuBackend) -> Result<Vec<String>, String> {
+    let planned = super::planned(GRAPH, &[&SQUARE_NODE], gpu)?;
+    let routing = &planned.regions.routing;
+    let output = routing
+        .host_outputs
+        .iter()
+        .find(|output| output.port == "squared")
+        .ok_or("the squared output has no host route")?;
+    Ok(output
+        .reader
+        .path
+        .iter()
+        .map(|&step| routing.table[step].id.clone())
+        .collect())
+}
+
 /// Squares `input` on the GPU and returns what came back.
 pub fn squared_on_gpu(input: &[u32]) -> Result<Vec<u32>, String> {
     let gpu = gpu()?;

@@ -243,6 +243,13 @@ fn wrap(
     }
 }
 
+/// Whether the device can import a dma-buf as memory: the extensions that let it are enabled.
+pub fn imports_dma_buf(device: &wgpu::Device) -> bool {
+    Raw::of(device).is_some_and(|raw| {
+        raw.has(khr::external_memory_fd::NAME) && raw.has(ash::ext::external_memory_dma_buf::NAME)
+    })
+}
+
 /// Whether the device has host-visible memory that is also cached. V3D has none, and reading
 /// its uncached memory from the host is slow.
 pub fn has_host_cached(device: &wgpu::Device) -> bool {

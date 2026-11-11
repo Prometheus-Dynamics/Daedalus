@@ -17,7 +17,7 @@ use crate::memory::{
     SPACE_DEVICE, SPACE_DMA_HEAP, SPACE_HOST_CACHED, SPACE_HOST_MAPPED, SPACE_TEXTURE,
 };
 use crate::transfer::{
-    HOST_SPACE, MAP, MAP_CACHED, MAP_HEAP, READBACK, UPLOAD, UPLOAD_MAPPED, intern,
+    HOST_SPACE, MAP, MAP_CACHED, MAP_HEAP, READBACK, READBACK_HEAP, UPLOAD, UPLOAD_MAPPED, intern,
 };
 
 /// The words a space or a transfer of this backend ends in. A device can't be named one.
@@ -82,8 +82,10 @@ pub(crate) fn spaces(named: Option<&Named>, host: bool) -> Vec<MemorySpace> {
 type Make = fn(&CompileCx<'_>) -> Result<Step, Refusal>;
 
 /// Every move a backend offers, all for any type and all between the host and its own device.
-pub(crate) fn transfers(named: Option<&Named>) -> Vec<Transfer> {
-    use TransferCost::{Copy, Import};
+/// `heap` says the device imports dma-bufs and the system heap opens, which offers the readback
+/// into dma-heap memory beside the host-mapped one.
+pub(crate) fn transfers(named: Option<&Named>, heap: bool) -> Vec<Transfer> {
+    use TransferCost::{Copy, CopyCached, Import};
     let slot = named.map_or(0, |named| named.slot);
     let device = name(named);
     let entry = |id: &'static str, from: &'static str, to: &'static str, cost, make: Make| {
@@ -102,7 +104,7 @@ pub(crate) fn transfers(named: Option<&Named>) -> Vec<Transfer> {
     };
     let (upload, upload_mapped) = crate::upload::makes(slot);
     let map: Make = crate::readback::make_map;
-    vec![
+    let mut table = vec![
         entry(UPLOAD, HOST_SPACE, SPACE_DEVICE, Copy, upload),
         entry(
             UPLOAD_MAPPED,
@@ -121,7 +123,17 @@ pub(crate) fn transfers(named: Option<&Named>) -> Vec<Transfer> {
         entry(MAP, SPACE_HOST_MAPPED, HOST_SPACE, Import, map),
         entry(MAP_CACHED, SPACE_HOST_CACHED, HOST_SPACE, Import, map),
         entry(MAP_HEAP, SPACE_DMA_HEAP, HOST_SPACE, Import, map),
-    ]
+    ];
+    if heap {
+        table.push(entry(
+            READBACK_HEAP,
+            SPACE_DEVICE,
+            SPACE_DMA_HEAP,
+            CopyCached,
+            crate::readback::make_heap,
+        ));
+    }
+    table
 }
 
 #[cfg(test)]
@@ -149,5 +161,41 @@ mod tests {
         assert!(crosses_devices("wgpu.a.texture", "wgpu.b.texture"));
         assert!(!crosses_devices("wgpu.b.buffer", "wgpu.b.mapped"));
         assert!(!crosses_devices("wgpu.buffer", "cpu.host"));
+    }
+
+    #[test]
+    fn the_heap_readback_is_offered_only_when_asked_for() {
+        use daedalus_backend::TransferCost;
+
+        use super::super::memory::{SPACE_DEVICE, SPACE_DMA_HEAP};
+        use super::super::transfer::{READBACK, READBACK_HEAP};
+        use super::transfers;
+
+        let plain = transfers(None, false);
+        assert!(plain.iter().all(|t| t.id != READBACK_HEAP));
+        assert!(plain.iter().any(|t| t.id == READBACK));
+        let heap = transfers(None, true);
+        let entry = heap
+            .iter()
+            .find(|t| t.id == READBACK_HEAP)
+            .expect("offered");
+        assert_eq!(
+            (&*entry.from, &*entry.to, entry.cost),
+            (SPACE_DEVICE, SPACE_DMA_HEAP, TransferCost::CopyCached)
+        );
+        // Dearer than an import, cheaper than the plain copy: the planner takes it over READBACK.
+        assert!(TransferCost::Import < entry.cost && entry.cost < TransferCost::Copy);
+        // A named device's move is named for that device, in the same spaces.
+        let named = crate::devices::Named {
+            slot: 1,
+            name: "gpu2".into(),
+            id: "wgpu.gpu2".into(),
+        };
+        let named_heap = transfers(Some(&named), true);
+        let entry = named_heap
+            .iter()
+            .find(|t| t.id.starts_with("wgpu.gpu2.readback.heap"))
+            .expect("a named device offers its own");
+        assert_eq!(&*entry.to, "wgpu.gpu2.dmaheap");
     }
 }

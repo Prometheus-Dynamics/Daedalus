@@ -19,7 +19,7 @@ use daedalus_types::Typed;
 use crate::backend::WgpuBackend;
 use crate::buffer::Storage;
 use crate::handoff::on_device;
-use crate::memory::{SPACE_DEVICE, SPACE_HOST_MAPPED};
+use crate::memory::{SPACE_DEVICE, SPACE_DMA_HEAP, SPACE_HOST_MAPPED};
 use crate::transfer::{HOST_SPACE, intern};
 
 /// A type whose values are a run of bytes, as far as a device is concerned.
@@ -76,7 +76,7 @@ fn make_map<T: HostBytes>(_: &CompileCx<'_>) -> Result<Step, Refusal> {
 }
 
 /// The two moves for `T` on `backend`'s device.
-fn transfers<T: HostBytes>(backend: &WgpuBackend) -> [Transfer; 2] {
+fn transfers<T: HostBytes>(backend: &WgpuBackend) -> [Transfer; 3] {
     let device = backend.device_name();
     let slot = backend.link().named_as().map_or(0, |named| named.slot);
     let id = |what: &str| {
@@ -99,6 +99,16 @@ fn transfers<T: HostBytes>(backend: &WgpuBackend) -> [Transfer; 2] {
             id: id("map"),
             key: Some(T::KEY),
             from: on_device(device, SPACE_HOST_MAPPED),
+            to: std::borrow::Cow::Borrowed(HOST_SPACE),
+            cost: TransferCost::Copy,
+            make: make_map::<T>,
+        },
+        // A readback into dma-heap memory reads its bytes the same way, so a `T` comes back from it
+        // as well.
+        Transfer {
+            id: id("map.dmaheap"),
+            key: Some(T::KEY),
+            from: on_device(device, SPACE_DMA_HEAP),
             to: std::borrow::Cow::Borrowed(HOST_SPACE),
             cost: TransferCost::Copy,
             make: make_map::<T>,

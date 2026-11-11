@@ -67,6 +67,7 @@ fn planning_creates_no_device() {
             },
             ..ComputeCaps::WEBGPU_DEFAULTS
         },
+        dma_heap: false,
     };
     let informed = WgpuBackend::open(Options {
         known: Some(known.clone()),

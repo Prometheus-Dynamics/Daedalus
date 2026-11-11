@@ -343,8 +343,14 @@ impl Storage {
     /// device can't import a dma-buf.
     #[cfg(target_os = "linux")]
     pub fn new_dma_heap(backend: &WgpuBackend, size: u64) -> Result<Storage, StorageError> {
-        use daedalus_vk_sys::Error;
         let context = backend.context().map_err(StorageError::Open)?;
+        Storage::dma_heap_on(context, size)
+    }
+
+    /// A dma-heap buffer on `context`'s device. See [`Storage::new_dma_heap`].
+    #[cfg(target_os = "linux")]
+    pub(crate) fn dma_heap_on(context: Arc<Context>, size: u64) -> Result<Storage, StorageError> {
+        use daedalus_vk_sys::Error;
         check_size(&context, size)?;
         let failed = |error: daedalus_dma_sys::Error| StorageError::Device(error.to_string());
         let heap = daedalus_dma_sys::DmaHeap::open("system")
