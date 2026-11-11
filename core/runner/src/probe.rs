@@ -123,23 +123,40 @@ pub enum ProbeClock {
     /// `(1e9 << 32) / frequency` for the counter's frequency.
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     Counter { mult: u64 },
+    /// The x86_64 time stamp counter, which the kernel reads as its clocksource: one `rdtsc`,
+    /// scaled to nanoseconds by `mult` as for `Counter`.
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    Tsc { mult: u64 },
 }
 
 impl ProbeClock {
+    /// Reads the clock, in nanoseconds from its own starting point.
     #[inline(always)]
-    fn now(self) -> u64 {
+    pub fn now(self) -> u64 {
         match self {
             ProbeClock::Host(clock) => clock(),
             #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
             ProbeClock::Counter { mult } => ticks_to_ns(counter_ticks(), mult),
+            #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+            ProbeClock::Tsc { mult } => ticks_to_ns(tsc_ticks(), mult),
         }
     }
 }
 
 /// The cheapest clock this platform has for a probe, and `fallback` where it has none. A probe
-/// takes only differences of readings, so the clock's starting point does not matter. The
-/// counter's frequency is read here, once.
-pub fn best_clock(fallback: ClockFn) -> ProbeClock {
+/// takes only differences of readings, so the clock's starting point does not matter.
+///
+/// `kernel_clock_ok` says whether the kernel's clocksource is one the probe may read directly. It
+/// matters on x86_64 Linux only: there the probe uses the time stamp counter only when the host
+/// has found the kernel's clocksource to be `tsc`. Anything in doubt gives `fallback`.
+pub fn best_clock(fallback: ClockFn, kernel_clock_ok: bool) -> ProbeClock {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    if kernel_clock_ok && let Some(frequency) = tsc_frequency(fallback) {
+        let mult = ((1_000_000_000u128 << 32) / u128::from(frequency)) as u64;
+        if mult != 0 {
+            return ProbeClock::Tsc { mult };
+        }
+    }
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
     {
         let frequency = counter_frequency();
@@ -150,6 +167,7 @@ pub fn best_clock(fallback: ClockFn) -> ProbeClock {
             }
         }
     }
+    let _ = kernel_clock_ok;
     ProbeClock::Host(fallback)
 }
 
@@ -165,6 +183,84 @@ fn counter_ticks() -> u64 {
     ticks
 }
 
+/// One read of the time stamp counter.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+#[inline(always)]
+fn tsc_ticks() -> u64 {
+    // SAFETY: `rdtsc` reads the time stamp counter. It needs no feature beyond the baseline and
+    // changes no state; the kernel leaves it readable from user space.
+    unsafe { core::arch::x86_64::_rdtsc() }
+}
+
+/// The TSC frequency in hertz, or `None` when it cannot be trusted: the counter must be invariant
+/// (CPUID 0x80000007 EDX bit 8), and the frequency comes from CPUID 0x15 or 0x16 when they give it,
+/// and otherwise from one calibration against `fallback`.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn tsc_frequency(fallback: ClockFn) -> Option<u64> {
+    if !tsc_invariant() {
+        return None;
+    }
+    let hertz = cpuid_tsc_hertz()
+        .or_else(cpuid_base_hertz)
+        .or_else(|| calibrate(fallback))?;
+    // A frequency outside what any part runs at means a misread, and then the host clock is kept.
+    (500_000_000..=10_000_000_000)
+        .contains(&hertz)
+        .then_some(hertz)
+}
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn tsc_invariant() -> bool {
+    if core::arch::x86_64::__cpuid(0x8000_0000).eax < 0x8000_0007 {
+        return false;
+    }
+    core::arch::x86_64::__cpuid(0x8000_0007).edx & (1 << 8) != 0
+}
+
+/// CPUID 0x15: the TSC ratio and the crystal frequency, when the part reports all three.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn cpuid_tsc_hertz() -> Option<u64> {
+    if core::arch::x86_64::__cpuid(0).eax < 0x15 {
+        return None;
+    }
+    let leaf = core::arch::x86_64::__cpuid_count(0x15, 0);
+    if leaf.eax == 0 || leaf.ebx == 0 || leaf.ecx == 0 {
+        return None;
+    }
+    Some(u64::from(leaf.ecx) * u64::from(leaf.ebx) / u64::from(leaf.eax))
+}
+
+/// CPUID 0x16: the base frequency in MHz, when the part reports it.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn cpuid_base_hertz() -> Option<u64> {
+    if core::arch::x86_64::__cpuid(0).eax < 0x16 {
+        return None;
+    }
+    let base = core::arch::x86_64::__cpuid(0x16).eax;
+    (base != 0).then(|| u64::from(base) * 1_000_000)
+}
+
+/// The TSC frequency, measured against `fallback` over 10 ms. The frequency is an estimate, and
+/// its error scales the probe's times but never reorders them.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn calibrate(fallback: ClockFn) -> Option<u64> {
+    const SPAN_NS: u64 = 10_000_000;
+    // A clock that stops advancing gives up after this many reads, and the host clock is kept.
+    const MAX_READS: u32 = 50_000_000;
+    let start = fallback();
+    let start_ticks = tsc_ticks();
+    for _ in 0..MAX_READS {
+        let now = fallback();
+        if now.saturating_sub(start) >= SPAN_NS {
+            let elapsed = now - start;
+            let ticks = tsc_ticks().wrapping_sub(start_ticks);
+            return (ticks > 0)
+                .then(|| (u128::from(ticks) * 1_000_000_000 / u128::from(elapsed)) as u64);
+        }
+    }
+    None
+}
+
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 fn counter_frequency() -> u64 {
     let frequency: u64;
@@ -177,7 +273,13 @@ fn counter_frequency() -> u64 {
 }
 
 /// Nanoseconds for `ticks` of a counter, with `mult` as in [`ProbeClock::Counter`].
-#[cfg(any(test, all(target_arch = "aarch64", target_os = "linux")))]
+#[cfg(any(
+    test,
+    all(
+        any(target_arch = "aarch64", target_arch = "x86_64"),
+        target_os = "linux"
+    )
+))]
 #[inline(always)]
 fn ticks_to_ns(ticks: u64, mult: u64) -> u64 {
     ((u128::from(ticks) * u128::from(mult)) >> 32) as u64

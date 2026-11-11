@@ -19,7 +19,7 @@ use daedalus_host::{LoadOptions, LoadedHost, TickOverheadWindow};
 use daedalus_macros::node;
 use daedalus_planner::{Config, Planned, plan};
 use daedalus_registry::{NodeRecord, Registry};
-use daedalus_runner::{TickProbe, best_clock};
+use daedalus_runner::TickProbe;
 
 /// Operations per batch.
 const PER_BATCH: u32 = 1_000;
@@ -161,8 +161,17 @@ fn probe_on(batches: usize) {
 /// The chain with a probe timing every `every`th tick. The window records every tick, so its
 /// step count is exact and its timing figures are over the timed ticks it holds.
 fn probe_every(batches: usize, every: u32) {
+    let clock = daedalus_host::probe_clock();
+    let name = match clock {
+        daedalus_runner::ProbeClock::Host(_) => "host",
+        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        daedalus_runner::ProbeClock::Counter { .. } => "counter",
+        #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+        daedalus_runner::ProbeClock::Tsc { .. } => "tsc",
+    };
+    println!("probe clock: {name}");
     let probe: &'static TickProbe<'static> =
-        Box::leak(Box::new(TickProbe::sampled_by(best_clock(clock), every)));
+        Box::leak(Box::new(TickProbe::sampled_by(clock, every)));
     let mut host = chain(16, Stage::Plain, false);
     host.host().runner().set_probe(probe);
     let mut window = TickOverheadWindow::new(PER_BATCH as usize);
