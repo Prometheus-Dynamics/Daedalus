@@ -75,10 +75,11 @@ no copy: the only cost left is the cache sync after the device's write. `MappedB
 buffer, so the region writes its next output into another one until the host lets go. A type
 that doesn't implement it gets its bytes copied out into a `Vec`, as before.
 
-On the CM5, for a 16 MiB result: the shader's write costs the same into either memory (8.5 ms).
-Getting the bytes to the host after that costs 0.6 ms in place, against 8.0 ms for a readback
-into dma-heap memory followed by a copy out, and 16 ms through host-mapped memory. Reading every
-byte once in place takes 2.2 ms in all, against 5.6 ms for copying out and then reading.
+On the CM5, for a 16 MiB result, the shader's write costs the same into either memory (8.46 and
+8.47 ms). Getting the bytes to the host after that costs 0.61 ms in place. A readback into
+dma-heap memory followed by a copy out costs 7.96 ms, and the route through host-mapped memory
+16.0 ms. Reading every byte once costs 2.1 to 2.2 ms in place in all, against 5.2 to 5.6 ms for
+copying out and then reading. The record is `testing/board-runs/read-in-place.md`.
 
 Values a region doesn't write itself, such as an input handed on, still take the readback routes:
 `wgpu.readback` into host-mapped memory and `wgpu.readback.heap` into dma-heap memory.
