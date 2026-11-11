@@ -40,7 +40,41 @@ impl Decoding {
     }
 }
 
+/// Whether a decode of `n` symbols takes the vector shape: whole invocations of sixty-four.
+pub(super) fn decode_vector(n: u64) -> bool {
+    n >= 64 && n.is_multiple_of(64)
+}
+
+/// The decode table: for each byte, its six bits, or 0xff for a byte that is no symbol.
+fn decode_table() -> Vec<u8> {
+    (0..=255u8)
+        .flat_map(|c| {
+            let value = match c {
+                b'A'..=b'Z' => c - b'A',
+                b'a'..=b'z' => c - b'a' + 26,
+                b'0'..=b'9' => c - b'0' + 52,
+                b'+' => 62,
+                b'/' => 63,
+                _ => 0xff,
+            };
+            (value as u32).to_le_bytes()
+        })
+        .collect()
+}
+
 impl Kernels {
+    /// The decode table on the device, made once.
+    fn b64_decode_table(&self) -> Result<&Storage, KernelError> {
+        if let Some(table) = self.b64_table.get() {
+            return Ok(table);
+        }
+        let made = Storage::zeroed(std::sync::Arc::clone(&self.context), 1024)
+            .map_err(KernelError::Storage)?;
+        made.write(0, &decode_table())
+            .map_err(KernelError::Storage)?;
+        Ok(self.b64_table.get_or_init(|| made))
+    }
+
     /// Decodes `n` base64 symbols from `src` into `dst` and submits. `n` is a multiple of 4,
     /// and `dst` holds `n / 4 * 3` bytes rounded up to a word. Never waits: the result is read
     /// by [`Decoding::wait`].
@@ -65,13 +99,20 @@ impl Kernels {
             .write(0, &[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0])
             .map_err(KernelError::Storage)?;
         let mut encoder = self.encoder();
+        // The vector decode reads the table; the word decode doesn't, and binds only its status.
+        let table = self.b64_decode_table()?;
+        let extras: Vec<&Storage> = if decode_vector(n) {
+            vec![&status, table]
+        } else {
+            vec![&status]
+        };
         self.encode_with(
             (&mut crate::shader::OpenPass::default(), &mut encoder),
             Kernel::Base64Decode,
             src,
             dst,
             n,
-            Some(&status),
+            &extras,
         )?;
         Ok(Decoding {
             work: Some((self.submit(encoder), status)),

@@ -88,6 +88,37 @@ const DECODE_WIDE: &[BindingSpec] = &[
     },
     PARAMS,
     storage(3, "status", false),
+    // The six bits of each byte: a lookup, in place of a chain of comparisons per symbol.
+    BindingSpec {
+        index: 4,
+        name: "dec_table",
+        kind: BindingKind::Storage {
+            read_only: true,
+            stride: 4,
+        },
+    },
+];
+
+/// The hex vector shape: the plain bindings and the byte-pair table.
+const HEX_WIDE: &[BindingSpec] = &[
+    BindingSpec {
+        index: 0,
+        name: "src",
+        kind: BindingKind::Storage {
+            read_only: true,
+            stride: 16,
+        },
+    },
+    BindingSpec {
+        index: 1,
+        name: "dst",
+        kind: BindingKind::Storage {
+            read_only: false,
+            stride: 16,
+        },
+    },
+    PARAMS,
+    storage(3, "hex_table", true),
 ];
 
 /// What most ops bind: the input, the output and their counts.
@@ -177,7 +208,7 @@ pub(super) const SPECS: [ShaderSpec; 14] = [
         entry: "hex_lower_wide",
         source: WIDE_SOURCE,
         workgroup: [WORKGROUP, 1, 1],
-        bindings: COPY,
+        bindings: HEX_WIDE,
         dispatch: Dispatch::Counts([1, 1, 1]),
         inputs: &[],
         outputs: &[],
@@ -222,6 +253,10 @@ pub struct Kernels {
     /// nothing is copied before a pass.
     params: Mutex<HashMap<[u32; 3], Arc<Storage>>>,
     pub(super) table: OnceLock<Storage>,
+    /// The base64 decode table, for the vector decode: the six bits of each byte, or 0xff.
+    pub(super) b64_table: OnceLock<Storage>,
+    /// The two hex digits of each byte, for the vector hex.
+    pub(super) hex_table: OnceLock<Storage>,
     /// Ops run with Vulkan itself, where the device is on Vulkan.
     #[cfg(target_os = "linux")]
     pub(super) chains: super::chained::Chains,
@@ -244,6 +279,8 @@ impl Kernels {
             shaders: [const { OnceLock::new() }; 14],
             params: Mutex::new(HashMap::new()),
             table: OnceLock::new(),
+            b64_table: OnceLock::new(),
+            hex_table: OnceLock::new(),
             #[cfg(target_os = "linux")]
             chains: super::chained::Chains::default(),
         }
@@ -285,6 +322,44 @@ impl Kernels {
         Ok(buffer)
     }
 
+    /// The extra buffers an op binds after its three plain ones, for a count of `n`: the table its
+    /// shape reads, in the order its spec lists it. Decode binds its own in codec.rs.
+    pub(super) fn extras(&self, kernel: Kernel, n: u64) -> Result<Vec<&Storage>, KernelError> {
+        Ok(match kernel {
+            Kernel::Crc32Chunks => vec![self.crc_table()?],
+            Kernel::HexLower if n >= 16 && n.is_multiple_of(16) => vec![self.hex_table()?],
+            _ => Vec::new(),
+        })
+    }
+
+    /// The hex table on the device, made once.
+    fn hex_table(&self) -> Result<&Storage, KernelError> {
+        self.small_table(&self.hex_table, || {
+            (0..256u32)
+                .flat_map(|byte| {
+                    let digit = |n: u32| n + 48 + if n > 9 { 39 } else { 0 };
+                    (digit(byte >> 4) | (digit(byte & 15) << 8)).to_le_bytes()
+                })
+                .collect()
+        })
+    }
+
+    /// A small table, made on the device the first time and kept.
+    pub(super) fn small_table<'a>(
+        &self,
+        cell: &'a OnceLock<Storage>,
+        bytes: impl FnOnce() -> Vec<u8>,
+    ) -> Result<&'a Storage, KernelError> {
+        if let Some(table) = cell.get() {
+            return Ok(table);
+        }
+        let data = bytes();
+        let made = Storage::zeroed(Arc::clone(&self.context), (data.len() as u64).max(4))
+            .map_err(KernelError::Storage)?;
+        made.write(0, &data).map_err(KernelError::Storage)?;
+        Ok(cell.get_or_init(|| made))
+    }
+
     /// Records `kernel` over `n` elements of `src` into `dst`, as one compute pass in `encoder`.
     /// Nothing is submitted. Base64 decode is [`Kernels::base64_decode`], which also reads what
     /// the op reports.
@@ -304,13 +379,14 @@ impl Kernels {
         if kernel == Kernel::Crc32Chunks {
             return self.encode_crc32_chunks(encoder, src, dst, n);
         }
+        let extras = self.extras(kernel, n)?;
         self.encode_with(
             (&mut OpenPass::default(), encoder),
             kernel,
             src,
             dst,
             n,
-            None,
+            &extras,
         )
     }
 
@@ -351,7 +427,7 @@ impl Kernels {
             Kernel::F32ToUnorm8 if n >= 16 && n.is_multiple_of(16) => (WIDE_UNORM8, n / 16),
             Kernel::HexLower if n >= 16 && n.is_multiple_of(16) => (WIDE_HEX, n / 16),
             Kernel::Base64Encode if n >= 48 && n.is_multiple_of(48) => (WIDE_B64_ENC, n / 48),
-            Kernel::Base64Decode if n >= 64 && n.is_multiple_of(64) => (WIDE_B64_DEC, n / 64),
+            Kernel::Base64Decode if super::codec::decode_vector(n) => (WIDE_B64_DEC, n / 64),
             _ => (kernel.index(), kernel.threads(n)),
         };
         let groups = threads.div_ceil(u64::from(WORKGROUP));
@@ -379,24 +455,22 @@ impl Kernels {
         src: &Storage,
         dst: &Storage,
         n: u64,
-        extra: Option<&Storage>,
+        extras: &[&Storage],
     ) -> Result<(), KernelError> {
         let Some((params, counts, spec)) = self.plan(kernel, src, dst, n)? else {
             return Ok(());
         };
         let shader = self.shader(spec)?;
-        let plain = [
-            Bound::Storage(src),
-            Bound::Storage(dst),
-            Bound::Storage(&params),
-        ];
-        let with = extra.map(|extra| [plain[0], plain[1], plain[2], Bound::Storage(extra)]);
-        let bound: &[Bound<'_>] = match &with {
-            Some(with) => with,
-            None => &plain,
-        };
+        // The plain bindings, then the op's extra ones in the order its spec lists them.
+        let mut bound = [Bound::Storage(src); 6];
+        bound[1] = Bound::Storage(dst);
+        bound[2] = Bound::Storage(&params);
+        for (slot, extra) in bound[3..].iter_mut().zip(extras) {
+            *slot = Bound::Storage(extra);
+        }
+        let count = 3 + extras.len();
         shader
-            .encode_sized_in(open, encoder, bound, counts)
+            .encode_sized_in(open, encoder, &bound[..count], counts)
             .map_err(KernelError::Shader)
     }
 
@@ -506,23 +580,20 @@ impl Batch<'_> {
         dst: &Storage,
         n: u64,
     ) -> Result<(), KernelError> {
-        let extra = match kernel {
-            Kernel::Base64Decode => {
-                return Err(KernelError::Size(
-                    "base64 decode reports a length: run it with `base64_decode`".into(),
-                ));
-            }
-            Kernel::Crc32Chunks => Some(self.kernels.crc_table()?),
-            _ => None,
-        };
+        if kernel == Kernel::Base64Decode {
+            return Err(KernelError::Size(
+                "base64 decode reports a length: run it with `base64_decode`".into(),
+            ));
+        }
+        let extras = self.kernels.extras(kernel, n)?;
         #[cfg(target_os = "linux")]
         if let Some(ops) = &mut self.chained {
-            return super::chained::add(self.kernels, ops, kernel, [src, dst], n, extra);
+            return super::chained::add(self.kernels, ops, kernel, [src, dst], n, &extras);
         }
         match &mut self.encoded {
             Some((open, encoder)) => {
                 self.kernels
-                    .encode_with((open, encoder), kernel, src, dst, n, extra)
+                    .encode_with((open, encoder), kernel, src, dst, n, &extras)
             }
             None => Ok(()),
         }

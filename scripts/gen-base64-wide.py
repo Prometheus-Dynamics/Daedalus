@@ -75,7 +75,7 @@ def decode():
         out.append(f"        let g = 16u * t + {j}u;")
         out.append(f"        let used = select(4u, 4u - pad, g == last);")
         for k in range(4):
-            out.append(f"        let d{k} = b64_value((s >> {8 * k}u) & 0xffu);")
+            out.append(f"        let d{k} = dec_table[(s >> {8 * k}u) & 0xffu];")
             out.append(f"        first = min(first, select(0xffffffffu, 4u * g + {k}u, {k}u < used && d{k} == 0xffu));")
         parts = [f"select(0u, (d{k} & 63u) << {18 - 6 * k}u, {k}u < used)" for k in range(4)]
         out.append(f"        let x = {' | '.join(parts)};")
@@ -120,6 +120,8 @@ def main():
         "@group(0) @binding(2) var<storage, read> params: Params;",
         "// decode: [offset of the first invalid symbol, or 0xffffffff; decoded length].",
         "@group(0) @binding(3) var<storage, read_write> status: array<atomic<u32>>;",
+        "// decode: the six bits of each byte, or 0xff for a byte that is no symbol.",
+        "@group(0) @binding(4) var<storage, read> dec_table: array<u32>;",
         "",
     ]
     text = "\n".join(header) + "\n" + encode() + "\n\n" + decode() + "\n"
