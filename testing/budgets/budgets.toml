@@ -101,9 +101,10 @@ name = "alloc_detector_frame"
 measure = "allocations per frame of the detector-shaped graph"
 tool = "alloc"
 dev = 0
-# Zero. The graph's outputs, including the three the host reads, are kept for reuse by their
-# producer. A host that takes a value with `take_value` or `take_copy` takes no copy; a host
-# typed `take::<T>` copies a value that the producer still holds (see docs/design.md).
+# Zero. The graph's outputs are kept for reuse by their producer. The three the host reads move
+# to it through the cell the producer refills, so the host's typed `take::<T>` moves them with no
+# copy. `detections` is also read by a node, so a host typed take of it copies it
+# (see docs/design.md).
 limit = 0
 
 # --- Flash and static RAM: ELF section sizes of the five-node firmware. ---------------------------

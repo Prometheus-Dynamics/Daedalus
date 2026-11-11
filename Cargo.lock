@@ -647,7 +647,6 @@ dependencies = [
  "daedalus-types",
  "daedalus-value",
  "defmt",
- "spin",
 ]
 
 [[package]]
@@ -1016,6 +1015,7 @@ dependencies = [
  "daedalus-types",
  "daedalus-value",
  "libc",
+ "spin",
 ]
 
 [[package]]

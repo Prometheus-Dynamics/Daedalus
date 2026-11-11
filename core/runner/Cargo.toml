@@ -9,7 +9,7 @@ repository.workspace = true
 [features]
 default = ["alloc"]
 # Shared and typed payloads, which need the heap to be built.
-alloc = ["daedalus-abi/alloc", "daedalus-value/alloc"]
+alloc = ["daedalus-abi/alloc", "daedalus-value/alloc", "dep:spin"]
 # Panics in bodies become faults instead of unwinding.
 std = ["alloc", "daedalus-abi/std", "dep:libc"]
 # The parallel lanes: a worker pool and the shared ready queue.
@@ -22,6 +22,7 @@ heap_free = true
 daedalus-abi = { path = "../abi", default-features = false }
 daedalus-plan = { path = "../plan", default-features = false }
 daedalus-value = { path = "../value", default-features = false }
+spin = { workspace = true, optional = true }
 daedalus-types = { path = "../types", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]

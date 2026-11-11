@@ -127,11 +127,17 @@ fn output_sharing(cx: &Compiling<'_>, formed: &Formed) -> Vec<OutputSharing> {
 }
 
 fn sharing_of(cx: &Compiling<'_>, backend: BackendIndex, consumers: &[(&str, u32)]) -> Sharing {
+    // The host's only reader takes the value out of the port, so it is the one taker, and the
+    // value moves to it. With a reader on a node as well, the host shares the value as a reader.
+    if let [(_, node)] = consumers
+        && matches!(cx.assignment.placed[*node as usize], Placed::Host)
+    {
+        return Sharing::Taker;
+    }
     let mut by_value = Vec::with_capacity(consumers.len());
     for &(port, node) in consumers {
         match cx.assignment.placed[node as usize] {
-            // The host reads the value as a shared handle. Its typed take copies a value that another
-            // holder still has, so a host typed take of such an output copies it each tick.
+            // The host reads alongside a node. Its typed take copies a value a node still holds.
             Placed::Host => by_value.push(false),
             // Another backend may take the value in its own way, so the value is not kept.
             Placed::Backend(at) if at != backend => return Sharing::Fresh,
