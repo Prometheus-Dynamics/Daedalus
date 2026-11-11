@@ -460,17 +460,6 @@ impl Shader {
         self.dispatch_in(open, encoder, bound, counts)
     }
 
-    /// [`Shader::encode_in`] with the workgroup counts given.
-    pub(crate) fn encode_sized_in(
-        &self,
-        open: &mut OpenPass,
-        encoder: &mut wgpu::CommandEncoder,
-        bound: &[Bound<'_>],
-        counts: [u32; 3],
-    ) -> Result<(), ShaderError> {
-        self.dispatch_in(open, encoder, bound, counts)
-    }
-
     /// Records the copies that fill uniforms whose bytes are on the device. `bound` has been
     /// checked.
     fn copy_uniforms(&self, encoder: &mut wgpu::CommandEncoder, bound: &[Bound<'_>]) {

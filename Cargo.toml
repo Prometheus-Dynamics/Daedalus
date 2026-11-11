@@ -96,13 +96,6 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 
-# The kernels are vectorized by the optimizer: debug builds must run the vector code,
-# so the conformance tests check it.
-[profile.dev.package.daedalus-kernels-sys]
-opt-level = 3
-overflow-checks = false
-debug-assertions = false
-
 # Firmware size profile.
 [profile.chip]
 inherits = "release"

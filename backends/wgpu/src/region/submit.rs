@@ -403,7 +403,6 @@ impl RegionStep {
                     open.close();
                     let mut cx = RecordCx {
                         device: &self.context.device,
-                        context: &self.context,
                         encoder: &mut *encoder,
                         inputs: &given[..node.sources.len()],
                         outputs: &written[..node.makes.len()],

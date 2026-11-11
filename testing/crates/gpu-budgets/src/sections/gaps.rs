@@ -141,7 +141,7 @@ pub fn busy(backend: &WgpuBackend) {
     let dst = Storage::new(backend, n * 4).expect("a buffer");
     src.write(0, &vec![1u8; (n * 4) as usize])
         .expect("in range");
-    let shader = chain_shader(backend, &[&daedalus_wgpu::kernels::HALF_TO_F32]).expect("merges");
+    let shader = chain_shader(backend, &[&daedalus_wgpu_conformance::TRIPLE]).expect("merges");
     let mut per_call = Vec::with_capacity(RUNS);
     let mut answered = 0usize;
     for _ in 0..(WARM + RUNS) {
@@ -258,20 +258,11 @@ pub fn heap_read(backend: &WgpuBackend) {
     // The same read again, after the one-byte reads, as a check on what the first read left behind.
     // The reference reads after a GPU kernel has written the imported buffer. Here the device
     // writes the storage (a copy from a host-written source), then the same sync and read run.
-    let kernels = daedalus_wgpu::kernels::Kernels::new(backend).expect("a device");
+    let copy = daedalus_wgpu_conformance::Op::new(backend, &daedalus_wgpu_conformance::COPY);
     let source = Storage::new(backend, bytes as u64).expect("a buffer");
     source.write(0, &payload).expect("in range");
     let gpu_write = |storage: &Storage| {
-        kernels
-            .run(
-                daedalus_wgpu::kernels::Kernel::Copy,
-                &source,
-                storage,
-                bytes as u64,
-            )
-            .expect("runs")
-            .wait()
-            .expect("finishes");
+        copy.run(&source, storage).wait().expect("finishes");
     };
     gpu_write(&storage);
     let timed_after_gpu = |bytes_out: &mut [u8]| -> std::time::Duration {

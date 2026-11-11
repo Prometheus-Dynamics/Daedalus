@@ -15,7 +15,6 @@ use daedalus_camera_fixture::{Camera, Error, capture_nodes};
 use daedalus_dma_sys::{Access, DmaBuf};
 use daedalus_wgpu::dmabuf::{ExternalImage, ExternalPlane, Fourcc, ImportError};
 use daedalus_wgpu::image::{ExternalBuffer, ImageCopy};
-use daedalus_wgpu::kernels::{Kernel, Kernels};
 use daedalus_wgpu::{Format, Options, Storage, TextureDesc, WgpuBackend};
 
 /// Frames streamed in rotation over the camera's buffers.
@@ -130,7 +129,7 @@ fn real_camera_frames_import_and_read_the_bytes_the_host_sees() {
         fourcc: Fourcc::R8,
         planes: vec![(0, stride)],
     };
-    let kernels = Kernels::new(&backend).expect("a device");
+    let copy = daedalus_wgpu_conformance::Op::new(&backend, &daedalus_wgpu_conformance::COPY);
     let image = ImageCopy::new(
         &backend,
         TextureDesc {
@@ -169,11 +168,7 @@ fn real_camera_frames_import_and_read_the_bytes_the_host_sees() {
         seen[index % 64] = true;
 
         let start = Instant::now();
-        kernels
-            .run(Kernel::Copy, &imported.storage, &out, len as u64)
-            .expect("runs")
-            .wait()
-            .expect("finishes");
+        copy.run(&imported.storage, &out).wait().expect("finishes");
         copy_times.push(start.elapsed());
         let on_device = read_back(&out, len);
         let host = host_bytes(camera.dmabuf(frame.index).expect("an export"), len);

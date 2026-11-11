@@ -5,9 +5,9 @@ use std::any::Any;
 
 use daedalus_abi::StepEnd;
 use daedalus_abi::testing::release;
-use daedalus_kernels_sys::reference as r;
-use daedalus_wgpu::kernels::{F32_TO_UNORM8, HALF_TO_F32};
-use daedalus_wgpu_conformance::{AFFINE, In, Net, filled, measure, port, private, run, words};
+use daedalus_wgpu_conformance::{
+    AFFINE, FLIP, In, Net, TRIPLE, filled, measure, port, private, run, triple_flip, words,
+};
 
 type Code = &'static (dyn Any + Send + Sync);
 
@@ -18,7 +18,7 @@ fn halves() -> Vec<u32> {
 #[test]
 fn a_chain_is_one_pipeline_and_one_pass_and_gives_what_its_bodies_give() {
     let Some(backend) = private() else { return };
-    let chain: [Code; 2] = [&HALF_TO_F32, &F32_TO_UNORM8];
+    let chain: [Code; 2] = [&TRIPLE, &FLIP];
     let net = Net::line(&chain);
     let (unit, built) = measure(&backend, || {
         net.compile(&backend, &[port(1, 0)]).expect("compiles")
@@ -48,12 +48,8 @@ fn a_chain_is_one_pipeline_and_one_pass_and_gives_what_its_bodies_give() {
     }
     assert_eq!(merged, words(&value), "bit for bit");
 
-    // And what the CPU kernels give for every binary16 value.
-    let bytes: Vec<u8> = (0..=u16::MAX).flat_map(u16::to_le_bytes).collect();
-    let want: Vec<u32> = r::f32_to_unorm8(&r::f16_to_f32(&bytes))
-        .into_iter()
-        .map(u32::from)
-        .collect();
+    // And what the two functions give, worked out here.
+    let want: Vec<u32> = halves().into_iter().map(triple_flip).collect();
     assert_eq!(merged, want);
 
     // The same chain compiled again builds nothing.
@@ -68,13 +64,7 @@ fn a_chain_is_one_pipeline_and_one_pass_and_gives_what_its_bodies_give() {
 fn a_whole_shader_cuts_the_chain_around_it() {
     let Some(backend) = private() else { return };
     // Two pixel bodies, a shader that isn't one, two more: a pass, a pass, a pass.
-    let codes: [Code; 5] = [
-        &HALF_TO_F32,
-        &F32_TO_UNORM8,
-        &AFFINE,
-        &HALF_TO_F32,
-        &F32_TO_UNORM8,
-    ];
+    let codes: [Code; 5] = [&TRIPLE, &FLIP, &AFFINE, &TRIPLE, &FLIP];
     let net = Net::line(&codes);
     let mut unit = net.compile(&backend, &[port(4, 0)]).expect("compiles");
     assert_eq!(unit.info.covers, net.nodes(), "still one step");
@@ -96,17 +86,12 @@ fn a_whole_shader_cuts_the_chain_around_it() {
         (3, 1, 1)
     );
 
-    let convert = |values: &[u32]| -> Vec<u32> {
-        let bytes: Vec<u8> = values
-            .iter()
-            .flat_map(|v| (*v as u16).to_le_bytes())
-            .collect();
-        r::f32_to_unorm8(&r::f16_to_f32(&bytes))
-            .into_iter()
-            .map(u32::from)
-            .collect()
-    };
-    let middle: Vec<u32> = convert(&input).iter().map(|x| x * 2 + 1).collect();
+    let convert =
+        |values: &[u32]| -> Vec<u32> { values.iter().copied().map(triple_flip).collect() };
+    let middle: Vec<u32> = convert(&input)
+        .iter()
+        .map(|x| x.wrapping_mul(2).wrapping_add(1))
+        .collect();
     assert_eq!(
         words(ran.outputs[0].as_ref().expect("an output")),
         convert(&middle)

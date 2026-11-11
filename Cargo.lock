@@ -446,13 +446,6 @@ name = "daedalus-abi"
 version = "3.0.1-dev"
 
 [[package]]
-name = "daedalus-accel"
-version = "3.0.1-dev"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "daedalus-author-fixture"
 version = "3.0.1-dev"
 dependencies = [
@@ -512,6 +505,7 @@ dependencies = [
  "daedalus-camera-fixture-sys",
  "daedalus-dma-sys",
  "daedalus-wgpu",
+ "daedalus-wgpu-conformance",
 ]
 
 [[package]]
@@ -711,18 +705,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "daedalus-dmabuf"
-version = "3.0.1-dev"
-dependencies = [
- "daedalus-abi",
- "daedalus-backend",
- "daedalus-conformance",
- "daedalus-dma-sys",
- "daedalus-runner",
- "daedalus-types",
-]
-
-[[package]]
 name = "daedalus-example-basics"
 version = "3.0.1-dev"
 dependencies = [
@@ -837,7 +819,6 @@ dependencies = [
  "daedalus-backend",
  "daedalus-dma-sys",
  "daedalus-graph",
- "daedalus-kernels-sys",
  "daedalus-macros",
  "daedalus-registry",
  "daedalus-runner",
@@ -889,20 +870,6 @@ dependencies = [
  "daedalus-wire",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "daedalus-inventory"
-version = "3.0.1-dev"
-dependencies = [
- "daedalus-accel",
-]
-
-[[package]]
-name = "daedalus-kernels-sys"
-version = "3.0.1-dev"
-dependencies = [
- "daedalus-accel",
 ]
 
 [[package]]
@@ -1125,7 +1092,6 @@ dependencies = [
  "daedalus-backend",
  "daedalus-dma-sys",
  "daedalus-graph",
- "daedalus-kernels-sys",
  "daedalus-planner",
  "daedalus-planner-tests",
  "daedalus-registry",
@@ -1165,7 +1131,6 @@ dependencies = [
  "daedalus-conformance",
  "daedalus-gpu-budgets",
  "daedalus-graph",
- "daedalus-kernels-sys",
  "daedalus-runner",
  "daedalus-types",
  "daedalus-wgpu",

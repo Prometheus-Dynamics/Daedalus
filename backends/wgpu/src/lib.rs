@@ -19,7 +19,6 @@ pub mod handoff;
 mod host_bytes;
 pub mod image;
 mod inflight;
-pub mod kernels;
 mod loss;
 mod memory;
 pub mod merge;

@@ -1,27 +1,13 @@
-//! The cost of a submit that has nothing to wait for, and of polling a ticket.
+//! The cost of polling a ticket.
 
 use std::time::Instant;
 
-use daedalus_wgpu::kernels::{Kernel, Kernels};
 use daedalus_wgpu::{Storage, WgpuBackend};
 
-use super::{MIB, RUNS, WARM, median, median_of, us};
+use super::{MIB, RUNS, WARM, median_of, us};
 
 pub fn run(backend: &WgpuBackend) {
-    let kernels = Kernels::new(backend).expect("a device");
-    // An empty submit, with no pass recorded, and an empty batch, with its pass opened and closed.
-    let bare = median(WARM, RUNS, || {
-        kernels.submit(kernels.encoder()).wait().expect("finishes");
-    });
-    let empty_pass = median(WARM, RUNS, || {
-        kernels.batch().submit().wait().expect("finishes");
-    });
-    println!(
-        "submit to done, nothing recorded: {:.1} us; an empty batch (one pass): {:.1} us",
-        us(bare),
-        us(empty_pass)
-    );
-
+    let copy = daedalus_wgpu_conformance::Op::new(backend, &daedalus_wgpu_conformance::COPY);
     // Polling a ticket that is still pending: a 16 MiB copy, polled once straight after submit.
     let n = 16 * MIB;
     let src = Storage::new(backend, n).expect("a buffer");
@@ -30,7 +16,7 @@ pub fn run(backend: &WgpuBackend) {
     let mut pending_polls = Vec::with_capacity(RUNS);
     let mut pending_count = 0usize;
     for round in 0..(WARM + RUNS) {
-        let ticket = kernels.run(Kernel::Copy, &src, &dst, n).expect("runs");
+        let ticket = copy.run(&src, &dst);
         let start = Instant::now();
         let done = ticket.is_done();
         let took = start.elapsed();
@@ -43,7 +29,7 @@ pub fn run(backend: &WgpuBackend) {
         ticket.wait().expect("finishes");
     }
     // Polling a ticket that has finished, which a step pays on every later run.
-    let finished = kernels.run(Kernel::Copy, &src, &dst, 4096).expect("runs");
+    let finished = copy.run(&src, &dst);
     finished.wait().expect("finishes");
     let mut done_polls = Vec::with_capacity(10_000);
     for _ in 0..10_000 {

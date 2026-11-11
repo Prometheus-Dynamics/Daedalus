@@ -437,7 +437,10 @@ owned declarations that a worker sends when it starts.
 - There is no frame type, no frame library, and no dependency on Lemnos. Device selection is in
   the wgpu backend. Pixel conversions and colorimetry are not carried: they belong to whoever owns
   the type.
-- Kernels are `backends/kernels-sys` (SIMD needs `unsafe`), usable by any backend.
+- There is no library of byte kernels (copy, hex, base64, CRC, float conversions) and no
+  acceleration matrix for one. Nothing in Daedalus calls such functions: a node that needs one
+  brings it.
+- There is no memory-only backend. A backend that runs nodes names its own memory spaces.
 - The generic foreign-owner and layout-hash code is `core/value`'s `foreign` module (A14).
 - Bytes in graph JSON use a small hex encoder inside `core/graph`. Speed doesn't matter while
   planning, and the worker and service wires are binary.

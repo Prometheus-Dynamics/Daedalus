@@ -163,7 +163,7 @@ That is `origin/dev` when this audit was written. Its crate directories:
 
 | Capability | On dev | Replaced by |
 |---|---|---|
-| Acceleration inventory and backend matrix | `crates/accel`, `crates/kernels` | D8 |
+| Acceleration inventory and backend matrix | `crates/accel`, `crates/kernels` | dropped: nothing in Daedalus calls a byte kernel |
 | WGSL inference | `crates/wgsl-infer` | E4 |
 | The accelerator interface | `crates/accelerator` | dropped: the Backend trait (A7) covers it, and I1 is the NPU case |
 
