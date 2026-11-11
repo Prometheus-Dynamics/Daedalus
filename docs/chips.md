@@ -61,7 +61,10 @@ A `#[node]` needs nothing to run on both. `examples/chip_shared` declares its no
 
 ## Measurements
 
-Five-node blink graph, profile `chip`, measured by `scripts/ci.d/chip.sh`:
+Every figure here is from `scripts/ci.d/chip.sh`, on the commit and toolchain in
+[`testing/board-runs/F1.md`](../testing/board-runs/F1.md). Nothing here was measured on a board.
+
+Five-node blink graph, profile `chip`:
 
 | Target | Flash | RAM |
 | --- | --- | --- |
@@ -70,18 +73,14 @@ Five-node blink graph, profile `chip`, measured by `scripts/ci.d/chip.sh`:
 
 Budget: 12 KiB flash, 584 B RAM. The figures are pinned exactly, so a change that moves them has to say so in the same commit.
 
-The blink graph in its three modes, in bytes, from `scripts/ci.d/chip.sh`:
+The blink graph in its three modes, in bytes:
 
 | Mode (binary) | `thumbv7em-none-eabihf` flash | `thumbv6m-none-eabi` flash | RAM | Budget |
 | --- | --- | --- | --- | --- |
 | Compiled (`daedalus-chip-blink`) | 2128 | 2672 | 112 | 12 KiB, 584 B, pinned exactly |
-| Tunable, 4 parameters (`-tunable`) | 4360 | 5568 | 128 | 6 KiB, 512 B |
-| Stored plans, a 7-node library and two plans (`-loaded`) | 15976 | 17456 | 576 | 17.5 KiB, 584 B |
+| Tunable, 4 parameters (`-tunable`) | 4368 | 5592 | 128 | 6 KiB, 512 B |
+| Stored plans, a 7-node library and two plans (`-loaded`) | 16064 | 17612 | 576 | 17.5 KiB, 584 B |
 
-Of the stored-plan flash on the M4: 1024 is the vector table, about 6 KiB checks and lays out a
-plan, 2.4 KiB runs one, 1.5 KiB is `memcpy` and its relatives, 1.4 KiB is the seven node bodies,
-1124 the two stored plans and 600 the library's table. The runner's RAM is zeroed memory, so it
-takes no flash. The plans need 505 and 418 of the 512 arena bytes on a 32-bit chip, and the fan-in
-plans 644 and 561, so a firmware that loads those needs a larger arena.
+The runner's RAM is zeroed memory, so it takes no flash.
 
-The Pico firmware, with all three modes, the HAL and defmt, is 18836 B flash and 1928 B RAM (1 KiB of that is the defmt-RTT buffer). Budget: 20 KiB, 2 KiB.
+The Pico firmware, with all three modes, the HAL and defmt, is 19220 B flash and 1928 B RAM. Budget: 20 KiB, 2 KiB.
