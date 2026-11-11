@@ -1,0 +1,25 @@
+[package]
+name = "daedalus-cpu-timings"
+description = "The CPU timings that board runs record: a host's round trip and idle step, the tick probe's cost, and a dylib plugin's tick. Run on a board, not in the gate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-abi = { path = "../../../core/abi" }
+daedalus-budget-harness = { path = "../budget-harness" }
+daedalus-cpu = { path = "../../../backends/cpu" }
+daedalus-cpu-author = { path = "../../../backends/cpu-author" }
+daedalus-graph = { path = "../../../core/graph" }
+daedalus-host = { path = "../../../core/host" }
+daedalus-macros = { path = "../../../core/macros" }
+daedalus-plan = { path = "../../../core/plan" }
+daedalus-planner = { path = "../../../core/planner" }
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-runner = { path = "../../../core/runner" }
+daedalus-types = { path = "../../../core/types" }
+
+[lints]
+workspace = true
