@@ -5,8 +5,8 @@ mod common;
 
 use std::sync::Arc;
 
-use daedalus_abi::testing::{release, run_once};
-use daedalus_abi::{Slot, Slots, Step, StepCx, StepEnd};
+use daedalus_abi::testing::{release, run_once, wait_fence};
+use daedalus_abi::{FencePoll, Slot, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{Backend, CompileCx, TransferCost, find_transfer};
 use daedalus_runner::{drop_owned, put_inline, put_shared, put_typed, take_typed};
 use daedalus_types::{SpaceIndex, TypeIndex, TypeKey};
@@ -296,7 +296,16 @@ fn the_heap_readback_lands_in_dma_heap_memory() {
     let mut cell = Slot::EMPTY;
     put_typed(&mut cell, TY, SPACE, on_device);
     let (end, mut out, why) = through(&mut readback, cell);
-    assert!(matches!(end, StepEnd::Pending(_)), "{why}");
+    let StepEnd::Pending(fence) = end else {
+        panic!("the readback should be pending: {why}");
+    };
+    // The heap buffer is host-mapped, so it is read in place: the copy has to finish first. A
+    // device read would wait for it; this read doesn't.
+    assert_eq!(
+        wait_fence(&fence, 50_000_000),
+        FencePoll::Ready,
+        "the readback finishes"
+    );
     let heap = take_typed::<Storage>(&mut out).expect("a buffer");
     assert_eq!(heap.space(), SPACE_DMA_HEAP);
     let mut seen = vec![0u8; 4004];

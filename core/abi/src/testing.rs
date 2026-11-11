@@ -5,7 +5,7 @@
 //! come from `Step::of`, `Step::boxed` or a backend's `compile`, which is why they sit behind
 //! `test-run` and are not for production use.
 
-use crate::{Slots, Step, StepCx, StepEnd};
+use crate::{Fence, FencePoll, Slots, Step, StepCx, StepEnd};
 
 /// Calls the step once.
 pub fn run_once(step: &mut Step, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
@@ -17,4 +17,21 @@ pub fn run_once(step: &mut Step, slots: &mut Slots, cx: &mut StepCx) -> StepEnd 
 /// Frees what the step owns. Call it once, when finished with the step.
 pub fn release(step: Step) {
     step.discard();
+}
+
+/// Polls a pending step's fence until it is not pending, for at most `polls` polls, and says what
+/// the last poll found. A step's output is read once it says so: a host-mapped buffer is read in
+/// place, so the work that wrote it has to finish first.
+pub fn wait_fence(fence: &Fence, polls: u64) -> FencePoll {
+    let mut last = FencePoll::Pending;
+    for _ in 0..polls {
+        // SAFETY: the fence is one a step returned, and the step's contract keeps its work until
+        // the fence is ready, as the runner relies on when it polls.
+        last = unsafe { fence.poll() };
+        if last != FencePoll::Pending {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    last
 }
