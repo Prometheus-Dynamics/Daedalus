@@ -788,6 +788,8 @@ version = "3.0.1-dev"
 dependencies = [
  "daedalus-abi",
  "daedalus-backend",
+ "daedalus-dma-sys",
+ "daedalus-kernels-sys",
  "daedalus-runner",
  "daedalus-types",
  "daedalus-wgpu",

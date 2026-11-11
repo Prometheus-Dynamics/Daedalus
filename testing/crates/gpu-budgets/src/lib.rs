@@ -165,7 +165,7 @@ pub fn merged_chain(backend: &WgpuBackend, pairs: usize, len: u32) -> (Counted, 
     (built, warm)
 }
 
-fn transfer(backend: &WgpuBackend, id: &str) -> Step {
+pub fn transfer(backend: &WgpuBackend, id: &str) -> Step {
     let cx = CompileCx {
         types: &[],
         consts: &[],
@@ -183,7 +183,7 @@ fn transfer(backend: &WgpuBackend, id: &str) -> Step {
     (found.make)(&cx).expect("a step")
 }
 
-fn through(step: &mut Step, input: Slot) -> Slot {
+pub fn through(step: &mut Step, input: Slot) -> Slot {
     let mut cells = [input, Slot::EMPTY];
     let mut cx = StepCx::new();
     let end = run_once(step, &mut Slots::of(&mut cells), &mut cx);

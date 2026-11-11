@@ -1,6 +1,7 @@
 //! The measurement tool for the timed GPU budgets. It runs on boards and by hand, not in the
 //! gate: `cargo run --release -p daedalus-gpu-budgets -- [section ...]`, with the sections
-//! `limits`, `batching`, `allocation`, `dispatch-floor` and `readback`, or none for all.
+//! `limits`, `batching`, `allocation`, `dispatch-floor`, `readback`, `kernels`, `images`,
+//! `transfers`, `chains`, `fences` and `alloc16`, or none for all.
 //! Times are the best of the runs, since a budget is what the device can do.
 #![allow(clippy::print_stdout)] // the measurements are this program's output
 
@@ -14,12 +15,20 @@ use daedalus_wgpu::{Options, Storage, WgpuBackend};
 #[global_allocator]
 static COUNTING: CountingAlloc = CountingAlloc;
 
-const SECTIONS: [&str; 5] = [
+mod sections;
+
+const SECTIONS: [&str; 11] = [
     "limits",
     "batching",
     "allocation",
     "dispatch-floor",
     "readback",
+    "kernels",
+    "images",
+    "transfers",
+    "chains",
+    "fences",
+    "alloc16",
 ];
 const RUNS: usize = 200;
 
@@ -186,6 +195,15 @@ fn main() -> std::process::ExitCode {
             "batching" => batching(&backend),
             "allocation" => allocation(&backend),
             "dispatch-floor" => dispatch_floor(&backend),
+            "kernels" => sections::kernels::run(&backend),
+            #[cfg(target_os = "linux")]
+            "images" => sections::images::run(&backend),
+            #[cfg(not(target_os = "linux"))]
+            "images" => println!("images: skipped, the dma-buf import is Linux only"),
+            "transfers" => sections::transfers::run(&backend),
+            "chains" => sections::chains::run(&backend),
+            "fences" => sections::fences::run(&backend),
+            "alloc16" => sections::allocations::run(),
             _ => readback(&backend),
         }
     }
