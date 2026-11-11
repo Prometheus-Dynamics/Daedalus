@@ -141,7 +141,11 @@ impl TextureDesc {
 
     /// Checks `len` bytes laid out in rows of `bytes_per_row` against this description. The last
     /// row may stop at its last pixel.
-    pub fn validate_bytes(&self, bytes_per_row: u32, len: usize) -> Result<(), TextureError> {
+    pub(crate) fn validate_bytes(
+        &self,
+        bytes_per_row: u32,
+        len: usize,
+    ) -> Result<(), TextureError> {
         let pixel = self.format.bytes_per_pixel();
         let least = self.width.saturating_mul(pixel);
         if bytes_per_row < least || !bytes_per_row.is_multiple_of(pixel) {

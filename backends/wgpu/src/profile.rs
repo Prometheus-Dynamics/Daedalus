@@ -9,16 +9,16 @@ use crate::adapter::AdapterInfo;
 
 /// PCI vendor ids, or Khronos ids for vendors without one.
 pub mod vendor_ids {
-    pub const ARM: u32 = 0x13B5;
-    pub const BROADCOM: u32 = 0x14E4;
-    pub const QUALCOMM: u32 = 0x5143;
-    pub const IMAGINATION: u32 = 0x1010;
-    pub const APPLE: u32 = 0x106B;
+    pub(crate) const ARM: u32 = 0x13B5;
+    pub(crate) const BROADCOM: u32 = 0x14E4;
+    pub(crate) const QUALCOMM: u32 = 0x5143;
+    pub(crate) const IMAGINATION: u32 = 0x1010;
+    pub(crate) const APPLE: u32 = 0x106B;
     pub const NVIDIA: u32 = 0x10DE;
     pub const AMD: u32 = 0x1002;
-    pub const INTEL: u32 = 0x8086;
+    pub(crate) const INTEL: u32 = 0x8086;
     /// llvmpipe and lavapipe.
-    pub const MESA: u32 = 0x10005;
+    pub(crate) const MESA: u32 = 0x10005;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

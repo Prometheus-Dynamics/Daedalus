@@ -27,7 +27,7 @@ pub const fn settle(driver_closes_refused_fds: bool) -> Settled {
 /// the driver.
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
-pub struct Refusable(std::os::fd::OwnedFd);
+pub(crate) struct Refusable(std::os::fd::OwnedFd);
 
 #[cfg(target_os = "linux")]
 impl Refusable {

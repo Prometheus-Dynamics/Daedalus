@@ -38,7 +38,7 @@ impl Importer {
     /// The least each plane's memory has to hold on this device, which can be more than the
     /// layout's own end: the driver's padding is added. The import refuses memory shorter than
     /// this and says the size. It never reads less than the driver asks for.
-    pub fn required_len(&self, fourcc: Fourcc, layout: &Layout) -> Vec<u64> {
+    pub(crate) fn required_len(&self, fourcc: Fourcc, layout: &Layout) -> Vec<u64> {
         let mut needed = layout.min_len.clone();
         if self.family == Family::VideoCore
             && let Some(last) = needed.last_mut()
