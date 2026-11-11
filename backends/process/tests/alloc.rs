@@ -42,6 +42,7 @@ fn a_steady_state_run_allocates_nothing_on_the_host_thread() {
         inputs: &inputs,
         outputs: &outputs,
         incoming: &[],
+        placed: &[],
         rate: RateId(0),
     };
     let bodies = [NodeBody {

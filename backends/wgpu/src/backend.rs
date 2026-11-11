@@ -311,6 +311,24 @@ impl Backend for WgpuBackend {
         )
     }
 
+    /// A shader's output can be written straight into memory the host reads: dma-heap memory
+    /// where an open device imports it, which the host reads through its cache, and host-mapped
+    /// memory anywhere. The planner places an output there when the host is who reads it, and
+    /// then no readback is planned.
+    fn placements(&self) -> Vec<std::borrow::Cow<'static, str>> {
+        use crate::memory::{SPACE_DMA_HEAP, SPACE_HOST_MAPPED};
+        let device = self.device_name();
+        let heap = self
+            .open_context()
+            .is_some_and(|context| context.record.dma_heap);
+        let mut spaces = Vec::new();
+        if heap {
+            spaces.push(crate::handoff::on_device(device, SPACE_DMA_HEAP));
+        }
+        spaces.push(crate::handoff::on_device(device, SPACE_HOST_MAPPED));
+        spaces
+    }
+
     fn transfers(&self) -> Vec<Transfer> {
         // Only a device that is open is asked: a plan made before it opens offers the host-mapped
         // readback alone, and the heap route is then not planned for.

@@ -94,7 +94,13 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
         let mut failure = None;
         for (region, one) in formed.iter().enumerate() {
             let backend = backends[rank(one.backend)];
-            match compile_region(&cx, one, backend, &routing.incoming_of(region)) {
+            match compile_region(
+                &cx,
+                one,
+                backend,
+                &routing.incoming_of(region),
+                &routing.placed_of(&one.outputs),
+            ) {
                 Ok(compiled) => {
                     if let Err(error) = check_contract(one, region as u32, backend.id(), &compiled)
                     {

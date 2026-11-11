@@ -1,6 +1,6 @@
 //! The round trip: the host hands the graph words, one shader node runs on them on the device,
-//! and the host takes the result. The planner puts the upload before the node and the readback
-//! after it, since the host's memory isn't the device's.
+//! and the host takes the result. The planner puts the upload before the node, since the host's
+//! memory isn't the device's, and has the node write its result where the host reads it.
 
 use std::sync::Arc;
 
@@ -34,7 +34,7 @@ const GRAPH: &str = r#"{
   }
 }"#;
 
-/// The transfers the planner chose for the squared values' way back to the host, planned on the
+/// The transfers the planner chose for the squared values' way to the host, planned on the
 /// open `gpu` the way the round trip plans.
 pub fn readback_route(gpu: &daedalus_wgpu::WgpuBackend) -> Result<Vec<String>, String> {
     let planned = super::planned(GRAPH, &[&SQUARE_NODE], gpu)?;
@@ -54,12 +54,18 @@ pub fn readback_route(gpu: &daedalus_wgpu::WgpuBackend) -> Result<Vec<String>, S
 
 /// Squares `input` on the GPU and returns what came back.
 pub fn squared_on_gpu(input: &[u32]) -> Result<Vec<u32>, String> {
+    squared_words(input).map(|words| words.to_vec())
+}
+
+/// Squares `input` on the GPU and returns the host's `Words`, which on Vulkan are the buffer
+/// the shader wrote, read in place.
+pub fn squared_words(input: &[u32]) -> Result<Words, String> {
     let gpu = gpu()?;
     let mut loaded = load(GRAPH, &[&SQUARE_NODE], &gpu)?;
     let host = loaded.host();
     host.feed_typed("words", Arc::new(Words::new(input)))
         .map_err(|error| error.to_string())?;
-    take_when_ready(host, "squared").map(|words| words.to_vec())
+    take_when_ready(host, "squared")
 }
 
 /// Runs the round trip and checks it against the CPU. Returns the line the example prints.

@@ -388,6 +388,8 @@ pub struct Mem {
     /// (id, from, to, cost).
     pub moves: Vec<(&'static str, &'static str, &'static str, TransferCost)>,
     pub may_pend: bool,
+    /// Other spaces of its own its nodes can write an output into.
+    pub placements: Vec<&'static str>,
 }
 
 impl Backend for Mem {
@@ -417,6 +419,13 @@ impl Backend for Mem {
                 cost,
                 make: make_nop,
             })
+            .collect()
+    }
+
+    fn placements(&self) -> Vec<Cow<'static, str>> {
+        self.placements
+            .iter()
+            .map(|&id| Cow::Borrowed(id))
             .collect()
     }
 

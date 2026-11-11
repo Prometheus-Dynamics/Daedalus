@@ -95,6 +95,9 @@ pub trait Backend: Send + Sync {
     fn id(&self) -> &str;
     fn memory(&self) -> Vec<MemorySpace>;
     fn transfers(&self) -> Vec<Transfer>;
+    // Other spaces of its own its nodes can write an output into. The planner puts each output
+    // where its readers reach it most cheaply and says so in `Region::placed`. Default: none.
+    fn placements(&self) -> Vec<Cow<'static, str>>;
     fn can_take(&self, offer: &Offer) -> Vec<NodeRef>;
     fn compile(&self, region: &Region, cx: &CompileCx) -> Result<Compiled, Refusal>;
     // Makes the step for a `#[transfer]` this backend wrote. The default says it wrote none.

@@ -414,3 +414,65 @@ fn a_read_with_no_device_use_in_between_does_no_sync() {
     heap.read_into(0, &mut seen).expect("in range");
     assert_eq!(heap.cpu_access_syncs(), 2);
 }
+
+/// A host-mapped buffer's bytes are read where they are, and the host can't write them while
+/// they are lent. A buffer the host doesn't map is handed back.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_mapped_buffer_is_read_in_place_and_holds_off_host_writes() {
+    use daedalus_wgpu::MappedBytes;
+    use std::sync::Arc;
+    let Some(backend) = private() else { return };
+    let storage = Storage::new_host_mapped(&backend, 4096).expect("host-mapped");
+    if !storage.is_host_mapped() {
+        // Off Vulkan there is no mapping to lend.
+        let (back, _) = MappedBytes::new(Arc::new(storage)).expect_err("nothing mapped");
+        assert_eq!(back.size(), 4096);
+        return;
+    }
+    storage.write(0, &pattern(4096)).expect("in range");
+    let storage = Arc::new(storage);
+    let mapped = MappedBytes::new(Arc::clone(&storage)).expect("lent");
+    assert_eq!(&*mapped, &pattern(4096)[..]);
+    assert!(
+        storage.write(0, &[0; 4]).is_err(),
+        "the host doesn't write lent bytes"
+    );
+    let mut seen = [0u8; 8];
+    storage.read_into(8, &mut seen).expect("reads still copy");
+    assert_eq!(seen, pattern(4096)[8..16]);
+    drop(mapped);
+    storage
+        .write(0, &[1, 2, 3, 4])
+        .expect("written once let go");
+
+    let device = Arc::new(Storage::new(&backend, 4096).expect("a buffer"));
+    let (back, error) = MappedBytes::new(device).expect_err("device memory isn't lent");
+    assert_eq!(back.size(), 4096);
+    assert!(matches!(error, StorageError::Unsupported(_)), "{error}");
+}
+
+/// What the device wrote into a dma-heap buffer is read in place after one sync, and a second
+/// lend with no device use in between does no sync.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_heap_buffer_read_in_place_syncs_only_after_device_use() {
+    use daedalus_wgpu::MappedBytes;
+    use std::sync::Arc;
+    let Some(backend) = private() else { return };
+    let Some(heap) = heap_or_skip(&backend, 1 << 16) else {
+        return;
+    };
+    let source = Storage::new(&backend, 1 << 16).expect("a buffer");
+    let reversed: Vec<u8> = pattern(1 << 16).into_iter().rev().collect();
+    source.write(0, &reversed).expect("in range");
+    copy_on_device(&backend, &source, &heap);
+    let heap = Arc::new(heap);
+    let mapped = MappedBytes::new(Arc::clone(&heap)).expect("lent");
+    assert_eq!(&*mapped, &reversed[..], "the device's bytes, in place");
+    assert_eq!(heap.cpu_access_syncs(), 1);
+    drop(mapped);
+    let again = MappedBytes::new(Arc::clone(&heap)).expect("lent");
+    assert_eq!(again.len(), 1 << 16);
+    assert_eq!(heap.cpu_access_syncs(), 1, "no device use, no sync");
+}

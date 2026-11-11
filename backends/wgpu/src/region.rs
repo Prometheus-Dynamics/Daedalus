@@ -53,10 +53,37 @@ pub(crate) enum Size {
     Recorded { output: usize },
 }
 
+/// Where a buffer the region makes lives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Place {
+    /// Device memory: where a value read by other shaders is.
+    Device,
+    /// Memory the host has mapped.
+    Mapped,
+    /// A dma-buf from the system heap, which the host reads through its cache.
+    Heap,
+}
+
+/// Whether `here` leaves the region, as which output, and where the planner wants it written.
+fn published(backend: &WgpuBackend, region: &Region<'_>, here: PortRef) -> (Option<usize>, Place) {
+    use crate::memory::{SPACE_DMA_HEAP, SPACE_HOST_MAPPED};
+    let at = region.outputs.iter().position(|output| *output == here);
+    let device = backend.device_name();
+    let is = |space: &str, id| crate::handoff::on_device(device, id) == space;
+    let place = match at.and_then(|at| region.placed.get(at)) {
+        Some(space) if is(space, SPACE_DMA_HEAP) => Place::Heap,
+        Some(space) if is(space, SPACE_HOST_MAPPED) => Place::Mapped,
+        _ => Place::Device,
+    };
+    (at, place)
+}
+
 /// A buffer the region makes. One that leaves the region is handed to the runner each run, so
 /// the region keeps a few and reuses one nobody else still holds.
 pub(crate) struct Owned {
     pub(crate) size: Size,
+    /// Which memory the buffer is made in.
+    pub(crate) place: Place,
     /// The step's output cell this buffer is published in, if it leaves the region.
     pub(crate) publish: Option<usize>,
     pub(crate) kept: Vec<Arc<Storage>>,
@@ -207,6 +234,7 @@ fn source_for(
 /// that reads the first node's input and writes the last node's output. Nothing is written for
 /// the values in between.
 fn merged_node(
+    backend: &WgpuBackend,
     chain: &[NodeIndex],
     region: &Region<'_>,
     cx: &CompileCx<'_>,
@@ -266,13 +294,15 @@ fn merged_node(
                     node: tail,
                     port: PortIndex(0),
                 };
+                let (publish, place) = published(backend, region, here);
                 owned.push(Owned {
                     size: Size::Like {
                         position: 0,
                         of: specs[0].input_stride.max(1),
                         stride: specs[specs.len() - 1].output_stride.max(1),
                     },
-                    publish: region.outputs.iter().position(|output| *output == here),
+                    publish,
+                    place,
                     kept: Vec::new(),
                     current: 0,
                     texture: None,
@@ -343,7 +373,8 @@ pub(crate) fn compile(
         let body = body_of(index, cx)?;
         if let Some(chain) = chains.iter().find(|chain| chain.contains(&index)) {
             if chain.last() == Some(&index) {
-                let node = merged_node(chain, region, cx, &context, &mut owned, &mut made)?;
+                let node =
+                    merged_node(backend, chain, region, cx, &context, &mut owned, &mut made)?;
                 nodes.push(node);
             }
             continue;
@@ -381,11 +412,13 @@ pub(crate) fn compile(
                     node: index,
                     port: PortIndex(port),
                 };
+                let (publish, place) = published(backend, region, here);
                 owned.push(Owned {
                     size: Size::Recorded {
                         output: usize::from(port),
                     },
-                    publish: region.outputs.iter().position(|output| *output == here),
+                    publish,
+                    place,
                     kept: Vec::new(),
                     current: 0,
                     texture: None,
@@ -456,9 +489,11 @@ pub(crate) fn compile(
                 port: PortIndex(port as u16),
             };
             let position = position as usize;
+            let (publish, place) = published(backend, region, here);
             owned.push(Owned {
                 size: size_of(index, body, spec, position)?,
-                publish: region.outputs.iter().position(|output| *output == here),
+                publish,
+                place,
                 kept: Vec::new(),
                 current: 0,
                 texture: None,

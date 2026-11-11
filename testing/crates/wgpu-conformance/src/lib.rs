@@ -255,6 +255,7 @@ impl Net {
             inputs: &self.inputs,
             outputs,
             incoming: &[],
+            placed: &[],
             rate: RateId(0),
         };
         let cx = CompileCx {

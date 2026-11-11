@@ -10,7 +10,7 @@ mod uapi;
 
 use std::fmt;
 
-pub use buf::{Access, DmaBuf, DmaBufRef, Mapping};
+pub use buf::{Access, DmaBuf, DmaBufRef, Lent, Mapping};
 pub use heap::DmaHeap;
 pub use ident::Identity;
 pub use sync::{SyncFence, is_sync_file};
@@ -24,6 +24,8 @@ pub enum Error {
     NotSyncFile,
     /// An offset or length outside the mapping, or a size that can't be used.
     Range,
+    /// The mapping's bytes are lent out, so this process can't write them.
+    Lent,
 }
 
 impl Error {
@@ -43,6 +45,7 @@ impl fmt::Display for Error {
             Error::Os(errno) => write!(f, "{}", std::io::Error::from_raw_os_error(*errno)),
             Error::NotSyncFile => f.write_str("the fd isn't a sync_file"),
             Error::Range => f.write_str("outside the mapping"),
+            Error::Lent => f.write_str("the mapping's bytes are lent out"),
         }
     }
 }

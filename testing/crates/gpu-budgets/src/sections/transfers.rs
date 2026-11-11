@@ -82,6 +82,7 @@ pub fn run(backend: &WgpuBackend) {
         let (dev_w, dev_r) = direct(&|size| Storage::new(backend, size));
         let (map_w, map_r) = direct(&|size| Storage::new_host_mapped(backend, size));
         let heap = direct_heap(backend, bytes, &payload, &mut out_bytes);
+        let placed = placed_heap(backend, bytes, &payload, &mut out_bytes);
         println!(
             "{kib} KiB: step upload to device {:.3} ms; step upload to mapped {:.3} ms; step readback device to mapped {:.3} ms (with the host read)",
             ms(up),
@@ -100,6 +101,7 @@ pub fn run(backend: &WgpuBackend) {
             ms(map_r),
             heap
         );
+        println!("{kib} KiB placed in dma-heap, after a device write: {placed}");
     }
     release(upload);
     release(mapped_upload);
@@ -117,4 +119,67 @@ fn direct_heap(backend: &WgpuBackend, bytes: usize, payload: &[u8], out: &mut [u
         storage.read_into(0, out).expect("a readback")
     });
     format!("write {:.3} ms, read {:.3} ms", ms(write), ms(read))
+}
+
+/// A shader's output placed in dma-heap memory, as the planner places one the host reads: after
+/// each device write, the host takes the bytes in place (the sync, then a view), against copying
+/// them out. Each also reads every byte once, as a consumer of the result would.
+fn placed_heap(backend: &WgpuBackend, bytes: usize, payload: &[u8], out: &mut [u8]) -> String {
+    use daedalus_wgpu::MappedBytes;
+    let size = word_size(bytes as u64);
+    let heap = match Storage::new_dma_heap(backend, size) {
+        Ok(storage) => Arc::new(storage),
+        Err(error) => return format!("skipped: {error}"),
+    };
+    let copy = daedalus_wgpu_conformance::Op::new(backend, &daedalus_wgpu_conformance::COPY);
+    let source = Storage::new(backend, size).expect("a buffer");
+    source.write(0, payload).expect("in range");
+    let sum = |bytes: &[u8]| -> u64 {
+        bytes.as_chunks::<8>().0.iter().fold(0u64, |acc, word| {
+            acc.wrapping_add(u64::from_ne_bytes(*word))
+        })
+    };
+    let timed = |body: &mut dyn FnMut() -> u64| -> std::time::Duration {
+        let mut times = Vec::new();
+        let mut seen = 0u64;
+        for round in 0..(WARM + RUNS) {
+            copy.run(&source, &heap).wait().expect("finishes");
+            let start = std::time::Instant::now();
+            seen = seen.wrapping_add(body());
+            if round >= WARM {
+                times.push(start.elapsed());
+            }
+        }
+        std::hint::black_box(seen);
+        times.sort();
+        times[times.len() / 2]
+    };
+    let lend = timed(&mut || {
+        let mapped = MappedBytes::new(Arc::clone(&heap)).expect("lent");
+        mapped.len() as u64
+    });
+    let lend_scan = timed(&mut || {
+        let mapped = MappedBytes::new(Arc::clone(&heap)).expect("lent");
+        sum(&mapped)
+    });
+    let copied_scan = timed(&mut || {
+        heap.read_into(0, out).expect("a readback");
+        sum(out)
+    });
+    // What the shader's own write costs into each memory, waited on.
+    let device = Storage::new(backend, size).expect("a buffer");
+    let write_device = median(WARM, RUNS, || {
+        copy.run(&source, &device).wait().expect("finishes");
+    });
+    let write_heap = median(WARM, RUNS, || {
+        copy.run(&source, &heap).wait().expect("finishes");
+    });
+    format!(
+        "in place {:.3} ms, in place and read once {:.3} ms; copied out and read once {:.3} ms; shader write into device memory {:.3} ms, into dma-heap {:.3} ms",
+        ms(lend),
+        ms(lend_scan),
+        ms(copied_scan),
+        ms(write_device),
+        ms(write_heap)
+    )
 }

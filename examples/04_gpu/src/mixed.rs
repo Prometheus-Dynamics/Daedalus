@@ -1,6 +1,6 @@
 //! A CPU node, a GPU node, and a CPU node again. The planner sees that the three don't share
-//! memory, and puts an upload before the shader and a readback after it. The nodes only say
-//! what type they take and return.
+//! memory, puts an upload before the shader, and has the shader write its result where the
+//! next CPU node can read it. The nodes only say what type they take and return.
 
 use std::sync::Arc;
 

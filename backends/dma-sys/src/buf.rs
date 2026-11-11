@@ -153,6 +153,8 @@ impl<'a> DmaBufRef<'a> {
             ptr,
             len,
             writable: protection & libc::PROT_WRITE != 0,
+            access: std::sync::Mutex::new(()),
+            lent: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -227,17 +229,22 @@ impl<'a> DmaBufRef<'a> {
 }
 
 /// A buffer's memory in this process, until dropped. The memory is shared with devices and other
-/// processes, so it is read and written by copying, never borrowed as a slice.
+/// processes, so it is read and written by copying, or lent out read-only with [`Mapping::lend`]
+/// while this process's writes through it refuse.
 #[derive(Debug)]
 pub struct Mapping {
     ptr: NonNull<u8>,
     len: usize,
     writable: bool,
+    /// Writes and new lends, one at a time.
+    access: std::sync::Mutex<()>,
+    /// How many [`Lent`]s are alive. This process writes nothing through the mapping while any is.
+    lent: std::sync::atomic::AtomicUsize,
 }
 
 // SAFETY: the mapping is plain memory with no thread affinity, and every access through it is a
-// bounds-checked copy. Racing writers can garble bytes, as with any shared memory, and can't
-// break memory safety.
+// bounds-checked copy or a read through a `Lent`. Racing writers can garble bytes, as with any
+// shared memory, and can't break memory safety.
 unsafe impl Send for Mapping {}
 // SAFETY: as above.
 unsafe impl Sync for Mapping {}
@@ -280,6 +287,13 @@ impl Mapping {
             return Err(Error::Os(libc::EACCES));
         }
         let start = self.range(offset, bytes.len())?;
+        let _one = self
+            .access
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.lent.load(std::sync::atomic::Ordering::Acquire) != 0 {
+            return Err(Error::Lent);
+        }
         // SAFETY: as in `read`, and the mapping was made writable.
         unsafe {
             std::ptr::copy_nonoverlapping(
@@ -289,6 +303,50 @@ impl Mapping {
             );
         }
         Ok(())
+    }
+}
+
+impl Mapping {
+    /// The mapping's bytes in place, until the [`Lent`] drops. This process's writes through the
+    /// mapping refuse while any is alive. The holder sees to it that no device writes the buffer
+    /// meanwhile, and brackets the reads with [`DmaBufRef::begin_cpu_access`] and
+    /// [`DmaBufRef::end_cpu_access`] as it would a copy.
+    pub fn lend(self: &std::sync::Arc<Self>) -> Lent {
+        let _one = self
+            .access
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.lent.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Lent {
+            mapping: std::sync::Arc::clone(self),
+        }
+    }
+}
+
+/// A [`Mapping`]'s bytes, read in place.
+#[derive(Debug)]
+pub struct Lent {
+    mapping: std::sync::Arc<Mapping>,
+}
+
+impl std::ops::Deref for Lent {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        let map = &self.mapping;
+        // This process writes nothing through the mapping while a `Lent` is alive (`write`
+        // refuses). A device or another process writing meanwhile breaks `lend`'s terms, and even
+        // then only changes bytes under the reader, as with `read`: every byte value is a `u8`.
+        // SAFETY: the pointer and length are the live mapping's, which `mapping` keeps alive.
+        unsafe { std::slice::from_raw_parts(map.ptr.as_ptr(), map.len) }
+    }
+}
+
+impl Drop for Lent {
+    fn drop(&mut self) {
+        self.mapping
+            .lent
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
