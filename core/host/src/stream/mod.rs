@@ -23,7 +23,7 @@ use input::InputPort;
 use output::OutputPort;
 
 /// The idle wait when a worker has nothing to do. A zero idle sleep normalizes to this.
-pub const DEFAULT_STREAM_IDLE_SLEEP: Duration = Duration::from_millis(100);
+pub(crate) const DEFAULT_STREAM_IDLE_SLEEP: Duration = Duration::from_millis(100);
 
 fn normalize_idle_sleep(idle: Duration) -> Duration {
     if idle.is_zero() {

@@ -19,7 +19,7 @@ pub use independent::{Independent, IndependentConfig};
 pub use synchronized::{PartialPolicy, Push, SyncConfig, Synchronized};
 
 /// The most inputs one group can have.
-pub const MAX_INPUTS: usize = 64;
+pub(crate) const MAX_INPUTS: usize = 64;
 
 /// A set of input numbers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

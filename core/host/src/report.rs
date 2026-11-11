@@ -6,7 +6,7 @@ use std::string::String;
 use std::vec::Vec;
 
 /// The most names a report's list holds. The counts are always exact.
-pub const REPORT_NAME_LIMIT: usize = 32;
+pub(crate) const REPORT_NAME_LIMIT: usize = 32;
 
 /// A list of names that keeps its length bounded.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
