@@ -75,6 +75,10 @@ pub struct Queue {
     pub counts_rejects: bool,
     /// How many values were rejected while `counts_rejects` was set.
     pub rejected: u32,
+    /// The place after the newest value holds one more, stored by a step whose work hasn't
+    /// finished. It isn't counted in `len`, so no reader sees it until the step's fence is
+    /// ready and it is shown, and the values before it stay readable meanwhile.
+    pub hidden: bool,
 }
 
 impl Queue {
@@ -88,19 +92,34 @@ impl Queue {
         (self.base + (self.head + self.len) % self.cap) as usize
     }
 
+    /// Whether nothing more can be pushed: every place is taken, or the next one holds a hidden
+    /// value, which has to be shown or taken back before anything goes after it.
     pub(crate) fn is_full(&self) -> bool {
-        self.len == self.cap
+        self.hidden || self.len == self.cap
     }
 
-    /// The index of the newest value, removed from the queue without being released. The caller
-    /// releases it. None when the queue is empty.
-    pub(crate) fn take_tail(&mut self) -> Option<usize> {
-        if self.len == 0 {
+    /// Forgets the hidden value and gives its index, for the caller to release. None when there
+    /// is none.
+    pub(crate) fn take_hidden(&mut self) -> Option<usize> {
+        if !self.hidden {
             return None;
         }
-        self.len -= 1;
-        self.unconsumed = self.unconsumed.min(self.len);
-        Some((self.base + (self.head + self.len) % self.cap) as usize)
+        self.hidden = false;
+        Some(self.tail_index())
+    }
+
+    /// Shows the hidden value to readers: it becomes the newest value, stamped as a push is.
+    /// Nothing happens when there is none.
+    pub(crate) fn show_hidden(&mut self, storage: &mut [Slot], now_ns: u64) {
+        if !self.hidden {
+            return;
+        }
+        self.hidden = false;
+        if self.len == 0 {
+            self.opened_ns = now_ns;
+        }
+        let at = self.tail_index();
+        storage[at] = self.stamp(storage[at]);
     }
 
     /// Drops the oldest value from the queue without releasing it, as a take does.

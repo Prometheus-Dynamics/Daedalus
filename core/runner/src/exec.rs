@@ -70,16 +70,22 @@ impl SlotParts {
     }
 
     /// Stores `cell` at the back of `queue`, moving its reference in. False when the queue is full.
+    /// With `hide`, the value is stored where the next one goes and not counted: no reader sees
+    /// it until [`Queue::show_hidden`]. A step that is still working publishes this way.
     ///
     /// # Safety
     /// The caller has exclusive access to this queue's storage and inline range.
-    unsafe fn publish(self, queue: &mut Queue, cell: Slot, now_ns: u64) -> Stored {
+    unsafe fn publish(self, queue: &mut Queue, cell: Slot, now_ns: u64, hide: bool) -> Stored {
+        if queue.hidden {
+            // One hidden value a queue: its producer runs once at a time.
+            return Stored::Full;
+        }
         let decision = queue
             .pressure
             .decide(queue.len, queue.cap, queue.opened_ns, now_ns);
         match decision {
             Decision::Store => {
-                if queue.len == 0 {
+                if queue.len == 0 && !hide {
                     queue.opened_ns = now_ns;
                 }
             }
@@ -94,20 +100,25 @@ impl SlotParts {
                 unsafe { owned::release(&*self.storage.add(queue.head_index())) };
                 queue.pop_head();
                 queue.opened_ns = now_ns;
-                self.place(queue, cell);
+                self.place(queue, cell, hide);
                 return Stored::Dropped;
             }
         }
-        self.place(queue, cell);
+        self.place(queue, cell, hide);
         Stored::Kept
     }
 
-    /// Writes `cell` at the back of `queue`, which has room.
-    fn place(self, queue: &mut Queue, cell: Slot) {
+    /// Writes `cell` at the back of `queue`, which has room: counted and stamped, or hidden.
+    fn place(self, queue: &mut Queue, cell: Slot, hide: bool) {
         let at = queue.tail_index();
         // SAFETY: `at` is inside this queue's inline range, which the caller holds exclusively.
         let raw = owned::place(cell, unsafe { &mut *self.inline.add(at) });
-        let raw = queue.stamp(raw);
+        let raw = if hide {
+            queue.hidden = true;
+            raw
+        } else {
+            queue.stamp(raw)
+        };
         // SAFETY: `at` is inside this queue's storage range, which the caller holds exclusively.
         unsafe { self.storage.add(at).write(raw) };
     }
@@ -122,6 +133,10 @@ impl SlotParts {
             // reference is released exactly once.
             unsafe { owned::release(&*self.storage.add(queue.head_index())) };
             queue.pop_head();
+        }
+        if let Some(at) = queue.take_hidden() {
+            // SAFETY: the queue owned its hidden entry, and `take_hidden` forgot it.
+            unsafe { owned::release(&*self.storage.add(at)) };
         }
         queue.unconsumed = 0;
     }
@@ -263,7 +278,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
                 store(env, index, meta);
             }
             commit_inputs(env, meta);
-            if let Err(error) = publish(env, meta) {
+            if let Err(error) = publish(env, meta, false) {
                 if meta.reuse {
                     forget(env, index, meta);
                 }
@@ -282,9 +297,9 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
             report.skipped += 1;
         }
         StepEnd::Pending(fence) => {
-            // The outputs are stored now. Consumers wait for the fence to be Ready.
+            // The outputs are stored now, hidden: no reader sees them until the fence is Ready.
             commit_inputs(env, meta);
-            let kept = publish(env, meta)?;
+            let kept = publish(env, meta, true)?;
             let step = index as u32;
             if !env.register_pending(Pending { step, fence, kept }) {
                 return Err(RunError::PendingFull { step });
@@ -370,9 +385,10 @@ pub(crate) fn commit_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
 
 /// Stores every output the body wrote, moving each one's reference into its queue. A cell the
 /// body left empty stores nothing. On overflow, the rest of the outputs are released.
-/// Publishes a step's outputs. Returns a mask with bit `at` set for each output that was stored,
-/// so a pending step can take back what it published if its fence fails.
-fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<u32, RunError> {
+/// Publishes a step's outputs, hidden when `hide` is set. Returns a mask with bit `at` set for
+/// each output that was stored, so a pending step's values can be shown when its fence is
+/// ready, or taken back if it fails.
+fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta, hide: bool) -> Result<u32, RunError> {
     let mut overflow = None;
     let mut kept = 0u32;
     for (at, &slot) in spanned(env.table(), meta.outputs).iter().enumerate() {
@@ -395,7 +411,7 @@ fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) -> Result<u32, RunError>
         let stored = match overflow {
             // SAFETY: `with_queue` holds what protects this queue, and this step is its producer.
             None => env.with_queue(slot, |queue, parts| unsafe {
-                parts.publish(queue, cell, now)
+                parts.publish(queue, cell, now, hide)
             }),
             Some(_) => Stored::Full,
         };
