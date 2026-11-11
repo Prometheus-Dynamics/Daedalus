@@ -10,6 +10,7 @@
 #endif
 
 #include "daedalus.h"
+#include "internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -888,26 +889,74 @@ static int handle_run(const dd_node *nodes, size_t count, dd_in *in, FILE *out, 
     return 0;
 }
 
-int dd_serve(const dd_node *nodes, size_t count, const char *worker_name) {
+/* A state export: the node's state, encoded with its state type, sent as a state value. A node with
+ * no state to export answers with a bad_input fault, so the host never waits for a reply that will
+ * not come. */
+static void handle_state_export(const dd_node *nodes, size_t count, dd_in *in, FILE *out, dd_slot *states) {
+    const unsigned char *id = NULL;
+    size_t len = 0;
+    int index = -1;
+    const dd_node *node;
+    dd_buf b = {0};
+    if (in_bytes(in, &id, &len) != 0 || in->pos != in->len) {
+        send_fault(out, 0, NULL, "malformed_packet", "a state export names one node");
+        return;
+    }
+    node = find_node(nodes, count, id, len, &index);
+    if (!node || !node->state || !states[index].present) {
+        send_fault(out, 0, NULL, "bad_input", "the node has no state to export");
+        return;
+    }
+    put_u8(&b, KIND_STATE_VALUE);
+    put_bytes(&b, id, len);
+    if (encode_value(node->state, &states[index].value, &b, 0) != 0) {
+        send_fault(out, 0, NULL, "internal", "the node's state does not fit its type");
+    } else {
+        write_packet(out, &b);
+    }
+    buf_free(&b);
+}
+
+/* A state import: the host's value for a node's state, decoded with the state type. The value lives
+ * in `state_arena`, which the loop never resets, so the stored state stays valid across runs. A
+ * value that does not match the type leaves the stored state as it was. */
+static void handle_state_import(const dd_node *nodes, size_t count, dd_in *in, FILE *out, dd_slot *states,
+                                dd_arena *state_arena) {
+    const unsigned char *id = NULL;
+    size_t len = 0;
+    int index = -1;
+    const dd_node *node;
+    dd_value value;
+    if (in_bytes(in, &id, &len) != 0) {
+        send_fault(out, 0, NULL, "malformed_packet", "a state import names no node");
+        return;
+    }
+    node = find_node(nodes, count, id, len, &index);
+    if (!node || !node->state) {
+        send_fault(out, 0, NULL, "bad_input", "the node has no state to import");
+        return;
+    }
+    memset(&value, 0, sizeof value);
+    if (decode_value(node->state, in, state_arena, &value, 0) != 0 || in->pos != in->len) {
+        send_fault(out, 0, NULL, "malformed_packet", "the state value does not match the node's state type");
+        return;
+    }
+    states[index].value = value;
+    states[index].present = 1;
+}
+
+/* Serves the worker protocol on `in` and `packets` until the host shuts it down or the input ends.
+ * Returns 0 on a clean end, and -1 when the stream could not be read or written. The loop does not
+ * touch stdio, so a test can run it over files. */
+int dd_serve_io(const dd_node *nodes, size_t count, FILE *in, FILE *packets, const char *worker_name) {
     dd_buf hello = {0};
     dd_buf body = {0};
     dd_arena arena = {NULL, 0};
+    dd_arena state_arena = {NULL, 0};
     dd_slot states[DD_MAX_NODES];
-    FILE *packets = NULL;
-    int packet_fd;
     int status = 0;
 
     if (count > DD_MAX_NODES) return -1;
-#ifdef _WIN32
-    _setmode(_fileno(stdin), _O_BINARY);
-    _setmode(_fileno(stdout), _O_BINARY);
-#endif
-    /* Packets go to a copy of stdout. Stdout itself becomes stderr, so a printf cannot corrupt them. */
-    packet_fd = DD_DUP(DD_FILENO(stdout));
-    if (packet_fd < 0) return -1;
-    if (DD_DUP2(DD_FILENO(stderr), DD_FILENO(stdout)) < 0) return -1;
-    packets = DD_FDOPEN(packet_fd, "wb");
-    if (!packets) return -1;
     memset(states, 0, sizeof states);
 
     if (build_hello(&hello, nodes, count, worker_name) != 0 || write_packet(packets, &hello) != 0) {
@@ -916,8 +965,8 @@ int dd_serve(const dd_node *nodes, size_t count, const char *worker_name) {
     buf_free(&hello);
 
     while (status == 0) {
-        int r = read_packet(stdin, &body);
-        dd_in in;
+        int r = read_packet(in, &body);
+        dd_in packet;
         uint8_t kind;
         if (r == 0) break;
         if (r < 0) {
@@ -926,9 +975,9 @@ int dd_serve(const dd_node *nodes, size_t count, const char *worker_name) {
         }
         if (body.len == 0) continue;
         kind = body.p[0];
-        in.p = body.p;
-        in.len = body.len;
-        in.pos = 1;
+        packet.p = body.p;
+        packet.len = body.len;
+        packet.pos = 1;
         if (kind == KIND_PING) {
             dd_buf pong = {0};
             put_u8(&pong, KIND_PONG);
@@ -938,16 +987,89 @@ int dd_serve(const dd_node *nodes, size_t count, const char *worker_name) {
             break;
         } else if (kind == KIND_RUN) {
             arena_reset(&arena);
-            handle_run(nodes, count, &in, packets, &arena, states);
+            handle_run(nodes, count, &packet, packets, &arena, states);
             arena_reset(&arena);
-        } else if (kind != KIND_CANCEL && kind != KIND_STATE_EXPORT && kind != KIND_STATE_IMPORT) {
+        } else if (kind == KIND_STATE_EXPORT) {
+            handle_state_export(nodes, count, &packet, packets, states);
+        } else if (kind == KIND_STATE_IMPORT) {
+            handle_state_import(nodes, count, &packet, packets, states, &state_arena);
+        } else if (kind != KIND_CANCEL) {
             /* Not a message this worker reads: answer with a fault, so the host never waits for nothing. */
             send_fault(packets, 0, NULL, "malformed_packet", "unknown message kind");
         }
-        /* A cancel between runs has nothing to stop; state messages are not served by the C SDK. */
+        /* A cancel between runs has nothing to stop. */
     }
     buf_free(&body);
     arena_reset(&arena);
+    arena_reset(&state_arena);
+    return status;
+}
+
+/* Serves the worker on stdin and stdout until the host shuts it down or closes the pipe. Packets go
+ * to a copy of stdout, and stdout itself becomes stderr, so a printf cannot corrupt the stream. */
+int dd_serve(const dd_node *nodes, size_t count, const char *worker_name) {
+    int packet_fd;
+    FILE *packets;
+    int status;
+
+#ifdef _WIN32
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    packet_fd = DD_DUP(DD_FILENO(stdout));
+    if (packet_fd < 0) return -1;
+    if (DD_DUP2(DD_FILENO(stderr), DD_FILENO(stdout)) < 0) return -1;
+    packets = DD_FDOPEN(packet_fd, "wb");
+    if (!packets) return -1;
+    status = dd_serve_io(nodes, count, stdin, packets, worker_name);
     fclose(packets);
     return status;
+}
+
+/* ---- the codec, for the native tests ------------------------------------------------------- */
+
+int dd_internal_encode(const dd_type *ty, const dd_value *v, unsigned char **out, size_t *len) {
+    dd_buf b = {0};
+    unsigned char *copy;
+    if (encode_value(ty, v, &b, 0) != 0 || b.failed) {
+        buf_free(&b);
+        return -1;
+    }
+    copy = malloc(b.len ? b.len : 1);
+    if (!copy) {
+        buf_free(&b);
+        return -1;
+    }
+    if (b.len) memcpy(copy, b.p, b.len);
+    *out = copy;
+    *len = b.len;
+    buf_free(&b);
+    return 0;
+}
+
+int dd_internal_decode(const dd_type *ty, const unsigned char *p, size_t len, dd_value *out, void **keep) {
+    dd_arena *arena = calloc(1, sizeof *arena);
+    dd_in input;
+    int r;
+    if (!arena) return -1;
+    input.p = p;
+    input.len = len;
+    input.pos = 0;
+    r = decode_value(ty, &input, arena, out, 0);
+    if (r != 0 || input.pos != len) {
+        arena_reset(arena);
+        free(arena);
+        return -1;
+    }
+    *keep = arena;
+    return 0;
+}
+
+void dd_internal_free_bytes(unsigned char *p) { free(p); }
+
+void dd_internal_free_arena(void *keep) {
+    dd_arena *arena = keep;
+    if (!arena) return;
+    arena_reset(arena);
+    free(arena);
 }

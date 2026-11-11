@@ -21,11 +21,10 @@ pub fn build(build_dir: &Path) -> io::Result<PathBuf> {
     if !configure.success() {
         return Err(io::Error::other("cmake configure failed"));
     }
+    // Every target, the worker and the native tests, so one configure serves both.
     let build = Command::new("cmake")
         .arg("--build")
         .arg(build_dir)
-        .arg("--target")
-        .arg("daedalus_cpp_worker")
         .status()?;
     if !build.success() {
         return Err(io::Error::other("cmake build failed"));
@@ -44,4 +43,20 @@ pub fn build(build_dir: &Path) -> io::Result<PathBuf> {
 /// A spec that starts the worker at `worker`.
 pub fn spec(worker: &Path) -> WorkerSpec {
     WorkerSpec::new(worker)
+}
+
+/// Runs the native tests (the value codec and the worker loop's state messages) with ctest, in a
+/// build made by [`build`].
+pub fn run_native_tests(build_dir: &Path) -> io::Result<()> {
+    let mut ctest = Command::new("ctest");
+    ctest.arg("--output-on-failure").current_dir(build_dir);
+    // A generator with several configurations needs the one to test, as Visual Studio's does.
+    if build_dir.join("bin").join("Debug").is_dir() {
+        ctest.args(["-C", "Debug"]);
+    }
+    if ctest.status()?.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other("a native C or C++ test failed"))
+    }
 }
