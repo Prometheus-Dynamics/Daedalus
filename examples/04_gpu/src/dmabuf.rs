@@ -19,7 +19,8 @@ const HEAP_ROOM: u64 = 8192;
 #[derive(Debug)]
 pub struct Frame {
     bytes: Vec<u8>,
-    dmabuf: OwnedFd,
+    /// The dma-buf, when the system dma-heap opens. Without one the frame is bytes only.
+    dmabuf: Option<OwnedFd>,
 }
 
 /// A frame is a named type with no structure of its own: the derive would need the fd to be
@@ -36,9 +37,11 @@ impl Frame {
         // The device pads a buffer's memory by up to a page and 256 bytes (V3D), so the dma-buf is
         // made with room for that. This node has no device to ask what it needs, and the frame's
         // length is kept apart from the dma-buf's.
+        // A machine with no usable dma-heap (a CI runner) makes the frame as bytes only: the planner
+        // then uploads it, and never imports it.
         Ok(Frame {
             bytes: bytes.to_vec(),
-            dmabuf: daedalus_wgpu::dma_heap_fd(bytes, HEAP_ROOM)?,
+            dmabuf: daedalus_wgpu::dma_heap_fd(bytes, HEAP_ROOM).ok(),
         })
     }
 }
@@ -58,8 +61,10 @@ impl HostBytes for Frame {
 
 /// The frame's dma-buf, which the device imports in place where it can.
 impl DmaBufBacked for Frame {
-    fn dmabuf(&self) -> (BorrowedFd<'_>, u64) {
-        (self.dmabuf.as_fd(), self.bytes.len() as u64)
+    fn dmabuf(&self) -> Option<(BorrowedFd<'_>, u64)> {
+        self.dmabuf
+            .as_ref()
+            .map(|fd| (fd.as_fd(), self.bytes.len() as u64))
     }
 }
 

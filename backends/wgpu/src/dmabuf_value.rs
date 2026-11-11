@@ -25,8 +25,9 @@ use crate::transfer::{HOST_SPACE, intern};
 /// A type whose values are a dma-buf. The dma-buf holds the value's bytes.
 pub trait DmaBufBacked: Typed + Send + Sync + 'static {
     /// The dma-buf that holds the value, and the value's length in it. A dma-buf can be longer
-    /// than its value: a dma-heap allocation is at least a page.
-    fn dmabuf(&self) -> (BorrowedFd<'_>, u64);
+    /// than its value: a dma-heap allocation is at least a page. `None` when the value has none
+    /// (a device without a dma-heap makes values as bytes only): such a value is never imported.
+    fn dmabuf(&self) -> Option<(BorrowedFd<'_>, u64)>;
 }
 
 fn fault(cx: &mut StepCx, reason: &str) -> StepEnd {
@@ -50,7 +51,9 @@ impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
         let Some(value) = typed_view::<T>(input) else {
             return fault(cx, "an import was given a value that is not a dma-buf");
         };
-        let (dmabuf, want) = value.dmabuf();
+        let Some((dmabuf, want)) = value.dmabuf() else {
+            return fault(cx, "an import was given a value with no dma-buf");
+        };
         let Ok(fd) = dmabuf.try_clone_to_owned() else {
             return fault(cx, "an import couldn't take the value's dma-buf");
         };
