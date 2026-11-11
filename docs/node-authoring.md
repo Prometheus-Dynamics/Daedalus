@@ -68,7 +68,7 @@ A type of your own gets one with `#[derive(Type)]`:
 struct Point { x: u32, y: u32 }
 ```
 
-Without `#[type_key]` the key is `rust:<module path>::<name>`, lowercased, which only the crate
+Without `#[type_key]` the key is `rust:<module path>::<name>`, with the name lowercased, which only the crate
 that defines the type may use. Daedalus has no built-in value types beyond the scalars: a type
 belongs to whoever wrote the nodes that use it.
 

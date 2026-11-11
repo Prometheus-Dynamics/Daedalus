@@ -34,7 +34,7 @@ let config = Config { form: Form::Source, ..Config::default() };
 plan(&graph, &registry, &[&CpuBackend], &config)?.write("graph.rs")?;
 ```
 
-The generated file is a struct with `feed`, `step` and `take` for that one graph, calling the
+The generated file is a struct with `push_<port>` for each host input, `pop_<port>` for each host output, and `tick` for that one graph, calling the
 node functions directly. It needs no allocator. [mcu.md](mcu.md) shows it on a chip.
 
 ## Which backends give which form

@@ -55,7 +55,7 @@ pub trait Backend: Send + Sync {
 pub enum Compiled {
     Steps(Vec<StepUnit>),         // the normal form
     Source(GeneratedCode),    // when the graph is sealed into a build
-    Blob(Vec<u8>),            // when a small device loads a plan
+    Blob { bytes: Vec<u8>, units: Vec<UnitInfo> }, // when a small device loads a plan
 }
 
 #[repr(C)] pub struct Step {
@@ -259,7 +259,7 @@ In a daemon, the same list comes from a config file. A backend can also be loade
 
 ### Tick by tick
 
-- A CPU step is a function pointer and two slot numbers.
+- A CPU step is a function pointer; the plan's unit lists say which slots it reads and writes.
 - An edge inside a single-rate chain is a slot, a straight pipe.
 - Telemetry is compiled into the list, or absent.
 - A failing node's step is swapped for a backoff step, so healthy nodes pay nothing for the check.

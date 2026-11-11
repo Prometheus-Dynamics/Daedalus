@@ -25,6 +25,8 @@ daedalus_loader::export_plugin!(PluginDef {
     name: "acme-plugin",
     backends: &["acme.cpu"],
     nodes: &NODES,
+    codecs: &[],
+    produce: None,
 });
 ```
 

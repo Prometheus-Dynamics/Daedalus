@@ -27,7 +27,7 @@ runs in the cloud until the user says so, whatever a brief's `Runs:` line says.
   `git show origin/dev:<path>`. Bring in only
   what the brief lists. The paths under "Read on dev" are from the repository root on `dev`.
 - Stay inside the paths your PR creates. Don't edit the root `Cargo.toml`, `TODO.md`, or a changelog.
-  `Cargo.lock` is ignored until I7. Keeping to this is what lets many sessions run at once without
+  `Cargo.lock` is committed since I7. Keeping to this is what lets many sessions run at once without
   conflicts.
 - The one exception: a PR that adds a module to a crate from an earlier PR adds its own `mod` line
   to that crate's `lib.rs`. On a conflict there, keep both lines.
