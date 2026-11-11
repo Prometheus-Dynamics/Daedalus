@@ -93,6 +93,9 @@ only through an A-series PR.
 // core/backend. Runs while planning, so it may allocate.
 pub trait Backend: Send + Sync {
     fn id(&self) -> &str;
+    // Changes whenever what this backend takes or compiles may change, on this machine. A cached
+    // plan is only reused under the same version.
+    fn version(&self) -> u64 { 0 }
     fn memory(&self) -> Vec<MemorySpace>;
     fn transfers(&self) -> Vec<Transfer>;
     // Other spaces of its own its nodes can write an output into. The planner puts each output
@@ -106,7 +109,7 @@ pub trait Backend: Send + Sync {
 
 pub enum Compiled {
     Steps(Vec<StepUnit>),      // run now, in this process; each unit lists what it covers
-    Blob(Vec<u8>),             // a stored plan a loader or small runner reads
+    Blob { bytes: Vec<u8>, units: Vec<UnitInfo> },             // a stored plan a loader or small runner reads
     Source(GeneratedCode),     // code compiled ahead of time, for example on a chip
 }
 
@@ -487,7 +490,7 @@ build on them.
   for a backend whose bodies need a real payload. It installs the counting allocator, so it links
   only into test binaries.
 - The sim's `SimConfig` has the knobs planner tests need: `refuse`, `merge`, `form`, `faults`,
-  `absorb`, `no_transfers`, `drop_output`, `omit_covers`. A sim body's `text` is its node's id.
+  `absorb`, `no_transfers`, `pending`, `drop_output`, `omit_covers`. A sim body's `text` is its node's id.
   `SimMemory` is the memory-only backend, and it has the absorbable `sim.import`.
 
 **The planner as built (B1 to B15).** `core/planner` is the reference, and `core/planner/README.md`

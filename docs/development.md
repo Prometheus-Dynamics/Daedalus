@@ -4,7 +4,7 @@
 
 ```text
 core/        abi, types, value, graph, backend, registry, plan, planner, runner, macros, derive,
-             host, wire, client, loader, daedalus (the facade)
+             host, wire, client, loader, capi, daedalus (the facade)
 backends/    cpu, cpu-author, wgpu, wgpu-author, dmabuf, process, sim, and *-sys crates
 languages/   python, node, java, cpp, rust: SDKs for nodes run by the process backend
 service/     daedalusd, daedalus-ctl
@@ -21,7 +21,8 @@ crate is making its directory.
 
 - `core/*` depends on nothing in `backends/`, `languages/` or `service/`.
 - Nothing in `core/` is named after hardware or media.
-- `unsafe` only in `core/abi`, `core/loader`, `core/runner`, and crates named `*-sys`, with a
+- `unsafe` only in `core/abi`, `core/capi`, `core/loader`, `core/runner`, `examples/wasm_smoke`,
+  `examples/wasm_bindgen_host`, `examples/chip_board`, and crates named `*-sys`, with a
   `SAFETY` comment on each use. Every other crate forbids it.
 - The heap-free crates build for the three bare-metal targets with no allocator.
 - No Rust file is over 800 lines.
@@ -47,6 +48,8 @@ crate is making its directory.
 | `budgets` | The budget table: instructions, allocations, firmware sizes |
 | `capability` | The audit of what the earlier branch could do |
 | `packaging` | The daemon's unit files and sample config |
+| `package` | Every publishable crate lists its files with no warning and has the registry metadata |
+| `semver` | Semantic versioning against the `SEMVER_BASELINE` tag; reports and never fails the gate |
 | `smoke` | The examples run and print what they should |
 | `doc` | The API docs build with no warning, and every link in `docs/` resolves |
 
