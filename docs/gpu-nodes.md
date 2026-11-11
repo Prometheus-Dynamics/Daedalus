@@ -56,6 +56,8 @@ and none between two GPU nodes. Memory that is already somewhere the device can 
 a dma-buf, is imported and not copied: the type's owner describes the memory, and a transfer
 registered for that type does the import.
 
+Daedalus does not judge who made a dma-buf: one it is given is imported in place when the device can take it, and whoever hands it over answers for its contents being readable by a device. A dma-buf with less memory behind it than the device needs for the buffer is refused with both sizes, and is not copied.
+
 A value that goes back to the host has two routes. `wgpu.readback` copies it into host-mapped
 memory, which the host reads uncached, and `wgpu.readback.heap` copies it into dma-heap memory,
 which the host reads through its cache: on the CM5 a 16 MiB readback costs about 12 ms that way

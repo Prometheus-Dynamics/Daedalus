@@ -499,23 +499,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "daedalus-camera-fixture"
-version = "3.0.1-dev"
-dependencies = [
- "daedalus-camera-fixture-sys",
- "daedalus-dma-sys",
- "daedalus-wgpu",
- "daedalus-wgpu-conformance",
-]
-
-[[package]]
-name = "daedalus-camera-fixture-sys"
-version = "3.0.1-dev"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "daedalus-capi"
 version = "3.0.1-dev"
 dependencies = [

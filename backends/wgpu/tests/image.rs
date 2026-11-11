@@ -168,7 +168,7 @@ fn frames_import_once_per_dmabuf_and_read_in_place() {
         "each plane's place is reported as described"
     );
 
-    // The camera's bytes become a texture with one folded copy, and nothing was copied to get
+    // The producer's bytes become a texture with one folded copy, and nothing was copied to get
     // them onto the device.
     let desc = TextureDesc {
         format: Format::R8,
@@ -213,39 +213,4 @@ fn frames_import_once_per_dmabuf_and_read_in_place() {
         matches!(&short, Err(ImportError::Invalid(why)) if why.contains("this device needs")),
         "{short:?}"
     );
-}
-
-/// A dma-buf whose exporter is not a dma-heap is copied through the CPU and counted, and the
-/// copy is what the device reads. A memfd has no heap behind it, so it takes that path.
-#[cfg(target_os = "linux")]
-#[test]
-fn a_dma_buf_that_is_not_a_heap_buffer_is_copied_and_counted() {
-    use daedalus_dma_sys::DmaBuf;
-    use daedalus_wgpu::dmabuf::Fourcc;
-    use daedalus_wgpu::image::ExternalBuffer;
-
-    let Some(backend) = private() else { return };
-    let (width, height, stride) = (64u32, 8u32, 64u64);
-    let len = stride * u64::from(height);
-    let buf = DmaBuf::memfd("copy-test", len).expect("a memfd");
-    let bytes: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(3)).collect();
-    let map = buf.as_ref().map().expect("a mapping");
-    map.write(0, &bytes).expect("in range");
-    let imported = backend
-        .import_storage(ExternalBuffer {
-            fd: buf.into_fd(),
-            width,
-            height,
-            fourcc: Fourcc::R8,
-            planes: vec![(0, stride)],
-        })
-        .expect("copied");
-    let mut seen = vec![0u8; len as usize];
-    imported
-        .storage
-        .read_into(0, &mut seen)
-        .expect("a readback");
-    assert_eq!(seen, bytes, "the copy is the bytes the host wrote");
-    let stats = backend.storage_import_stats().expect("open");
-    assert_eq!((stats.copies, stats.copied_bytes), (1, len));
 }

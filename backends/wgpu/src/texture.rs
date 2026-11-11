@@ -13,7 +13,7 @@ pub enum Format {
     /// Two channels, 8 bits each.
     Rg8,
     Rgba8,
-    /// As `Rgba8` with blue first in memory, which is how most displays and cameras store it.
+    /// As `Rgba8` with blue first in memory, which is how most displays store it.
     Bgra8,
     R32F,
     Rg32F,

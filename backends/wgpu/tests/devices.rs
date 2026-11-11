@@ -191,8 +191,8 @@ fn a_value_crosses_devices_only_by_the_host_and_fails_to_plan_where_it_cant() {
         spaces: vec![("cpu.host", SpaceKind::Host, true)],
         ..Mem::default()
     };
-    // A camera whose images import as textures on the default device, and go nowhere else.
-    let camera = Mem {
+    // A producer whose images import as textures on the default device, and go nowhere else.
+    let producer = Mem {
         id: "cam",
         spaces: vec![("cam.frames", SpaceKind::Shared, true)],
         moves: vec![(
@@ -203,7 +203,7 @@ fn a_value_crosses_devices_only_by_the_host_and_fails_to_plan_where_it_cant() {
         )],
         ..Mem::default()
     };
-    let backends: [&dyn Backend; 4] = [&main, &other, &camera, &host];
+    let backends: [&dyn Backend; 4] = [&main, &other, &producer, &host];
     let line = |from: &str, to: &str| (vec![node(from), node(to)], vec![edge(0, "out", 1, "x")]);
 
     // From one device to the other: read back, handed to the host, uploaded. Every leg is in
@@ -221,7 +221,7 @@ fn a_value_crosses_devices_only_by_the_host_and_fails_to_plan_where_it_cant() {
         ["wgpu.plan.readback", "wgpu.plan.map", "wgpu.upload"]
     );
 
-    // A camera image reaches the default device, where its import is listed.
+    // An image from a producer reaches the default device, where its import is listed.
     let (nodes, edges) = line("t.cam", "t.a");
     let (_, plan) = stitched(&registry, nodes, edges, &backends).expect("plans");
     assert_eq!(moves(&plan), ["cam.import"]);
