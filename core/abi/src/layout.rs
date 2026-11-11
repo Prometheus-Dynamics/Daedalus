@@ -5,8 +5,8 @@ use core::mem::{align_of, offset_of, size_of};
 use crate::foreign::{ForeignHandle, ForeignInterfaceInfo, ForeignOwner};
 
 use crate::{
-    AbiVersion, BackendTable, BoundaryPort, CodecC, Fence, FencePoll, Handle, NodeC, PluginEntry,
-    PortC, RegionView, Slot, Slots, Status, Step, StepCx, StepEnd, Text, UnitOut,
+    AbiVersion, BackendTable, BoundaryPort, BytesC, CodecC, Fence, FencePoll, Handle, NodeC,
+    PluginEntry, PortC, RegionView, Slot, Slots, Status, Step, StepCx, StepEnd, Text, UnitOut,
 };
 
 /// FNV-1a over the words, each as little-endian bytes.
@@ -59,7 +59,8 @@ pub const SHAPES: &[u64] = &shape! {
     UnitOut { step, node, reserved }
     BackendTable { id, can_take, compile }
     CodecC { key, value_key, wire_key, backend, layout, cost, lossy, to_value, from_value, to_bytes, from_bytes }
-    PluginEntry { layout, name, nodes, node_count, backends, backend_count, codecs, codec_count, release }
+    BytesC { ptr, len, data, release }
+    PluginEntry { layout, name, nodes, node_count, backends, backend_count, codecs, codec_count, produce, release }
 };
 
 pub const LAYOUT_HASH: u64 = layout_hash(SHAPES);

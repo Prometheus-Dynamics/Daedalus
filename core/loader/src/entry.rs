@@ -72,6 +72,7 @@ impl Loader {
             backends,
             codecs,
             conversions,
+            produce: opened.entry.produce,
         })
     }
 }
@@ -146,6 +147,8 @@ pub struct Plugin {
     codecs: Vec<Codec>,
     /// The conversion nodes the codecs declare. They join the registry with the nodes.
     conversions: Vec<OwnedDecl>,
+    /// The plugin's way of making bytes without a copy. Its code belongs to `generation`.
+    produce: Option<daedalus_abi::ProduceBytesFn>,
 }
 
 impl std::fmt::Debug for Plugin {
@@ -191,6 +194,44 @@ impl Plugin {
     /// A value of this plugin's generation holding `bytes`. The value keeps the library open.
     pub fn share(&self, bytes: &[u8]) -> crate::SharedBytes {
         crate::SharedBytes::from_plugin(&self.generation, bytes)
+    }
+
+    /// The bytes the plugin makes for `index`, handed over without a copy. The value keeps the
+    /// library open, and the plugin frees the bytes when the last value of them is dropped.
+    pub fn produce(&self, index: u32) -> Result<crate::SharedBytes, LoadError> {
+        let produce = self.produce.ok_or_else(|| LoadError::Produce {
+            plugin: self.name.clone(),
+            status: Status::NOT_SUPPORTED,
+        })?;
+        let mut made = daedalus_abi::BytesC {
+            ptr: std::ptr::null(),
+            len: 0,
+            data: std::ptr::null_mut(),
+            release: None,
+        };
+        // SAFETY: `produce` is the plugin's code, held by `generation`, and `made` is writable for
+        // the one `BytesC` the call writes.
+        let status = unsafe { produce(index, &mut made) };
+        if status != Status::OK {
+            return Err(LoadError::Produce {
+                plugin: self.name.clone(),
+                status,
+            });
+        }
+        if made.len > 0 && made.ptr.is_null() {
+            // A plugin that says it has bytes and gives none has nothing to hold: release what it gave.
+            if let Some(release) = made.release {
+                // SAFETY: the plugin handed `data` out with this release, and this is the one call.
+                unsafe { release(made.data) };
+            }
+            return Err(LoadError::Produce {
+                plugin: self.name.clone(),
+                status: Status::from_errno(22),
+            });
+        }
+        // SAFETY: the plugin wrote `made` on OK, with bytes valid until its release, which the value
+        // calls once. `self.generation` keeps the library, and so the release, loaded.
+        Ok(unsafe { crate::SharedBytes::adopt(&self.generation, made) })
     }
 
     /// Joins this plugin's nodes into `registry`, under the rules for a compiled-in record.

@@ -159,9 +159,15 @@ static CODECS: [CodecDef; 1] = [CodecDef {
     from_bytes: wire_to_number,
 }];
 
+/// The bytes the fixture hands over without a copy: one megabyte, for index 0. Other indexes make none.
+fn make_bytes(index: u32) -> Option<Vec<u8>> {
+    (index == 0).then(|| vec![7u8; 1 << 20])
+}
+
 daedalus_loader::export_plugin!(PluginDef {
     name: "dylib-fixture",
     backends: &["fixture.cpu"],
     nodes: &NODES,
     codecs: &CODECS,
+    produce: Some(make_bytes),
 });
