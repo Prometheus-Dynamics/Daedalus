@@ -243,3 +243,147 @@ pub fn heap_read(backend: &WgpuBackend) {
     drop(storage);
     raw_read("device buffer dropped");
 }
+
+/// The 16 MiB dma-heap read split by what surrounds the copy: the destination (reused, or a fresh
+/// zeroed Vec each run, which page-faults on first touch), the sync (once, or per 64 KiB chunk),
+/// and the storage's own read against the raw mapping's, with the same copy.
+#[cfg(target_os = "linux")]
+pub fn heap_probe(backend: &WgpuBackend) {
+    use daedalus_dma_sys::{Access, DmaHeap};
+    let bytes = 16 * MIB as usize;
+    let payload = vec![9u8; bytes];
+    let Ok(storage) = Storage::new_dma_heap(backend, bytes as u64) else {
+        println!("probe: no dma-heap storage");
+        return;
+    };
+    storage.write(0, &payload).expect("in range");
+    let heap = DmaHeap::open("system").expect("heap");
+    let buf = heap.allocate(bytes as u64).expect("buffer");
+    let map = buf.as_ref().map().expect("mapping");
+    buf.as_ref().begin_cpu_access(Access::Write).expect("begin");
+    map.write(0, &payload).expect("in range");
+    buf.as_ref().end_cpu_access(Access::Write).expect("end");
+
+    let mut reused = vec![0u8; bytes];
+    let storage_reused = median(WARM, RUNS, || {
+        storage.read_into(0, &mut reused).expect("read")
+    });
+    let raw_reused = median(WARM, RUNS, || {
+        buf.as_ref().begin_cpu_access(Access::Read).expect("begin");
+        map.read(0, &mut reused).expect("read");
+        buf.as_ref().end_cpu_access(Access::Read).expect("end");
+    });
+    let raw_nosync = median(WARM, RUNS, || map.read(0, &mut reused).expect("read"));
+    let storage_fresh = median(WARM, RUNS, || {
+        let mut fresh = vec![0u8; bytes];
+        storage.read_into(0, &mut fresh).expect("read");
+        std::hint::black_box(&fresh);
+    });
+    let raw_fresh = median(WARM, RUNS, || {
+        let mut fresh = vec![0u8; bytes];
+        buf.as_ref().begin_cpu_access(Access::Read).expect("begin");
+        map.read(0, &mut fresh).expect("read");
+        buf.as_ref().end_cpu_access(Access::Read).expect("end");
+        std::hint::black_box(&fresh);
+    });
+    let raw_chunks = median(WARM, RUNS, || {
+        for (at, chunk) in reused.chunks_mut(64 * 1024).enumerate() {
+            buf.as_ref().begin_cpu_access(Access::Read).expect("begin");
+            map.read((at * 64 * 1024) as u64, chunk).expect("read");
+            buf.as_ref().end_cpu_access(Access::Read).expect("end");
+        }
+    });
+    println!(
+        "probe storage read into a reused Vec: {:.3} ms",
+        ms(storage_reused)
+    );
+    println!(
+        "probe raw sync, copy, sync into a reused Vec: {:.3} ms",
+        ms(raw_reused)
+    );
+    println!(
+        "probe raw copy with no sync into a reused Vec: {:.3} ms",
+        ms(raw_nosync)
+    );
+    println!(
+        "probe storage read into a fresh zeroed Vec: {:.3} ms",
+        ms(storage_fresh)
+    );
+    println!(
+        "probe raw sync, copy, sync into a fresh zeroed Vec: {:.3} ms",
+        ms(raw_fresh)
+    );
+    println!(
+        "probe raw sync per 64 KiB chunk into a reused Vec: {:.3} ms",
+        ms(raw_chunks)
+    );
+}
+
+/// One variant alone in its process: the storage's read, or the raw mapping's read, each into its
+/// own reused Vec, with nothing else allocated. Run as separate processes, so no order effect.
+#[cfg(target_os = "linux")]
+pub fn heap_alone(backend: &WgpuBackend, which: &str) {
+    use daedalus_dma_sys::{Access, DmaHeap};
+    let bytes = 16 * MIB as usize;
+    let payload = vec![9u8; bytes];
+    let mut out = vec![0u8; bytes];
+    match which {
+        "storage" => {
+            let storage = Storage::new_dma_heap(backend, bytes as u64).expect("storage");
+            storage.write(0, &payload).expect("in range");
+            let read = median(WARM, RUNS, || storage.read_into(0, &mut out).expect("read"));
+            println!("alone storage read_into: {:.3} ms", ms(read));
+        }
+        "raw" | "rawpad" | "raw2m" => {
+            let heap = DmaHeap::open("system").expect("heap");
+            // "rawpad" allocates what the storage allocates: its bytes plus the device's slack.
+            let len = if which == "rawpad" {
+                bytes as u64 + 256
+            } else {
+                bytes as u64
+            };
+            let buf = heap.allocate(len).expect("buffer");
+            let map = buf.as_ref().map().expect("mapping");
+            buf.as_ref().begin_cpu_access(Access::Write).expect("begin");
+            map.write(0, &payload).expect("in range");
+            buf.as_ref().end_cpu_access(Access::Write).expect("end");
+            let read = median(WARM, RUNS, || {
+                buf.as_ref().begin_cpu_access(Access::Read).expect("begin");
+                map.read(0, &mut out).expect("read");
+                buf.as_ref().end_cpu_access(Access::Read).expect("end");
+            });
+            println!("alone raw sync, copy, sync: {:.3} ms", ms(read));
+        }
+        "imported" => {
+            // A raw buffer of the storage's own length, imported into the device and kept alive
+            // while the raw mapping is read: does the import change the host's read?
+            use daedalus_wgpu::dmabuf::Fourcc;
+            use daedalus_wgpu::image::ExternalBuffer;
+            let heap = DmaHeap::open("system").expect("heap");
+            let len = bytes as u64 + 256;
+            let buf = heap.allocate(len).expect("buffer");
+            let map = buf.as_ref().map().expect("mapping");
+            buf.as_ref().begin_cpu_access(Access::Write).expect("begin");
+            map.write(0, &payload).expect("in range");
+            buf.as_ref().end_cpu_access(Access::Write).expect("end");
+            let imported = backend.import_storage(ExternalBuffer {
+                fd: buf.try_clone().expect("clone").into_fd(),
+                width: bytes as u32,
+                height: 1,
+                fourcc: Fourcc::R8,
+                planes: vec![(0, bytes as u64)],
+            });
+            println!(
+                "import for the test: {}",
+                if imported.is_ok() { "ok" } else { "refused" }
+            );
+            let read = median(WARM, RUNS, || {
+                buf.as_ref().begin_cpu_access(Access::Read).expect("begin");
+                map.read(0, &mut out).expect("read");
+                buf.as_ref().end_cpu_access(Access::Read).expect("end");
+            });
+            println!("alone raw read after a device import: {:.3} ms", ms(read));
+        }
+        other => println!("alone: unknown variant {other}"),
+    }
+}
