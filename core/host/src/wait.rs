@@ -56,7 +56,7 @@ impl InboundSignal {
     }
 
     /// Says input arrived.
-    pub fn notify(&self) {
+    pub(crate) fn notify(&self) {
         let wakers = {
             let mut state = self.lock();
             state.pending = true;
@@ -100,7 +100,7 @@ impl InboundSignal {
     }
 
     /// Clears the pending flag. Input that arrives afterwards sets it again.
-    pub fn clear_pending(&self) {
+    pub(crate) fn clear_pending(&self) {
         self.lock().pending = false;
     }
 

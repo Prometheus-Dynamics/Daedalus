@@ -122,7 +122,7 @@ impl StateStore {
 
     /// How many entries the store holds, state and resources both.
     /// Removes everything held for `node`, dropping each value once. Returns how many.
-    pub fn remove_node(&mut self, node: NodeId) -> usize {
+    pub(crate) fn remove_node(&mut self, node: NodeId) -> usize {
         let before = self.entries.len();
         self.entries.retain(|entry| entry.node != node);
         before - self.entries.len()

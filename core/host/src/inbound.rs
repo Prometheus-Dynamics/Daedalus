@@ -88,7 +88,7 @@ impl Host<'_> {
     }
 
     /// The policy of the port `name`.
-    pub fn port_policy(&self, name: &str) -> Result<PortPolicy, HostError> {
+    pub(crate) fn port_policy(&self, name: &str) -> Result<PortPolicy, HostError> {
         self.input(name)?;
         let index = self.ports.index_of(name).unwrap_or(0);
         Ok(self

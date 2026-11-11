@@ -62,7 +62,7 @@ impl<H: StreamHost> StreamGraph<H> {
     }
 
     /// One tick's work: moves one value per port in, ticks, moves outputs out.
-    pub fn tick_once(&mut self) -> Option<Result<TickReport, HostError>> {
+    pub(crate) fn tick_once(&mut self) -> Option<Result<TickReport, HostError>> {
         let host = self.host.as_mut()?;
         worker::move_inputs(host, &self.shared);
         let report = host.step();

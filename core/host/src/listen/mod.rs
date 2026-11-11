@@ -54,9 +54,9 @@ use watch::Watchers;
 /// The longest wait between two attempts to accept.
 pub const ACCEPT_BACKOFF_CAP: Duration = Duration::from_secs(8);
 /// The first wait after a failed accept.
-pub const ACCEPT_BACKOFF_START: Duration = Duration::from_millis(50);
+pub(crate) const ACCEPT_BACKOFF_START: Duration = Duration::from_millis(50);
 /// How many connections a host serves at once, unless its options say otherwise.
-pub const DEFAULT_CONNECTION_LIMIT: usize = 64;
+pub(crate) const DEFAULT_CONNECTION_LIMIT: usize = 64;
 
 /// The wait after `failures` failed accepts in a row. It doubles and stops growing at 8 s.
 pub fn accept_backoff(failures: u32) -> Duration {
