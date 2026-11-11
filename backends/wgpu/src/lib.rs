@@ -10,6 +10,8 @@ mod context;
 mod copy_limiter;
 pub mod devices;
 pub mod dmabuf;
+#[cfg(target_os = "linux")]
+mod dmabuf_value;
 mod driver;
 mod fence;
 #[cfg(test)]
@@ -43,6 +45,8 @@ pub use backend::{Handle, WgpuBackend};
 pub use buffer::{Storage, StorageError};
 pub use caps::{CapsRecord, ComputeCaps, ComputeFeatures, Need};
 pub use context::OpenError;
+#[cfg(target_os = "linux")]
+pub use dmabuf_value::{DmaBufBacked, dma_heap_fd};
 pub use driver::{DriverGuard, devices_created, driver_lock, with_driver_lock};
 pub use fence::Ticket;
 pub use host_bytes::HostBytes;

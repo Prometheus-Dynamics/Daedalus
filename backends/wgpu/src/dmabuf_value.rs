@@ -1,0 +1,154 @@
+//! A type whose values are a dma-buf, as far as a device is concerned.
+//!
+//! A dma-buf the device can import is used in place: nothing is copied, and the device reads the
+//! memory the exporter wrote. [`DmaBufBacked`] says that a type's values are one, once, and
+//! [`WgpuBackend::with_dmabuf`] lists the move that imports a value's dma-buf. The move is offered
+//! only while the open device imports dma-bufs, and the planner takes it over the byte copy the
+//! type's [`HostBytes`](crate::HostBytes) would give, which is what a device that can't import
+//! gets. Whoever hands a dma-buf over answers for its contents being readable by a device.
+
+use std::marker::PhantomData;
+use std::os::fd::BorrowedFd;
+
+use daedalus_abi::{OwnedStep, Slots, Step, StepCx, StepEnd};
+use daedalus_backend::{CompileCx, Refusal, Transfer, TransferCost};
+use daedalus_runner::{UNSTAMPED, put_typed, typed_view};
+use daedalus_types::Typed;
+
+use crate::backend::WgpuBackend;
+use crate::dmabuf::Fourcc;
+use crate::handoff::on_device;
+use crate::image::ExternalBuffer;
+use crate::memory::SPACE_DEVICE;
+use crate::transfer::{HOST_SPACE, intern};
+
+/// A type whose values are a dma-buf. The dma-buf holds the value's bytes.
+pub trait DmaBufBacked: Typed + Send + Sync + 'static {
+    /// The dma-buf that holds the value, and the value's length in it. A dma-buf can be longer
+    /// than its value: a dma-heap allocation is at least a page.
+    fn dmabuf(&self) -> (BorrowedFd<'_>, u64);
+}
+
+fn fault(cx: &mut StepCx, reason: &str) -> StepEnd {
+    cx.fault(None, reason);
+    StepEnd::Fault
+}
+
+/// Imports the dma-buf of the `T` in its input cell into device memory, and hands the device
+/// buffer on. Nothing is copied: the buffer is the dma-buf.
+struct ImportStep<T> {
+    /// The device, by its slot: 0 for the default, or a named device's place.
+    slot: usize,
+    of: PhantomData<fn() -> T>,
+}
+
+impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
+    fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
+        let Some(input) = slots.cell(0) else {
+            return fault(cx, "an import has no input");
+        };
+        let Some(value) = typed_view::<T>(input) else {
+            return fault(cx, "an import was given a value that is not a dma-buf");
+        };
+        let (dmabuf, want) = value.dmabuf();
+        let Ok(fd) = dmabuf.try_clone_to_owned() else {
+            return fault(cx, "an import couldn't take the value's dma-buf");
+        };
+        let Ok(context) = crate::devices::context(self.slot) else {
+            return fault(cx, "an import has no device to go to");
+        };
+        let Ok(width) = u32::try_from(want) else {
+            return fault(
+                cx,
+                "a value of more than 4 GiB can't be imported as one row",
+            );
+        };
+        let image = ExternalBuffer {
+            fd,
+            width,
+            height: 1,
+            // A code that is no format: the value is bytes, which only have to be there. An image's
+            // layout would pad the row to the device's pitch, and a value is not an image.
+            fourcc: Fourcc::from_bytes(*b"BYTE"),
+            planes: vec![(0, want)],
+        };
+        let imported = match WgpuBackend::import_sized(&context, image, Some(want)) {
+            Ok(imported) => imported,
+            Err(error) => return fault(cx, &format!("an import was refused: {error}")),
+        };
+        let Some(out) = slots.cell(1) else {
+            return fault(cx, "an import has no output");
+        };
+        put_typed(out, UNSTAMPED.0, UNSTAMPED.1, imported.storage);
+        StepEnd::Done
+    }
+}
+
+type Make = fn(&CompileCx<'_>) -> Result<Step, Refusal>;
+
+fn import<T: DmaBufBacked, const SLOT: usize>(_: &CompileCx<'_>) -> Result<Step, Refusal> {
+    Ok(Step::boxed(ImportStep::<T> {
+        slot: SLOT,
+        of: PhantomData,
+    }))
+}
+
+/// The maker of the import of `T`'s dma-buf, for the device in `slot`.
+fn make_import<T: DmaBufBacked>(slot: usize) -> Make {
+    match slot {
+        1 => import::<T, 1>,
+        2 => import::<T, 2>,
+        3 => import::<T, 3>,
+        _ => import::<T, 0>,
+    }
+}
+
+impl WgpuBackend {
+    /// This backend, also importing a `T`'s dma-buf in place when a CPU node or the host hands a
+    /// shader a `T`. Listed only while the open device imports dma-bufs; a device that doesn't
+    /// takes the upload of the type's bytes instead, so a `T` should be [`HostBytes`](crate::HostBytes)
+    /// as well.
+    #[must_use]
+    pub fn with_dmabuf<T: DmaBufBacked>(self) -> WgpuBackend {
+        let device = self.device_name();
+        let slot = self.link().named_as().map_or(0, |named| named.slot);
+        let base = match device {
+            Some(device) => format!("wgpu.{device}.import"),
+            None => "wgpu.import".to_string(),
+        };
+        let transfer = Transfer {
+            id: intern(format!("{base}:{}", T::KEY.as_str())),
+            key: Some(T::KEY),
+            from: std::borrow::Cow::Borrowed(HOST_SPACE),
+            to: on_device(device, SPACE_DEVICE),
+            cost: TransferCost::Import,
+            make: make_import::<T>(slot),
+        };
+        self.link().offer_dma([transfer]);
+        self
+    }
+}
+
+/// A dma-heap buffer holding `bytes`, with `room` bytes past them for the device's padding, as
+/// the fd of its dma-buf. The CPU writes it under a write sync, so a device that imports it reads
+/// what was written. The buffer's length is the bytes' own: `room` is only the allocation.
+pub fn dma_heap_fd(bytes: &[u8], room: u64) -> Result<std::os::fd::OwnedFd, String> {
+    use daedalus_dma_sys::{Access, DmaHeap};
+    let heap = DmaHeap::open("system").map_err(|error| error.to_string())?;
+    let buf = heap
+        .allocate(bytes.len() as u64 + room)
+        .map_err(|error| error.to_string())?;
+    buf.as_ref()
+        .begin_cpu_access(Access::Write)
+        .map_err(|error| error.to_string())?;
+    let written = buf
+        .as_ref()
+        .map()
+        .and_then(|map| map.write(0, bytes))
+        .map_err(|error| error.to_string());
+    buf.as_ref()
+        .end_cpu_access(Access::Write)
+        .map_err(|error| error.to_string())?;
+    written?;
+    Ok(buf.into_fd())
+}

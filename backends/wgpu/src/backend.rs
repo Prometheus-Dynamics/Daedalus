@@ -35,6 +35,10 @@ pub(crate) struct Link {
     named: Option<crate::devices::Named>,
     /// Moves for types of the author's own, added by `with_bytes`.
     typed: Mutex<Vec<Transfer>>,
+    /// Moves that import a value's dma-buf, added by `with_dmabuf`. Listed only while the open
+    /// device imports dma-bufs, so a plan made without one never asks for an import.
+    #[cfg(target_os = "linux")]
+    dma: Mutex<Vec<Transfer>>,
     state: Mutex<State>,
 }
 
@@ -71,6 +75,25 @@ impl Link {
             .clone()
     }
 
+    /// Adds moves that import a dma-buf. One already listed, by id, is left as it is.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn offer_dma(&self, more: impl IntoIterator<Item = Transfer>) {
+        let mut dma = self.dma.lock().unwrap_or_else(PoisonError::into_inner);
+        for transfer in more {
+            if dma.iter().all(|have| have.id != transfer.id) {
+                dma.push(transfer);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn dma(&self) -> Vec<Transfer> {
+        self.dma
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     pub(crate) fn named_as(&self) -> Option<&crate::devices::Named> {
         self.named.as_ref()
     }
@@ -80,6 +103,8 @@ impl Link {
             options,
             named: Some(named),
             typed: Mutex::default(),
+            #[cfg(target_os = "linux")]
+            dma: Mutex::default(),
             state: Mutex::default(),
         }
     }
@@ -144,6 +169,8 @@ impl WgpuBackend {
                 options,
                 named: None,
                 typed: Mutex::default(),
+                #[cfg(target_os = "linux")]
+                dma: Mutex::default(),
                 state: Mutex::default(),
             }),
         }
@@ -170,6 +197,8 @@ impl WgpuBackend {
                 options: Options::default(),
                 named: None,
                 typed: Mutex::default(),
+                #[cfg(target_os = "linux")]
+                dma: Mutex::default(),
                 state: Mutex::new(State {
                     context: Some(context),
                     adopted: true,
@@ -289,6 +318,12 @@ impl Backend for WgpuBackend {
             .open_context()
             .is_some_and(|context| context.record.dma_heap);
         let mut table = crate::handoff::transfers(self.link.named.as_ref(), heap);
+        #[cfg(target_os = "linux")]
+        if heap {
+            table.extend(self.link.dma());
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = heap;
         table.extend(self.link.offered());
         table
     }

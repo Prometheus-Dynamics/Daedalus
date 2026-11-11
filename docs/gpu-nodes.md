@@ -58,6 +58,8 @@ registered for that type does the import.
 
 Daedalus does not judge who made a dma-buf: one it is given is imported in place when the device can take it, and whoever hands it over answers for its contents being readable by a device. A dma-buf with less memory behind it than the device needs for the buffer is refused with both sizes, and is not copied.
 
+A type whose values are dma-buffers says so once: it implements `DmaBufBacked` and the backend is given `with_dmabuf::<T>()`. While the open device imports dma-bufs the planner takes that import over the upload of the type's bytes (its `HostBytes`), which is the route a device that can't import gets.
+
 A value that goes back to the host has two routes. `wgpu.readback` copies it into host-mapped
 memory, which the host reads uncached, and `wgpu.readback.heap` copies it into dma-heap memory,
 which the host reads through its cache: on the CM5 a 16 MiB readback costs about 12 ms that way
