@@ -181,6 +181,11 @@ fn stage(id: &str, consts: &[(&str, Lit)]) -> NodeDoc {
 /// The detector graph, loaded. The host port `picture` feeds four stages, and the host reads
 /// `detections`, `rejected` and `corners`.
 pub fn detector() -> LoadedHost {
+    detector_with(true)
+}
+
+/// The detector graph, loaded with the backend free to fuse its nodes (`merge`) or not.
+pub fn detector_with(merge: bool) -> LoadedHost {
     let nodes = vec![
         bridge(&[
             ("picture", "budget:picture"),
@@ -227,7 +232,7 @@ pub fn detector() -> LoadedHost {
         edges,
         groups: Vec::new(),
     };
-    load(&graph, &NODES, true)
+    load(&graph, &NODES, merge)
 }
 
 pub fn picture() -> Arc<Picture> {
