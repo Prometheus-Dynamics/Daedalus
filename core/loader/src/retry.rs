@@ -8,10 +8,10 @@ use std::time::Duration;
 use crate::{LoadError, Loader, Plugin};
 
 /// The first delay after a failure.
-pub const BASE: Duration = Duration::from_millis(250);
+pub(crate) const BASE: Duration = Duration::from_millis(250);
 
 /// The longest delay between two attempts.
-pub const CAP: Duration = Duration::from_secs(8);
+pub(crate) const CAP: Duration = Duration::from_secs(8);
 
 /// Counts the failures of one load, and says how long to wait before the next attempt.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
