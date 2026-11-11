@@ -495,12 +495,12 @@ impl Storage {
     /// How many CPU-access syncs the host's reads of this buffer have run. Zero for a buffer that
     /// is not a dma-heap buffer. A test uses it to see that a read with no device use in between
     /// does no sync.
-    #[cfg(target_os = "linux")]
     pub fn cpu_access_syncs(&self) -> u64 {
-        match &self.mapping {
-            Some(Mapping::Heap { syncs, .. }) => syncs.load(Ordering::Relaxed),
-            _ => 0,
+        #[cfg(target_os = "linux")]
+        if let Some(Mapping::Heap { syncs, .. }) = &self.mapping {
+            return syncs.load(Ordering::Relaxed);
         }
+        0
     }
 
     /// The id of the memory space this buffer is in.
