@@ -154,7 +154,9 @@ impl Link {
                 Ok(opened)
             }
             Err(error) => {
-                state.retry.failed(now);
+                // The wait counts from the failure, not from the start of the attempt: an attempt
+                // that takes longer than the wait would otherwise have used it all up.
+                state.retry.failed(Instant::now());
                 Err(error)
             }
         }
