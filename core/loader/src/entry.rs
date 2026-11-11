@@ -3,11 +3,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 use daedalus_abi::{
-    BackendTable, BoundaryPort, CanTakeFn, CompileFn, OwnedStep, RegionView, Slots, Status, Step,
-    StepCx, StepEnd, Text, UnitOut,
+    BackendTable, BoundaryPort, CanTakeFn, CompileFn, OwnedStep, PluginEntry, RegionView, Slots,
+    Status, Step, StepCx, StepEnd, Text, UnitOut,
 };
 use daedalus_backend::{PortRef, StepUnit, UnitInfo};
 use daedalus_registry::{OwnedDecl, Registry};
@@ -53,15 +54,40 @@ impl Loader {
             opened.library,
         ));
 
+        TABLES_HELD.fetch_add(1, Ordering::Relaxed);
         // SAFETY: the entry's nodes and backends are read while the library is held by
         // `generation`, which the loop below keeps alive through every backend it hands out.
-        let (nodes, backends) = unsafe { read_entry(&opened.entry, &path, &generation)? };
+        let read = unsafe { read_entry(&opened.entry, &path, &generation) };
+        // The host has copied what it needs, so the plugin takes its tables back now, whether or
+        // not the read succeeded.
+        release_tables(&opened.entry);
+        let (nodes, backends) = read?;
         Ok(Plugin {
             name,
             generation,
             nodes,
             backends,
         })
+    }
+}
+
+/// Entries the loader has read whose tables the plugin has not taken back. A plugin that frees
+/// its tables brings this back down, so it grows only with a plugin that never releases them.
+static TABLES_HELD: AtomicUsize = AtomicUsize::new(0);
+
+/// How many plugin entries are read but not released. A reload of a plugin that releases its
+/// tables leaves this where it was.
+pub fn plugin_tables_held() -> usize {
+    TABLES_HELD.load(Ordering::Relaxed)
+}
+
+/// Hands the entry's tables back to the plugin, which frees them. Nothing reads them afterwards.
+fn release_tables(entry: &PluginEntry) {
+    if let Some(release) = entry.release {
+        // SAFETY: the entry came from the plugin's entry call, and this is the one release of it.
+        // The tables are read only before this call, and the library is still loaded here.
+        unsafe { release(entry) }
+        TABLES_HELD.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

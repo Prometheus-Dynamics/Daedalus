@@ -23,7 +23,7 @@ pub use error::RegError;
 #[cfg(feature = "std")]
 pub use offer::OfferData;
 #[cfg(feature = "std")]
-pub use owned::{OwnedBody, OwnedDecl, OwnedPort};
+pub use owned::{OwnedBody, OwnedDecl, OwnedPort, promoted_declarations};
 pub use record::{
     BodyRecord, ConfigDecl, Conversion, FanInDecl, FieldRule, Fire, NoCode, NodeDecl, NodeRecord,
     PortDecl, SourceAt, StateDecl, TransferClass, TransferRecord, TypeRef,

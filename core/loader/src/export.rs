@@ -93,8 +93,8 @@ pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> S
             compile: compile_tables::<P>()[index],
         })
         .collect();
-    let node_ptr = leak(nodes);
-    let table_ptr = leak(tables);
+    let node_ptr = hand_over(nodes);
+    let table_ptr = hand_over(tables);
     let entry = PluginEntry {
         layout: LAYOUT_HASH,
         name: Text::of(def.name),
@@ -102,6 +102,7 @@ pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> S
         node_count: node_ptr.1,
         backends: table_ptr.0,
         backend_count: table_ptr.1,
+        release: Some(release_entry),
     };
     // SAFETY: `out` is writable, as this function's contract says.
     unsafe { out.write(entry) };
@@ -109,8 +110,8 @@ pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> S
 }
 
 fn node_c(node: &NodeDef) -> NodeC {
-    let inputs = leak(node.inputs.iter().map(port_c).collect::<Vec<_>>());
-    let outputs = leak(node.outputs.iter().map(port_c).collect::<Vec<_>>());
+    let inputs = hand_over(node.inputs.iter().map(port_c).collect::<Vec<_>>());
+    let outputs = hand_over(node.outputs.iter().map(port_c).collect::<Vec<_>>());
     NodeC {
         id: Text::of(node.id),
         source: Text::of(node.source),
@@ -131,11 +132,48 @@ fn port_c(port: &PortDef) -> PortC {
     }
 }
 
-/// Leaks a vector, so the loader can read it for as long as the library is loaded. An entry is
-/// read once per load, so this is a fixed cost per load.
-fn leak<T: 'static>(items: Vec<T>) -> (*const T, usize) {
-    let slice: &'static mut [T] = Box::leak(items.into_boxed_slice());
-    (slice.as_ptr(), slice.len())
+/// Gives a vector to the entry as a raw slice. The entry owns it until [`release_entry`] takes it
+/// back, so nothing is leaked when the host has finished reading the entry.
+fn hand_over<T>(items: Vec<T>) -> (*const T, usize) {
+    let slice: *mut [T] = Box::into_raw(items.into_boxed_slice());
+    (slice.cast::<T>().cast_const(), slice.len())
+}
+
+/// Frees the tables an entry handed over. The host calls it once, after copying every table.
+///
+/// # Safety
+/// `entry` must be the entry [`entry`] wrote, and it must not be used again afterwards.
+pub unsafe extern "C" fn release_entry(entry: *const PluginEntry) {
+    // SAFETY: the host passes the entry it was given, and reads it before this call only.
+    let entry = unsafe { *entry };
+    if !entry.nodes.is_null() {
+        let nodes = core::ptr::slice_from_raw_parts_mut(entry.nodes.cast_mut(), entry.node_count);
+        // SAFETY: `nodes` came from `hand_over` in `entry`, and no one else holds it.
+        let nodes = unsafe { Box::from_raw(nodes) };
+        for node in nodes.iter() {
+            // SAFETY: each node's port lists came from `hand_over` in `node_c`, once each.
+            unsafe { free_ports(node.inputs, node.input_count) };
+            // SAFETY: as above.
+            unsafe { free_ports(node.outputs, node.output_count) };
+        }
+    }
+    if !entry.backends.is_null() {
+        let tables =
+            core::ptr::slice_from_raw_parts_mut(entry.backends.cast_mut(), entry.backend_count);
+        // SAFETY: `tables` came from `hand_over` in `entry`, and no one else holds it.
+        drop(unsafe { Box::from_raw(tables) });
+    }
+}
+
+/// # Safety
+/// `ports` and `count` must describe a list that [`hand_over`] produced, freed only here.
+unsafe fn free_ports(ports: *const PortC, count: usize) {
+    if ports.is_null() {
+        return;
+    }
+    let ports = core::ptr::slice_from_raw_parts_mut(ports.cast_mut(), count);
+    // SAFETY: as this function's contract says.
+    drop(unsafe { Box::from_raw(ports) });
 }
 
 /// The index of the node in `def`, and the node, for each node of the region the backend `index`

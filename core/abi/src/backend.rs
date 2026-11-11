@@ -133,7 +133,12 @@ pub struct BackendTable {
     pub compile: CompileFn,
 }
 
-/// What a plugin declares. The loader copies each string into host-owned storage at load.
+/// Frees what a plugin's entry points to: its node, port and backend tables. The host calls it
+/// once, after it has copied every table, and does not read the entry again.
+pub type ReleaseEntryFn = unsafe extern "C" fn(entry: *const PluginEntry);
+
+/// What a plugin declares. The loader copies each string into host-owned storage at load, then
+/// calls `release` so the tables do not outlive the load.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PluginEntry {
@@ -144,6 +149,8 @@ pub struct PluginEntry {
     pub node_count: usize,
     pub backends: *const BackendTable,
     pub backend_count: usize,
+    /// Frees the tables above. A plugin that leaves it unset keeps its tables for its lifetime.
+    pub release: Option<ReleaseEntryFn>,
 }
 
 /// The entry point's signature. `out` must point at a `PluginEntry` the caller owns.

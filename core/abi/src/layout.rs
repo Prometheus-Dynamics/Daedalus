@@ -58,7 +58,7 @@ pub const SHAPES: &[u64] = &shape! {
     RegionView { nodes, node_count, inputs, input_count, outputs, output_count }
     UnitOut { step, node, reserved }
     BackendTable { id, can_take, compile }
-    PluginEntry { layout, name, nodes, node_count, backends, backend_count }
+    PluginEntry { layout, name, nodes, node_count, backends, backend_count, release }
 };
 
 pub const LAYOUT_HASH: u64 = layout_hash(SHAPES);
