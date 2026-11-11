@@ -41,7 +41,7 @@ impl<'a> State<'a> {
         added
     }
 
-    pub fn unplace(&mut self, node: u32) {
+    pub(crate) fn unplace(&mut self, node: u32) {
         let place = self.placed[node as usize].take();
         if let Some(place) = place {
             for &port in &self.wiring.consumes[node as usize] {
