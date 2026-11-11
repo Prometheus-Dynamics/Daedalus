@@ -661,6 +661,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-cpu-timings"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-abi",
+ "daedalus-budget-harness",
+ "daedalus-cpu",
+ "daedalus-cpu-author",
+ "daedalus-graph",
+ "daedalus-host",
+ "daedalus-macros",
+ "daedalus-plan",
+ "daedalus-planner",
+ "daedalus-registry",
+ "daedalus-runner",
+ "daedalus-types",
+]
+
+[[package]]
 name = "daedalus-ctl"
 version = "3.0.1-dev"
 dependencies = [
