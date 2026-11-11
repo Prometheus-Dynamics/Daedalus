@@ -67,13 +67,13 @@ fn uninit_storage_is_handed_out_again_once_the_device_is_idle() {
     // It still holds what the last holder wrote: nothing cleared it, as the name says.
     again.read_into(0, &mut seen).expect("a readback");
     assert_eq!(seen, pattern(size as usize));
-    // A buffer that was cleared for its holder isn't one of these.
-    let cleared = Storage::new(&backend, size).expect("a buffer");
-    let was = cleared.wgpu().clone();
-    drop(cleared);
+    // A buffer that was made cleared goes back the same way. Handed out as uninit it keeps its
+    // bytes, and handed out as new it is zeroes again.
     drop(again);
-    let next = Storage::new_uninit(&backend, size).expect("uninit");
-    assert_ne!(next.wgpu(), &was);
+    let cleared = Storage::new(&backend, size).expect("a buffer");
+    assert_eq!(cleared.wgpu(), &was, "the same buffer again");
+    cleared.read_into(0, &mut seen).expect("a readback");
+    assert!(seen.iter().all(|byte| *byte == 0));
 }
 
 /// A new buffer reads as zeroes wherever nothing was written, however it was first touched:
