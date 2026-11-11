@@ -985,6 +985,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-process-timings"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-abi",
+ "daedalus-backend",
+ "daedalus-backend-process",
+ "daedalus-types",
+ "daedalus-worker-conformance",
+]
+
+[[package]]
 name = "daedalus-registry"
 version = "3.0.1-dev"
 dependencies = [
