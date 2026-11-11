@@ -17,6 +17,7 @@ pub mod rates;
 pub mod rewrite;
 mod suggest;
 pub mod type_table;
+mod type_text;
 pub mod typecheck;
 
 use std::collections::BTreeMap;

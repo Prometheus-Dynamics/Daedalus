@@ -20,6 +20,16 @@ pub enum Fire {
     All,
 }
 
+/// The type a port of Rust type `T` declares: its key for a named type, and what it is made
+/// of for a list, an optional value, a tuple or a map, which have no key of their own.
+pub const fn port_type<T: daedalus_types::Typed>() -> TypeRef {
+    if T::STRUCTURAL {
+        TypeRef::Expr(T::EXPR)
+    } else {
+        TypeRef::Key(T::KEY)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TypeRef {
     Key(TypeKey),

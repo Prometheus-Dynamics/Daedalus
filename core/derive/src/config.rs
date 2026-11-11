@@ -169,7 +169,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         ports.push(quote! {
             #r::PortDecl {
                 name: #port_name,
-                ty: #r::TypeRef::Key(<#key_ty as #p::Typed>::KEY),
+                ty: #r::port_type::<#key_ty>(),
                 access: #p::Access::Read,
                 optional: false,
                 conditional: false,

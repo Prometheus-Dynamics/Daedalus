@@ -28,6 +28,8 @@ A crate that writes CPU nodes depends on `daedalus`, on `daedalus-cpu-author` an
 |---|---|
 | `x: T` | The node takes the value. A `Copy` type is read, since taking it changes nothing for others. |
 | `x: &T` | The node reads it. Any number of readers share one value. |
+| `x: &[T]` | The node reads a list. The port's type is a list of `T`, held as a `Vec<T>`. |
+| `x: &str` | The node reads text, held as a `String`. |
 | `x: Arc<T>` | The node takes the value's handle. The port's type is `T`. Returning the same `Arc<T>` hands the value on with no copy and no allocation. |
 | `x: &mut T` | The node changes it in place. The planner gives it a copy if someone else also reads it. |
 | `x: Option<T>` | The port is optional: the node runs with or without it. |
@@ -39,6 +41,13 @@ A crate that writes CPU nodes depends on `daedalus`, on `daedalus-cpu-author` an
 ## Value types
 
 A scalar (`bool`, the integers, `f32`, `f64`, `String`, `Vec<u8>`, `()`) has a type key already.
+A type made of others needs nothing declared: `Vec<T>` is a list of `T`, `Option<T>` a value that
+may be missing, `(A, B)` up to four a tuple, and `BTreeMap<K, V>` a map, for any `T` that has a
+type. Two such types are the same when they are made of the same things, so a `Vec<f32>` output
+connects to a `&[f32]` input and to nothing else. `Vec<u8>` is bytes, not a list. In a graph
+document a host port names one as the planner prints it: `list<f32>`, `optional<u32>`,
+`(u32, f32)`, `map<string, i64>`. One named output that returns a tuple carries the tuple; several
+named outputs take one part each.
 A type of your own gets one with `#[derive(Type)]`:
 
 ```rust

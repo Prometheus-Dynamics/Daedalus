@@ -46,7 +46,9 @@ impl Host<'_> {
         let wrong = || HostError::WrongRustType {
             port: Label::new(name),
         };
-        if self.output(name)?.key.as_str() != T::KEY.as_str() {
+        // A type made of others has no key to compare: the port's type was proved when the
+        // graph was planned, and the size is checked below.
+        if !T::STRUCTURAL && self.output(name)?.key.as_str() != T::KEY.as_str() {
             return Err(wrong());
         }
         let Some(value) = self.take_value(name)? else {

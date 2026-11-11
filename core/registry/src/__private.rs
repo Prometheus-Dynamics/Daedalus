@@ -5,6 +5,10 @@ pub use daedalus_types::{
 };
 pub use daedalus_value::Access;
 
+/// What a slice or `str` parameter's value is held as.
+#[cfg(feature = "std")]
+pub use std::{string::String, vec::Vec};
+
 /// How a by-value parameter uses its value. A `Copy` type only reads it, so many consumers can
 /// share one output with no copy step in between.
 pub struct ByValue<T>(core::marker::PhantomData<T>);

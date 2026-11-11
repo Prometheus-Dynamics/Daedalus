@@ -52,6 +52,30 @@ pub(crate) fn generic_of<'a>(ty: &'a Type, name: &str) -> Option<Vec<&'a Type>> 
     )
 }
 
+/// The type a parameter's value is held as. `&[T]` reads a `Vec<T>` and `&str` a `String`: the
+/// reference to the holder is passed, and is a reference to the slice wherever one is wanted.
+fn held(ty: Type) -> Type {
+    let Type::Reference(reference) = &ty else {
+        return ty;
+    };
+    if reference.mutability.is_some() {
+        return ty;
+    }
+    let holder: Type = match &*reference.elem {
+        Type::Slice(slice) => {
+            let element = &slice.elem;
+            syn::parse_quote!(::daedalus_registry::__private::Vec<#element>)
+        }
+        Type::Path(path) if path.qself.is_none() && path.path.is_ident("str") => {
+            syn::parse_quote!(::daedalus_registry::__private::String)
+        }
+        _ => return ty,
+    };
+    let mut reference = reference.clone();
+    reference.elem = Box::new(holder);
+    Type::Reference(reference)
+}
+
 fn unref(ty: &Type) -> &Type {
     match ty {
         Type::Reference(reference) => &reference.elem,
@@ -105,9 +129,17 @@ pub(crate) fn checked_key(ty: &Type) -> TokenStream {
     }}
 }
 
+/// The port type of a Rust type: its key, checked to be usable from this crate, or what it is
+/// made of when it has no key of its own.
 pub(crate) fn key_of(ty: &Type) -> TokenStream {
-    let key = checked_key(ty);
-    quote!(::daedalus_registry::TypeRef::Key(#key))
+    quote! {{
+        const _: () = {
+            static KEY: ::daedalus_registry::__private::TypeKey =
+                <#ty as ::daedalus_registry::__private::Typed>::KEY;
+            ::daedalus_registry::__private::require_local_key(&KEY, ::core::module_path!())
+        };
+        ::daedalus_registry::port_type::<#ty>()
+    }}
 }
 
 pub(crate) fn body_type() -> TokenStream {
@@ -237,6 +269,8 @@ pub(crate) fn shape(
         let ident = &pattern.ident;
         let ty = fill_type(&param.ty)?;
         shape.params.extend(quote!(#ident: #ty,));
+        // A slice or a `str` is read out of the list or string that holds it.
+        let ty = held(ty);
         let is_state = matches!(&ty, Type::Reference(r) if r.mutability.is_some())
             && args
                 .state
@@ -318,8 +352,14 @@ pub(crate) fn shape(
         value = parts.first().copied().unwrap_or(value);
         shape.error = parts.get(1).map(|error| (*error).clone());
     }
-    let types = output_types(value);
-    let is_tuple = matches!(value, Type::Tuple(_));
+    // One named output and a tuple returned: the tuple is that output's value. With several
+    // names, or none, a tuple is one output for each of its parts.
+    let whole = outputs.as_ref().is_some_and(|names| names.len() == 1);
+    let is_tuple = matches!(value, Type::Tuple(_)) && !whole;
+    let types = match is_tuple {
+        true => output_types(value),
+        false => vec![value],
+    };
     if let Some(names) = &outputs
         && names.len() != types.len()
     {
