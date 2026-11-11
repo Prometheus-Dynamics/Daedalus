@@ -124,6 +124,10 @@ pub struct Options {
     /// set they are on the device: the host feeds and takes [`Storage`](crate::Storage), and
     /// nothing is copied for it.
     pub host_ports_on_device: bool,
+    /// Plans this device as one that can't import dma-bufs, whatever the machine has: no dma-buf
+    /// import and no heap readback is offered, so a value is uploaded. The same planner and runner
+    /// run either way; only the device's record says which route it can take.
+    pub no_dma_heap: bool,
     /// What an earlier run learned about the adapter, so planning can use it before a device
     /// opens.
     pub known: Option<crate::CapsRecord>,
@@ -150,6 +154,7 @@ impl Default for Options {
             adapter: None,
             index: None,
             host_ports_on_device: false,
+            no_dma_heap: false,
             known: None,
             hints: crate::MemoryHints::default(),
             staging: crate::StagingConfig::default(),

@@ -185,7 +185,11 @@ impl Context {
             passes: AtomicU64::new(0),
             dispatches: AtomicU64::new(0),
             moved: crate::transfer::Counters::default(),
-            record: with_heap(CapsRecord::new(info, &limits, device.features()), &device),
+            record: with_heap(
+                CapsRecord::new(info, &limits, device.features()),
+                &device,
+                options.no_dma_heap,
+            ),
             limits,
             device,
             queue,
@@ -408,13 +412,14 @@ impl Context {
 }
 
 /// The record with `dma_heap` set: the device imports dma-bufs and the system heap opens.
-fn with_heap(record: CapsRecord, device: &wgpu::Device) -> CapsRecord {
+fn with_heap(record: CapsRecord, device: &wgpu::Device, no_dma_heap: bool) -> CapsRecord {
     #[cfg(target_os = "linux")]
-    let dma_heap = daedalus_vk_sys::memory::imports_dma_buf(device)
+    let dma_heap = !no_dma_heap
+        && daedalus_vk_sys::memory::imports_dma_buf(device)
         && daedalus_dma_sys::DmaHeap::open("system").is_ok();
     #[cfg(not(target_os = "linux"))]
     let dma_heap = {
-        let _ = device;
+        let _ = (device, no_dma_heap);
         false
     };
     CapsRecord { dma_heap, ..record }
