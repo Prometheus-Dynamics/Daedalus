@@ -321,3 +321,55 @@ fn a_panic_in_a_body_leaves_nothing_leaked_or_freed_twice() {
         );
     }
 }
+
+/// `x -> make`, with `make`'s output sent only to the host, as `big`.
+fn host_only(merge: bool) -> LoadedHost {
+    let mut host = bridge();
+    host.port_types.remove("out");
+    host.port_types.insert("big".into(), "outputs:big".into());
+    let mut nodes = vec![host];
+    nodes.push(NodeDoc::new("k.make"));
+    let graph = GraphBody {
+        nodes,
+        edges: vec![edge(0, "x", 1, "x"), edge(1, "value", 0, "big")],
+        groups: Vec::new(),
+    };
+    let mut registry = Registry::new();
+    registry.register_all(&NODES).unwrap();
+    let config = Config {
+        merge,
+        ..Config::default()
+    };
+    load(plan(&graph, &registry, &[&CpuBackend], &config).unwrap())
+}
+
+#[test]
+fn a_host_that_takes_its_output_by_value_gets_it_moved_with_no_copy_or_allocation() {
+    let _turn = turn();
+    // `take::<Big>` takes the value out of the cell the producer refills. `Big` panics when
+    // cloned, so a copy fails the test. The tick and the take are counted; the feed is not.
+    for merge in [false, true] {
+        let mut host = host_only(merge);
+        for x in 1..=50 {
+            let io = host.host();
+            io.feed_typed("x", Arc::new(x)).unwrap();
+            let ((stepped, taken), allocations) = counted(|| {
+                let stepped = io.step().is_ok();
+                (stepped, io.take::<Big>("big"))
+            });
+            assert!(stepped, "merge {merge}, x {x}: the tick ran");
+            let big = taken.unwrap().expect("a value for the host");
+            assert_eq!(big.x, x, "merge {merge}, x {x}");
+            drop(big);
+            if x > 2 {
+                assert_eq!(allocations, 0, "merge {merge}, x {x}");
+            }
+        }
+        drop(host);
+        assert_eq!(
+            LIVE.load(Ordering::SeqCst),
+            0,
+            "merge {merge}: nothing left alive"
+        );
+    }
+}

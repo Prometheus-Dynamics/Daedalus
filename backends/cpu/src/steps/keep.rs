@@ -6,7 +6,7 @@
 //!
 //! - `Readers`: the producer keeps the `Arc`s it published in a small pool. Once every consumer has
 //!   let go of one, the producer refills it in place. Consumers only read, so nothing is taken.
-//! - `Taker`: the value sits in a [`Carrier`], a shared cell that holds an `Option`. The one
+//! - `Taker`: the value sits in a [`daedalus_runner::Carried`], a shared cell that holds an `Option`. The one
 //!   consumer takes the value out of the cell, and leaves the cell in place. Once the consumer has
 //!   let go of a cell, the producer puts the next value in it. A value is moved, never copied.
 //!
@@ -101,7 +101,7 @@ impl<T, const INLINE: bool> Keeper<T> for Kept<T, INLINE> {
 }
 
 #[cfg(feature = "alloc")]
-pub use with_alloc::{Carrier, Spare, take_carried};
+pub use with_alloc::{Spare, take_carried};
 
 #[cfg(feature = "alloc")]
 mod with_alloc {
@@ -109,30 +109,9 @@ mod with_alloc {
     use core::mem::replace;
 
     use daedalus_abi::Slot;
-    use daedalus_runner::{UNSTAMPED, put_typed, take_typed};
-    use spin::Mutex;
+    use daedalus_runner::{Carried, UNSTAMPED, put_typed, take_typed};
 
     use super::{Keep, Keeper, POOL_LIMIT};
-
-    /// A value that a producer puts in a cell, for one consumer to take. The consumer takes the
-    /// value and leaves `None`, so the cell is never read by two holders at once.
-    pub struct Carrier<T>(Mutex<Option<T>>);
-
-    impl<T> Carrier<T> {
-        pub fn holding(value: T) -> Carrier<T> {
-            Carrier(Mutex::new(Some(value)))
-        }
-
-        /// Moves the value out. `None` if it was taken already, which a graph never asks for.
-        pub fn take(&self) -> Option<T> {
-            self.0.lock().take()
-        }
-
-        /// Puts the next value in. Whatever the cell held before is dropped.
-        pub fn put(&self, value: T) {
-            *self.0.lock() = Some(value);
-        }
-    }
 
     /// The memory an output keeps from one tick to the next. Each kind keeps a small pool: a value
     /// a queue still holds is busy, and the queue may hold its last value for several ticks, so
@@ -143,7 +122,7 @@ mod with_alloc {
         /// Values that every consumer reads.
         Readers(Vec<Arc<T>>),
         /// Cells that a single consumer takes its value from.
-        Taker(Vec<Arc<Carrier<T>>>),
+        Taker(Vec<Arc<Carried<T>>>),
     }
 
     // A derive would ask for `T: Default`, which a value need not have.
@@ -200,7 +179,7 @@ mod with_alloc {
                             cell.put(value);
                             cell
                         }
-                        None => Arc::new(Carrier::holding(value)),
+                        None => Arc::new(Carried::holding(value)),
                     };
                     pool.push(cell.clone());
                     if pool.len() > POOL_LIMIT {
@@ -216,7 +195,7 @@ mod with_alloc {
     /// Takes the carrier a cell holds, and the value in it. `None` when the cell holds no carrier
     /// of `T`, and nothing is moved then.
     pub fn take_carried<T: 'static>(cell: &mut Slot) -> Option<Option<T>> {
-        take_typed::<Carrier<T>>(cell).map(|carrier| carrier.take())
+        take_typed::<Carried<T>>(cell).map(|carrier| carrier.take())
     }
 }
 

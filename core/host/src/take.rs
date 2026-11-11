@@ -3,7 +3,7 @@
 use core::any::Any;
 use std::sync::Arc;
 
-use daedalus_runner::{INLINE_BYTES, value_of};
+use daedalus_runner::{Carried, INLINE_BYTES, value_of};
 use daedalus_types::Typed;
 use daedalus_value::Owner;
 
@@ -26,6 +26,11 @@ impl Host<'_> {
             });
         };
         let payload: Arc<dyn Any + Send + Sync> = payload;
+        // A value in a cell the producer refills is moved out of it: no copy, and nothing is cloned.
+        let payload = match payload.downcast::<Carried<T>>() {
+            Ok(cell) => return Ok(cell.take()),
+            Err(other) => other,
+        };
         let typed = payload
             .downcast::<T>()
             .map_err(|_| HostError::WrongRustType {
@@ -54,10 +59,13 @@ impl Host<'_> {
         let Some(value) = self.take_value(name)? else {
             return Ok(None);
         };
-        if let Owner::Typed(payload) = &value.owner
-            && let Some(typed) = payload.downcast_ref::<T>()
-        {
-            return Ok(Some(*typed));
+        if let Owner::Typed(payload) = &value.owner {
+            if let Some(cell) = payload.downcast_ref::<Carried<T>>() {
+                return Ok(cell.take());
+            }
+            if let Some(typed) = payload.downcast_ref::<T>() {
+                return Ok(Some(*typed));
+            }
         }
         let bytes = value.bytes().ok_or_else(wrong)?;
         let mut cell = [0; INLINE_BYTES];

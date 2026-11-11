@@ -20,6 +20,8 @@ mod async_step;
 mod backpressure;
 mod bits;
 mod cancel;
+#[cfg(feature = "alloc")]
+mod carried;
 mod error;
 #[cfg(all(feature = "std", target_os = "linux"))]
 pub mod event_fd;
@@ -69,6 +71,8 @@ pub use arena::{
 pub use async_step::FutureFence;
 pub use backpressure::BackpressureStrategy;
 pub use cancel::{CANCEL_REASON, CancelWord, skip_cancelled};
+#[cfg(feature = "alloc")]
+pub use carried::Carried;
 pub use error::{LoadError, MaskError, RunError};
 pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
 #[cfg(feature = "alloc")]

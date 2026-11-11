@@ -251,8 +251,9 @@ says how each output is consumed (`Sharing` in `core/backend`), and the producer
 |---|---|---|
 | Every consumer reads it, on the same backend | A small pool of values. A value that no consumer holds any more is refilled for the next tick | Nothing, once warm |
 | One consumer takes it by value, on the same backend | A small pool of shared cells. The consumer moves the value out of a cell, and the producer refills the cell once the consumer lets go of it | Nothing, once warm. The value is moved, never copied |
-| Every reader is the host or a consumer on the same backend, and none takes the value | A small pool of values, as above. A host's typed `take::<T>` copies a value the producer still holds | Nothing, once warm |
-| Anything else: another backend, or a value taken by a host or another backend | Nothing. The output is made new each tick | One allocation |
+| The host alone reads it | The same shared cells as a value one consumer takes. The host's `take::<T>` moves the value out, and the producer refills the cell on its next tick | Nothing, once warm. The value is moved, never copied |
+| The host and a node both read it, or several nodes read it | A small pool of values, as above. The host's typed `take::<T>` copies a value a node still holds, once a tick. `take_value` and `take_copy` do not copy | Nothing, once warm. One copy a tick for the host's typed take |
+| Anything else: a consumer on another backend, or several consumers of which one takes the value | Nothing. The output is made new each tick | One allocation |
 
 A value taken out of its cell is moved to the stage that takes it. Each stage keeps its own pool of
 cells for what it returns, so a chain of stages that take and return values makes nothing once

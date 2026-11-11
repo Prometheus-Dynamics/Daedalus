@@ -12,7 +12,6 @@ std = ["alloc", "daedalus-registry/std"]
 alloc = [
     "dep:daedalus-backend",
     "dep:daedalus-graph",
-    "dep:spin",
     "daedalus-abi/alloc",
     "daedalus-plan/alloc",
     "daedalus-runner/alloc",
@@ -43,7 +42,6 @@ daedalus-runner = { path = "../../core/runner", default-features = false }
 daedalus-types = { path = "../../core/types", default-features = false }
 daedalus-value = { path = "../../core/value", default-features = false }
 defmt = { workspace = true, optional = true }
-spin = { workspace = true, optional = true }
 
 [dev-dependencies]
 daedalus-abi = { path = "../../core/abi", features = ["test-run", "count-alloc"] }
