@@ -319,7 +319,8 @@ The form of a compiled graph doesn't depend on the machine. These are the same t
 - **The core has to work without a heap.** Types, ports and the step list can't assume `Arc` or `Any`. Typed slots already move it this way.
 - **`#[node]` becomes the only macro.** `#[daedalus_mcu::node]`, `NodeDesc`, `McuType` and the separate `Scalar` values go away.
 - **Three runtimes become one.** The full runtime, the `no_std` tier and the MCU profile collapse into one runner, with capacities fixed at plan time on a chip.
-- **It has to stay tiny:** today that's 3-12 KiB of flash and 112-584 B of RAM for five nodes, and this must not grow.
+- **It has to stay tiny:** today that's 2,128 to 2,672 B of flash and 112 B of RAM for five nodes, pinned in
+  `scripts/ci.d/chip.sh`, under gate limits of 12,288 B flash and 584 B RAM. This must not grow.
 
 
 ## Everything connected
@@ -366,7 +367,7 @@ The planner knows every value's consumers before anything runs, so nothing is co
 
 ### Memory backends
 
-A backend doesn't have to run nodes. A memory backend declares memory spaces and the handlers between them, and offers no nodes. `backends/dmabuf` is one: blocks of memory with an fd and a length, and no idea what's stored in them.
+A backend doesn't have to run nodes. A memory backend declares memory spaces and the handlers between them, and offers no nodes. There is no production memory-only backend on `next`: `backends/dmabuf` was removed in #194.
 
 ### GPU setup
 
@@ -420,7 +421,8 @@ daedalus/
     sim/                  a fake backend for testing the core
     vk-sys/ and other *-sys crates: the unsafe parts
   languages/
-    python/  node/  java/  cpp/  rust/  rust-capi/  SDKs for writing and embedding
+    python/  node/  java/  cpp/  rust/  SDKs for writing nodes run by the process backend
+    rust-capi/  rust-capi-sys/  a safe Rust host over the C surface, and its loader
   service/
     daedalusd/  daedalus-ctl/
   testing/
@@ -514,7 +516,7 @@ Working through dev's code raised these. Each is decided, and it's written into 
 | The assignment search gets huge | It's exact. Past a limit, planning fails and suggests forcing a backend. It doesn't silently settle for a worse answer. |
 | Is there a soft preference, like dev's `GpuPreferred`? | No. Force a backend, or let crossings and then the Host's priority order decide. |
 | Can `until` run forever? | No, it needs a declared maximum. |
-| An edge with no capacity (dev's is unbounded) | 64 slots on a host. Chips set their own default. Running can't allocate, so unbounded can't exist. |
+| An edge with no capacity (dev's is unbounded) | 4 slots from the planner, 64 from the host's loader. Chips set their own default. Running can't allocate, so unbounded can't exist. |
 | wgpu allocates about 29 times per submit | "Running allocates nothing" is about our code. wgpu's count must not grow with the node count in a region. |
 | What is a frame? | Nothing, to Daedalus. A node declares its types, and a memory handler moves them. The type belongs to whoever wrote the nodes. Neither Daedalus nor Lemnos defines one. |
 | GPU setup | The GPU backend: `open` finds its own device, `adopt` is handed one. The core never sees a device. |
@@ -546,13 +548,13 @@ Everything else dev does has a PR. I6 keeps the checklist, and the last PR walks
 - Stay inside the paths the PR creates. No PR edits the root `Cargo.toml`, `TODO.md` or a changelog, and `Cargo.lock` is ignored until the last PR. That's what lets dozens run at once.
 - A PR that needs a shared interface changed stops and says so. Those change through A-series PRs only.
 - A PR merges when `scripts/gate.sh` passes, and its description pastes the proof.
-- Hardware that can't be reached from the cloud is marked `untested on board`, and the check goes into `testing/board-runs/<id>.md`.
+- Hardware that can't be reached from the cloud gets a record at `testing/board-runs/<id>.md` whose first line is a `Status:` line.
 - Failure rule everywhere. No estimates. No version bumps. No tags. No force-push.
 
 
 ## The groups
 
-112 PRs. 26 of them have a board check that a local session runs afterwards.
+110 PRs. 23 of them have a board check that a local session runs afterwards.
 
 | Group | PRs | Board runs | Builds on | Waves |
 |---|---|---|---|---|
@@ -573,18 +575,18 @@ Worked out from each PR's needs. A PR can start when everything it needs has mer
 |---|---|---|
 | **1** | 2 | A1 I6 |
 | **2** | 5 | A2 A3 A4 D8 D11 |
-| **3** | 4 | A5 A6 D14 D16 |
-| **4** | 5 | A7 A10 A14 D15 G1 |
+| **3** | 3 | A5 A6 D14 |
+| **4** | 4 | A7 A10 A14 G1 |
 | **5** | 5 | A8 A11 C1 E1 H1 |
 | **6** | 14 | A9 A12 B1 B14 B15 C2 C3 C5 C9 C11 C18 E2 E13 H2 |
 | **7** | 17 | A13 A15 B2 B5 C4 C6 C7 C8 C13 C15 C20 C22 C24 E4 E9 G2 G4 |
-| **8** | 17 | B3 B4 C16 C17 E7 E8 E14 E16 E17 G3 G5 G6 G7 G8 G9 G12 I1 |
+| **8** | 16 | B3 B4 C16 C17 E7 E8 E14 E17 G3 G5 G6 G7 G8 G9 G12 I1 |
 | **9** | 3 | B6 E11 E15 |
 | **10** | 1 | B7 |
 | **11** | 1 | B8 |
 | **12** | 3 | B9 C12 E5 |
 | **13** | 5 | B10 B11 B12 B13 E6 |
-| **14** | 3 | C10 D1 E12 |
+| **14** | 4 | C10 D0 D1 E12 |
 | **15** | 11 | C14 C21 C23 D2 D3 D4 D9 D10 E3 G10 H3 |
 | **16** | 6 | D5 E10 G11 H4 I4 I5 |
 | **17** | 6 | D6 D13 H5 H6 I2 I8 |

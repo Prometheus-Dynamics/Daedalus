@@ -5,8 +5,9 @@
 ```text
 core/        abi, types, value, graph, backend, registry, plan, planner, runner, macros, derive,
              host, wire, client, loader, capi, daedalus (the facade)
-backends/    cpu, cpu-author, wgpu, wgpu-author, dmabuf, process, sim, and *-sys crates
+backends/    cpu, cpu-author, wgpu, wgpu-author, process, sim, and *-sys crates
 languages/   python, node, java, cpp, rust: SDKs for nodes run by the process backend
+             rust-capi (a safe Rust host over the C surface) and rust-capi-sys (its loader)
 service/     daedalusd, daedalus-ctl
 testing/     testing/crates/ (conformance suites, the budget harness), fixtures/, board-runs/,
              budgets/
@@ -76,5 +77,5 @@ to one is a change of its own, with the page under `docs/` that describes it upd
 - Running allocates nothing in Daedalus's own code. Planning may.
 - A number that is a budget is in [`testing/budgets/budgets.toml`](../testing/budgets/budgets.toml),
   and a change that makes one worse changes it there and says why.
-- Hardware that was not reached is marked `untested on board`, with the procedure in
-  `testing/board-runs/`.
+- Hardware that was not reached has a record in `testing/board-runs/`, whose `Status:` line says
+  what ran and what did not.

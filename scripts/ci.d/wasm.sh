@@ -10,9 +10,10 @@ node scripts/wasm-smoke.mjs "$out/wasm32-unknown-unknown/debug/daedalus_wasm_smo
 cargo build --locked -q --target wasm32-wasip1 -p daedalus-wasm-smoke --bin daedalus-wasi-smoke
 echo "wasi smoke: $(node --no-warnings scripts/wasi-smoke.mjs "$out/wasm32-wasip1/debug/daedalus-wasi-smoke.wasm")"
 
-# The CLI has to match the library, or its output won't load. Cargo.lock isn't committed, and
-# other dependencies pin the library, so the CLI follows the library: CI installs the version
-# `scripts/wasm-bindgen-version.sh` prints.
+# The CLI has to match the wasm-bindgen library the build links, or its output won't load. The
+# lockfile is committed, so the locked build has one wasm-bindgen version, and
+# `scripts/wasm-bindgen-version.sh` prints it. The CLI is a separate binary the lock doesn't pin,
+# so this check is still needed.
 wanted=$(scripts/wasm-bindgen-version.sh)
 found=$(wasm-bindgen --version | awk '{ print $2 }')
 if [[ "$wanted" != "$found" ]]; then

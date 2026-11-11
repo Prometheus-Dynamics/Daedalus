@@ -49,8 +49,9 @@ scripts/gpu-lavapipe.sh                     # the GPU lane, on Mesa's software V
 
 - Timings. A hosted runner's clock is not a measurement. The `Budgets` workflow compares
   timings with the previous run and never fails on them.
-- Boards. Each PR that needs one has its procedure in `testing/board-runs/<id>.md`, marked
-  `untested on board` until someone runs it.
+- Boards. Each PR that needs one has its procedure and record in `testing/board-runs/<id>.md`.
+  The record's first line is a `Status:` line: `run on CM5 <date>`, `partly run on CM5 <date>`
+  (what ran and what did not), or `not run` with the reason.
 
 ## Workflows
 

@@ -17,7 +17,7 @@ reference, and nothing here changes it. The work is a pre-planned list of PRs in
 
 [`TODO.md`](TODO.md) is the full list.
 
-Group A is merged. Groups B and C are being built in local sessions, one owner per group. No PR
+Every PR in `TODO.md` is merged. No PR
 runs in the cloud until the user says so, whatever a brief's `Runs:` line says.
 
 ## Working a PR
@@ -59,8 +59,9 @@ runs in the cloud until the user says so, whatever a brief's `Runs:` line says.
 - No dependency on Lemnos.
 - No Rust file over 800 lines.
 - Remove legacy outright: no compatibility shims and no code paths for old callers.
-- Hardware you can't reach is marked `untested on board`, with the check written to
-  `testing/board-runs/<id>.md`. A PR is not held back for a board run.
+- Hardware you can't reach gets a record at `testing/board-runs/<id>.md`. Its first line is a
+  `Status:` line: `run on CM5 <date>`, `partly run on CM5 <date>` (what ran and what did not), or
+  `not run` with the reason. A PR is not held back for a board run.
 - Never claim something works without having run it. Report failures with their output.
 - Breaking other repositories is fine. They aren't built here.
 - Never push tags. Never force-push `next` or `dev`. Don't change `dev`. Don't bump versions.
