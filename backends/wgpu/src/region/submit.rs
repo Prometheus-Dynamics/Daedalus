@@ -22,18 +22,21 @@ const KEPT: usize = 4;
 
 pub(crate) struct RegionStep {
     /// Where another device comes from when this one is lost.
-    link: Arc<Link>,
-    context: Arc<Context>,
-    nodes: Vec<Node>,
-    owned: Vec<Owned>,
-    reads: usize,
+    pub(super) link: Arc<Link>,
+    pub(super) context: Arc<Context>,
+    pub(super) nodes: Vec<Node>,
+    pub(super) owned: Vec<Owned>,
+    pub(super) reads: usize,
     /// For uniforms nothing feeds.
-    zeroes: Vec<u8>,
+    pub(super) zeroes: Vec<u8>,
     /// What the last run read. The device may still be reading it after the step has returned,
     /// so the region keeps its own reference until its next run, which the runner holds back
     /// until this run's fence has resolved. For an imported image that reference is what keeps
     /// the producer from reusing the buffer.
-    held: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+    pub(super) held: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+    /// The region as a chain recorded with Vulkan itself, where it can be one.
+    #[cfg(target_os = "linux")]
+    pub(super) chained: Option<super::chained::Chained>,
 }
 
 impl RegionStep {
@@ -58,6 +61,8 @@ impl RegionStep {
             .max()
             .unwrap_or(0);
         RegionStep {
+            #[cfg(target_os = "linux")]
+            chained: super::chained::Chained::build(&context, &nodes),
             link,
             context,
             nodes,
@@ -248,6 +253,108 @@ fn draw(
     Ok(())
 }
 
+/// Sizes what `node` writes from what it was given, and picks the buffers.
+pub(super) fn prepare_makes(
+    node: &Node,
+    inputs: &[Slot],
+    owned: &mut [Owned],
+    context: &Arc<Context>,
+) -> Result<(), (u32, String)> {
+    let at = node.index.0;
+    for &(_, buffer) in &node.makes {
+        let bytes = match owned[buffer].size {
+            Size::Bytes(bytes) => bytes,
+            Size::Like {
+                position: like,
+                of,
+                stride,
+            } => {
+                let source = node.sources[like];
+                let given = bytes_of(source, inputs, owned)
+                    .ok_or_else(|| (at, "an input buffer is missing".to_string()))?;
+                (given / u64::from(of)) * u64::from(stride)
+            }
+            Size::Recorded { output } => {
+                let Work::Record(body) = &node.work else {
+                    return Err((at, "only a recording body sizes its own outputs".into()));
+                };
+                let mut given = [0; MAX_BINDINGS];
+                for (bytes, source) in given.iter_mut().zip(&node.sources) {
+                    *bytes = bytes_of(*source, inputs, owned)
+                        .ok_or_else(|| (at, "an input buffer is missing".to_string()))?;
+                }
+                (body.output_bytes)(&given[..node.sources.len()], output)
+            }
+        };
+        owned[buffer]
+            .prepare(context, bytes.max(4).next_multiple_of(4))
+            .map_err(|error| (at, error))?;
+    }
+    Ok(())
+}
+
+/// What each binding of the shader node `node` gets this run, in the binding table's order.
+pub(super) fn bound_for<'a>(
+    node: &Node,
+    shader: &crate::shader::Shader,
+    inputs: &'a [Slot],
+    owned: &'a [Owned],
+    zeroes: &'a [u8],
+) -> Result<[Bound<'a>; MAX_BINDINGS], (u32, String)> {
+    let at = node.index.0;
+    let mut bound = [Bound::Sampler; MAX_BINDINGS];
+    for (slot, source) in bound.iter_mut().zip(&node.sources) {
+        *slot = match *source {
+            Source::Cell(cell) => {
+                let cell = inputs.get(cell);
+                match cell.and_then(typed_view::<Storage>) {
+                    Some(storage) => Bound::Storage(storage),
+                    None => match cell.and_then(typed_view::<Texture>) {
+                        Some(texture) => Bound::Texture(texture),
+                        None => {
+                            let text = "an input isn't a buffer or a texture on the device";
+                            return Err((at, text.into()));
+                        }
+                    },
+                }
+            }
+            Source::Bytes(cell) => {
+                let cell = inputs.get(cell);
+                // Plain bytes, or bytes an upload already put on the device.
+                match cell.and_then(Slot::bytes) {
+                    Some(bytes) => Bound::Uniform(bytes),
+                    None => match cell.and_then(typed_view::<Storage>) {
+                        Some(storage) => Bound::UniformFrom(storage),
+                        None => return Err((at, "a uniform's input has no bytes".into())),
+                    },
+                }
+            }
+            Source::Zeroes => Bound::Uniform(&[]),
+            Source::Buffer(buffer) => {
+                let owned = &owned[buffer];
+                // What the node before made: a texture if it drew one this run.
+                match (&owned.texture, owned.kept.get(owned.current)) {
+                    (Some(texture), _) => Bound::Texture(texture),
+                    (None, Some(storage)) => Bound::Storage(storage),
+                    (None, None) => {
+                        return Err((at, "an input from this region wasn't made".into()));
+                    }
+                }
+            }
+            Source::Sampler => Bound::Sampler,
+        };
+    }
+    // A uniform nothing feeds is zeroes of the size the shader declares.
+    for (slot, binding) in bound.iter_mut().zip(shader.spec().bindings) {
+        if let (Bound::Uniform([]), crate::shader::BindingKind::Uniform { size }) =
+            (&*slot, binding.kind)
+        {
+            *slot = Bound::Uniform(&zeroes[..size as usize]);
+        }
+    }
+    Ok(bound)
+}
+
 impl RegionStep {
     fn record(
         &mut self,
@@ -266,37 +373,7 @@ impl RegionStep {
                 self.owned[output].texture = Some(texture);
                 continue;
             }
-            // Size what this node writes from what it was given, then pick the buffers.
-            for &(position, buffer) in &node.makes {
-                let bytes = match self.owned[buffer].size {
-                    Size::Bytes(bytes) => bytes,
-                    Size::Like {
-                        position: like,
-                        of,
-                        stride,
-                    } => {
-                        let source = node.sources[like];
-                        let given = bytes_of(source, inputs, &self.owned)
-                            .ok_or_else(|| (at, "an input buffer is missing".to_string()))?;
-                        (given / u64::from(of)) * u64::from(stride)
-                    }
-                    Size::Recorded { output } => {
-                        let Work::Record(body) = &node.work else {
-                            return Err((at, "only a recording body sizes its own outputs".into()));
-                        };
-                        let mut given = [0; MAX_BINDINGS];
-                        for (bytes, source) in given.iter_mut().zip(&node.sources) {
-                            *bytes = bytes_of(*source, inputs, &self.owned)
-                                .ok_or_else(|| (at, "an input buffer is missing".to_string()))?;
-                        }
-                        (body.output_bytes)(&given[..node.sources.len()], output)
-                    }
-                };
-                let _ = position;
-                self.owned[buffer]
-                    .prepare(&self.context, bytes.max(4).next_multiple_of(4))
-                    .map_err(|error| (at, error))?;
-            }
+            prepare_makes(node, inputs, &mut self.owned, &self.context)?;
             let shader = match &node.work {
                 Work::Shader(shader) => shader,
                 Work::Record(body) => {
@@ -335,59 +412,7 @@ impl RegionStep {
                     continue;
                 }
             };
-            let mut bound = [Bound::Sampler; MAX_BINDINGS];
-            for (slot, source) in bound.iter_mut().zip(&node.sources) {
-                *slot = match *source {
-                    Source::Cell(cell) => {
-                        let cell = inputs.get(cell);
-                        match cell.and_then(typed_view::<Storage>) {
-                            Some(storage) => Bound::Storage(storage),
-                            None => match cell.and_then(typed_view::<Texture>) {
-                                Some(texture) => Bound::Texture(texture),
-                                None => {
-                                    return Err((
-                                        at,
-                                        "an input isn't a buffer or a texture on the device".into(),
-                                    ));
-                                }
-                            },
-                        }
-                    }
-                    Source::Bytes(cell) => {
-                        let cell = inputs.get(cell);
-                        // Plain bytes, or bytes an upload already put on the device.
-                        match cell.and_then(Slot::bytes) {
-                            Some(bytes) => Bound::Uniform(bytes),
-                            None => match cell.and_then(typed_view::<Storage>) {
-                                Some(storage) => Bound::UniformFrom(storage),
-                                None => return Err((at, "a uniform's input has no bytes".into())),
-                            },
-                        }
-                    }
-                    Source::Zeroes => Bound::Uniform(&[]),
-                    Source::Buffer(buffer) => {
-                        let owned = &self.owned[buffer];
-                        // What the node before made: a texture if it drew one this run.
-                        match (&owned.texture, owned.kept.get(owned.current)) {
-                            (Some(texture), _) => Bound::Texture(texture),
-                            (None, Some(storage)) => Bound::Storage(storage),
-                            (None, None) => {
-                                return Err((at, "an input from this region wasn't made".into()));
-                            }
-                        }
-                    }
-                    Source::Sampler => Bound::Sampler,
-                };
-            }
-            // A uniform nothing feeds is zeroes of the size the shader declares.
-            let spec = shader.spec();
-            for (slot, binding) in bound.iter_mut().zip(spec.bindings) {
-                if let (Bound::Uniform([]), crate::shader::BindingKind::Uniform { size }) =
-                    (&*slot, binding.kind)
-                {
-                    *slot = Bound::Uniform(&self.zeroes[..size as usize]);
-                }
-            }
+            let bound = bound_for(node, shader, inputs, &self.owned, &self.zeroes)?;
             shader
                 .encode_in(&mut open, encoder, &bound[..node.sources.len()])
                 .map_err(|error| (at, error.to_string()))?;
@@ -422,6 +447,10 @@ impl RegionStep {
             chain.targets.clear();
             chain.config_buffers.clear();
         }
+        #[cfg(target_os = "linux")]
+        {
+            self.chained = super::chained::Chained::build(&context, &self.nodes);
+        }
         self.context = context;
         Ok(())
     }
@@ -454,24 +483,41 @@ impl OwnedStep for RegionStep {
         let cells = slots.as_mut_slice();
         let reads = self.reads.min(cells.len());
         let (inputs, outputs) = cells.split_at_mut(reads);
-        let mut encoder = context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        if let Err((node, reason)) = self.record(inputs, &mut encoder) {
-            // Nothing was submitted: the encoder is dropped with everything recorded in it.
-            cx.fault(Some(node), &reason);
-            return StepEnd::Fault;
-        }
-        let state = TicketState::new();
-        let finished = Arc::clone(&state);
-        {
-            let _held = context.submit.lock();
-            context.queue.submit([encoder.finish()]);
-            context.count_submit();
-            context
-                .queue
-                .on_submitted_work_done(move || finished.finish());
-        }
+        #[cfg(target_os = "linux")]
+        let chained = match self.run_chained(inputs) {
+            Ok(fence) => fence,
+            Err((node, reason)) => {
+                cx.fault(Some(node), &reason);
+                return StepEnd::Fault;
+            }
+        };
+        #[cfg(not(target_os = "linux"))]
+        let chained = None;
+        let fence = match chained {
+            Some(fence) => fence,
+            None => {
+                let mut encoder = context
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+                if let Err((node, reason)) = self.record(inputs, &mut encoder) {
+                    // Nothing was submitted: the encoder is dropped with everything recorded
+                    // in it.
+                    cx.fault(Some(node), &reason);
+                    return StepEnd::Fault;
+                }
+                let state = TicketState::new();
+                let finished = Arc::clone(&state);
+                {
+                    let _held = context.submit.lock();
+                    context.queue.submit([encoder.finish()]);
+                    context.count_submit();
+                    context
+                        .queue
+                        .on_submitted_work_done(move || finished.finish());
+                }
+                Ticket::new(state, Arc::clone(&context), None).into_fence()
+            }
+        };
         self.held.extend(inputs.iter().filter_map(share_typed));
         // What leaves the region. The values are on the device, and the fence says when the
         // work that fills them is done.
@@ -485,6 +531,6 @@ impl OwnedStep for RegionStep {
                 put_typed(out, UNSTAMPED.0, UNSTAMPED.1, Arc::clone(storage));
             }
         }
-        StepEnd::Pending(Ticket::new(state, context, None).into_fence())
+        StepEnd::Pending(fence)
     }
 }

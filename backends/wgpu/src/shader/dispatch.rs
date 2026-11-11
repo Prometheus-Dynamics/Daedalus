@@ -299,7 +299,8 @@ impl Shader {
         Ok(out)
     }
 
-    fn counts(&self, bound: &[Bound<'_>]) -> Result<[u32; 3], ShaderError> {
+    /// How many workgroups a run with `bound` dispatches.
+    pub(crate) fn counts(&self, bound: &[Bound<'_>]) -> Result<[u32; 3], ShaderError> {
         let counts = match self.spec.dispatch {
             Dispatch::Counts(counts) => counts,
             Dispatch::PerElement { binding, stride } => {

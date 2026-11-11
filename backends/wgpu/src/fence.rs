@@ -169,6 +169,104 @@ impl FenceWord for Polled {
     }
 }
 
+/// A region's chain, as something its fences name. A fence carries one word and is never told
+/// it was dropped, so a chain's fences carry the chain's place here and nothing is kept for
+/// each one: making one allocates nothing, and one that is never polled leaves nothing behind.
+#[cfg(target_os = "linux")]
+pub(crate) struct ChainPlace {
+    slot: usize,
+    generation: usize,
+}
+
+#[cfg(target_os = "linux")]
+type Chain = Mutex<daedalus_vk_sys::chain::Chain>;
+
+#[cfg(target_os = "linux")]
+struct ChainEntry {
+    /// Counts the chains that have had this place, so a fence of an earlier one is told apart.
+    generation: usize,
+    live: Option<(Weak<Chain>, Weak<Context>)>,
+}
+
+/// The places a word has room to name.
+#[cfg(target_os = "linux")]
+const PLACES: usize = 1 << 16;
+
+#[cfg(target_os = "linux")]
+static CHAINS: Mutex<Vec<ChainEntry>> = Mutex::new(Vec::new());
+
+#[cfg(target_os = "linux")]
+impl ChainPlace {
+    /// A place for `chain`, which runs on `context`'s device. `None` when every place is
+    /// taken.
+    pub(crate) fn of(chain: &Arc<Chain>, context: &Arc<Context>) -> Option<ChainPlace> {
+        let mut chains = CHAINS.lock().unwrap_or_else(PoisonError::into_inner);
+        let live = Some((Arc::downgrade(chain), Arc::downgrade(context)));
+        let slot = match chains.iter().position(|entry| entry.live.is_none()) {
+            Some(free) => free,
+            None if chains.len() < PLACES => {
+                chains.push(ChainEntry {
+                    generation: 0,
+                    live: None,
+                });
+                chains.len() - 1
+            }
+            None => return None,
+        };
+        chains[slot].live = live;
+        Some(ChainPlace {
+            slot,
+            generation: chains[slot].generation,
+        })
+    }
+
+    /// The fence for the chain's last run. A region runs again only once its fence is ready,
+    /// so the last run is the one the fence is for.
+    pub(crate) fn fence(&self) -> Fence {
+        Fence::of::<ChainPolled>(self.slot | (self.generation << 16))
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for ChainPlace {
+    fn drop(&mut self) {
+        let mut chains = CHAINS.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(entry) = chains.get_mut(self.slot) {
+            entry.live = None;
+            // Wraps where a word has no more room, long after a fence that old is gone.
+            entry.generation = (entry.generation + 1) & (usize::MAX >> 16);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct ChainPolled;
+
+#[cfg(target_os = "linux")]
+impl FenceWord for ChainPolled {
+    fn poll(word: usize) -> FencePoll {
+        let chains = CHAINS.lock().unwrap_or_else(PoisonError::into_inner);
+        let entry = chains
+            .get(word % PLACES)
+            .filter(|entry| entry.generation == word >> 16);
+        // A fence of a region that is gone.
+        let Some((chain, context)) = entry.and_then(|entry| entry.live.as_ref()) else {
+            return FencePoll::Failed;
+        };
+        let (Some(chain), Some(context)) = (chain.upgrade(), context.upgrade()) else {
+            return FencePoll::Failed;
+        };
+        if context.is_lost() || context.errors.pending() {
+            return FencePoll::Failed;
+        }
+        // A chain that is busy recording isn't asked: its fence is polled again.
+        match chain.try_lock() {
+            Ok(chain) if chain.is_idle() => FencePoll::Ready,
+            _ => FencePoll::Pending,
+        }
+    }
+}
+
 /// How many fences are still waiting. For tests of the table's bookkeeping.
 #[cfg(test)]
 pub(crate) fn waiting() -> usize {

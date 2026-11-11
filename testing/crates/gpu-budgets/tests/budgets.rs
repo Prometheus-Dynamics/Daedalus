@@ -2,10 +2,9 @@
 
 use daedalus_abi::counting::CountingAlloc;
 use daedalus_gpu_budgets::{
-    ALLOCATION_SLACK, ALLOCATIONS_PER_DISPATCH, ALLOCATIONS_PER_STEP, DISPATCHES_PER_MERGED_CHAIN,
-    DISPATCHES_PER_SHADER_NODE, DOWNLOADS_PER_BOUNDARY, Miss, PIPELINES_PER_MERGED_CHAIN,
-    SUBMITS_PER_REGION, UPLOADS_PER_BOUNDARY, boundaries, exactly, merged_chain, region,
-    shader_line,
+    ALLOCATIONS_PER_STEP, DISPATCHES_PER_MERGED_CHAIN, DISPATCHES_PER_SHADER_NODE,
+    DOWNLOADS_PER_BOUNDARY, Miss, PIPELINES_PER_MERGED_CHAIN, SUBMITS_PER_REGION,
+    UPLOADS_PER_BOUNDARY, boundaries, exactly, merged_chain, region, shader_line,
 };
 use daedalus_wgpu_conformance::{Counted, private};
 
@@ -70,22 +69,11 @@ fn a_value_crosses_each_boundary_once() {
 #[test]
 fn the_allocation_budget_is_what_is_measured() {
     let Some(backend) = private() else { return };
-    // The budget is a ceiling in `region`. Here it is checked not to have gone slack: a step
-    // that allocates less has earned a lower constant.
-    let (one, eight) = (
-        shader_line(&backend, 1, 4096).allocations,
-        shader_line(&backend, 8, 4096).allocations,
-    );
-    let per_pass = (eight - one).div_ceil(7);
-    let base = one - per_pass;
-    assert_eq!(
-        per_pass, ALLOCATIONS_PER_DISPATCH,
-        "one pass {one}, eight {eight}"
-    );
-    assert!(
-        base <= ALLOCATIONS_PER_STEP && base + ALLOCATION_SLACK >= ALLOCATIONS_PER_STEP,
-        "a step with one pass allocates {one}: {base} beside its pass, where the budget is {ALLOCATIONS_PER_STEP}"
-    );
+    // One shader or eight, a warm step allocates the same: nothing.
+    for nodes in [1, 8] {
+        let measured = shader_line(&backend, nodes, 4096).allocations;
+        assert_eq!(measured, ALLOCATIONS_PER_STEP, "{nodes} shaders");
+    }
 }
 
 #[test]

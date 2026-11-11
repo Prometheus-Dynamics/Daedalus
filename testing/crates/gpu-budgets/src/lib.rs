@@ -38,14 +38,10 @@ pub const UPLOADS_PER_BOUNDARY: u64 = 1;
 pub const DOWNLOADS_PER_BOUNDARY: u64 = 1;
 /// A region moves nothing between the host and the device by itself.
 pub const TRANSFERS_PER_REGION: u64 = 0;
-/// Allocations by one run of a region's step after warm-up: at most this many, and
-/// [`ALLOCATIONS_PER_DISPATCH`] more for each shader run. They are inside wgpu, which allocates
-/// for an encoder, a pass and a submit. The count moves by one or two from run to run, as
-/// wgpu's own tables grow, so this is a ceiling with [`ALLOCATION_SLACK`] of room over what is
-/// usually measured.
-pub const ALLOCATIONS_PER_STEP: u64 = 32;
-pub const ALLOCATIONS_PER_DISPATCH: u64 = 2;
-pub const ALLOCATION_SLACK: u64 = 4;
+/// Allocations by one run of a region's step after warm-up, however many shaders run in it.
+/// A region of shaders that bind buffers is recorded with Vulkan itself into a command buffer
+/// it uses again, so nothing is allocated.
+pub const ALLOCATIONS_PER_STEP: u64 = 0;
 
 /// A measure that is over its budget, or under one that has to be exact.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,7 +105,7 @@ pub fn region(counted: &Counted, dispatches: u64) -> Result<(), Miss> {
     at_most(
         "allocations per step",
         counted.allocations,
-        ALLOCATIONS_PER_STEP + ALLOCATIONS_PER_DISPATCH * dispatches,
+        ALLOCATIONS_PER_STEP,
     )
 }
 
