@@ -65,6 +65,12 @@ pub(crate) struct Context {
     dispatches: AtomicU64,
     pub(crate) moved: crate::transfer::Counters,
     pub(crate) temp: Mutex<TempPool>,
+    /// Set when bytes were given to the queue to write, which reach the device only with the
+    /// queue's next submit.
+    unsent: AtomicBool,
+    /// Regions that record with Vulkan itself, for a wait to cover their work too.
+    #[cfg(target_os = "linux")]
+    chains: Mutex<Vec<Weak<Mutex<daedalus_vk_sys::chain::Chain>>>>,
 }
 
 static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
@@ -168,6 +174,9 @@ impl Context {
             staging: Mutex::new(StagingPool::new(options.staging)),
             shaders: Mutex::default(),
             temp: Mutex::new(TempPool::new(options.temp_pool)),
+            unsent: AtomicBool::new(false),
+            #[cfg(target_os = "linux")]
+            chains: Mutex::default(),
         }
     }
 
@@ -220,9 +229,47 @@ impl Context {
         let _ = self.device.poll(wgpu::PollType::Poll);
     }
 
+    /// Notes that the queue was given bytes to write.
+    pub(crate) fn note_write(&self) {
+        self.unsent.store(true, Ordering::Release);
+    }
+
+    /// Sends what the queue was given to write, if anything was. Work recorded with Vulkan
+    /// itself doesn't go through the queue's submit, so it calls this first.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn flush_writes(&self) {
+        if self.unsent.swap(false, Ordering::AcqRel) {
+            let _held = self.submit.lock();
+            self.queue.submit([]);
+        }
+    }
+
+    /// Notes a region's chain, so a wait on this device covers it.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn note_chain(&self, chain: &Arc<Mutex<daedalus_vk_sys::chain::Chain>>) {
+        let mut chains = self.chains.lock().unwrap_or_else(PoisonError::into_inner);
+        chains.retain(|known| known.strong_count() > 0);
+        chains.push(Arc::downgrade(chain));
+    }
+
+    /// Whether every chain's last run finished within the bound.
+    #[cfg(target_os = "linux")]
+    fn chains_idle(&self) -> bool {
+        let chains = self.chains.lock().unwrap_or_else(PoisonError::into_inner);
+        chains.iter().filter_map(Weak::upgrade).all(|chain| {
+            let chain = chain.lock().unwrap_or_else(PoisonError::into_inner);
+            chain.wait(self.wait_timeout)
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn chains_idle(&self) -> bool {
+        true
+    }
+
     /// Waits for everything submitted, up to the bound. A timeout marks the device lost.
     pub(crate) fn wait(&self, what: &'static str) -> Result<(), WaitError> {
-        if crate::wait::wait_idle(&self.device, self.wait_timeout) {
+        if crate::wait::wait_idle(&self.device, self.wait_timeout) && self.chains_idle() {
             Ok(())
         } else {
             Err(self.timed_out(what))

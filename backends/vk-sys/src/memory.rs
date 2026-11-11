@@ -95,6 +95,7 @@ fn buffer_info(size: u64) -> vk::BufferCreateInfo<'static> {
         .size(size)
         .usage(
             vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::UNIFORM_BUFFER
                 | vk::BufferUsageFlags::TRANSFER_SRC
                 | vk::BufferUsageFlags::TRANSFER_DST,
         )

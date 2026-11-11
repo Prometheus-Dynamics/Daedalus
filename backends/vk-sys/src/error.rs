@@ -19,6 +19,9 @@ pub enum Error {
     Fd,
     /// The dma-buf is smaller than the memory the device needs for the buffer.
     TooSmall { have: u64, need: u64 },
+    /// Something this crate doesn't do, such as a shader that binds a texture where only
+    /// buffers are bound.
+    Unsupported,
     /// Vulkan said no.
     Vulkan(vk::Result),
 }
@@ -36,6 +39,7 @@ impl fmt::Display for Error {
                 f,
                 "the dma-buf is {have} bytes, and the device needs {need} for the buffer"
             ),
+            Error::Unsupported => f.write_str("not supported here"),
             Error::Vulkan(result) => write!(f, "Vulkan: {result:?}"),
         }
     }

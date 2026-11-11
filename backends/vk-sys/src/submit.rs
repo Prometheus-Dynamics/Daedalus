@@ -118,6 +118,31 @@ impl Submitter {
         self.slots.len()
     }
 
+    /// Whether every submit has finished. Never blocks.
+    pub fn is_idle(&self) -> bool {
+        self.slots.iter().all(|slot| {
+            // SAFETY: a fence of this submitter's device.
+            let status = unsafe { self.device.get_fence_status(slot.fence) };
+            matches!(status, Ok(true))
+        })
+    }
+
+    /// Waits for every submit to finish. An error, such as a lost device, ends the wait:
+    /// nothing more will finish.
+    pub fn wait_idle(&self) {
+        self.wait_idle_for(Duration::MAX);
+    }
+
+    /// Waits up to `timeout` for every submit to finish, and says whether they all have.
+    pub fn wait_idle_for(&self, timeout: Duration) -> bool {
+        let nanos = u64::try_from(timeout.as_nanos()).unwrap_or(u64::MAX);
+        self.slots.iter().all(|slot| {
+            // SAFETY: a fence of this submitter's device.
+            let waited = unsafe { self.device.wait_for_fences(&[slot.fence], true, nanos) };
+            waited.is_ok()
+        })
+    }
+
     /// Records with `record`, which is given the device and a command buffer that is recording,
     /// and submits it. The submit first waits on each of `waits`, at most [`MAX_WAITS`]. `record`
     /// must not begin, end or submit the command buffer. It runs outside the submit lock.

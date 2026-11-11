@@ -156,6 +156,16 @@ impl Storage {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // Cleared now, and not when wgpu first uses it: work recorded with Vulkan itself may
+        // write the buffer first, and a clear after that would undo it.
+        let mut encoder = context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.clear_buffer(&buffer, 0, None);
+        {
+            let _held = context.submit.lock();
+            context.queue.submit([encoder.finish()]);
+        }
         Ok(Storage {
             buffer,
             size,
@@ -347,6 +357,7 @@ impl Storage {
             return mapping.write(offset, bytes);
         }
         self.context.queue.write_buffer(&self.buffer, offset, bytes);
+        self.context.note_write();
         Ok(())
     }
 

@@ -5,6 +5,8 @@
 //! read back between them and no transfer is planned. The step returns its submission as a
 //! fence, so the runner wakes the region's consumers when the device has finished.
 
+#[cfg(target_os = "linux")]
+mod chained;
 mod submit;
 
 use std::sync::Arc;

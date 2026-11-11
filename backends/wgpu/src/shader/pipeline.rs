@@ -38,6 +38,9 @@ pub(crate) type GroupKey = (u64, [u64; MAX_BINDINGS]);
 pub(crate) struct ShaderCache {
     pipelines: HashMap<u64, Arc<Pipeline>>,
     groups: Vec<(GroupKey, wgpu::BindGroup)>,
+    /// Pipelines built with Vulkan itself, for regions that record that way.
+    #[cfg(target_os = "linux")]
+    chained: HashMap<u64, Arc<daedalus_vk_sys::compute::ComputePipeline>>,
     stats: ShaderStats,
 }
 
@@ -131,6 +134,41 @@ impl ShaderCache {
         self.pipelines.insert(key, Arc::clone(&built));
         self.stats.pipelines += 1;
         Ok(built)
+    }
+
+    /// The pipeline for `spec` built with Vulkan itself, for a region that records its own
+    /// commands. `None` when the device isn't on Vulkan, or the shader binds anything but
+    /// buffers, or its bindings aren't the ones the spec lists.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn chained(
+        &mut self,
+        device: &wgpu::Device,
+        spec: &ShaderSpec,
+    ) -> Option<Arc<daedalus_vk_sys::compute::ComputePipeline>> {
+        use daedalus_vk_sys::compute::{Binding, ComputePipeline};
+        let key = spec.key();
+        if let Some(found) = self.chained.get(&key) {
+            return Some(Arc::clone(found));
+        }
+        let built = ComputePipeline::from_wgsl(device, spec.source, spec.entry).ok()?;
+        let slots = built.slots();
+        let same = slots.len() == spec.bindings.len()
+            && slots.iter().zip(spec.bindings).all(|(slot, binding)| {
+                slot.number == binding.index
+                    && match (slot.kind, binding.kind) {
+                        (Binding::Storage, BindingKind::Storage { .. }) => true,
+                        (Binding::Uniform, BindingKind::Uniform { size }) => {
+                            u64::from(size) == slot.min_size
+                        }
+                        _ => false,
+                    }
+            });
+        if !same {
+            return None;
+        }
+        let built = Arc::new(built);
+        self.chained.insert(key, Arc::clone(&built));
+        Some(built)
     }
 
     /// The bind group made of exactly these resources, if one was kept.

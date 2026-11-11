@@ -399,8 +399,11 @@ against these. `Blob` and `Source` carry the same information as a covers table.
 - A FIFO edge with no declared capacity gets 64 slots on a host, set by the planner. Chip builds set
   their own default through planner config.
 
-**Running.** "Running allocates nothing" applies to Daedalus's own code. wgpu allocates inside a
-submit, and that count must not grow with the number of nodes in the region. Restart is the
+**Running.** "Running allocates nothing" holds for a GPU region of shaders that bind buffers, on
+Vulkan: the region records its dispatches with Vulkan itself into a command buffer it uses again,
+and a warm step allocates nothing. A region that draws to a texture, holds an author's own
+recording, or runs off Vulkan goes through wgpu's encoder, which allocates inside a submit, and
+that count must not grow with the number of nodes in the region. Restart is the
 `StepCx` flag. Adaptive serial/parallel selection and configuration from environment variables are
 not carried.
 

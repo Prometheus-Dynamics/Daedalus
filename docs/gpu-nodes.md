@@ -71,8 +71,11 @@ backend opens the device again and the region runs again: it is not turned off.
 - A region of whole-shader nodes is one queue submit, however many nodes it has, and one pass a
   node.
 - A chain of merged per-pixel bodies is one pass and one pipeline.
-- wgpu allocates when it records a pass, so a GPU step is not allocation-free. The count is held
-  to a budget in the lavapipe lane.
+- On Vulkan, a region whose nodes are all shaders that bind storage and uniform buffers is
+  recorded with Vulkan itself, into a command buffer the region uses again. A warm step of it
+  allocates nothing, and the lavapipe lane holds it to that.
+- A region that is given a texture, draws to one, or holds a recording body goes through wgpu's
+  encoder, which allocates when it records a pass. So does every region off Vulkan.
 
 The counted budgets are checked on Mesa's software Vulkan in the `GPU` workflow
 (`scripts/gpu-lavapipe.sh`). Timings are board runs.

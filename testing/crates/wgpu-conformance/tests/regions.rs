@@ -3,7 +3,6 @@
 use daedalus_abi::StepEnd;
 use daedalus_abi::testing::release;
 use daedalus_conformance::{CheckResult, Scenario, check};
-use daedalus_gpu_budgets::{ALLOCATIONS_PER_DISPATCH, ALLOCATIONS_PER_STEP};
 use daedalus_wgpu::{Options, WgpuBackend};
 use daedalus_wgpu_conformance::{AFFINE, IDLE, In, Net, filled, port, private, run, words};
 
@@ -19,7 +18,7 @@ fn rule(name: &str) -> CheckResult {
     check(name, || WgpuBackend::open(Options::default()), &SCENARIO).expect("a known check")
 }
 
-/// Every backend rule but the one about allocating, which is the test after this one.
+/// Every backend rule, the one about a warm step allocating nothing among them.
 #[test]
 fn the_backend_rules_hold() {
     if private().is_none() {
@@ -34,37 +33,13 @@ fn the_backend_rules_hold() {
         "accepted_region_compiles",
         "refusal_names_only_region_nodes",
         "covers_stay_inside_the_region",
+        "steps_do_not_allocate",
         "faults_stay_inside_the_region",
         "running_is_deterministic",
     ] {
         let result = rule(name);
         assert!(result.passed(), "{result}");
     }
-}
-
-/// The rule is that a step allocates nothing once warm. This backend's step does: wgpu
-/// allocates for every encoder, pass and submit. Until it doesn't, the rule is known to fail
-/// here, and what it fails by is held to the budget. When this test fails because the rule
-/// passes, move `steps_do_not_allocate` into the list above.
-#[test]
-fn a_warm_step_allocates_within_its_budget_and_not_yet_nothing() {
-    if private().is_none() {
-        return;
-    }
-    let result = rule("steps_do_not_allocate");
-    let failure = result
-        .failure
-        .expect("the rule fails on this backend today");
-    let count: u64 = failure
-        .split_whitespace()
-        .find_map(|word| word.parse().ok())
-        .filter(|_| failure.contains("allocated"))
-        .unwrap_or_else(|| panic!("failed some other way: {failure}"));
-    // The suite's region is its three nodes, one pass each.
-    assert!(
-        count <= ALLOCATIONS_PER_STEP + 3 * ALLOCATIONS_PER_DISPATCH,
-        "{failure}"
-    );
 }
 
 #[test]
