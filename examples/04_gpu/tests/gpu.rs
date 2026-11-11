@@ -103,22 +103,38 @@ fn a_wrong_answer_is_caught() {
     assert_eq!(fragment::on_cpu(&[0, 100, 200, 255]), [255, 255, 0, 0]);
 }
 
-/// The round trip reads back through the heap route when the device imports dma-bufs, and through
-/// the host-mapped one when it does not. Either way the planner's choice is the one the device
-/// can run.
+/// The shader writes the round trip's result straight into memory the host reads: dma-heap memory
+/// when the device imports dma-bufs, host-mapped memory when it does not. So no readback copy is
+/// planned, only the map that hands the host the bytes where they are.
 #[test]
-fn the_readback_takes_the_route_the_device_can_run() {
+fn the_result_is_written_where_the_host_reads_it() {
     let Some(_turn) = has_gpu() else { return };
     let gpu = daedalus_example_gpu::gpu().expect("a device");
     let imports = gpu.caps().expect("open").dma_heap;
     let route = upload_download::readback_route(&gpu).expect("plans");
-    // The typed map's id carries the payload's key, so the ids are matched by their prefix.
-    let (readback, map) = if imports {
-        ("wgpu.readback.heap", "wgpu.map.dmaheap:")
+    // The typed map's id carries the payload's key, so the id is matched by its prefix.
+    let map = if imports {
+        "wgpu.map.dmaheap:"
     } else {
-        ("wgpu.readback", "wgpu.map:")
+        "wgpu.map:"
     };
-    assert_eq!(route.len(), 2, "{route:?}");
-    assert_eq!(route[0], readback, "{route:?}");
-    assert!(route[1].starts_with(map), "{route:?}");
+    assert_eq!(route.len(), 1, "{route:?}");
+    assert!(route[0].starts_with(map), "{route:?}");
+}
+
+/// On Vulkan under Linux the host's result is the shader's buffer itself, read where it is.
+#[test]
+fn the_host_reads_the_result_in_place() {
+    let Some(_turn) = has_gpu() else { return };
+    let gpu = daedalus_example_gpu::gpu().expect("a device");
+    let vulkan = gpu.caps().expect("open").adapter.api == daedalus_wgpu::Api::Vulkan;
+    let input: Vec<u32> = (1..=1000).collect();
+    let words = upload_download::squared_words(&input).expect("runs");
+    assert_eq!(
+        words.to_vec(),
+        input.iter().map(|x| x * x).collect::<Vec<_>>()
+    );
+    if cfg!(target_os = "linux") && vulkan {
+        assert!(words.is_in_place(), "the result was copied out");
+    }
 }

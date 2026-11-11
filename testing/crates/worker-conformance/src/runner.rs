@@ -145,6 +145,7 @@ fn run_round(backend: &ProcessBackend, fixture: &Fixture, round: usize) -> Resul
         inputs: &inputs,
         outputs: &outputs,
         incoming: &[],
+        placed: &[],
         rate: RateId(0),
     };
     let bodies = [NodeBody {

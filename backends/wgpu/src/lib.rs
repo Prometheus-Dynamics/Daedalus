@@ -22,6 +22,7 @@ mod host_bytes;
 pub mod image;
 mod inflight;
 mod loss;
+mod mapped;
 mod memory;
 pub mod merge;
 mod pool;
@@ -51,6 +52,7 @@ pub use driver::{DriverGuard, devices_created, driver_lock, with_driver_lock};
 pub use fence::Ticket;
 pub use host_bytes::HostBytes;
 pub use loss::{RETRY_CAP, RETRY_FIRST, retry_delay};
+pub use mapped::MappedBytes;
 pub use memory::{
     MemoryHints, SPACE_DEVICE, SPACE_DMA_HEAP, SPACE_HOST_CACHED, SPACE_HOST_MAPPED, SPACE_TEXTURE,
 };

@@ -60,15 +60,28 @@ Daedalus does not judge who made a dma-buf: one it is given is imported in place
 
 A type whose values are dma-buffers says so once: it implements `DmaBufBacked` and the backend is given `with_dmabuf::<T>()`. While the open device imports dma-bufs the planner takes that import over the upload of the type's bytes (its `HostBytes`), which is the route a device that can't import gets.
 
-A value that goes back to the host has two routes. `wgpu.readback` copies it into host-mapped
-memory, which the host reads uncached, and `wgpu.readback.heap` copies it into dma-heap memory,
-which the host reads through its cache: on the CM5 a 16 MiB readback costs about 12 ms that way
-against about 17 ms into host-mapped memory. The heap route is offered only by a device that is
-open, imports dma-bufs, and whose system dma-heap opens. The planner reads that from the open
-device, and never opens one to ask. A plan made before the device opens is correct and uses the
-host-mapped route alone. Planning on an open device prefers the heap route, since it costs less.
-The planner takes the cheaper route, so a backend that cannot import dma-bufs gets the
-host-mapped readback without any change to the graph.
+A value the host or a CPU node reads is written by its shader straight into memory the host
+maps, so no readback copy is planned at all. The backend offers two such places: dma-heap memory,
+which the host reads through its cache, and host-mapped memory, which it reads uncached. The
+planner places each GPU output in whichever of the device's spaces costs its readers least, and
+the region's step allocates the output there. An output only other shaders read stays in device
+memory. Dma-heap placement is offered only by a device that is open, imports dma-bufs, and whose
+system dma-heap opens. The planner reads that from the open device and never opens one to ask, so
+a plan made before the device opens places host-read outputs in host-mapped memory.
+
+The host then reads the bytes where they are. A type that is bytes underneath implements
+`HostBytes::from_mapped` to keep the `MappedBytes` it is given, and reads the shader's output with
+no copy: the only cost left is the cache sync after the device's write. `MappedBytes` holds the
+buffer, so the region writes its next output into another one until the host lets go. A type
+that doesn't implement it gets its bytes copied out into a `Vec`, as before.
+
+On the CM5, for a 16 MiB result: the shader's write costs the same into either memory (8.5 ms).
+Getting the bytes to the host after that costs 0.6 ms in place, against 8.0 ms for a readback
+into dma-heap memory followed by a copy out, and 16 ms through host-mapped memory. Reading every
+byte once in place takes 2.2 ms in all, against 5.6 ms for copying out and then reading.
+
+Values a region doesn't write itself, such as an input handed on, still take the readback routes:
+`wgpu.readback` into host-mapped memory and `wgpu.readback.heap` into dma-heap memory.
 
 ## Waiting
 

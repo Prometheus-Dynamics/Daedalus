@@ -61,11 +61,11 @@ impl std::error::Error for StorageError {}
 #[cfg(target_os = "linux")]
 enum Mapping {
     /// The device's own memory, mapped.
-    Device(daedalus_vk_sys::memory::HostMapping),
+    Device(Arc<daedalus_vk_sys::memory::HostMapping>),
     /// A dma-buf, which wants to be told around each host access.
     Heap {
         buf: daedalus_dma_sys::DmaBuf,
-        map: daedalus_dma_sys::Mapping,
+        map: Arc<daedalus_dma_sys::Mapping>,
         /// Set whenever the device is given the buffer, and cleared by a read's sync. While it is
         /// clear the device can't have written the buffer since the host last synced, so a read
         /// has nothing to invalidate. Starts set: a new buffer may be written before it is read.
@@ -127,6 +127,54 @@ impl Mapping {
                 }
                 read.map_err(failed)
             }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Mapping {
+    /// The bytes in place. A dma-buf the device may have written since the host last synced is
+    /// synced for reading first, and stays so until [`Mapping::end_lend`].
+    fn lend(&self) -> Result<crate::mapped::Lend, StorageError> {
+        use daedalus_dma_sys::Access;
+        match self {
+            Mapping::Device(map) => Ok(crate::mapped::Lend::Device(map.lend())),
+            Mapping::Heap {
+                buf,
+                map,
+                device_may_have_written,
+                syncs,
+            } => {
+                let synced = device_may_have_written.swap(false, Ordering::AcqRel);
+                if synced {
+                    syncs.fetch_add(1, Ordering::Relaxed);
+                    if let Err(error) = buf.as_ref().begin_cpu_access(Access::Read) {
+                        device_may_have_written.store(true, Ordering::Release);
+                        return Err(StorageError::Device(error.to_string()));
+                    }
+                }
+                Ok(crate::mapped::Lend::Heap {
+                    lent: map.lend(),
+                    synced,
+                })
+            }
+        }
+    }
+
+    /// Closes the read sync a lend opened.
+    fn end_lend(&self, synced: bool) {
+        if let (true, Mapping::Heap { buf, .. }) = (synced, self)
+            && buf
+                .as_ref()
+                .end_cpu_access(daedalus_dma_sys::Access::Read)
+                .is_err()
+            && let Mapping::Heap {
+                device_may_have_written,
+                ..
+            } = self
+        {
+            // A failed close leaves the buffer as possibly written, so the next read syncs.
+            device_may_have_written.store(true, Ordering::Release);
         }
     }
 }
@@ -409,7 +457,7 @@ impl Storage {
             space: crate::memory::SPACE_DMA_HEAP,
             mapping: Some(Mapping::Heap {
                 buf,
-                map,
+                map: Arc::new(map),
                 device_may_have_written: AtomicBool::new(true),
                 syncs: AtomicU64::new(0),
             }),
@@ -463,7 +511,7 @@ impl Storage {
                 size,
                 id: Context::next_id(),
                 space,
-                mapping: mapping.map(Mapping::Device),
+                mapping: mapping.map(|map| Mapping::Device(Arc::new(map))),
                 fresh: None,
                 context,
             }),
@@ -490,6 +538,25 @@ impl Storage {
     /// another one.
     pub fn wgpu(&self) -> &wgpu::Buffer {
         self.buffer()
+    }
+
+    /// The buffer's bytes in place, for a buffer the host maps. The caller holds the buffer, so
+    /// the backend doesn't give it to the device while the bytes are lent.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn lend(&self) -> Result<crate::mapped::Lend, StorageError> {
+        match &self.mapping {
+            Some(mapping) => mapping.lend(),
+            None => Err(StorageError::Unsupported(
+                "the host doesn't map this buffer",
+            )),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn end_lend(&self, synced: bool) {
+        if let Some(mapping) = &self.mapping {
+            mapping.end_lend(synced);
+        }
     }
 
     /// How many CPU-access syncs the host's reads of this buffer have run. Zero for a buffer that

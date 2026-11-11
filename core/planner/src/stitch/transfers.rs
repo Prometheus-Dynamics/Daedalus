@@ -104,6 +104,30 @@ impl Routing {
             .collect()
     }
 
+    /// For each of a region's outputs, the space its value is written in. Empty when none of
+    /// them has a value, which is when nothing reads them.
+    pub(crate) fn placed_of(&self, outputs: &[PortRef]) -> Vec<&str> {
+        let home = |output: &PortRef| {
+            let source = Source::Node {
+                node: output.node.0,
+                port: output.port.0,
+            };
+            self.values
+                .iter()
+                .find(|value| value.source == source)
+                .map(|value| self.spaces[value.home].as_str())
+        };
+        let placed: Vec<Option<&str>> = outputs.iter().map(home).collect();
+        // An output nothing reads is written wherever the others are, or in the first space.
+        let Some(known) = placed.iter().flatten().next().copied() else {
+            return Vec::new();
+        };
+        placed
+            .into_iter()
+            .map(|space| space.unwrap_or(known))
+            .collect()
+    }
+
     fn space(&mut self, id: &str) -> usize {
         match self.spaces.iter().position(|known| known == id) {
             Some(at) => at,
@@ -155,6 +179,9 @@ fn build_table(routing: &mut Routing, backends: &[&dyn Backend], registry: &Regi
 }
 
 type PathKey = (TransferCost, usize, Vec<String>, Vec<String>);
+
+/// What reaching a value costs a reader: its dearest move, or none, and how many moves.
+type Reach = (Option<TransferCost>, usize);
 
 /// The moves usable for this type: for a given pair of spaces, a typed one hides any-type ones.
 fn usable(table: &[MoveEntry], key: Option<&TypeKey>) -> Vec<usize> {
@@ -249,11 +276,24 @@ fn port_of(ports: &[Port], name: &str) -> Option<u16> {
 /// One backend's memory, by space index.
 struct BackendSpaces {
     list: Vec<(MemorySpace, usize)>,
+    /// The other spaces an output can be written in, by index, in the backend's order.
+    placements: Vec<usize>,
 }
 
 impl BackendSpaces {
     fn home(&self) -> Option<usize> {
         self.list.first().map(|(_, at)| *at)
+    }
+
+    /// Every space an output of this backend can be written in: its first, then the others.
+    fn writable(&self) -> Vec<usize> {
+        let mut spaces: Vec<usize> = self.home().into_iter().collect();
+        for &at in &self.placements {
+            if !spaces.contains(&at) {
+                spaces.push(at);
+            }
+        }
+        spaces
     }
 
     fn readable(&self) -> Vec<usize> {
@@ -279,6 +319,8 @@ struct Router<'a> {
     names: Vec<String>,
     region_of: Vec<Option<usize>>,
     values: BTreeMap<(Source, usize), u32>,
+    /// Where each node output is written, once decided.
+    homes: BTreeMap<(u32, u16), Option<usize>>,
     routing: Routing,
 }
 
@@ -297,6 +339,72 @@ impl Router<'_> {
                 });
                 routing.values.len() as u32 - 1
             })
+    }
+
+    /// What it costs a reader that takes its input from one of `targets` to get a value written
+    /// in `home`: nothing when it is already there, the dearest move of the best path
+    /// otherwise, and `None` when there is no way.
+    fn reach(&self, key: Option<&TypeKey>, home: usize, targets: &[usize]) -> Option<Reach> {
+        if targets.contains(&home) {
+            return Some((None, 0));
+        }
+        let (_, path) = find_path(&self.routing, key, home, targets)?;
+        let dearest = path.iter().map(|&at| self.routing.table[at].cost).max();
+        Some((dearest, path.len()))
+    }
+
+    /// Where the output `port` of `node` is written: the space of its backend that costs its
+    /// readers least to read from. The backend's first space wins a tie, so a backend with
+    /// nowhere else to write, or readers that are all its own, is placed as before.
+    fn home_of(&mut self, node: u32, port: u16) -> Result<Option<usize>, StitchError> {
+        if let Some(known) = self.homes.get(&(node, port)) {
+            return Ok(*known);
+        }
+        let home = self.choose_home(node, port)?;
+        self.homes.insert((node, port), home);
+        Ok(home)
+    }
+
+    fn choose_home(&self, node: u32, port: u16) -> Result<Option<usize>, StitchError> {
+        let Some(region) = self.region_of[node as usize] else {
+            return Ok(None);
+        };
+        let memory = self.memory_of(region)?;
+        let candidates = memory.writable();
+        if candidates.len() < 2 {
+            return Ok(memory.home());
+        }
+        let graph = self.graph;
+        let produced = &graph.nodes[node as usize].outputs[port as usize];
+        let key = key_of(&produced.ty);
+        // Each reader, as the spaces it can take the value from.
+        let mut readers: Vec<Vec<usize>> = Vec::new();
+        let leaving = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.from.node == node && edge.from.port == produced.name);
+        for edge in leaving {
+            let consumer = &graph.nodes[edge.to.node as usize];
+            if consumer.doc.kind == NodeKindDoc::HostBridge {
+                readers.extend(memory.host_kind().map(|host| vec![host]));
+            } else if let Some(other) = self.region_of[edge.to.node as usize] {
+                readers.push(self.memory_of(other)?.readable());
+            }
+        }
+        let cost = |home: usize| -> Option<(Option<TransferCost>, usize)> {
+            let mut worst = (None, 0);
+            for targets in &readers {
+                let one = self.reach(key.as_ref(), home, targets)?;
+                worst = (worst.0.max(one.0), worst.1 + one.1);
+            }
+            Some(worst)
+        };
+        let best = candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(order, &home)| Some((cost(home)?, order, home)))
+            .min();
+        Ok(best.map(|(_, _, home)| home).or(memory.home()))
     }
 
     fn deliver(&self, value: u32, targets: &[usize], port: &str) -> Result<Reader, StitchError> {
@@ -350,7 +458,8 @@ impl Router<'_> {
             ) else {
                 continue;
             };
-            let Some(home) = self.memory_of(region)?.home() else {
+            let _ = region;
+            let Some(home) = self.home_of(edge.from.node, out)? else {
                 continue;
             };
             let source = Source::Node {
@@ -403,11 +512,7 @@ impl Router<'_> {
             };
             (source, home)
         } else {
-            let from = self.region_of[edge.from.node as usize];
-            let home = match from {
-                Some(from) => self.memory_of(from)?.home(),
-                None => None,
-            };
+            let home = self.home_of(edge.from.node, out)?;
             (
                 Source::Node {
                     node: edge.from.node,
@@ -434,10 +539,13 @@ impl Router<'_> {
         let producer = &graph.nodes[output.node.0 as usize];
         let port = &producer.outputs[output.port.0 as usize];
         let memory = self.memory_of(region)?;
-        let (Some(home), host) = (memory.home(), memory.host_kind()) else {
+        let (Some(first), host) = (memory.home(), memory.host_kind()) else {
             return Ok(());
         };
-        let targets = vec![host.unwrap_or(home)];
+        let targets = vec![host.unwrap_or(first)];
+        let Some(home) = self.home_of(output.node.0, output.port.0)? else {
+            return Ok(());
+        };
         let source = Source::Node {
             node: output.node.0,
             port: output.port.0,
@@ -473,15 +581,23 @@ pub fn route(
     };
     let memory: Vec<BackendSpaces> = backends
         .iter()
-        .map(|backend| BackendSpaces {
-            list: backend
+        .map(|backend| {
+            let list: Vec<(MemorySpace, usize)> = backend
                 .memory()
                 .into_iter()
                 .map(|space| {
                     let at = routing.space(&space.id);
                     (space, at)
                 })
-                .collect(),
+                .collect();
+            // A placement has to be one of the backend's own spaces.
+            let placements = backend
+                .placements()
+                .iter()
+                .filter_map(|id| list.iter().find(|(space, _)| space.id == *id))
+                .map(|(_, at)| *at)
+                .collect();
+            BackendSpaces { list, placements }
         })
         .collect();
     build_table(&mut routing, backends, registry);
@@ -498,6 +614,7 @@ pub fn route(
         names: backends.iter().map(|b| b.id().to_string()).collect(),
         region_of,
         values: BTreeMap::new(),
+        homes: BTreeMap::new(),
         routing,
     };
     for (region, one) in formed.iter().enumerate() {

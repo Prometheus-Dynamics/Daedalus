@@ -19,6 +19,7 @@ use daedalus_types::Typed;
 use crate::backend::WgpuBackend;
 use crate::buffer::Storage;
 use crate::handoff::on_device;
+use crate::mapped::MappedBytes;
 use crate::memory::{SPACE_DEVICE, SPACE_DMA_HEAP, SPACE_HOST_MAPPED};
 use crate::transfer::{HOST_SPACE, intern};
 
@@ -30,6 +31,16 @@ pub trait HostBytes: Typed + Send + Sync + 'static {
     /// A value from the bytes of a buffer a shader wrote. A buffer is a whole number of 4-byte
     /// words, so there can be up to three bytes of zeroes after what the shader meant.
     fn from_bytes(bytes: Vec<u8>) -> Self;
+
+    /// A value from a buffer's bytes where they are, for a buffer the host maps. A type that can
+    /// keep the [`MappedBytes`] reads the shader's output with no copy at all; by default the
+    /// bytes are copied out for [`HostBytes::from_bytes`]. The same zeroes may follow.
+    fn from_mapped(bytes: MappedBytes) -> Self
+    where
+        Self: Sized,
+    {
+        Self::from_bytes(bytes.to_vec())
+    }
 }
 
 /// The bytes of the `T` a cell holds, for the upload step.
@@ -37,7 +48,7 @@ pub(crate) fn bytes_of<T: HostBytes>(slot: &Slot) -> Option<&[u8]> {
     typed_view::<T>(slot).map(T::bytes)
 }
 
-/// Makes a `T` from a buffer the host can read. The readback before it finished, or the runner
+/// Makes a `T` from a buffer the host can read. The work that wrote it finished, or the runner
 /// would not have run this.
 struct TypedMap<T> {
     of: std::marker::PhantomData<fn() -> T>,
@@ -52,19 +63,21 @@ impl<T: HostBytes> OwnedStep for TypedMap<T> {
         let Some(storage) = slots.cell(0).and_then(take_typed::<Storage>) else {
             return fault("a buffer was expected");
         };
-        let mut bytes = vec![0; storage.size as usize];
-        if storage.read_into(0, &mut bytes).is_err() {
-            return fault("the buffer couldn't be read");
-        }
+        // Where the host maps the buffer the value reads it in place; otherwise it is copied.
+        let value = match MappedBytes::new(storage) {
+            Ok(mapped) => T::from_mapped(mapped),
+            Err((storage, _)) => {
+                let mut bytes = vec![0; storage.size as usize];
+                if storage.read_into(0, &mut bytes).is_err() {
+                    return fault("the buffer couldn't be read");
+                }
+                T::from_bytes(bytes)
+            }
+        };
         let Some(out) = slots.cell(1) else {
             return fault("a map has no output");
         };
-        put_typed(
-            out,
-            UNSTAMPED.0,
-            UNSTAMPED.1,
-            Arc::new(T::from_bytes(bytes)),
-        );
+        put_typed(out, UNSTAMPED.0, UNSTAMPED.1, Arc::new(value));
         StepEnd::Done
     }
 }

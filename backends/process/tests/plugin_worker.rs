@@ -59,6 +59,7 @@ fn process_step(backend: &ProcessBackend, node: &'static str) -> Step {
         inputs: &inputs,
         outputs: &outputs,
         incoming: &[],
+        placed: &[],
         rate: RateId(0),
     };
     let bodies = [NodeBody {

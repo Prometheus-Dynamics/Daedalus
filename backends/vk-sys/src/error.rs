@@ -22,6 +22,8 @@ pub enum Error {
     /// Something this crate doesn't do, such as a shader that binds a texture where only
     /// buffers are bound.
     Unsupported,
+    /// The host can't write a mapping while its bytes are lent out.
+    Lent,
     /// Vulkan said no.
     Vulkan(vk::Result),
 }
@@ -40,6 +42,9 @@ impl fmt::Display for Error {
                 "the dma-buf is {have} bytes, and the device needs {need} for the buffer"
             ),
             Error::Unsupported => f.write_str("not supported here"),
+            Error::Lent => {
+                f.write_str("the buffer's bytes are lent out, so the host can't write them")
+            }
             Error::Vulkan(result) => write!(f, "Vulkan: {result:?}"),
         }
     }

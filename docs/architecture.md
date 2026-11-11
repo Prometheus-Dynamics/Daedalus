@@ -42,6 +42,9 @@ pub trait Backend: Send + Sync {
     /// How can data get in and out?    image in dmabuf -> image in wgpu:0, zero copy
     fn transfers(&self) -> Vec<Transfer>;
 
+    /// Where else can my nodes write an output?   a GPU sharing the CPU's memory: dma-heap
+    fn placements(&self) -> Vec<Cow<'static, str>>;
+
     /// Which of these nodes could I run on this machine?
     fn can_take(&self, offer: &Offer) -> Vec<NodeRef>;
 

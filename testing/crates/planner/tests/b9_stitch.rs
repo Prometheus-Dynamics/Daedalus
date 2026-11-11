@@ -125,6 +125,50 @@ fn no_path_names_port_and_spaces() {
     );
 }
 
+/// `a` can also write its output into `m.share`, which `b` reads without a move.
+fn placing() -> Mem {
+    let mut a = own("a", "m.a");
+    a.spaces.push(("m.share", SpaceKind::Shared, true));
+    a.placements = vec!["m.share"];
+    a.moves = vec![("t.copy", "m.a", "m.b", COPY)];
+    a
+}
+
+fn slot_spaces(stitched: &Stitched) -> Vec<&str> {
+    stitched
+        .slots
+        .iter()
+        .map(|slot| stitched.spaces[slot.space as usize].as_str())
+        .collect()
+}
+
+#[test]
+fn an_output_is_written_where_its_reader_needs_no_move() {
+    let mut b = own("b", "m.b");
+    b.spaces.push(("m.share", SpaceKind::Shared, true));
+    let (nodes, edges) = line(&["t.a", "t.b"]);
+    let placed = run(nodes, edges, &placing(), &b).unwrap();
+    assert!(moves(&placed).is_empty(), "{:?}", moves(&placed));
+    assert_eq!(slot_spaces(&placed), ["m.share"]);
+
+    // Without the placement the same graph pays a copy.
+    let mut plain = placing();
+    plain.placements.clear();
+    let (nodes, edges) = line(&["t.a", "t.b"]);
+    assert_eq!(moves(&run(nodes, edges, &plain, &b).unwrap()), ["t.copy"]);
+}
+
+#[test]
+fn an_output_stays_home_when_a_placement_costs_its_readers_more() {
+    // `b` reads `m.a` and nothing reaches it from `m.share`.
+    let mut b = own("b", "m.b");
+    b.spaces.push(("m.a", SpaceKind::Device, true));
+    let (nodes, edges) = line(&["t.a", "t.b"]);
+    let stitched = run(nodes, edges, &placing(), &b).unwrap();
+    assert!(moves(&stitched).is_empty());
+    assert_eq!(slot_spaces(&stitched), ["m.a"]);
+}
+
 fn mover() -> Mem {
     let mut a = own("a", "m.a");
     a.moves = vec![("t.move", "m.a", "m.b", COPY)];

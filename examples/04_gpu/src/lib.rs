@@ -9,28 +9,57 @@ pub mod fragment;
 pub mod mixed;
 pub mod upload_download;
 
+use std::sync::Arc;
 use std::time::Duration;
 
+use daedalus::layers::types;
 use daedalus::prelude::*;
-use daedalus_wgpu::{HostBytes, Options, WgpuBackend};
+use daedalus_wgpu::{HostBytes, MappedBytes, Options, WgpuBackend};
 
 /// What the examples pass around: 32-bit words. On the host it is this struct, and on the
-/// device it is a buffer of the same bytes.
-#[derive(Clone, Debug, PartialEq, Eq, Type)]
+/// device it is a buffer of the same bytes. A shader's output the host reads stays in the
+/// buffer the shader wrote, where the host maps it, and is read there.
+#[derive(Clone, Debug, Type)]
 #[type_key("gpu:words")]
 pub struct Words {
-    bytes: Vec<u8>,
+    bytes: Bytes,
 }
+
+/// The words' bytes: the host's own, or a buffer's where the shader wrote them. Either way the
+/// type is the bytes scalar, as `Vec<u8>` is.
+#[derive(Clone, Debug)]
+enum Bytes {
+    Owned(Vec<u8>),
+    Mapped(Arc<MappedBytes>),
+}
+
+impl types::Typed for Bytes {
+    const KEY: types::TypeKey = <Vec<u8> as types::Typed>::KEY;
+    const EXPR: types::TypeExpr = <Vec<u8> as types::Typed>::EXPR;
+}
+
+impl PartialEq for Words {
+    fn eq(&self, other: &Words) -> bool {
+        self.bytes() == other.bytes()
+    }
+}
+
+impl Eq for Words {}
 
 impl Words {
     pub fn new(words: &[u32]) -> Words {
         Words {
-            bytes: words.iter().flat_map(|word| word.to_le_bytes()).collect(),
+            bytes: Bytes::Owned(words.iter().flat_map(|word| word.to_le_bytes()).collect()),
         }
     }
 
+    /// Whether these are a shader's output read where the shader wrote them.
+    pub fn is_in_place(&self) -> bool {
+        matches!(self.bytes, Bytes::Mapped(_))
+    }
+
     pub fn to_vec(&self) -> Vec<u32> {
-        self.bytes
+        self.bytes()
             .as_chunks::<4>()
             .0
             .iter()
@@ -42,11 +71,22 @@ impl Words {
 /// This is all the GPU backend needs to move a `Words` between the host and the device.
 impl HostBytes for Words {
     fn bytes(&self) -> &[u8] {
-        &self.bytes
+        match &self.bytes {
+            Bytes::Owned(bytes) => bytes,
+            Bytes::Mapped(bytes) => bytes,
+        }
     }
 
     fn from_bytes(bytes: Vec<u8>) -> Words {
-        Words { bytes }
+        Words {
+            bytes: Bytes::Owned(bytes),
+        }
+    }
+
+    fn from_mapped(bytes: MappedBytes) -> Words {
+        Words {
+            bytes: Bytes::Mapped(Arc::new(bytes)),
+        }
     }
 }
 

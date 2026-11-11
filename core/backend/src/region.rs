@@ -41,6 +41,10 @@ pub struct Region<'a> {
     pub inputs: &'a [PortRef],
     pub outputs: &'a [PortRef],
     pub incoming: &'a [Incoming<'a>],
+    /// For each of `outputs`, the id of the space the planner wants it written in: the
+    /// backend's first, or one of its [`Backend::placements`](crate::Backend::placements).
+    /// Empty when every output is in the first.
+    pub placed: &'a [&'a str],
     pub rate: RateId,
 }
 

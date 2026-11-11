@@ -105,6 +105,7 @@ fn a_backend_is_object_safe() {
         inputs: &[],
         outputs: &[],
         incoming: &[],
+        placed: &[],
         rate: RateId(0),
     };
     let Compiled::Steps(units) = backend.compile(&region, &cx()).unwrap() else {

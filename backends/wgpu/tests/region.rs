@@ -174,6 +174,7 @@ fn compile(backend: &WgpuBackend, chain: &Chain, outputs: &[PortRef]) -> StepUni
         inputs: &chain.inputs,
         outputs,
         incoming: &[],
+        placed: &[],
         rate: RateId(0),
     };
     let cx = CompileCx {
@@ -349,6 +350,7 @@ fn what_cannot_run_is_refused_or_faults_and_names_the_node() {
         inputs: &made.inputs,
         outputs: &outputs,
         incoming: &[],
+        placed: &[],
         rate: RateId(0),
     };
     let cx = CompileCx {

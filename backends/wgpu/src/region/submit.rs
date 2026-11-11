@@ -5,11 +5,12 @@ use std::sync::Arc;
 use daedalus_abi::{OwnedStep, Slot, Slots, StepCx, StepEnd};
 use daedalus_runner::{UNSTAMPED, put_typed, share_typed, typed_view};
 
-use super::{Node, Owned, PixelChain, Size, Source, Work};
+use super::{Node, Owned, PixelChain, Place, Size, Source, Work};
 use crate::backend::Link;
 use crate::buffer::Storage;
 use crate::context::Context;
 use crate::fence::{Ticket, TicketState};
+use crate::memory::SPACE_HOST_MAPPED;
 use crate::record::RecordCx;
 use crate::shader::Bound;
 use crate::shader::OpenPass;
@@ -97,8 +98,19 @@ impl Owned {
         self.current = match free {
             Some(at) => at,
             None => {
-                let storage = Storage::zeroed(Arc::clone(context), bytes)
-                    .map_err(|error| error.to_string())?;
+                let made = match self.place {
+                    Place::Device => Storage::zeroed(Arc::clone(context), bytes),
+                    Place::Mapped => {
+                        Storage::placed_on(Arc::clone(context), bytes, SPACE_HOST_MAPPED)
+                    }
+                    #[cfg(target_os = "linux")]
+                    Place::Heap => Storage::dma_heap_on(Arc::clone(context), bytes),
+                    #[cfg(not(target_os = "linux"))]
+                    Place::Heap => Err(crate::StorageError::Unsupported(
+                        "dma-heaps are a Linux interface",
+                    )),
+                };
+                let storage = made.map_err(|error| error.to_string())?;
                 // Drop one that is the wrong size or the oldest idle one, to stay bounded.
                 let stale = self.kept.iter().position(|storage| {
                     Arc::strong_count(storage) == 1

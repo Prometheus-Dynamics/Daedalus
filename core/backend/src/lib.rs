@@ -32,8 +32,18 @@ pub trait Backend: Send + Sync {
         0
     }
 
-    /// The memory this backend has. The first entry is where its outputs live.
+    /// The memory this backend has. The first entry is where its outputs live, unless one is
+    /// placed elsewhere: see [`Backend::placements`].
     fn memory(&self) -> Vec<MemorySpace>;
+
+    /// The ids of the other spaces of its own that this backend's nodes can write an output
+    /// into directly, in the order it prefers them. The planner places an output in the one
+    /// that costs its readers least to reach, or leaves it in the first space of
+    /// [`Backend::memory`] when none is cheaper, and tells the backend with [`Region::placed`].
+    /// A value written where its reader reads it needs no move at all.
+    fn placements(&self) -> Vec<std::borrow::Cow<'static, str>> {
+        Vec::new()
+    }
 
     /// How data can get in and out.
     fn transfers(&self) -> Vec<Transfer>;

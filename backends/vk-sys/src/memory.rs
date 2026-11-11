@@ -5,7 +5,8 @@
 //! clears them.
 
 use std::os::fd::{AsRawFd, BorrowedFd, IntoRawFd, OwnedFd};
-use std::sync::{Mutex, PoisonError};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use ash::{khr, vk};
 use wgpu::hal::api::Vulkan;
@@ -36,12 +37,15 @@ pub struct HostMapping {
     len: usize,
     /// One host access at a time.
     access: Mutex<()>,
+    /// How many [`Lent`]s are alive. The host doesn't write while any is.
+    lent: AtomicUsize,
     /// The mapping is the buffer's memory.
     _buffer: wgpu::Buffer,
 }
 
 // SAFETY: the pointer is to memory that lives as long as `_buffer`, and every access through it
-// is a bounds-checked copy made under `access`.
+// is a bounds-checked copy made under `access`, or a read through a `Lent`, during which the
+// host writes nothing.
 unsafe impl Send for HostMapping {}
 // SAFETY: as above.
 unsafe impl Sync for HostMapping {}
@@ -67,6 +71,9 @@ impl HostMapping {
     pub fn write(&self, offset: u64, bytes: &[u8]) -> Result<(), Error> {
         let start = self.range(offset, bytes.len())?;
         let _one = self.access.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.lent.load(Ordering::Acquire) != 0 {
+            return Err(Error::Lent);
+        }
         // SAFETY: `start + bytes.len()` is within the mapping, which is live and can't overlap
         // a Rust slice.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(start), bytes.len()) };
@@ -77,6 +84,9 @@ impl HostMapping {
     pub fn zero(&self, offset: u64, len: usize) -> Result<(), Error> {
         let start = self.range(offset, len)?;
         let _one = self.access.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.lent.load(Ordering::Acquire) != 0 {
+            return Err(Error::Lent);
+        }
         // SAFETY: `start + len` is within the mapping, which is live.
         unsafe { std::ptr::write_bytes(self.ptr.add(start), 0, len) };
         Ok(())
@@ -89,6 +99,50 @@ impl HostMapping {
         // SAFETY: as in `write`.
         unsafe { std::ptr::copy_nonoverlapping(self.ptr.add(start), out.as_mut_ptr(), out.len()) };
         Ok(())
+    }
+
+    /// The mapping's bytes in place, until the [`Lent`] drops. The host's writes refuse while
+    /// any is alive. The holder sees to it that no device work writes the buffer meanwhile: GPU
+    /// work that wrote it must have finished, and the buffer isn't given to the device again
+    /// until the `Lent` is gone.
+    pub fn lend(self: &Arc<Self>) -> Lent {
+        let _one = self.access.lock().unwrap_or_else(PoisonError::into_inner);
+        self.lent.fetch_add(1, Ordering::AcqRel);
+        Lent {
+            mapping: Arc::clone(self),
+        }
+    }
+}
+
+/// A [`HostMapping`]'s bytes, read in place.
+pub struct Lent {
+    mapping: Arc<HostMapping>,
+}
+
+impl std::ops::Deref for Lent {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        let map = &self.mapping;
+        // The host writes nothing while a `Lent` is alive (`write` and `zero` refuse). A device
+        // write meanwhile breaks `lend`'s terms, and even then only changes bytes under the
+        // reader, as with `read`: every byte value is a `u8`.
+        // SAFETY: the pointer and length are the live mapping's, which `mapping` keeps alive.
+        unsafe { std::slice::from_raw_parts(map.ptr, map.len) }
+    }
+}
+
+impl Drop for Lent {
+    fn drop(&mut self) {
+        self.mapping.lent.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+impl std::fmt::Debug for Lent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Lent")
+            .field("len", &self.mapping.len)
+            .finish()
     }
 }
 
@@ -221,6 +275,7 @@ pub fn storage_buffer(
         ptr,
         len: size as usize,
         access: Mutex::new(()),
+        lent: AtomicUsize::new(0),
         _buffer: buffer.clone(),
     });
     Ok((buffer, mapping))
