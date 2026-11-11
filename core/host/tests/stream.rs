@@ -176,9 +176,10 @@ fn an_inactive_input_stays_queued() {
 fn diagnostics_report_serial_execution_and_the_applied_config() {
     let calls = Arc::new(AtomicU32::new(0));
     let mut graph = graph(&calls, None);
-    let config = StreamWorkerConfig::default()
-        .with_idle_sleep(Duration::from_millis(3))
-        .with_error_policy(StreamErrorPolicy::Stop);
+    let config = StreamWorkerConfig {
+        on_error: StreamErrorPolicy::Stop,
+        ..StreamWorkerConfig::default().with_idle_sleep(Duration::from_millis(3))
+    };
     graph.spawn_continuous(config);
     let report = graph.diagnostics();
     assert_eq!(report.execution, StreamExecutionMode::Serial);
