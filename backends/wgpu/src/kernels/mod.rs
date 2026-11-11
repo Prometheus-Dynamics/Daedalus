@@ -2,9 +2,8 @@
 //!
 //! These are library functions, not nodes: a node calls them from its recording body, or a
 //! program calls them on buffers it holds. Each gives, bit for bit, what the CPU kernel of the
-//! same name gives. Whether one beats the CPU depends on the device and on where the data is:
-//! use them when the bytes are already in a [`Storage`](crate::Storage) and would otherwise be
-//! read back just to be converted.
+//! same name gives. On this device the CPU is faster for a single op on data it already holds;
+//! the device ops are for data that is already on the device and would otherwise be read back.
 //!
 //! The per-value conversions are also [`PixelSpec`]s, [`HALF_TO_F32`] and [`F32_TO_UNORM8`], so
 //! a chain of pixel bodies that includes one is still one shader.

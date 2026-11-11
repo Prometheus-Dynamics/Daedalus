@@ -45,19 +45,20 @@ pub(super) fn decode_vector(n: u64) -> bool {
     n >= 64 && n.is_multiple_of(64)
 }
 
-/// The decode table: for each byte, its six bits, or 0xff for a byte that is no symbol.
+/// The decode table: for each byte, its six bits, or, for a byte that is no symbol, the invalid flag
+/// (bit 8) alone. A lookup therefore gives the value and the validity together.
 fn decode_table() -> Vec<u8> {
     (0..=255u8)
         .flat_map(|c| {
-            let value = match c {
-                b'A'..=b'Z' => c - b'A',
-                b'a'..=b'z' => c - b'a' + 26,
-                b'0'..=b'9' => c - b'0' + 52,
+            let value: u32 = match c {
+                b'A'..=b'Z' => u32::from(c - b'A'),
+                b'a'..=b'z' => u32::from(c - b'a') + 26,
+                b'0'..=b'9' => u32::from(c - b'0') + 52,
                 b'+' => 62,
                 b'/' => 63,
-                _ => 0xff,
+                _ => 0x100,
             };
-            (value as u32).to_le_bytes()
+            value.to_le_bytes()
         })
         .collect()
 }

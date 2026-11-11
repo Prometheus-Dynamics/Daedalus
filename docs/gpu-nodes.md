@@ -89,5 +89,8 @@ backend opens the device again and the region runs again: it is not turned off.
 - The kernel ops run by `Kernels::run` and `Batch` are recorded the same way, and allocate
   nothing once the same ops have run before.
 
+On this device the CPU is faster for a single op on data it already holds; the device ops are for
+data that is already on the device and would otherwise be read back.
+
 The counted budgets are checked on Mesa's software Vulkan in the `GPU` workflow
 (`scripts/gpu-lavapipe.sh`). Timings are board runs.
