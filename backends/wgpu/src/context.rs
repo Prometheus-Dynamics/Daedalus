@@ -68,10 +68,17 @@ pub(crate) struct Context {
     /// Set when bytes were given to the queue to write, which reach the device only with the
     /// queue's next submit.
     unsent: AtomicBool,
+    /// Bytes given to the queue to write since its last submit. Their staging memory is only freed
+    /// by a submit, so past [`WRITE_BUDGET`] the queue is submitted.
+    unsent_bytes: AtomicU64,
     /// Regions that record with Vulkan itself, for a wait to cover their work too.
     #[cfg(target_os = "linux")]
     chains: Mutex<Vec<Weak<Mutex<daedalus_vk_sys::chain::Chain>>>>,
 }
+
+/// Bytes the queue may hold for writing before it is submitted. A 16 MiB write alone is over the
+/// budget, so it is submitted with the write that made it.
+const WRITE_BUDGET: u64 = 8 << 20;
 
 static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
 
@@ -175,6 +182,7 @@ impl Context {
             shaders: Mutex::default(),
             temp: Mutex::new(TempPool::new(options.temp_pool)),
             unsent: AtomicBool::new(false),
+            unsent_bytes: AtomicU64::new(0),
             #[cfg(target_os = "linux")]
             chains: Mutex::default(),
         }
@@ -229,9 +237,17 @@ impl Context {
         let _ = self.device.poll(wgpu::PollType::Poll);
     }
 
-    /// Notes that the queue was given bytes to write.
-    pub(crate) fn note_write(&self) {
+    /// Notes that the queue was given `bytes` to write. Past [`WRITE_BUDGET`] the queue is
+    /// submitted here: a long run of uploads with no submit would hold every staging copy at once.
+    pub(crate) fn note_write(&self, bytes: u64) {
         self.unsent.store(true, Ordering::Release);
+        let total = self.unsent_bytes.fetch_add(bytes, Ordering::AcqRel) + bytes;
+        #[cfg(target_os = "linux")]
+        if total >= WRITE_BUDGET {
+            self.flush_writes();
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = total;
     }
 
     /// Sends what the queue was given to write, if anything was. Work recorded with Vulkan
@@ -239,6 +255,7 @@ impl Context {
     #[cfg(target_os = "linux")]
     pub(crate) fn flush_writes(&self) {
         if self.unsent.swap(false, Ordering::AcqRel) {
+            self.unsent_bytes.store(0, Ordering::Release);
             let _held = self.submit.lock();
             self.queue.submit([]);
         }

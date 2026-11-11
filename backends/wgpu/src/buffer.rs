@@ -357,7 +357,7 @@ impl Storage {
             return mapping.write(offset, bytes);
         }
         self.context.queue.write_buffer(&self.buffer, offset, bytes);
-        self.context.note_write();
+        self.context.note_write(bytes.len() as u64);
         Ok(())
     }
 
