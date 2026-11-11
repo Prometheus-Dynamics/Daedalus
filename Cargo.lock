@@ -836,10 +836,14 @@ dependencies = [
  "daedalus-abi",
  "daedalus-backend",
  "daedalus-dma-sys",
+ "daedalus-graph",
  "daedalus-kernels-sys",
+ "daedalus-macros",
+ "daedalus-registry",
  "daedalus-runner",
  "daedalus-types",
  "daedalus-wgpu",
+ "daedalus-wgpu-author",
  "daedalus-wgpu-conformance",
 ]
 

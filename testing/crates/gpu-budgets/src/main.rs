@@ -17,7 +17,7 @@ static COUNTING: CountingAlloc = CountingAlloc;
 
 mod sections;
 
-const SECTIONS: [&str; 11] = [
+const SECTIONS: [&str; 15] = [
     "limits",
     "batching",
     "allocation",
@@ -29,6 +29,10 @@ const SECTIONS: [&str; 11] = [
     "chains",
     "fences",
     "alloc16",
+    "pixels",
+    "busy",
+    "cached",
+    "heap-read",
 ];
 const RUNS: usize = 200;
 
@@ -184,6 +188,13 @@ fn main() -> std::process::ExitCode {
             "chains" => sections::chains::run(&backend),
             "fences" => sections::fences::run(&backend),
             "alloc16" => sections::allocations::run(),
+            "pixels" => sections::gaps::pixel_forms(&backend),
+            "busy" => sections::gaps::busy(&backend),
+            "cached" => sections::gaps::host_cached(&backend),
+            #[cfg(target_os = "linux")]
+            "heap-read" => sections::gaps::heap_read(&backend),
+            #[cfg(not(target_os = "linux"))]
+            "heap-read" => println!("heap-read: skipped, dma-heaps are a Linux interface"),
             _ => readback(&backend),
         }
     }

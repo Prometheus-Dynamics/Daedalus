@@ -15,6 +15,10 @@ daedalus-runner = { path = "../../../core/runner" }
 daedalus-types = { path = "../../../core/types" }
 daedalus-wgpu = { path = "../../../backends/wgpu" }
 daedalus-wgpu-conformance = { path = "../wgpu-conformance" }
+daedalus-wgpu-author = { path = "../../../backends/wgpu-author" }
+daedalus-macros = { path = "../../../core/macros" }
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-graph = { path = "../../../core/graph" }
 
 [lints]
 workspace = true
