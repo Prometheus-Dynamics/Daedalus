@@ -12,7 +12,18 @@ use crate::record::RecordCx;
 use crate::shader::{BindingKind, BindingSpec, Bound, Dispatch, OpenPass, Shader, ShaderSpec};
 
 const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("kernels.wgsl"));
+/// The workgroup size a shader's source is written with, before a variant gives it its own.
 const WORKGROUP: u32 = 64;
+/// The workgroup size each shader runs at, in the order of [`SPECS`] (the vector entry points
+/// after them): the fastest on the CM5 (V3D) that the desktop GPU does not run slower at, from
+/// the workgroup sweep in E16. A device that allows fewer invocations a workgroup gets the
+/// largest power of two it allows, at most this size: see [`workgroup_sizes`].
+// In the order of SPECS, then the vector entry points. CRC is fastest at 64 on the CM5 (12.1 ms,
+// against 20.6 at 32 and 25 to 28 at 128 and 256), and the desktop GPU is no faster at 128 or 256.
+// The other shaders are fastest at 256 on the CM5 and no slower on the desktop GPU.
+const PREFERRED: [u32; 14] = [
+    256, 256, 256, 256, 256, 256, 256, 64, 256, 256, 256, 256, 256, 256,
+];
 
 const fn storage(index: u32, name: &'static str, read_only: bool) -> BindingSpec {
     BindingSpec {
@@ -235,6 +246,36 @@ pub(super) const SPECS: [ShaderSpec; 14] = [
     },
 ];
 
+/// The sizes each shader runs at on a device: its preferred size, or the largest power of two
+/// the device allows if that is smaller.
+fn workgroup_sizes(compute: &crate::caps::ComputeCaps) -> [u32; 14] {
+    let limit = compute
+        .max_invocations_per_workgroup
+        .min(compute.max_workgroup_size[0])
+        .max(1);
+    PREFERRED.map(|preferred| 1 << (31 - preferred.min(limit).leading_zeros()))
+}
+
+/// The spec `index` of [`SPECS`] at workgroup size `size`: its source with `WG` set to it. Built
+/// once, and kept: a shader is loaded by its content, so each size is its own pipeline.
+fn variant(index: usize, size: u32) -> &'static ShaderSpec {
+    static VARIANTS: Mutex<Vec<(usize, u32, &'static ShaderSpec)>> = Mutex::new(Vec::new());
+    let mut known = VARIANTS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, _, found)) = known.iter().find(|(i, s, _)| *i == index && *s == size) {
+        return found;
+    }
+    let base = SPECS[index];
+    let source: &'static str =
+        Box::leak(format!("const WG: u32 = {size}u;\n{}", base.source).into_boxed_str());
+    let spec: &'static ShaderSpec = Box::leak(Box::new(ShaderSpec {
+        workgroup: [size, 1, 1],
+        source,
+        ..base
+    }));
+    known.push((index, size, spec));
+    spec
+}
+
 /// One op, checked: its counts on the device, and how many workgroups it dispatches.
 /// The params buffer, the counts, and the index in [`SPECS`] of the shader that runs.
 pub(super) type Planned = (Arc<Storage>, [u32; 3], usize);
@@ -248,10 +289,12 @@ const PARAMS_KEPT: usize = 64;
 pub struct Kernels {
     pub(super) context: Arc<Context>,
     shaders: [OnceLock<Shader>; 14],
+    /// Each shader at this device's workgroup size (see [`workgroup_sizes`]).
+    pub(super) specs: [&'static ShaderSpec; 14],
     /// The counts of a run, on the device, by what they are: one small buffer for each
     /// distinct set, bound as it is. Two runs of an op in one encoder each bind their own, and
     /// nothing is copied before a pass.
-    params: Mutex<HashMap<[u32; 3], Arc<Storage>>>,
+    params: Mutex<HashMap<[u32; 4], Arc<Storage>>>,
     pub(super) table: OnceLock<Storage>,
     /// The base64 decode table, for the vector decode: the six bits of each byte, or 0xff.
     pub(super) b64_table: OnceLock<Storage>,
@@ -274,7 +317,9 @@ impl Kernels {
     }
 
     fn on(context: Arc<Context>) -> Kernels {
+        let sizes = workgroup_sizes(&context.record.compute);
         Kernels {
+            specs: std::array::from_fn(|at| variant(at, sizes[at])),
             context,
             shaders: [const { OnceLock::new() }; 14],
             params: Mutex::new(HashMap::new()),
@@ -297,12 +342,14 @@ impl Kernels {
         if let Some(shader) = slot.get() {
             return Ok(shader);
         }
-        let loaded =
-            Shader::load_on(Arc::clone(&self.context), &SPECS[at]).map_err(KernelError::Shader)?;
+        let loaded = Shader::load_on(Arc::clone(&self.context), self.specs[at])
+            .map_err(KernelError::Shader)?;
         Ok(slot.get_or_init(|| loaded))
     }
 
-    fn params(&self, values: [u32; 3]) -> Result<Arc<Storage>, KernelError> {
+    /// A params buffer: the element count, the invocations, the output bytes, and the first
+    /// word a copy writes (zero for the rest).
+    fn params(&self, values: [u32; 4]) -> Result<Arc<Storage>, KernelError> {
         let mut kept = self.params.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(found) = kept.get(&values) {
             return Ok(Arc::clone(found));
@@ -430,7 +477,7 @@ impl Kernels {
             Kernel::Base64Decode if super::codec::decode_vector(n) => (WIDE_B64_DEC, n / 64),
             _ => (kernel.index(), kernel.threads(n)),
         };
-        let groups = threads.div_ceil(u64::from(WORKGROUP));
+        let groups = threads.div_ceil(u64::from(self.specs[spec].workgroup[0]));
         let max = u64::from(self.context.record.compute.max_workgroups_per_dimension);
         let (x, y) = match groups <= max {
             true => (groups, 1),
@@ -443,7 +490,61 @@ impl Kernels {
                 "{kernel:?} over {n} elements doesn't fit one pass on this device"
             )));
         }
-        let params = self.params([n as u32, threads as u32, kernel.output_len(n) as u32])?;
+        let params = self.params([n as u32, threads as u32, kernel.output_len(n) as u32, 0])?;
+        Ok(Some((params, [x as u32, y as u32, 1], spec)))
+    }
+
+    /// The ops a copy of `n` bytes is: the vector copy over the whole vectors, then, when `n`
+    /// is not a whole number of them, the word copy over the rest. An odd length costs the same
+    /// as an even one. Other kernels are one op.
+    pub(super) fn plan_parts(
+        &self,
+        kernel: Kernel,
+        src: &Storage,
+        dst: &Storage,
+        n: u64,
+    ) -> Result<[Option<Planned>; 2], KernelError> {
+        if kernel == Kernel::Copy && n >= 16 && !n.is_multiple_of(16) {
+            let whole = n - n % 16;
+            let vectors = self.plan(Kernel::Copy, src, dst, whole)?;
+            let rest = self.plan_copy_tail(src, dst, n, whole)?;
+            return Ok([vectors, rest]);
+        }
+        Ok([self.plan(kernel, src, dst, n)?, None])
+    }
+
+    /// The word copy of bytes `from..n` of a `n`-byte copy, which starts a whole number of words
+    /// in. It writes words `from / 4` onward, so the vector copy before it is not repeated.
+    fn plan_copy_tail(
+        &self,
+        src: &Storage,
+        dst: &Storage,
+        n: u64,
+        from: u64,
+    ) -> Result<Option<Planned>, KernelError> {
+        let need = n.next_multiple_of(4);
+        if src.size() < need || dst.size() < need {
+            return Err(KernelError::Size(format!(
+                "a copy of {n} bytes needs {need} bytes on each side, and was given {} and {}",
+                src.size(),
+                dst.size()
+            )));
+        }
+        let spec = Kernel::Copy.index();
+        let first = from / 4;
+        let threads = (n.div_ceil(4) - first).div_ceil(4);
+        let groups = threads.div_ceil(u64::from(self.specs[spec].workgroup[0]));
+        let max = u64::from(self.context.record.compute.max_workgroups_per_dimension);
+        if groups > max * max {
+            return Err(KernelError::Size(format!(
+                "a copy of {n} bytes doesn't fit one pass on this device"
+            )));
+        }
+        let (x, y) = match groups <= max {
+            true => (groups, 1),
+            false => (max, groups.div_ceil(max)),
+        };
+        let params = self.params([n as u32, threads as u32, n as u32, first as u32])?;
         Ok(Some((params, [x as u32, y as u32, 1], spec)))
     }
 
@@ -457,21 +558,21 @@ impl Kernels {
         n: u64,
         extras: &[&Storage],
     ) -> Result<(), KernelError> {
-        let Some((params, counts, spec)) = self.plan(kernel, src, dst, n)? else {
-            return Ok(());
-        };
-        let shader = self.shader(spec)?;
-        // The plain bindings, then the op's extra ones in the order its spec lists them.
-        let mut bound = [Bound::Storage(src); 6];
-        bound[1] = Bound::Storage(dst);
-        bound[2] = Bound::Storage(&params);
-        for (slot, extra) in bound[3..].iter_mut().zip(extras) {
-            *slot = Bound::Storage(extra);
+        for (params, counts, spec) in self.plan_parts(kernel, src, dst, n)?.into_iter().flatten() {
+            let shader = self.shader(spec)?;
+            // The plain bindings, then the op's extra ones in the order its spec lists them.
+            let mut bound = [Bound::Storage(src); 6];
+            bound[1] = Bound::Storage(dst);
+            bound[2] = Bound::Storage(&params);
+            for (slot, extra) in bound[3..].iter_mut().zip(extras) {
+                *slot = Bound::Storage(extra);
+            }
+            let count = 3 + extras.len();
+            shader
+                .encode_sized_in(open, encoder, &bound[..count], counts)
+                .map_err(KernelError::Shader)?;
         }
-        let count = 3 + extras.len();
-        shader
-            .encode_sized_in(open, encoder, &bound[..count], counts)
-            .map_err(KernelError::Shader)
+        Ok(())
     }
 
     /// Several ops recorded together: one pass for all of them, and one submit. This is the

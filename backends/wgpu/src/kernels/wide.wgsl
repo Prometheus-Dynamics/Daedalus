@@ -22,9 +22,9 @@ fn vec_byte(v: vec4<u32>, k: u32) -> u32 {
 }
 
 // Invocation t takes eight halves, from one input vector, and writes two output vectors.
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn f16_to_f32_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let t = gid.x + gid.y * groups.x * 64u;
+    let t = gid.x + gid.y * groups.x * WG;
     if (t >= params.threads) { return; }
     let v = src[t];
     var out: array<u32, 8>;
@@ -37,9 +37,9 @@ fn f16_to_f32_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_w
 
 // Invocation t takes sixteen floats, from four input vectors, and writes one output vector of
 // sixteen bytes: the four output words the word text would write for them.
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn f32_to_unorm8_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let t = gid.x + gid.y * groups.x * 64u;
+    let t = gid.x + gid.y * groups.x * WG;
     if (t >= params.threads) { return; }
     var words: vec4<u32>;
     for (var j = 0u; j < 4u; j++) {
@@ -63,9 +63,9 @@ fn hex_pair(a: u32, b: u32) -> u32 {
 
 // Invocation t takes one input vector, sixteen bytes, and writes two output vectors: the eight
 // output words, four hex digits each, that the word text writes for the same bytes.
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn hex_lower_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let t = gid.x + gid.y * groups.x * 64u;
+    let t = gid.x + gid.y * groups.x * WG;
     if (t >= params.threads) { return; }
     let v = src[t];
     let w0 = hex_pair(vec_byte(v, 0u), vec_byte(v, 1u));

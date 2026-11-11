@@ -99,8 +99,9 @@ impl Kernel {
         match self {
             Kernel::F32FromLe | Kernel::F16ToF32 => n,
             Kernel::Base64Encode => n.div_ceil(3),
-            // Copy's invocations each write eight words: the measured best of 1, 4, 8 and 16.
-            Kernel::Copy => self.output_len(n).div_ceil(32),
+            // Copy's invocations each write four words: the measured best of 1, 2, 4, 8 and 16 at
+            // 256 a workgroup (E16, copy-rate).
+            Kernel::Copy => self.output_len(n).div_ceil(16),
             _ => self.output_len(n).div_ceil(4),
         }
     }

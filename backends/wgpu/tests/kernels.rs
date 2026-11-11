@@ -184,6 +184,11 @@ fn copy_and_codec_kernels_match_the_references() {
         4095,
         4096,
         12_289,
+        // A tail of one to fifteen bytes after the whole vectors, and whole words within it.
+        20,
+        36,
+        4100,
+        (1 << 20) + 7,
         1 << 20,
     ] {
         let input = bytes(n, n as u32 + 11);
