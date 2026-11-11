@@ -74,10 +74,20 @@ def decode():
         out.append(f"        let s = {words[j]};")
         out.append(f"        let g = 16u * t + {j}u;")
         out.append(f"        let used = select(4u, 4u - pad, g == last);")
+        # Four lookups: each entry is the six bits, or the six bits' invalid flag (bit 8). A symbol
+        # past the end of a padded group counts as zero, so it can't fail the group.
         for k in range(4):
-            out.append(f"        let d{k} = dec_table[(s >> {8 * k}u) & 0xffu];")
-            out.append(f"        first = min(first, select(0xffffffffu, 4u * g + {k}u, {k}u < used && d{k} == 0xffu));")
-        parts = [f"select(0u, (d{k} & 63u) << {18 - 6 * k}u, {k}u < used)" for k in range(4)]
+            out.append(f"        let e{k} = dec_table[(s >> {8 * k}u) & 0xffu];")
+            out.append(f"        let q{k} = select(0u, e{k}, {k}u < used);")
+        out.append("        let bad = (q0 | q1 | q2 | q3) & 0x100u;")
+        out.append("        if (bad != 0u) {")
+        out.append("            // The failing path only: the lowest invalid symbol of the group.")
+        out.append("            var at = 0xffffffffu;")
+        for k in reversed(range(4)):
+            out.append(f"            if ((q{k} & 0x100u) != 0u) {{ at = 4u * g + {k}u; }}")
+        out.append("            first = min(first, at);")
+        out.append("        }")
+        parts = [f"((q{k} & 63u) << {18 - 6 * k}u)" for k in range(4)]
         out.append(f"        let x = {' | '.join(parts)};")
         out.append("        if (g == last && pad > 0u) {")
         out.append("            let stray = x & select(0xffu, 0xffffu, pad == 2u);")
