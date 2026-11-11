@@ -29,7 +29,7 @@ fn a_chain_is_one_pipeline_and_one_pass_and_gives_what_its_bodies_give() {
     let input = filled(&backend, &halves());
     let ran = run(&backend, &mut unit, &[In::Buffer(&input)], 1);
     assert!(matches!(ran.end, StepEnd::Pending(_)), "{}", ran.reason);
-    assert_eq!((ran.counted.passes, ran.counted.submits), (1, 1));
+    assert_eq!((ran.counted.dispatches, ran.counted.submits), (1, 1));
     let merged = words(ran.outputs[0].as_ref().expect("an output"));
     release(unit.step);
 
@@ -86,7 +86,15 @@ fn a_whole_shader_cuts_the_chain_around_it() {
         1,
     );
     assert!(matches!(ran.end, StepEnd::Pending(_)), "{}", ran.reason);
-    assert_eq!((ran.counted.passes, ran.counted.submits), (3, 1));
+    // Three shaders ran, in one pass and one submit.
+    assert_eq!(
+        (
+            ran.counted.dispatches,
+            ran.counted.passes,
+            ran.counted.submits
+        ),
+        (3, 1, 1)
+    );
 
     let convert = |values: &[u32]| -> Vec<u32> {
         let bytes: Vec<u8> = values

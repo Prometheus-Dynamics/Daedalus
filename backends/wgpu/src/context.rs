@@ -62,6 +62,7 @@ pub(crate) struct Context {
     storage_imports: Mutex<crate::image::StorageImports>,
     submits: AtomicU64,
     passes: AtomicU64,
+    dispatches: AtomicU64,
     pub(crate) moved: crate::transfer::Counters,
     pub(crate) temp: Mutex<TempPool>,
 }
@@ -155,6 +156,7 @@ impl Context {
             storage_imports: Mutex::default(),
             submits: AtomicU64::new(0),
             passes: AtomicU64::new(0),
+            dispatches: AtomicU64::new(0),
             moved: crate::transfer::Counters::default(),
             record: CapsRecord::new(info, &limits, device.features()),
             limits,
@@ -195,11 +197,16 @@ impl Context {
         self.passes.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(crate) fn count_dispatch(&self) {
+        self.dispatches.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// The shader cache's counters, with the submits and passes this device has seen.
     pub(crate) fn shader_stats(&self) -> crate::shader::ShaderStats {
         crate::shader::ShaderStats {
             submits: self.submits.load(Ordering::Relaxed),
             passes: self.passes.load(Ordering::Relaxed),
+            dispatches: self.dispatches.load(Ordering::Relaxed),
             ..self.shaders().stats()
         }
     }

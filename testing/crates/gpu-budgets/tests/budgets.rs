@@ -2,8 +2,8 @@
 
 use daedalus_abi::counting::CountingAlloc;
 use daedalus_gpu_budgets::{
-    ALLOCATION_SLACK, ALLOCATIONS_PER_PASS, ALLOCATIONS_PER_STEP, DOWNLOADS_PER_BOUNDARY, Miss,
-    PASSES_PER_MERGED_CHAIN, PASSES_PER_SHADER_NODE, PIPELINES_PER_MERGED_CHAIN,
+    ALLOCATION_SLACK, ALLOCATIONS_PER_DISPATCH, ALLOCATIONS_PER_STEP, DISPATCHES_PER_MERGED_CHAIN,
+    DISPATCHES_PER_SHADER_NODE, DOWNLOADS_PER_BOUNDARY, Miss, PIPELINES_PER_MERGED_CHAIN,
     SUBMITS_PER_REGION, UPLOADS_PER_BOUNDARY, boundaries, exactly, merged_chain, region,
     shader_line,
 };
@@ -17,12 +17,8 @@ fn a_region_is_one_submit_and_a_pass_for_each_node() {
     let Some(backend) = private() else { return };
     for nodes in [1u64, 2, 8] {
         let counted = shader_line(&backend, nodes as usize, 4096);
-        let passes = nodes * PASSES_PER_SHADER_NODE;
-        assert_eq!(
-            region(&counted, passes),
-            Ok(()),
-            "{nodes} nodes: {counted:?}"
-        );
+        let runs = nodes * DISPATCHES_PER_SHADER_NODE;
+        assert_eq!(region(&counted, runs), Ok(()), "{nodes} nodes: {counted:?}");
     }
 }
 
@@ -41,7 +37,7 @@ fn a_merged_chain_is_one_pipeline_and_one_pass() {
             "{pairs} pairs"
         );
         assert_eq!(
-            region(&warm, PASSES_PER_MERGED_CHAIN),
+            region(&warm, DISPATCHES_PER_MERGED_CHAIN),
             Ok(()),
             "{pairs} pairs: {warm:?}"
         );
@@ -83,7 +79,7 @@ fn the_allocation_budget_is_what_is_measured() {
     let per_pass = (eight - one).div_ceil(7);
     let base = one - per_pass;
     assert_eq!(
-        per_pass, ALLOCATIONS_PER_PASS,
+        per_pass, ALLOCATIONS_PER_DISPATCH,
         "one pass {one}, eight {eight}"
     );
     assert!(
@@ -97,7 +93,8 @@ fn a_region_that_submits_twice_fails_its_budget() {
     // Planted: what a region that split its work over two submits would measure.
     let planted = Counted {
         submits: 2,
-        passes: 3,
+        passes: 1,
+        dispatches: 3,
         ..Counted::default()
     };
     assert_eq!(
@@ -116,19 +113,29 @@ fn a_region_that_submits_twice_fails_its_budget() {
         Counted {
             submits: first.submits + second.submits,
             passes: first.passes + second.passes,
+            dispatches: first.dispatches + second.dispatches,
             ..Counted::default()
         }
     };
     assert!(region(&twice, 2).is_err_and(|miss| miss.what == "submits per region"));
-    // An extra pass, a pipeline built while running and a transfer are each refused too.
+    // A second pass, a shader run too many, a pipeline built while running and a transfer are
+    // each refused too.
     let fine = Counted {
         submits: 1,
-        passes: 2,
+        passes: 1,
+        dispatches: 2,
         ..Counted::default()
     };
     assert_eq!(region(&fine, 2), Ok(()));
     for (what, wrong) in [
-        ("passes per region", Counted { passes: 3, ..fine }),
+        ("passes per region", Counted { passes: 2, ..fine }),
+        (
+            "shader runs per region",
+            Counted {
+                dispatches: 3,
+                ..fine
+            },
+        ),
         (
             "pipelines built by a run",
             Counted {

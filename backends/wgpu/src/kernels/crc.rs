@@ -53,7 +53,7 @@ impl Checksum {
 }
 
 impl Kernels {
-    fn table(&self) -> Result<&Storage, KernelError> {
+    pub(super) fn crc_table(&self) -> Result<&Storage, KernelError> {
         if let Some(table) = self.table.get() {
             return Ok(table);
         }
@@ -72,8 +72,16 @@ impl Kernels {
         dst: &Storage,
         n: u64,
     ) -> Result<(), KernelError> {
-        let table = self.table()?;
-        self.encode_with(encoder, Kernel::Crc32Chunks, src, dst, n, Some(table))
+        let table = self.crc_table()?;
+        let mut open = crate::shader::OpenPass::default();
+        self.encode_with(
+            (&mut open, encoder),
+            Kernel::Crc32Chunks,
+            src,
+            dst,
+            n,
+            Some(table),
+        )
     }
 
     /// Starts the CRC-32 (IEEE) of `n` bytes of `src` and submits. Never waits: the value is

@@ -55,9 +55,9 @@ fn fragment_matches_cpu() {
             .collect();
         let (mask, passes) = fragment::on_gpu(&pixels).expect("runs");
         assert_eq!(mask, fragment::on_cpu(&pixels), "{len} pixels");
-        assert_eq!(passes, 1, "three nodes, one pass");
+        assert_eq!(passes, 1, "three nodes, one shader");
     }
-    let line = "fragment: three per-pixel nodes ran as 1 pass over 4096 pixels, 2688 are lit, as on the CPU\n";
+    let line = "fragment: three per-pixel nodes ran as 1 shader over 4096 pixels, 2688 are lit, as on the CPU\n";
     assert_eq!(fragment::run().as_deref(), Ok(line));
     binary_prints(env!("CARGO_BIN_EXE_fragment"), line);
 }

@@ -66,7 +66,7 @@ impl Kernels {
             .map_err(KernelError::Storage)?;
         let mut encoder = self.encoder();
         self.encode_with(
-            &mut encoder,
+            (&mut crate::shader::OpenPass::default(), &mut encoder),
             Kernel::Base64Decode,
             src,
             dst,
