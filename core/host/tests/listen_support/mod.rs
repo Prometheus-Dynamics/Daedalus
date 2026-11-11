@@ -271,6 +271,7 @@ pub fn registry() -> Registry {
                     backend: "t".to_string(),
                     text: id.to_string(),
                 },
+                conversion: None,
             })
             .unwrap();
     }

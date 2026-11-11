@@ -33,6 +33,8 @@ pub enum LoadError {
     Stopped { path: PathBuf },
     /// A backend call returned a status the host does not expect.
     Compile { backend: String, status: Status },
+    /// A codec conversion refused its input, or the plugin returned a status the host does not expect.
+    Codec { key: String, status: Status },
 }
 
 impl fmt::Display for LoadError {
@@ -66,6 +68,9 @@ impl fmt::Display for LoadError {
             LoadError::Stopped { path } => write!(f, "{}: loading was stopped", path.display()),
             LoadError::Compile { backend, status } => {
                 write!(f, "backend {backend} refused with status {}", status.0)
+            }
+            LoadError::Codec { key, status } => {
+                write!(f, "codec for {key} refused with status {}", status.0)
             }
         }
     }

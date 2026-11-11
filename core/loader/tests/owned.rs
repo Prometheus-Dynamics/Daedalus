@@ -85,8 +85,8 @@ fn a_reload_closes_the_old_generation_when_its_values_are_gone_across_threads() 
 #[test]
 fn another_layout_under_the_same_key_is_a_typed_error_naming_both() {
     let mut loader = Loader::new();
-    let plugin = loader.open(copy_fixture("pod")).expect("opens");
-    let block = PodBlock::new("demo::Point", 0xAAAA, plugin.share(&[0; 8]));
+    let _plugin = loader.open(copy_fixture("pod")).expect("opens");
+    let block = PodBlock::new("demo::Point", 0xAAAA, &[0; 8]);
     assert_eq!(
         block
             .accept("demo::Point", 0xAAAA)

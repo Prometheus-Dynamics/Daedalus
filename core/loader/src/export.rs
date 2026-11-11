@@ -6,8 +6,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 
 use daedalus_abi::{
-    BackendTable, LAYOUT_HASH, NodeC, OwnedStep, PluginEntry, PortC, RegionView, Slots, Status,
-    Step, StepCx, StepEnd, Text, UnitOut, guard_or,
+    BackendTable, ByteCodecFn, CodecC, LAYOUT_HASH, NodeC, OwnedStep, PluginEntry, PortC,
+    RegionView, Slots, Status, Step, StepCx, StepEnd, Text, UnitOut, guard_or,
 };
 use daedalus_abi::{CanTakeFn, CompileFn, write_out};
 
@@ -42,6 +42,34 @@ pub struct PluginDef {
     pub name: &'static str,
     pub backends: &'static [&'static str],
     pub nodes: &'static [NodeDef],
+    pub codecs: &'static [CodecDef],
+}
+
+/// The most codecs one plugin may declare.
+pub const MAX_CODECS: usize = 4;
+
+/// A codec's conversion over bytes: the output for an input, or `None` to refuse it.
+pub type CodecFn = fn(&[u8]) -> Option<Vec<u8>>;
+
+/// One codec a plugin declares for a plain-data type. The four functions convert the type's bytes
+/// to and from the host value form and the wire form. Each conversion becomes a registered node.
+pub struct CodecDef {
+    /// The plugin's type key.
+    pub key: &'static str,
+    /// The host value type the value conversions name.
+    pub value_key: &'static str,
+    /// The wire type the wire conversions name.
+    pub wire_key: &'static str,
+    /// The backend the conversion nodes name. It must be one of the plugin's backends.
+    pub backend: &'static str,
+    /// The layout hash of the plugin's type, from `daedalus_abi::PlainData::LAYOUT`.
+    pub layout: u64,
+    pub cost: u32,
+    pub lossy: bool,
+    pub to_value: CodecFn,
+    pub from_value: CodecFn,
+    pub to_bytes: CodecFn,
+    pub from_bytes: CodecFn,
 }
 
 /// Implemented by [`export_plugin!`](crate::export_plugin) for the plugin's own type.
@@ -79,7 +107,7 @@ pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> S
         return Status::VERSION_MISMATCH;
     }
     let def = P::def();
-    if def.backends.len() > MAX_BACKENDS {
+    if def.backends.len() > MAX_BACKENDS || def.codecs.len() > MAX_CODECS {
         return Status::from_errno(22);
     }
     let nodes: Vec<NodeC> = def.nodes.iter().map(node_c).collect();
@@ -93,8 +121,30 @@ pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> S
             compile: compile_tables::<P>()[index],
         })
         .collect();
+    let codecs: Vec<CodecC> = def
+        .codecs
+        .iter()
+        .enumerate()
+        .map(|(index, codec)| {
+            let fns = codec_fns::<P>()[index];
+            CodecC {
+                key: Text::of(codec.key),
+                value_key: Text::of(codec.value_key),
+                wire_key: Text::of(codec.wire_key),
+                backend: Text::of(codec.backend),
+                layout: codec.layout,
+                cost: codec.cost,
+                lossy: codec.lossy,
+                to_value: fns[0],
+                from_value: fns[1],
+                to_bytes: fns[2],
+                from_bytes: fns[3],
+            }
+        })
+        .collect();
     let node_ptr = hand_over(nodes);
     let table_ptr = hand_over(tables);
+    let codec_ptr = hand_over(codecs);
     let entry = PluginEntry {
         layout: LAYOUT_HASH,
         name: Text::of(def.name),
@@ -102,6 +152,8 @@ pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> S
         node_count: node_ptr.1,
         backends: table_ptr.0,
         backend_count: table_ptr.1,
+        codecs: codec_ptr.0,
+        codec_count: codec_ptr.1,
         release: Some(release_entry),
     };
     // SAFETY: `out` is writable, as this function's contract says.
@@ -163,6 +215,12 @@ pub unsafe extern "C" fn release_entry(entry: *const PluginEntry) {
         // SAFETY: `tables` came from `hand_over` in `entry`, and no one else holds it.
         drop(unsafe { Box::from_raw(tables) });
     }
+    if !entry.codecs.is_null() {
+        let codecs =
+            core::ptr::slice_from_raw_parts_mut(entry.codecs.cast_mut(), entry.codec_count);
+        // SAFETY: `codecs` came from `hand_over` in `entry`, and no one else holds it.
+        drop(unsafe { Box::from_raw(codecs) });
+    }
 }
 
 /// # Safety
@@ -207,6 +265,84 @@ unsafe fn region_nodes<'a>(view: &RegionView) -> &'a [Text] {
     }
     // SAFETY: the host passes `node_count` texts at `nodes`, valid for the call.
     unsafe { std::slice::from_raw_parts(view.nodes, view.node_count) }
+}
+
+/// The four conversion functions for each codec index, in the order to_value, from_value,
+/// to_bytes, from_bytes.
+fn codec_fns<P: PluginSpec>() -> [[ByteCodecFn; 4]; MAX_CODECS] {
+    [
+        [
+            codec_at::<P, 0, 0>,
+            codec_at::<P, 0, 1>,
+            codec_at::<P, 0, 2>,
+            codec_at::<P, 0, 3>,
+        ],
+        [
+            codec_at::<P, 1, 0>,
+            codec_at::<P, 1, 1>,
+            codec_at::<P, 1, 2>,
+            codec_at::<P, 1, 3>,
+        ],
+        [
+            codec_at::<P, 2, 0>,
+            codec_at::<P, 2, 1>,
+            codec_at::<P, 2, 2>,
+            codec_at::<P, 2, 3>,
+        ],
+        [
+            codec_at::<P, 3, 0>,
+            codec_at::<P, 3, 1>,
+            codec_at::<P, 3, 2>,
+            codec_at::<P, 3, 3>,
+        ],
+    ]
+}
+
+/// Runs conversion `D` of codec `I` over the input bytes, with the buffer pattern of [`ByteCodecFn`].
+///
+/// # Safety
+/// As [`ByteCodecFn`]: the input is valid for `input_len` bytes, `needed` is writable, and `out` is
+/// null or valid for `cap` bytes.
+unsafe extern "C" fn codec_at<P: PluginSpec, const I: usize, const D: usize>(
+    input: *const u8,
+    input_len: usize,
+    out: *mut u8,
+    cap: usize,
+    needed: *mut usize,
+) -> Status {
+    guard_or(Status::PANIC, || {
+        if needed.is_null() {
+            return Status::from_errno(22);
+        }
+        let Some(codec) = P::def().codecs.get(I) else {
+            return Status::NOT_SUPPORTED;
+        };
+        let input: &[u8] = if input.is_null() || input_len == 0 {
+            &[]
+        } else {
+            // SAFETY: the host passes `input_len` readable bytes at `input`, for this call.
+            unsafe { std::slice::from_raw_parts(input, input_len) }
+        };
+        let convert = match D {
+            0 => codec.to_value,
+            1 => codec.from_value,
+            2 => codec.to_bytes,
+            _ => codec.from_bytes,
+        };
+        let Some(value) = convert(input) else {
+            return Status::from_errno(22);
+        };
+        let slot = if out.is_null() {
+            None
+        } else {
+            // SAFETY: the host gives `cap` writable bytes at `out`, for this call.
+            Some(unsafe { std::slice::from_raw_parts_mut(out, cap) })
+        };
+        let written = write_out(&value, slot);
+        // SAFETY: `needed` is writable, as this function's contract says.
+        unsafe { needed.write(written.needed) };
+        written.status
+    })
 }
 
 fn can_tables<P: PluginSpec>() -> [CanTakeFn; MAX_BACKENDS] {

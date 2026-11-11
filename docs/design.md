@@ -127,6 +127,14 @@ fault allocates nothing.
 A backend can be linked or loaded as a plugin. One plugin can ship a backend and its nodes. A
 backend ships two crates: a small authoring crate that nodes depend on, and the part that runs.
 
+A plugin's codecs are declared in its entry beside its nodes. A codec converts one of the plugin's
+plain-data types, a `repr(C)` type with `#[derive(PlainData)]` from `daedalus-derive`, to and from
+a host value type and a wire type. Each of the four conversions joins the registry as a conversion
+node. A plain-data block carries its type key and layout hash, and a receiver whose type has another
+layout refuses it with an error that names both hashes. A codec holds its plugin's generation, so the
+library stays open while a codec does. The entry's tables are handed back to the plugin once the host
+has copied them, so a reload does not grow the host's memory.
+
 ## Writing a node
 
 There is one macro. It reads the id, ports and state. For the body it expands to a call into the

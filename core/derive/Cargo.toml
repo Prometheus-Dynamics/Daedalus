@@ -15,6 +15,7 @@ quote = { workspace = true }
 syn = { workspace = true }
 
 [dev-dependencies]
+daedalus-abi = { path = "../abi" }
 daedalus-author-fixture = { path = "../../testing/crates/author-fixture" }
 daedalus-macros = { path = "../macros" }
 daedalus-registry = { path = "../registry" }

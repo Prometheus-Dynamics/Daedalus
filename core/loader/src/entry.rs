@@ -14,6 +14,7 @@ use daedalus_backend::{PortRef, StepUnit, UnitInfo};
 use daedalus_registry::{OwnedDecl, Registry};
 use daedalus_types::{NodeIndex, PortIndex};
 
+use crate::codec::{Codec, read_codecs};
 use crate::generation::Generation;
 use crate::open::{LoadError, open_library};
 use crate::records::{join, read_node};
@@ -58,15 +59,19 @@ impl Loader {
         // SAFETY: the entry's nodes and backends are read while the library is held by
         // `generation`, which the loop below keeps alive through every backend it hands out.
         let read = unsafe { read_entry(&opened.entry, &path, &generation) };
+        let codec_read = unsafe { read_codecs(&opened.entry, &path, &generation) };
         // The host has copied what it needs, so the plugin takes its tables back now, whether or
         // not the read succeeded.
         release_tables(&opened.entry);
         let (nodes, backends) = read?;
+        let (codecs, conversions) = codec_read?;
         Ok(Plugin {
             name,
             generation,
             nodes,
             backends,
+            codecs,
+            conversions,
         })
     }
 }
@@ -138,6 +143,9 @@ pub struct Plugin {
     generation: Arc<Generation>,
     nodes: Vec<OwnedDecl>,
     backends: Vec<Backend>,
+    codecs: Vec<Codec>,
+    /// The conversion nodes the codecs declare. They join the registry with the nodes.
+    conversions: Vec<OwnedDecl>,
 }
 
 impl std::fmt::Debug for Plugin {
@@ -172,6 +180,10 @@ impl Plugin {
         &self.backends
     }
 
+    pub fn codecs(&self) -> &[Codec] {
+        &self.codecs
+    }
+
     pub fn backend(&self, id: &str) -> Option<&Backend> {
         self.backends.iter().find(|backend| backend.id == id)
     }
@@ -183,7 +195,8 @@ impl Plugin {
 
     /// Joins this plugin's nodes into `registry`, under the rules for a compiled-in record.
     pub fn join(&self, registry: &mut Registry) -> Result<(), LoadError> {
-        join(&self.nodes, self.generation.path(), registry)
+        join(&self.nodes, self.generation.path(), registry)?;
+        join(&self.conversions, self.generation.path(), registry)
     }
 }
 
