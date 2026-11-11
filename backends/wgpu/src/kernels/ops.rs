@@ -36,6 +36,9 @@ const PARAMS: BindingSpec = BindingSpec {
 
 const COPY_SOURCE: &str = include_str!("copy.wgsl");
 
+/// The vector entry points of the other ops, with the common text they call.
+const WIDE_SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("wide.wgsl"));
+
 /// The copy's bindings: the input and output as vectors of four words, so one invocation's
 /// loads and stores are vectors. A binding is at least one element, so a copy this shape is
 /// used for is at least a vector on both sides.
@@ -92,12 +95,15 @@ const fn spec(
     }
 }
 
-/// The index in [`SPECS`] of the copy that moves whole vectors. Copies whose buffers and count are
-/// at least a vector use it; the others use the word copy.
+/// The indexes in [`SPECS`] of the vector entry points: each op with a whole-vector shape, for
+/// counts that are whole vectors. The others use the word text.
 pub(super) const WIDE_COPY: usize = 8;
+pub(super) const WIDE_F16: usize = 9;
+pub(super) const WIDE_UNORM8: usize = 10;
+pub(super) const WIDE_HEX: usize = 11;
 
-/// In the order of [`Kernel`], then the wide copy at [`WIDE_COPY`].
-pub(super) const SPECS: [ShaderSpec; 9] = [
+/// In the order of [`Kernel`], then the vector entry points above.
+pub(super) const SPECS: [ShaderSpec; 12] = [
     spec("kernels.f32_from_le", "f32_from_le", PLAIN),
     spec("kernels.f16_to_f32", "f16_to_f32", PLAIN),
     spec("kernels.f32_to_unorm8", "f32_to_unorm8", PLAIN),
@@ -110,6 +116,36 @@ pub(super) const SPECS: [ShaderSpec; 9] = [
         name: "kernels.copy.wide",
         entry: "copy_quads",
         source: COPY_SOURCE,
+        workgroup: [WORKGROUP, 1, 1],
+        bindings: COPY,
+        dispatch: Dispatch::Counts([1, 1, 1]),
+        inputs: &[],
+        outputs: &[],
+    },
+    ShaderSpec {
+        name: "kernels.f16_to_f32.wide",
+        entry: "f16_to_f32_wide",
+        source: WIDE_SOURCE,
+        workgroup: [WORKGROUP, 1, 1],
+        bindings: COPY,
+        dispatch: Dispatch::Counts([1, 1, 1]),
+        inputs: &[],
+        outputs: &[],
+    },
+    ShaderSpec {
+        name: "kernels.f32_to_unorm8.wide",
+        entry: "f32_to_unorm8_wide",
+        source: WIDE_SOURCE,
+        workgroup: [WORKGROUP, 1, 1],
+        bindings: COPY,
+        dispatch: Dispatch::Counts([1, 1, 1]),
+        inputs: &[],
+        outputs: &[],
+    },
+    ShaderSpec {
+        name: "kernels.hex_lower.wide",
+        entry: "hex_lower_wide",
+        source: WIDE_SOURCE,
         workgroup: [WORKGROUP, 1, 1],
         bindings: COPY,
         dispatch: Dispatch::Counts([1, 1, 1]),
@@ -130,7 +166,7 @@ const PARAMS_KEPT: usize = 64;
 /// keeps answering with the device's error.
 pub struct Kernels {
     pub(super) context: Arc<Context>,
-    shaders: [OnceLock<Shader>; 9],
+    shaders: [OnceLock<Shader>; 12],
     /// The counts of a run, on the device, by what they are: one small buffer for each
     /// distinct set, bound as it is. Two runs of an op in one encoder each bind their own, and
     /// nothing is copied before a pass.
@@ -155,7 +191,7 @@ impl Kernels {
     fn on(context: Arc<Context>) -> Kernels {
         Kernels {
             context,
-            shaders: [const { OnceLock::new() }; 9],
+            shaders: [const { OnceLock::new() }; 12],
             params: Mutex::new(HashMap::new()),
             table: OnceLock::new(),
             #[cfg(target_os = "linux")]
@@ -251,18 +287,20 @@ impl Kernels {
                 dst.size()
             )));
         }
-        // The vector copy takes whole vectors: a count that is a whole number of them, so no
-        // vector is partly past the output. A device clamps a storage index past a buffer's end
-        // onto its last element, so a partial vector at the end would overwrite a whole one. The
-        // other counts are the word copy.
-        // F32FromLe is a copy of its bits, so it takes the same shader.
-        let copies_bits = matches!(kernel, Kernel::Copy | Kernel::F32FromLe);
-        let wide =
-            copies_bits && kernel.output_len(n) >= 16 && kernel.output_len(n).is_multiple_of(16);
-        let (spec, threads) = if wide {
-            (WIDE_COPY, kernel.output_len(n).div_ceil(16))
-        } else {
-            (kernel.index(), kernel.threads(n))
+        // Each op with a vector shape takes it for a count that is a whole number of its
+        // vectors, on both sides, so no vector is partly past the output: a device clamps a
+        // storage index past a buffer's end onto its last element, which would overwrite a whole
+        // one. The other counts take the word text. F32FromLe is a copy of its bits.
+        let (spec, threads) = match kernel {
+            Kernel::Copy | Kernel::F32FromLe
+                if kernel.output_len(n) >= 16 && kernel.output_len(n).is_multiple_of(16) =>
+            {
+                (WIDE_COPY, kernel.output_len(n).div_ceil(16))
+            }
+            Kernel::F16ToF32 if n >= 8 && n.is_multiple_of(8) => (WIDE_F16, n / 8),
+            Kernel::F32ToUnorm8 if n >= 16 && n.is_multiple_of(16) => (WIDE_UNORM8, n / 16),
+            Kernel::HexLower if n >= 16 && n.is_multiple_of(16) => (WIDE_HEX, n / 16),
+            _ => (kernel.index(), kernel.threads(n)),
         };
         let groups = threads.div_ceil(u64::from(WORKGROUP));
         let max = u64::from(self.context.record.compute.max_workgroups_per_dimension);

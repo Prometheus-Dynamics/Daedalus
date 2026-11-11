@@ -131,7 +131,7 @@ fn float_kernels_match_the_references() {
     let Some(backend) = private() else { return };
     let kernels = Kernels::new(&backend).expect("a device");
 
-    for n in [1usize, 3, 4, 5, 8, 16, 1023, 1024, 4099] {
+    for n in [1usize, 3, 4, 5, 8, 16, 24, 1023, 1024, 4096, 4099] {
         let input = bytes(n * 4, n as u32);
         let got = run(&backend, &kernels, Kernel::F32FromLe, &input, n as u64);
         assert_eq!(got, f32_bytes(&r::f32_from_le(&input)), "f32_from_le {n}");
@@ -147,7 +147,7 @@ fn float_kernels_match_the_references() {
         "an odd count"
     );
 
-    for n in [1usize, 2, 3, 4, 19, 277, 4097] {
+    for n in [1usize, 2, 3, 4, 16, 19, 32, 277, 4096, 4097] {
         let values = floats(n);
         let got = run(
             &backend,

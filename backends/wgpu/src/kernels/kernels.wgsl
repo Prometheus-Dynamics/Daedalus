@@ -183,7 +183,17 @@ fn crc32_chunks(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_work
     let start = t * CRC_CHUNK;
     let end = min(start + CRC_CHUNK, params.n);
     var crc = 0xffffffffu;
-    for (var i = start; i < end; i++) {
+    // Whole words first: a chunk starts on a word, so four bytes come from one load, in the
+    // order the bytes are in memory. The tail, if the count ends inside a word, is byte by byte.
+    var w = start / 4u;
+    for (; w * 4u + 4u <= end; w++) {
+        let v = src[w];
+        crc = table[(crc ^ v) & 0xffu] ^ (crc >> 8u);
+        crc = table[(crc ^ (v >> 8u)) & 0xffu] ^ (crc >> 8u);
+        crc = table[(crc ^ (v >> 16u)) & 0xffu] ^ (crc >> 8u);
+        crc = table[(crc ^ (v >> 24u)) & 0xffu] ^ (crc >> 8u);
+    }
+    for (var i = w * 4u; i < end; i++) {
         crc = table[(crc ^ byte_at(i)) & 0xffu] ^ (crc >> 8u);
     }
     dst[t] = ~crc;
