@@ -5,19 +5,19 @@ use core::time::Duration;
 
 use crate::{Push, Ring, Value};
 
-pub const EDGE_PRESSURE_FIFO: &str = "fifo";
-pub const EDGE_PRESSURE_LATEST_ONLY: &str = "latest_only";
-pub const EDGE_PRESSURE_NEWEST_WINS: &str = "newest_wins";
-pub const EDGE_PRESSURE_BOUNDED: &str = "bounded";
-pub const EDGE_PRESSURE_DROP_NEWEST: &str = "drop_newest";
-pub const EDGE_PRESSURE_DROP_OLDEST: &str = "drop_oldest";
-pub const EDGE_PRESSURE_ERROR_ON_FULL: &str = "error_on_full";
-pub const EDGE_PRESSURE_COALESCE: &str = "coalesce";
-pub const EDGE_FRESHNESS_PRESERVE_ALL: &str = "preserve_all";
-pub const EDGE_FRESHNESS_LATEST_BY_SEQUENCE: &str = "latest_by_sequence";
-pub const EDGE_FRESHNESS_LATEST_BY_TIMESTAMP: &str = "latest_by_timestamp";
-pub const EDGE_FRESHNESS_MAX_AGE: &str = "max_age";
-pub const EDGE_FRESHNESS_MAX_LAG: &str = "max_lag";
+pub(crate) const EDGE_PRESSURE_FIFO: &str = "fifo";
+pub(crate) const EDGE_PRESSURE_LATEST_ONLY: &str = "latest_only";
+pub(crate) const EDGE_PRESSURE_NEWEST_WINS: &str = "newest_wins";
+pub(crate) const EDGE_PRESSURE_BOUNDED: &str = "bounded";
+pub(crate) const EDGE_PRESSURE_DROP_NEWEST: &str = "drop_newest";
+pub(crate) const EDGE_PRESSURE_DROP_OLDEST: &str = "drop_oldest";
+pub(crate) const EDGE_PRESSURE_ERROR_ON_FULL: &str = "error_on_full";
+pub(crate) const EDGE_PRESSURE_COALESCE: &str = "coalesce";
+pub(crate) const EDGE_FRESHNESS_PRESERVE_ALL: &str = "preserve_all";
+pub(crate) const EDGE_FRESHNESS_LATEST_BY_SEQUENCE: &str = "latest_by_sequence";
+pub(crate) const EDGE_FRESHNESS_LATEST_BY_TIMESTAMP: &str = "latest_by_timestamp";
+pub(crate) const EDGE_FRESHNESS_MAX_AGE: &str = "max_age";
+pub(crate) const EDGE_FRESHNESS_MAX_LAG: &str = "max_lag";
 
 /// Which value of a coalescing window survives.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

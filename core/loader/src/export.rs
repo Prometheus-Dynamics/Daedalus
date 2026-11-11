@@ -12,7 +12,7 @@ use daedalus_abi::{
 use daedalus_abi::{CanTakeFn, CompileFn, write_out};
 
 /// The most backends one plugin may declare.
-pub const MAX_BACKENDS: usize = 8;
+pub(crate) const MAX_BACKENDS: usize = 8;
 
 /// A node's body. It reads its inputs from the first cells of `Slots` and writes its outputs
 /// after them, in declaration order.
@@ -49,13 +49,13 @@ pub struct PluginDef {
 }
 
 /// The bytes a plugin makes for an index.
-pub type ProduceFn = fn(u32) -> Option<Vec<u8>>;
+pub(crate) type ProduceFn = fn(u32) -> Option<Vec<u8>>;
 
 /// The most codecs one plugin may declare.
-pub const MAX_CODECS: usize = 4;
+pub(crate) const MAX_CODECS: usize = 4;
 
 /// A codec's conversion over bytes: the output for an input, or `None` to refuse it.
-pub type CodecFn = fn(&[u8]) -> Option<Vec<u8>>;
+pub(crate) type CodecFn = fn(&[u8]) -> Option<Vec<u8>>;
 
 /// One codec a plugin declares for a plain-data type. The four functions convert the type's bytes
 /// to and from the host value form and the wire form. Each conversion becomes a registered node.

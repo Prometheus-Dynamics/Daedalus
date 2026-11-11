@@ -48,7 +48,7 @@ impl ForeignInterfaceInfo {
         core::str::from_utf8(bytes).unwrap_or("<invalid>")
     }
 
-    pub fn same_interface(&self, other: &Self) -> bool {
+    pub(crate) fn same_interface(&self, other: &Self) -> bool {
         self.key() == other.key()
             && self.version == other.version
             && self.layout_hash == other.layout_hash
