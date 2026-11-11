@@ -14,6 +14,8 @@ UNSAFE_ALLOWED = (
     "examples/wasm_bindgen_host",
     # The RP2040 boot sector and the stack probe.
     "examples/chip_board",
+    # The raw V4L2 requests of the camera test fixture: a test-only crate, Linux only.
+    "testing/crates/camera-fixture-sys",
 )
 HEAP_FREE_TARGETS = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"]
 PRODUCT_NAMES = re.compile(r"\b(lemnos|eidos|ariadne|gaia|orion|helios)\b", re.I)
