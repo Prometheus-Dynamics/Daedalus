@@ -14,7 +14,8 @@ fn built() -> PathBuf {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT
         .get_or_init(|| {
-            let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("cpp-state");
+            let dir =
+                daedalus_lang_cpp::build_dir(Path::new(env!("CARGO_TARGET_TMPDIR")), "cpp-state");
             build(&dir).expect("cmake builds the fixture worker")
         })
         .clone()

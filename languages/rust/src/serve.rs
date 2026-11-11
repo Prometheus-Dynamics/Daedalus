@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 
-use daedalus_registry::{NodeRecord, PortDecl, TypeRef};
-use daedalus_types::{Scalar, TypeKey};
+use daedalus_registry::{NodeRecord, PortDecl, TypeRef, port_type};
+use daedalus_types::{Scalar, TypeKey, Typed};
 use daedalus_wire::codec::Writer;
 use daedalus_wire::{
     BoundaryValue, DEFAULT_CAP, Declaration, Fault, FaultCode, Hello, HostMsg, Outputs,
@@ -23,10 +23,17 @@ use crate::context::{Context, Event};
 pub type NodeFn =
     fn(&[(&'static str, WireValue)], &mut Context) -> Result<Vec<WireValue>, NodeError>;
 
-/// What a Rust node's body is: the function the worker calls.
+/// What a Rust node's body is: the function the worker calls, and the type of its state if it keeps
+/// one. A stateful node names its state type with [`state_type`], so the hello declares it.
 #[derive(Clone, Copy)]
 pub struct RustBody {
     pub run: NodeFn,
+    pub state: Option<fn() -> TypeRef>,
+}
+
+/// The type of a node's state: the port type of `T`, which the host declares in the hello.
+pub const fn state_type<T: Typed>() -> TypeRef {
+    port_type::<T>()
 }
 
 /// A node that failed: the fault code and its reason.
@@ -55,12 +62,19 @@ struct Served {
     run: NodeFn,
     inputs: Vec<(&'static str, WireType)>,
     outputs: Vec<(&'static str, WireType)>,
+    /// The state's wire type, when the node keeps state.
+    state_type: Option<WireType>,
+    /// The state the node holds between runs. Set by a run, or by an import from the host.
     state: Option<WireValue>,
 }
 
 /// A port's wire type: a scalar key, an opaque key, or a full type expression.
-fn port_type(port: &PortDecl) -> WireType {
-    match &port.ty {
+fn port_wire_type(port: &PortDecl) -> WireType {
+    wire_type(&port.ty)
+}
+
+fn wire_type(ty: &TypeRef) -> WireType {
+    match ty {
         TypeRef::Key(key) => key_type(key),
         TypeRef::Expr(expr) => WireType::from_expr(expr),
         TypeRef::Body => WireType::Opaque(String::new()),
@@ -95,10 +109,40 @@ fn key_type(key: &TypeKey) -> WireType {
     }
 }
 
-/// The nodes a worker serves. A record whose body is not a Rust body is refused.
-fn served(nodes: &[&'static NodeRecord]) -> Result<(Vec<Served>, Hello), String> {
+/// Every opaque type key a wire type names, once each, so the schema has a codec for each.
+fn opaque_keys(ty: &WireType, keys: &mut Vec<String>) {
+    match ty {
+        WireType::Opaque(key) => {
+            if !keys.contains(key) {
+                keys.push(key.clone());
+            }
+        }
+        WireType::Scalar(_) => {}
+        WireType::Optional(inner) | WireType::List(inner) => opaque_keys(inner, keys),
+        WireType::Map(key, value) => {
+            opaque_keys(key, keys);
+            opaque_keys(value, keys);
+        }
+        WireType::Tuple(items) => items.iter().for_each(|item| opaque_keys(item, keys)),
+        WireType::Struct(fields) => fields
+            .iter()
+            .for_each(|(_, field)| opaque_keys(field, keys)),
+        WireType::Enum(variants) => {
+            for (_, payload) in variants {
+                if let Some(payload) = payload {
+                    opaque_keys(payload, keys);
+                }
+            }
+        }
+    }
+}
+
+/// The nodes a worker serves, the hello that declares them, and the opaque keys they use. A record
+/// whose body is not a Rust body is refused.
+fn served(nodes: &[&'static NodeRecord]) -> Result<(Vec<Served>, Hello, Vec<String>), String> {
     let mut out = Vec::new();
     let mut declarations = Vec::new();
+    let mut keys = Vec::new();
     for record in nodes {
         let body = record
             .body
@@ -109,14 +153,21 @@ fn served(nodes: &[&'static NodeRecord]) -> Result<(Vec<Served>, Hello), String>
             .decl
             .inputs
             .iter()
-            .map(|port| (port.name, port_type(port)))
+            .map(|port| (port.name, port_wire_type(port)))
             .collect();
         let outputs: Vec<(&'static str, WireType)> = record
             .decl
             .outputs
             .iter()
-            .map(|port| (port.name, port_type(port)))
+            .map(|port| (port.name, port_wire_type(port)))
             .collect();
+        let state_type = body.state.map(|state| wire_type(&state()));
+        for (_, ty) in inputs.iter().chain(&outputs) {
+            opaque_keys(ty, &mut keys);
+        }
+        if let Some(ty) = &state_type {
+            opaque_keys(ty, &mut keys);
+        }
         declarations.push(Declaration {
             id: record.decl.id.to_owned(),
             inputs: inputs
@@ -128,7 +179,7 @@ fn served(nodes: &[&'static NodeRecord]) -> Result<(Vec<Served>, Hello), String>
                 .map(|(name, ty)| PortSpec::new(name, ty.clone()))
                 .collect(),
             config: Vec::new(),
-            state: None,
+            state: state_type.clone(),
             capabilities: Vec::new(),
         });
         out.push(Served {
@@ -136,12 +187,14 @@ fn served(nodes: &[&'static NodeRecord]) -> Result<(Vec<Served>, Hello), String>
             run: body.run,
             inputs,
             outputs,
+            state_type,
             state: None,
         });
     }
     Ok((
         out,
         Hello::new("daedalus-lang-rust", DEFAULT_CAP, declarations),
+        keys,
     ))
 }
 
@@ -158,8 +211,9 @@ fn send(out: &mut impl Write, msg: &WorkerMsg, schema: &Schema) -> Result<(), Pa
 /// Runs the worker loop on stdin and stdout until the host shuts it down or closes the pipe.
 /// Each node runs under a panic guard: a panic is a `node_panic` fault, and the loop keeps going.
 pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
-    let (mut served, hello) = served(nodes).map_err(io::Error::other)?;
-    let schema = Schema::from_hello(&hello, &[]);
+    let (mut served, hello, keys) = served(nodes).map_err(io::Error::other)?;
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    let schema = Schema::from_hello(&hello, &keys);
     let stdout = io::stdout();
     let mut out = stdout.lock();
     send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).map_err(io::Error::other)?;
@@ -188,8 +242,6 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
         };
         match msg {
             HostMsg::Run(run) => {
-                current.store(run.run, Ordering::SeqCst);
-                cancel.store(false, Ordering::SeqCst);
                 let mut outputs = Vec::new();
                 let mut status = RunStatus::Ok;
                 for id in &run.nodes {
@@ -232,8 +284,39 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
             }
             HostMsg::Ping => send(&mut out, &WorkerMsg::Pong, &schema).map_err(io::Error::other)?,
             HostMsg::Shutdown => return Ok(()),
-            // A node's state is kept by its body; a cancel between runs has nothing to stop.
-            HostMsg::Cancel { .. } | HostMsg::StateExport { .. } | HostMsg::StateImport { .. } => {}
+            // A cancel between runs has nothing to stop.
+            HostMsg::Cancel { .. } => {}
+            HostMsg::StateExport { node } => {
+                let state = served
+                    .iter()
+                    .find(|served| served.id == node)
+                    .filter(|served| served.state_type.is_some())
+                    .and_then(|served| served.state.clone());
+                let reply = match state {
+                    Some(value) => WorkerMsg::StateValue { node, value },
+                    None => WorkerMsg::Fault(Fault {
+                        run: 0,
+                        node: Some(node),
+                        code: FaultCode::BadInput,
+                        reason: "the node has no state to export".to_owned(),
+                    }),
+                };
+                send(&mut out, &reply, &schema).map_err(io::Error::other)?;
+            }
+            HostMsg::StateImport { node, value } => {
+                match served.iter_mut().find(|served| served.id == node) {
+                    Some(served) if served.state_type.is_some() => served.state = Some(value),
+                    _ => {
+                        let fault = WorkerMsg::Fault(Fault {
+                            run: 0,
+                            node: Some(node),
+                            code: FaultCode::BadInput,
+                            reason: "the node has no state to import".to_owned(),
+                        });
+                        send(&mut out, &fault, &schema).map_err(io::Error::other)?;
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -304,8 +387,9 @@ fn run_node(
         .collect()))
 }
 
-/// The stdin reader. It forwards every packet, and sets the cancel flag when a cancel names the
-/// run that is going on.
+/// The stdin reader. It forwards every packet in order. A run starts a new cancel window, and a
+/// cancel that names the run going on sets the cancel flag, so a cancel that arrives right after its
+/// run is never lost.
 fn read_in_thread(
     current: Arc<AtomicU64>,
     cancel: Arc<AtomicBool>,
@@ -318,13 +402,20 @@ fn read_in_thread(
         loop {
             match read_packet(&mut input, DEFAULT_CAP, &mut buf) {
                 Ok(()) => {
-                    if buf.first() == Some(&daedalus_wire::kind::CANCEL)
-                        && buf
-                            .get(1..9)
-                            .map(|raw| u64::from_le_bytes(raw.try_into().unwrap_or([0; 8])))
-                            == Some(current.load(Ordering::SeqCst))
-                    {
-                        cancel.store(true, Ordering::SeqCst);
+                    let run_id = buf
+                        .get(1..9)
+                        .map(|raw| u64::from_le_bytes(raw.try_into().unwrap_or([0; 8])));
+                    match (buf.first(), run_id) {
+                        (Some(&daedalus_wire::kind::RUN), Some(run)) => {
+                            current.store(run, Ordering::SeqCst);
+                            cancel.store(false, Ordering::SeqCst);
+                        }
+                        (Some(&daedalus_wire::kind::CANCEL), Some(run))
+                            if run == current.load(Ordering::SeqCst) =>
+                        {
+                            cancel.store(true, Ordering::SeqCst);
+                        }
+                        _ => {}
                     }
                     let packet = std::mem::take(&mut buf);
                     if tx.send(Ok(packet)).is_err() {
