@@ -459,11 +459,6 @@ impl<'a> Runner<'a> {
     pub fn set_probe(&mut self, probe: &'a TickProbe<'a>) {
         self.probe = Some(probe);
     }
-
-    /// Detaches the probe.
-    pub fn clear_probe(&mut self) {
-        self.probe = None;
-    }
 }
 
 #[cfg(test)]

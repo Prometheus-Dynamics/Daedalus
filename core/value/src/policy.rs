@@ -5,10 +5,6 @@ use core::time::Duration;
 
 use crate::{Push, Ring, Value};
 
-pub const EDGE_PRESSURE_POLICY_KEY: &str = "daedalus.edge.pressure";
-pub const EDGE_CAPACITY_KEY: &str = "daedalus.edge.capacity";
-pub const EDGE_FRESHNESS_POLICY_KEY: &str = "daedalus.edge.freshness";
-pub const EDGE_OVERFLOW_POLICY_KEY: &str = "daedalus.edge.overflow";
 pub const EDGE_PRESSURE_FIFO: &str = "fifo";
 pub const EDGE_PRESSURE_LATEST_ONLY: &str = "latest_only";
 pub const EDGE_PRESSURE_NEWEST_WINS: &str = "newest_wins";

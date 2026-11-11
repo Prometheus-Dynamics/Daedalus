@@ -1,7 +1,6 @@
 //! A watch: the events of one subscription, as a stream.
 
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::time::Duration;
+use std::sync::mpsc::Receiver;
 
 use daedalus_wire::service::Event;
 
@@ -26,16 +25,6 @@ impl Watch {
     /// Waits for the next event. `None` when the stream has ended.
     pub fn next_event(&self) -> Option<Event> {
         self.events.recv().ok()
-    }
-
-    /// Waits up to `timeout` for the next event. `Ok(None)` when the stream has ended, and `Err`
-    /// when nothing arrived in time.
-    pub fn next_timeout(&self, timeout: Duration) -> Result<Option<Event>, Duration> {
-        match self.events.recv_timeout(timeout) {
-            Ok(event) => Ok(Some(event)),
-            Err(RecvTimeoutError::Disconnected) => Ok(None),
-            Err(RecvTimeoutError::Timeout) => Err(timeout),
-        }
     }
 
     /// Ends the watch on the server. Events already queued can still be read.

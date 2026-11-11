@@ -375,15 +375,6 @@ impl<'a> Host<'a> {
         })
     }
 
-    /// Takes every value out of the output port `name`, oldest first.
-    pub fn drain_value(&mut self, name: &str) -> Result<std::vec::Vec<Value>, HostError> {
-        let mut values = std::vec::Vec::new();
-        while let Some(value) = self.take_value(name)? {
-            values.push(value);
-        }
-        Ok(values)
-    }
-
     /// The graph's runner, for hosts that need more than the port calls.
     pub fn runner(&mut self) -> &mut Runner<'a> {
         &mut self.runner

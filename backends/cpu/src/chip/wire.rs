@@ -84,14 +84,6 @@ impl<'a> Reader<'a> {
         Ok(len as usize)
     }
 
-    /// A `seq<u8>`, borrowed.
-    pub fn byte_seq(&mut self) -> Result<&'a [u8], WireError> {
-        let len = self.seq_len()?;
-        let (head, rest) = self.buf.split_at(len);
-        self.buf = rest;
-        Ok(head)
-    }
-
     /// A [`Scalar`]: its [`ScalarKind`] tag, then the value.
     pub fn scalar(&mut self) -> Result<Scalar, WireError> {
         let kind = ScalarKind::from_u8(self.u8()?).ok_or(WireError)?;

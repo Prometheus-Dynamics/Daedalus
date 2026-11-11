@@ -36,10 +36,6 @@ impl EventLog {
         }
     }
 
-    pub fn is_on(&self) -> bool {
-        self.on
-    }
-
     pub(crate) fn push(&mut self, event: Event) {
         if !self.on || self.limit == 0 {
             return;

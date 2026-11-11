@@ -25,11 +25,6 @@ impl Runner<'_> {
         self.failure = policy;
     }
 
-    /// The failure policy in force.
-    pub fn failure_policy(&self) -> FailurePolicy {
-        self.failure
-    }
-
     /// Sets the host's clock, in nanoseconds. The runner reads it only for a step in backoff.
     pub fn set_clock(&mut self, now_ns: u64) {
         self.cx.now_ns = now_ns;
