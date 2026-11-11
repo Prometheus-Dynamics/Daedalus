@@ -39,11 +39,21 @@ def encode():
 def decode():
     out = [
         "// Three output vectors for sixty-four input symbols: sixteen groups of four symbols, three",
-        "// bytes each. A group that holds an invalid symbol, or a padded last group with bits no byte",
-        "// takes, lowers the status to the index of its first such symbol; the status is written",
+        "// bytes each. A group that holds an invalid symbol, or a padded last group with bits no",
+        "// byte takes, lowers the status to the index of its first such symbol; the status is written",
         "// once an invocation, and only when it found one. Output bytes past the length are zero.",
+        "// Packing: group j's three bytes go to bytes 3j..3j+2 of the invocation's output, and the",
+        "// words are built from them with constant shifts. Only the last words of the output can be",
+        "// past the length, so `keep_word` clears them and nothing else is masked.",
         "fn byte_w(i: u32) -> u32 {",
         "    return (src[i / 16u][(i % 16u) / 4u] >> ((i % 4u) * 8u)) & 0xffu;",
+        "}",
+        "",
+        "// The bytes of the word at byte offset `first` that are before the output's length.",
+        "fn keep_word(first: u32, word: u32) -> u32 {",
+        "    if (first + 4u <= params.out_len) { return word; }",
+        "    if (first >= params.out_len) { return 0u; }",
+        "    return word & ((1u << ((params.out_len - first) * 8u)) - 1u);",
         "}",
         "",
         "@compute @workgroup_size(WG)",
@@ -65,17 +75,14 @@ def decode():
     ]
     words = ["v0.x", "v0.y", "v0.z", "v0.w", "v1.x", "v1.y", "v1.z", "v1.w",
              "v2.x", "v2.y", "v2.z", "v2.w", "v3.x", "v3.y", "v3.z", "v3.w"]
-    # The twelve output words, accumulated group by group: each group is decoded in its own block,
-    # so only the accumulators and the group's own values are live at once.
     for w in range(12):
         out.append(f"    var o{w} = 0u;")
     for j in range(16):
         out.append("    {")
         out.append(f"        let s = {words[j]};")
         out.append(f"        let g = 16u * t + {j}u;")
-        out.append(f"        let used = select(4u, 4u - pad, g == last);")
-        # Four lookups: each entry is the six bits, or the six bits' invalid flag (bit 8). A symbol
-        # past the end of a padded group counts as zero, so it can't fail the group.
+        out.append("        let used = select(4u, 4u - pad, g == last);")
+        # Four lookups, one symbol each: the table of 256 entries, the six bits or the flag (bit 8).
         for k in range(4):
             out.append(f"        let e{k} = dec_table[(s >> {8 * k}u) & 0xffu];")
             out.append(f"        let q{k} = select(0u, e{k}, {k}u < used);")
@@ -96,9 +103,10 @@ def decode():
         for m, shift in enumerate((16, 8, 0)):
             b = 3 * j + m
             w, k = b // 4, b % 4
-            out.append(
-                f"        o{w} = o{w} | (select(0u, (x >> {shift}u) & 0xffu, 3u * g + {m}u < out_len) << {8 * k}u);")
+            out.append(f"        o{w} = o{w} | (((x >> {shift}u) & 0xffu) << {8 * k}u);")
         out.append("    }")
+    for w in range(12):
+        out.append(f"    o{w} = keep_word(48u * t + {4 * w}u, o{w});")
     for q in range(3):
         out.append(f"    dst[3u * t + {q}u] = vec4<u32>(o{4 * q}, o{4 * q + 1}, o{4 * q + 2}, o{4 * q + 3});")
     out.append("    if (first != 0xffffffffu) {")
@@ -130,7 +138,7 @@ def main():
         "@group(0) @binding(2) var<storage, read> params: Params;",
         "// decode: [offset of the first invalid symbol, or 0xffffffff; decoded length].",
         "@group(0) @binding(3) var<storage, read_write> status: array<atomic<u32>>;",
-        "// decode: the six bits of each byte, or 0xff for a byte that is no symbol.",
+        "// decode: for each input byte, its six bits, or the invalid flag (bit 8) for a byte that is no symbol.",
         "@group(0) @binding(4) var<storage, read> dec_table: array<u32>;",
         "",
     ]

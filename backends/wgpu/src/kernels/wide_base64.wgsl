@@ -16,7 +16,7 @@ struct Params {
 @group(0) @binding(2) var<storage, read> params: Params;
 // decode: [offset of the first invalid symbol, or 0xffffffff; decoded length].
 @group(0) @binding(3) var<storage, read_write> status: array<atomic<u32>>;
-// decode: the six bits of each byte, or 0xff for a byte that is no symbol.
+// decode: for each input byte, its six bits, or the invalid flag (bit 8) for a byte that is no symbol.
 @group(0) @binding(4) var<storage, read> dec_table: array<u32>;
 
 // Four output vectors for forty-eight input bytes: three input vectors, sixteen groups of
@@ -115,11 +115,21 @@ fn base64_encode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
 }
 
 // Three output vectors for sixty-four input symbols: sixteen groups of four symbols, three
-// bytes each. A group that holds an invalid symbol, or a padded last group with bits no byte
-// takes, lowers the status to the index of its first such symbol; the status is written
+// bytes each. A group that holds an invalid symbol, or a padded last group with bits no
+// byte takes, lowers the status to the index of its first such symbol; the status is written
 // once an invocation, and only when it found one. Output bytes past the length are zero.
+// Packing: group j's three bytes go to bytes 3j..3j+2 of the invocation's output, and the
+// words are built from them with constant shifts. Only the last words of the output can be
+// past the length, so `keep_word` clears them and nothing else is masked.
 fn byte_w(i: u32) -> u32 {
     return (src[i / 16u][(i % 16u) / 4u] >> ((i % 4u) * 8u)) & 0xffu;
+}
+
+// The bytes of the word at byte offset `first` that are before the output's length.
+fn keep_word(first: u32, word: u32) -> u32 {
+    if (first + 4u <= params.out_len) { return word; }
+    if (first >= params.out_len) { return 0u; }
+    return word & ((1u << ((params.out_len - first) * 8u)) - 1u);
 }
 
 @compute @workgroup_size(WG)
@@ -177,9 +187,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o0 = o0 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 0u);
-        o0 = o0 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 8u);
-        o0 = o0 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 16u);
+        o0 = o0 | (((x >> 16u) & 0xffu) << 0u);
+        o0 = o0 | (((x >> 8u) & 0xffu) << 8u);
+        o0 = o0 | (((x >> 0u) & 0xffu) << 16u);
     }
     {
         let s = v0.y;
@@ -208,9 +218,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o0 = o0 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 24u);
-        o1 = o1 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 0u);
-        o1 = o1 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 8u);
+        o0 = o0 | (((x >> 16u) & 0xffu) << 24u);
+        o1 = o1 | (((x >> 8u) & 0xffu) << 0u);
+        o1 = o1 | (((x >> 0u) & 0xffu) << 8u);
     }
     {
         let s = v0.z;
@@ -239,9 +249,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o1 = o1 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 16u);
-        o1 = o1 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 24u);
-        o2 = o2 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 0u);
+        o1 = o1 | (((x >> 16u) & 0xffu) << 16u);
+        o1 = o1 | (((x >> 8u) & 0xffu) << 24u);
+        o2 = o2 | (((x >> 0u) & 0xffu) << 0u);
     }
     {
         let s = v0.w;
@@ -270,9 +280,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o2 = o2 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 8u);
-        o2 = o2 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 16u);
-        o2 = o2 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 24u);
+        o2 = o2 | (((x >> 16u) & 0xffu) << 8u);
+        o2 = o2 | (((x >> 8u) & 0xffu) << 16u);
+        o2 = o2 | (((x >> 0u) & 0xffu) << 24u);
     }
     {
         let s = v1.x;
@@ -301,9 +311,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o3 = o3 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 0u);
-        o3 = o3 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 8u);
-        o3 = o3 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 16u);
+        o3 = o3 | (((x >> 16u) & 0xffu) << 0u);
+        o3 = o3 | (((x >> 8u) & 0xffu) << 8u);
+        o3 = o3 | (((x >> 0u) & 0xffu) << 16u);
     }
     {
         let s = v1.y;
@@ -332,9 +342,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o3 = o3 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 24u);
-        o4 = o4 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 0u);
-        o4 = o4 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 8u);
+        o3 = o3 | (((x >> 16u) & 0xffu) << 24u);
+        o4 = o4 | (((x >> 8u) & 0xffu) << 0u);
+        o4 = o4 | (((x >> 0u) & 0xffu) << 8u);
     }
     {
         let s = v1.z;
@@ -363,9 +373,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o4 = o4 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 16u);
-        o4 = o4 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 24u);
-        o5 = o5 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 0u);
+        o4 = o4 | (((x >> 16u) & 0xffu) << 16u);
+        o4 = o4 | (((x >> 8u) & 0xffu) << 24u);
+        o5 = o5 | (((x >> 0u) & 0xffu) << 0u);
     }
     {
         let s = v1.w;
@@ -394,9 +404,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o5 = o5 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 8u);
-        o5 = o5 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 16u);
-        o5 = o5 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 24u);
+        o5 = o5 | (((x >> 16u) & 0xffu) << 8u);
+        o5 = o5 | (((x >> 8u) & 0xffu) << 16u);
+        o5 = o5 | (((x >> 0u) & 0xffu) << 24u);
     }
     {
         let s = v2.x;
@@ -425,9 +435,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o6 = o6 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 0u);
-        o6 = o6 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 8u);
-        o6 = o6 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 16u);
+        o6 = o6 | (((x >> 16u) & 0xffu) << 0u);
+        o6 = o6 | (((x >> 8u) & 0xffu) << 8u);
+        o6 = o6 | (((x >> 0u) & 0xffu) << 16u);
     }
     {
         let s = v2.y;
@@ -456,9 +466,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o6 = o6 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 24u);
-        o7 = o7 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 0u);
-        o7 = o7 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 8u);
+        o6 = o6 | (((x >> 16u) & 0xffu) << 24u);
+        o7 = o7 | (((x >> 8u) & 0xffu) << 0u);
+        o7 = o7 | (((x >> 0u) & 0xffu) << 8u);
     }
     {
         let s = v2.z;
@@ -487,9 +497,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o7 = o7 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 16u);
-        o7 = o7 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 24u);
-        o8 = o8 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 0u);
+        o7 = o7 | (((x >> 16u) & 0xffu) << 16u);
+        o7 = o7 | (((x >> 8u) & 0xffu) << 24u);
+        o8 = o8 | (((x >> 0u) & 0xffu) << 0u);
     }
     {
         let s = v2.w;
@@ -518,9 +528,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o8 = o8 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 8u);
-        o8 = o8 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 16u);
-        o8 = o8 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 24u);
+        o8 = o8 | (((x >> 16u) & 0xffu) << 8u);
+        o8 = o8 | (((x >> 8u) & 0xffu) << 16u);
+        o8 = o8 | (((x >> 0u) & 0xffu) << 24u);
     }
     {
         let s = v3.x;
@@ -549,9 +559,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o9 = o9 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 0u);
-        o9 = o9 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 8u);
-        o9 = o9 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 16u);
+        o9 = o9 | (((x >> 16u) & 0xffu) << 0u);
+        o9 = o9 | (((x >> 8u) & 0xffu) << 8u);
+        o9 = o9 | (((x >> 0u) & 0xffu) << 16u);
     }
     {
         let s = v3.y;
@@ -580,9 +590,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o9 = o9 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 24u);
-        o10 = o10 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 0u);
-        o10 = o10 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 8u);
+        o9 = o9 | (((x >> 16u) & 0xffu) << 24u);
+        o10 = o10 | (((x >> 8u) & 0xffu) << 0u);
+        o10 = o10 | (((x >> 0u) & 0xffu) << 8u);
     }
     {
         let s = v3.z;
@@ -611,9 +621,9 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o10 = o10 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 16u);
-        o10 = o10 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 24u);
-        o11 = o11 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 0u);
+        o10 = o10 | (((x >> 16u) & 0xffu) << 16u);
+        o10 = o10 | (((x >> 8u) & 0xffu) << 24u);
+        o11 = o11 | (((x >> 0u) & 0xffu) << 0u);
     }
     {
         let s = v3.w;
@@ -642,10 +652,22 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
             let stray = x & select(0xffu, 0xffffu, pad == 2u);
             first = min(first, select(0xffffffffu, 4u * g + used - 1u, stray != 0u));
         }
-        o11 = o11 | (select(0u, (x >> 16u) & 0xffu, 3u * g + 0u < out_len) << 8u);
-        o11 = o11 | (select(0u, (x >> 8u) & 0xffu, 3u * g + 1u < out_len) << 16u);
-        o11 = o11 | (select(0u, (x >> 0u) & 0xffu, 3u * g + 2u < out_len) << 24u);
+        o11 = o11 | (((x >> 16u) & 0xffu) << 8u);
+        o11 = o11 | (((x >> 8u) & 0xffu) << 16u);
+        o11 = o11 | (((x >> 0u) & 0xffu) << 24u);
     }
+    o0 = keep_word(48u * t + 0u, o0);
+    o1 = keep_word(48u * t + 4u, o1);
+    o2 = keep_word(48u * t + 8u, o2);
+    o3 = keep_word(48u * t + 12u, o3);
+    o4 = keep_word(48u * t + 16u, o4);
+    o5 = keep_word(48u * t + 20u, o5);
+    o6 = keep_word(48u * t + 24u, o6);
+    o7 = keep_word(48u * t + 28u, o7);
+    o8 = keep_word(48u * t + 32u, o8);
+    o9 = keep_word(48u * t + 36u, o9);
+    o10 = keep_word(48u * t + 40u, o10);
+    o11 = keep_word(48u * t + 44u, o11);
     dst[3u * t + 0u] = vec4<u32>(o0, o1, o2, o3);
     dst[3u * t + 1u] = vec4<u32>(o4, o5, o6, o7);
     dst[3u * t + 2u] = vec4<u32>(o8, o9, o10, o11);

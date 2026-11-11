@@ -49,18 +49,20 @@ pub(super) fn decode_vector(n: u64) -> bool {
 /// (bit 8) alone. A lookup therefore gives the value and the validity together.
 fn decode_table() -> Vec<u8> {
     (0..=255u8)
-        .flat_map(|c| {
-            let value: u32 = match c {
-                b'A'..=b'Z' => u32::from(c - b'A'),
-                b'a'..=b'z' => u32::from(c - b'a') + 26,
-                b'0'..=b'9' => u32::from(c - b'0') + 52,
-                b'+' => 62,
-                b'/' => 63,
-                _ => 0x100,
-            };
-            value.to_le_bytes()
-        })
+        .flat_map(|c| symbol_value(c).unwrap_or(0x100).to_le_bytes())
         .collect()
+}
+
+/// The six bits of a base64 symbol, or `None` for a byte that is no symbol.
+fn symbol_value(c: u8) -> Option<u32> {
+    Some(match c {
+        b'A'..=b'Z' => u32::from(c - b'A'),
+        b'a'..=b'z' => u32::from(c - b'a') + 26,
+        b'0'..=b'9' => u32::from(c - b'0') + 52,
+        b'+' => 62,
+        b'/' => 63,
+        _ => return None,
+    })
 }
 
 impl Kernels {
@@ -69,10 +71,10 @@ impl Kernels {
         if let Some(table) = self.b64_table.get() {
             return Ok(table);
         }
-        let made = Storage::zeroed(std::sync::Arc::clone(&self.context), 1024)
+        let bytes = decode_table();
+        let made = Storage::zeroed(std::sync::Arc::clone(&self.context), bytes.len() as u64)
             .map_err(KernelError::Storage)?;
-        made.write(0, &decode_table())
-            .map_err(KernelError::Storage)?;
+        made.write(0, &bytes).map_err(KernelError::Storage)?;
         Ok(self.b64_table.get_or_init(|| made))
     }
 
@@ -100,10 +102,9 @@ impl Kernels {
             .write(0, &[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0])
             .map_err(KernelError::Storage)?;
         let mut encoder = self.encoder();
-        // The vector decode reads the table; the word decode doesn't, and binds only its status.
-        let table = self.b64_decode_table()?;
+        // The vector decode reads the table; the word decode reads none, and binds only its status.
         let extras: Vec<&Storage> = if decode_vector(n) {
-            vec![&status, table]
+            vec![&status, self.b64_decode_table()?]
         } else {
             vec![&status]
         };

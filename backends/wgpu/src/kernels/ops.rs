@@ -297,6 +297,7 @@ pub struct Kernels {
     params: Mutex<HashMap<[u32; 4], Arc<Storage>>>,
     pub(super) table: OnceLock<Storage>,
     /// The base64 decode table, for the vector decode: the six bits of each byte, or 0xff.
+    /// The base64 decode table, for the vector decode: the six bits of each byte, or the flag.
     pub(super) b64_table: OnceLock<Storage>,
     /// The two hex digits of each byte, for the vector hex.
     pub(super) hex_table: OnceLock<Storage>,
