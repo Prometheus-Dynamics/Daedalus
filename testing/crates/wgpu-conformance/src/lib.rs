@@ -20,8 +20,9 @@ use daedalus_backend::{
 use daedalus_graph::EdgePolicyDoc;
 use daedalus_runner::{drop_owned, put_inline, put_typed, take_typed};
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex, SpaceIndex, TypeIndex};
-use daedalus_wgpu::shader::{BindingKind, BindingSpec, Dispatch, ShaderSpec};
-use daedalus_wgpu::{Options, Storage, WgpuBackend};
+use daedalus_wgpu::merge::{PixelSpec, source_hash};
+use daedalus_wgpu::shader::{BindingKind, BindingSpec, Bound, Dispatch, Run, Shader, ShaderSpec};
+use daedalus_wgpu::{Options, Storage, Ticket, WgpuBackend};
 
 /// A backend with a device of its own, so what it counts is this caller's alone. `None` when
 /// the machine has no adapter, unless `DAEDALUS_GPU_REQUIRED` is set, where that is a failure.
@@ -94,6 +95,79 @@ pub const AFFINE: ShaderSpec = unary(
     }
 ",
 );
+
+/// A whole shader, `dst = src`, word by word. Its workgroups are large, so a 16 MiB copy is
+/// within what a device dispatches in one dimension.
+pub const COPY: ShaderSpec = ShaderSpec {
+    workgroup: [256, 1, 1],
+    ..unary(
+        "conformance.copy",
+        "
+    @group(0) @binding(0) var<storage, read> src: array<u32>;
+    @group(0) @binding(1) var<storage, read_write> dst: array<u32>;
+    @compute @workgroup_size(256)
+    fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+        if id.x < arrayLength(&dst) { dst[id.x] = src[id.x]; }
+    }
+",
+    )
+};
+
+/// One shader run by hand, outside any region: `dst` from `src`, as many words as `dst` has.
+pub struct Op(Shader);
+
+impl Op {
+    /// `spec` is [`COPY`] or [`AFFINE`], loaded on `backend`'s device.
+    pub fn new(backend: &WgpuBackend, spec: &ShaderSpec) -> Op {
+        Op(Shader::load(backend, spec).expect("the shader loads"))
+    }
+
+    /// Submits one run and gives its ticket. Never waits, unless the device already has as
+    /// many runs unfinished as it takes: then it waits for the oldest and tries again.
+    pub fn run(&self, src: &Storage, dst: &Storage) -> Ticket {
+        loop {
+            let bound = [Bound::Storage(src), Bound::Storage(dst)];
+            match self.0.run(&bound).expect("the shader runs") {
+                Run::Started(ticket) => return ticket,
+                Run::Busy(oldest) => oldest.wait().expect("the device finishes"),
+            }
+        }
+    }
+}
+
+const fn pixel(name: &'static str, source: &'static str) -> PixelSpec {
+    PixelSpec {
+        name,
+        source,
+        names: &["apply"],
+        input: "u32",
+        output: "u32",
+        input_stride: 4,
+        output_stride: 4,
+        config: None,
+        sides: &[],
+        params: &["c"],
+        inputs: &[0],
+        source_hash: source_hash(source),
+    }
+}
+
+/// A pixel body: `c * 3 + 1`. Bodies like it, one after the other, merge into one shader.
+pub const TRIPLE: PixelSpec = pixel(
+    "conformance.triple",
+    "fn apply(c: u32) -> u32 { return c * 3u + 1u; }\n",
+);
+
+/// A pixel body: `c ^ 0x5a5a5a5a`.
+pub const FLIP: PixelSpec = pixel(
+    "conformance.flip",
+    "fn apply(c: u32) -> u32 { return c ^ 0x5a5a5a5au; }\n",
+);
+
+/// What [`TRIPLE`] then [`FLIP`] give for `c`.
+pub const fn triple_flip(c: u32) -> u32 {
+    (c.wrapping_mul(3).wrapping_add(1)) ^ 0x5a5a_5a5a
+}
 
 /// A shader with no bindings and so no ports: what the backend rules compile, which offer
 /// nodes with no payload to bind.

@@ -13,6 +13,7 @@ daedalus-camera-fixture-sys = { path = "../camera-fixture-sys" }
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 daedalus-dma-sys = { path = "../../../backends/dma-sys" }
 daedalus-wgpu = { path = "../../../backends/wgpu" }
+daedalus-wgpu-conformance = { path = "../wgpu-conformance" }
 
 [lints]
 workspace = true

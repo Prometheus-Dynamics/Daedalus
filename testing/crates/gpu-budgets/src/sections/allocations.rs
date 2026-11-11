@@ -73,16 +73,13 @@ pub fn run() {
             println!("Storage::new_uninit 16 MiB: {:.4} ms", ms(uninit));
             // The device's first use of a buffer nobody has written: a 4-byte copy out of it, as
             // the reference's `first_use` times it. The device clears the buffer on that first use.
-            let kernels = daedalus_wgpu::kernels::Kernels::new(&backend).expect("a device");
+            let copy =
+                daedalus_wgpu_conformance::Op::new(&backend, &daedalus_wgpu_conformance::COPY);
             let sink = Storage::new(&backend, 4).expect("a buffer");
             let first_use = sample(|| {
                 let storage = Storage::new(&backend, SIZE).expect("a buffer");
                 let start = Instant::now();
-                kernels
-                    .run(daedalus_wgpu::kernels::Kernel::Copy, &storage, &sink, 4)
-                    .expect("runs")
-                    .wait()
-                    .expect("finishes");
+                copy.run(&storage, &sink).wait().expect("finishes");
                 let took = start.elapsed();
                 drop(storage);
                 took

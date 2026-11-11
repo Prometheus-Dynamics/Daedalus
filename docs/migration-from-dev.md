@@ -19,10 +19,10 @@ has the same thing by capability, one row each, and is checked by the gate.
 | `crates/daedalus` | `core/daedalus`, the facade | C14 |
 | `crates/host-wrapper` | `core/host`, and the C surface that is planned | C10, G10, G11 |
 | `crates/transport` | Gone. Values are `core/value`, and values between processes are `core/wire` | A5, G1 |
-| `crates/gpu` | `backends/wgpu`, `backends/wgpu-author`, `backends/vk-sys`, `backends/dma-sys`, `backends/dmabuf` | E1 to E17 |
+| `crates/gpu` | `backends/wgpu`, `backends/wgpu-author`, `backends/vk-sys`, `backends/dma-sys` | E1 to E16 |
 | `crates/wgsl-infer` | Inside `backends/wgpu-author` | E4 |
 | `crates/accelerator` | Gone. The `Backend` trait in `core/backend` is the interface | A7, I1 |
-| `crates/accel`, `crates/kernels` | `backends/kernels-sys`, `testing/crates/accel`, `testing/crates/inventory` | D8, D11, D14, D15, D16 |
+| `crates/accel`, `crates/kernels` | Gone. Nothing in Daedalus calls a byte kernel: a node that needs one brings it | |
 | `crates/mcu` | The CPU backend's blob, source and chip parts in `backends/cpu` | D3, D4, D5, D6 |
 | `crates/ffi` | `core/abi` (the step interface), `core/loader` (dylib plugins), `backends/process` and `languages/*` (workers) | A3, G2 to G9, G12 |
 | `crates/surface` | Planned as `core/capi` | G10 |

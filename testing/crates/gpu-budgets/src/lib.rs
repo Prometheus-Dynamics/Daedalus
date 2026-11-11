@@ -15,10 +15,11 @@ use daedalus_abi::{Slot, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{Backend, CompileCx};
 use daedalus_runner::{drop_owned, put_shared, put_typed, take_typed};
 use daedalus_types::{SpaceIndex, TypeIndex};
-use daedalus_wgpu::kernels::{F32_TO_UNORM8, HALF_TO_F32};
 use daedalus_wgpu::merge::PixelSpec;
 use daedalus_wgpu::{Storage, WgpuBackend};
-use daedalus_wgpu_conformance::{AFFINE, Counted, In, Net, filled, measure, port, run, words};
+use daedalus_wgpu_conformance::{
+    AFFINE, Counted, FLIP, In, Net, TRIPLE, filled, measure, port, run, words,
+};
 
 /// A region is one submit, whatever is in it.
 pub const SUBMITS_PER_REGION: u64 = 1;
@@ -42,10 +43,6 @@ pub const TRANSFERS_PER_REGION: u64 = 0;
 /// A region of shaders that bind buffers is recorded with Vulkan itself into a command buffer
 /// it uses again, so nothing is allocated.
 pub const ALLOCATIONS_PER_STEP: u64 = 0;
-/// Allocations by a batch of kernel ops, recorded, submitted and waited for, once a batch of
-/// the same ops has run: the batch is a chain recorded the same way.
-pub const ALLOCATIONS_PER_KERNEL_BATCH: u64 = 0;
-
 /// A measure that is over its budget, or under one that has to be exact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Miss {
@@ -134,11 +131,9 @@ pub fn shader_line(backend: &WgpuBackend, nodes: usize, len: u32) -> Counted {
     last
 }
 
-/// The chain the merge budgets run: half to f32 to unorm8, `pairs` times over.
+/// The chain the merge budgets run: two small pixel bodies, `pairs` times over.
 pub fn chain(pairs: usize) -> Vec<&'static PixelSpec> {
-    (0..pairs)
-        .flat_map(|_| [&HALF_TO_F32, &F32_TO_UNORM8])
-        .collect()
+    (0..pairs).flat_map(|_| [&TRIPLE, &FLIP]).collect()
 }
 
 /// A chain of pixel bodies as a region: what compiling it built, and one warm run.
@@ -212,28 +207,4 @@ pub fn boundaries(backend: &WgpuBackend, bytes: usize) -> Counted {
     release(upload);
     release(readback);
     counted
-}
-
-/// Allocations by one batch of `ops` kernel copies of 4 KiB, recorded, submitted and waited
-/// for, after batches of the same ops have run.
-pub fn kernel_batch(backend: &WgpuBackend, ops: usize) -> u64 {
-    use daedalus_wgpu::Storage;
-    use daedalus_wgpu::kernels::{Kernel, Kernels};
-    let kernels = Kernels::new(backend).expect("a device");
-    let (src, dst) = (
-        Storage::new(backend, 4096).expect("a buffer"),
-        Storage::new(backend, 4096).expect("a buffer"),
-    );
-    let mut count = 0;
-    for _ in 0..8 {
-        let ((), allocations) = daedalus_abi::counting::counted(|| {
-            let mut batch = kernels.batch();
-            for _ in 0..ops {
-                batch.add(Kernel::Copy, &src, &dst, 4096).expect("fits");
-            }
-            batch.submit().wait().expect("finishes");
-        });
-        count = allocations as u64;
-    }
-    count
 }

@@ -43,7 +43,6 @@ crate is making its directory.
 | `nostd` | The heap-free crates on the bare-metal targets |
 | `chip` | The firmware builds and their flash and RAM |
 | `wasm` | The WebAssembly builds, run under Node |
-| `accel`, `accel-evidence` | The kernel matrix and its evidence are what the code says |
 | `gpu-async-blocking`, `gpu-driver-lock` | Two rules of the GPU backend |
 | `budgets` | The budget table: instructions, allocations, firmware sizes |
 | `capability` | The audit of what the earlier branch could do |

@@ -104,7 +104,7 @@ fn import(backend: &WgpuBackend) {
     );
     // Rewrite the buffer from the host, then read it through the cached import: does the device
     // see the new bytes? The host's view of the buffer is the reference.
-    let kernels = daedalus_wgpu::kernels::Kernels::new(backend).expect("a device");
+    let copy = daedalus_wgpu_conformance::Op::new(backend, &daedalus_wgpu_conformance::COPY);
     let out = daedalus_wgpu::Storage::new(backend, len).expect("a buffer");
     let map = buf.as_ref().map().expect("a mapping");
     for seed in [1u8, 2, 3] {
@@ -116,16 +116,7 @@ fn import(backend: &WgpuBackend) {
         buf.as_ref()
             .end_cpu_access(daedalus_dma_sys::Access::Write)
             .expect("end");
-        kernels
-            .run(
-                daedalus_wgpu::kernels::Kernel::Copy,
-                &first.storage,
-                &out,
-                len,
-            )
-            .expect("runs")
-            .wait()
-            .expect("finishes");
+        copy.run(&first.storage, &out).wait().expect("finishes");
         let mut seen = vec![0u8; len as usize];
         out.read_into(0, &mut seen).expect("a readback");
         println!(

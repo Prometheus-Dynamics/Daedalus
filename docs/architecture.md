@@ -413,10 +413,9 @@ daedalus/
   backends/
     cpu/  cpu-author/     typed calls, Blob and Source forms, chips
     wgpu/  wgpu-author/   shader merging, one submit
-    dmabuf/               a memory backend: no nodes
     process/              the worker protocol and its host
     sim/                  a fake backend for testing the core
-    kernels-sys/  vk-sys/ and other *-sys crates: the unsafe parts
+    vk-sys/ and other *-sys crates: the unsafe parts
   languages/
     python/  node/  java/  cpp/  rust/  rust-capi/  SDKs for writing and embedding
   service/
@@ -442,8 +441,7 @@ outside this repo:
 | `engine` | `core/host`. Its 11 run forms and 9 compile forms collapse |
 | `gpu` | `backends/wgpu`, and it gains merging |
 | `wgsl-infer` | `backends/wgpu-author`, using naga when the macro expands |
-| `kernels` | `backends/kernels-sys`, usable by any backend |
-| `accel` | `testing/crates/accel`: the acceleration inventory and matrix |
+| `kernels`, `accel` | Gone. Nothing in Daedalus calls a byte kernel, so there is no library of them and no matrix |
 | `macros` | `core/macros`, the one `#[node]` and `#[transfer]`; `core/derive`, `NodeConfig` and `Type` |
 | `ffi/core`, `ffi/host` | `backends/process`, and workers finally join graphs |
 | `ffi/rust`, `python`, `node`, `java`, `cpp` | `languages/*` |

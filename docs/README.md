@@ -32,8 +32,6 @@ nodes by their ports, and a planner proves the graph valid before anything runs.
 ## Reference
 
 - [schema/](schema): the JSON schema of a graph document.
-- [backend-matrix.md](backend-matrix.md): which kernel runs on which instruction set
-  (generated).
 - [chips.md](chips.md): firmware sizes by mode and target.
 - [`testing/budgets/README.md`](../testing/budgets/README.md): the budgets and where each is
   checked.
