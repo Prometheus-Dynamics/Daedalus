@@ -242,17 +242,13 @@ impl Context {
     pub(crate) fn note_write(&self, bytes: u64) {
         self.unsent.store(true, Ordering::Release);
         let total = self.unsent_bytes.fetch_add(bytes, Ordering::AcqRel) + bytes;
-        #[cfg(target_os = "linux")]
         if total >= WRITE_BUDGET {
             self.flush_writes();
         }
-        #[cfg(not(target_os = "linux"))]
-        let _ = total;
     }
 
     /// Sends what the queue was given to write, if anything was. Work recorded with Vulkan
     /// itself doesn't go through the queue's submit, so it calls this first.
-    #[cfg(target_os = "linux")]
     pub(crate) fn flush_writes(&self) {
         if self.unsent.swap(false, Ordering::AcqRel) {
             self.unsent_bytes.store(0, Ordering::Release);
