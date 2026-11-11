@@ -291,7 +291,7 @@ fn a_serial_tick_on_the_best_clock_is_monotonic_and_adds_up() {
         static START: OnceLock<Instant> = OnceLock::new();
         START.get_or_init(Instant::now).elapsed().as_nanos() as u64
     }
-    let clock: ProbeClock = best_clock(fallback);
+    let clock: ProbeClock = best_clock(fallback, true);
     let probe: &'static TickProbe<'static> = Box::leak(Box::new(TickProbe::sampled_by(clock, 1)));
     let mut runner = runner(4);
     runner.set_probe(probe);
@@ -310,4 +310,27 @@ fn a_serial_tick_on_the_best_clock_is_monotonic_and_adds_up() {
     }
     assert!(last_end > 0, "the best clock gives times");
     assert!(window.report().p50_ns > 0);
+}
+
+#[test]
+fn the_probe_clock_runs_at_the_rate_of_the_monotonic_clock() {
+    use std::time::{Duration, Instant};
+    let clock = daedalus_host::probe_clock();
+    let mut last = clock.now();
+    for _ in 0..10_000 {
+        let now = clock.now();
+        assert!(now >= last, "the probe clock never goes back");
+        last = now;
+    }
+    // Both clocks time the same sleep, so its length cancels out of the comparison.
+    let (probe_start, wall_start) = (clock.now(), Instant::now());
+    std::thread::sleep(Duration::from_millis(50));
+    let (probe_ns, wall_ns) = (
+        clock.now() - probe_start,
+        wall_start.elapsed().as_nanos() as u64,
+    );
+    assert!(
+        probe_ns.abs_diff(wall_ns) * 20 <= wall_ns,
+        "probe clock {probe_ns} ns against monotonic {wall_ns} ns, more than 5% apart"
+    );
 }

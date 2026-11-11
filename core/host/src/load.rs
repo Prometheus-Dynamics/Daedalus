@@ -531,6 +531,25 @@ fn monotonic_ns() -> u64 {
     START.get_or_init(Instant::now).elapsed().as_nanos() as u64
 }
 
+/// The clock a probe times with: the platform's cheapest one that the kernel allows, and the
+/// monotonic clock otherwise. On x86_64 Linux the time stamp counter is used only when the kernel's
+/// clocksource is `tsc`.
+pub fn probe_clock() -> ProbeClock {
+    best_clock(monotonic_ns, kernel_clock_ok())
+}
+
+fn kernel_clock_ok() -> bool {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    {
+        std::fs::read_to_string("/sys/devices/system/clocksource/clocksource0/current_clocksource")
+            .is_ok_and(|name| name.trim() == "tsc")
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+    {
+        true
+    }
+}
+
 fn type_keys(planned: &Planned) -> &'static [TypeKey] {
     let texts: Vec<String> = planned.types.exprs().iter().map(type_text).collect();
     intern_keys(&texts)
@@ -599,7 +618,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         .collect();
     let ports = port_table(planned, &meta, &table)?;
     let types = type_keys(planned);
-    let clock: Option<ProbeClock> = (options.overhead_window > 0).then(|| best_clock(monotonic_ns));
+    let clock: Option<ProbeClock> = (options.overhead_window > 0).then(probe_clock);
     let host_inputs: Vec<u32> = planned
         .stitched
         .host_inputs
