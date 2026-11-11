@@ -57,6 +57,27 @@ impl WgpuBackend {
         let context = self
             .context()
             .map_err(|error| ImportError::Unsupported(error.to_string()))?;
+        Self::import_on(&context, image)
+    }
+
+    /// [`WgpuBackend::import_storage`] on a device's context, for a step of the backend that has
+    /// the context and not the backend.
+    pub(crate) fn import_on(
+        context: &Arc<crate::context::Context>,
+        image: ExternalBuffer,
+    ) -> Result<ImportedStorage, ImportError> {
+        Self::import_sized(context, image, None)
+    }
+
+    /// [`WgpuBackend::import_on`] for a buffer of `want` bytes, when the value is shorter than its
+    /// dma-buf, as a dma-heap allocation is: the buffer is the value's length, and the dma-buf
+    /// must be able to back it. Such a buffer is not cached, since the cache is keyed by the
+    /// dma-buf and not by its length.
+    pub(crate) fn import_sized(
+        context: &Arc<crate::context::Context>,
+        image: ExternalBuffer,
+        want: Option<u64>,
+    ) -> Result<ImportedStorage, ImportError> {
         let kind = ImageKind::of(image.fourcc);
         if let Some(why) = kind.refusal() {
             return Err(ImportError::UnsupportedFormat {
@@ -98,7 +119,12 @@ impl WgpuBackend {
             }
         }
         let mut imports = context.storage_imports();
-        if let Some(at) = imports.kept.iter().position(|(have, _)| *have == id) {
+        if let Some(at) = imports
+            .kept
+            .iter()
+            .position(|(have, _)| *have == id)
+            .filter(|_| want.is_none())
+        {
             imports.stats.hits += 1;
             return Ok(ImportedStorage {
                 storage: Arc::clone(&imports.kept[at].1),
@@ -111,13 +137,38 @@ impl WgpuBackend {
             }
             other => ImportError::Refused(other.to_string()),
         };
-        // A buffer is a whole number of words, and as much of the dma-buf as the device can
-        // back with it: one that pads a buffer's memory gets a buffer that much shorter.
-        let size = daedalus_vk_sys::memory::dma_buf_size_that_fits(&context.device, len)
-            .map_err(refused)?;
-        let imported =
-            import_dma_buf(&context.device, image.fd, size, len, None).map_err(refused)?;
-        let storage = Arc::new(Storage::imported(Arc::clone(&context), imported, size));
+        let storage = match want {
+            Some(want) => {
+                // The device must be able to back the value's length with this dma-buf.
+                let needed = daedalus_vk_sys::memory::dma_buf_bytes_needed(&context.device, want)
+                    .map_err(refused)?;
+                if needed > len {
+                    return Err(ImportError::Refused(
+                        daedalus_vk_sys::Error::TooSmall {
+                            have: len,
+                            need: needed,
+                        }
+                        .to_string(),
+                    ));
+                }
+                let imported =
+                    import_dma_buf(&context.device, image.fd, want, len, None).map_err(refused)?;
+                imports.stats.imports += 1;
+                return Ok(ImportedStorage {
+                    storage: Arc::new(Storage::imported(Arc::clone(context), imported, want)),
+                    planes: image.planes,
+                });
+            }
+            None => {
+                // A buffer is a whole number of words, and as much of the dma-buf as the device
+                // can back with it: one that pads a buffer's memory gets a buffer that much shorter.
+                let size = daedalus_vk_sys::memory::dma_buf_size_that_fits(&context.device, len)
+                    .map_err(refused)?;
+                let imported =
+                    import_dma_buf(&context.device, image.fd, size, len, None).map_err(refused)?;
+                Arc::new(Storage::imported(Arc::clone(context), imported, size))
+            }
+        };
         imports.stats.imports += 1;
         if imports.kept.len() >= KEPT {
             imports.kept.remove(0);
