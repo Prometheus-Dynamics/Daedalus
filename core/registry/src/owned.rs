@@ -1,8 +1,11 @@
-//! Declarations that arrive at run time, from a worker starting up. Records are `'static`, so an
-//! owned declaration is promoted once. A host registers each worker's nodes when the worker
-//! starts, so this grows with the number of node kinds and not with time.
+//! Declarations that arrive at run time, from a worker or a plugin starting up. Records are
+//! `'static`, so an owned declaration is promoted once. The same declaration arriving again reuses
+//! its record, so the promoted set grows with the distinct declarations and not with reloads.
 
 #![cfg(feature = "std")]
+
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use crate::{
     BodyRecord, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, RegError, Registry, SourceAt, TypeRef,
@@ -46,38 +49,71 @@ fn ports(ports: Vec<OwnedPort>) -> &'static [PortDecl] {
     )
 }
 
-impl Registry {
-    /// Joins a declaration a worker sent, under the same rules as a compiled-in record.
-    pub fn register_owned(&mut self, decl: OwnedDecl) -> Result<(), RegError> {
-        let at = SourceAt(leak(decl.source));
-        let node: &'static NodeDecl = Box::leak(Box::new(NodeDecl {
-            id: leak(decl.id),
+/// The declarations promoted so far, keyed by their full content. A plugin that is loaded again
+/// finds its declarations here, so promotion happens once per distinct declaration.
+fn promoted() -> &'static Mutex<BTreeMap<String, &'static NodeRecord>> {
+    static PROMOTED: OnceLock<Mutex<BTreeMap<String, &'static NodeRecord>>> = OnceLock::new();
+    PROMOTED.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// How many distinct declarations have been promoted into `'static` records. Loading an
+/// unchanged plugin again adds none, so this does not grow with reloads.
+pub fn promoted_declarations() -> usize {
+    promoted()
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .len()
+}
+
+/// Promotes a declaration into records that live for the whole process.
+fn promote(decl: OwnedDecl) -> &'static NodeRecord {
+    let at = SourceAt(leak(decl.source));
+    let node: &'static NodeDecl = Box::leak(Box::new(NodeDecl {
+        id: leak(decl.id),
+        at,
+        summary: "",
+        description: "",
+        inputs: ports(decl.inputs),
+        outputs: ports(decl.outputs),
+        config: &[],
+        fanin: &[],
+        fire: Fire::default(),
+        reusable: false,
+        shareable: false,
+        conversion: None,
+        group: None,
+    }));
+    Box::leak(Box::new(NodeRecord {
+        decl: node,
+        body: BodyRecord {
+            backend: leak(decl.body.backend),
             at,
-            summary: "",
-            description: "",
-            inputs: ports(decl.inputs),
-            outputs: ports(decl.outputs),
-            config: &[],
-            fanin: &[],
-            fire: Fire::default(),
-            reusable: false,
-            shareable: false,
-            conversion: None,
-            group: None,
-        }));
-        let record: &'static NodeRecord = Box::leak(Box::new(NodeRecord {
-            decl: node,
-            body: BodyRecord {
-                backend: leak(decl.body.backend),
-                at,
-                needs: &[],
-                state: None,
-                ports: &[],
-                memory: &[],
-                code: &NoCode,
-                text: leak(decl.body.text),
-            },
-        }));
+            needs: &[],
+            state: None,
+            ports: &[],
+            memory: &[],
+            code: &NoCode,
+            text: leak(decl.body.text),
+        },
+    }))
+}
+
+impl Registry {
+    /// Joins a declaration a worker sent, under the same rules as a compiled-in record. The
+    /// promoted record is reused when the same declaration arrives again.
+    pub fn register_owned(&mut self, decl: OwnedDecl) -> Result<(), RegError> {
+        let key = format!("{decl:?}");
+        let record = {
+            let mut known = promoted().lock().unwrap_or_else(PoisonError::into_inner);
+            match known.get(&key) {
+                Some(record) => *record,
+                None => {
+                    let record = promote(decl);
+                    known.insert(key, record);
+                    record
+                }
+            }
+        };
         self.register(record)
     }
 }
