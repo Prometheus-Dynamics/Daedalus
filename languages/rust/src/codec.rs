@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use daedalus_wire::WireValue;
 
+use crate::context::Context;
 use crate::serve::NodeError;
 
 /// A Rust type a node takes or returns.
@@ -171,5 +172,52 @@ impl Wire for BTreeMap<String, i64> {
                 .collect(),
             _ => None,
         }
+    }
+}
+
+/// An optional input: `None` when the port has no value. A port declared as an option carries the
+/// value inside `Optional`, and a port of the value's own type carries the value itself, so both
+/// are read.
+pub fn optional_input<T: Wire>(
+    inputs: &[(&'static str, WireValue)],
+    name: &str,
+) -> Result<Option<T>, NodeError> {
+    let Some((_, value)) = inputs.iter().find(|(port, _)| *port == name) else {
+        return Ok(None);
+    };
+    let shape = || NodeError::bad_input(format!("input {name} has another shape"));
+    match value {
+        WireValue::Optional(None) => Ok(None),
+        WireValue::Optional(Some(inner)) => T::from_wire(inner).map(Some).ok_or_else(shape),
+        other => T::from_wire(other).map(Some).ok_or_else(shape),
+    }
+}
+
+/// The state a `#[node]` body reads before its call: the stored state, or the type's default when the
+/// node has none yet.
+pub fn state_value<T: Wire + Default>(cx: &Context) -> T {
+    cx.state().and_then(T::from_wire).unwrap_or_default()
+}
+
+/// Stores a `#[node]` body's state after its call, for the next run.
+pub fn store_state<T: Wire>(cx: &mut Context, value: &T) {
+    cx.set_state(value.to_wire());
+}
+
+/// What a `#[node]` body returns: its outputs, either as they are, or inside a `Result` whose error
+/// is the fault the node reports.
+pub trait WorkerReturn {
+    fn into_outputs(self) -> Result<Vec<WireValue>, NodeError>;
+}
+
+impl<T: Pack> WorkerReturn for T {
+    fn into_outputs(self) -> Result<Vec<WireValue>, NodeError> {
+        Ok(self.pack())
+    }
+}
+
+impl<T: Pack> WorkerReturn for Result<T, NodeError> {
+    fn into_outputs(self) -> Result<Vec<WireValue>, NodeError> {
+        self.map(Pack::pack)
     }
 }

@@ -43,6 +43,14 @@ pub struct NodeError {
     pub reason: String,
 }
 
+impl std::fmt::Display for NodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.reason)
+    }
+}
+
+impl std::error::Error for NodeError {}
+
 impl NodeError {
     pub fn new(code: FaultCode, reason: impl Into<String>) -> NodeError {
         NodeError {

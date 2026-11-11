@@ -1,6 +1,7 @@
 //! What a running node can see and report: whether the host asked it to stop, its state between
 //! runs, and progress and log events, which go out in order before the run's outputs.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -17,7 +18,8 @@ pub enum Event {
 pub struct Context {
     cancel: Arc<AtomicBool>,
     state: Option<WireValue>,
-    events: Vec<Event>,
+    /// Events the node has reported. Kept behind a cell, so a body reports through `&Ctx`.
+    events: RefCell<Vec<Event>>,
 }
 
 impl Context {
@@ -25,7 +27,7 @@ impl Context {
         Context {
             cancel,
             state,
-            events: Vec::new(),
+            events: RefCell::new(Vec::new()),
         }
     }
 
@@ -44,21 +46,23 @@ impl Context {
         self.state = Some(value);
     }
 
-    pub fn progress(&mut self, fraction: f32, message: &str) {
-        self.events.push(Event::Progress {
+    /// Reports progress, a fraction from 0 to 1 with a message. It goes out before the run's outputs.
+    pub fn progress(&self, fraction: f32, message: &str) {
+        self.events.borrow_mut().push(Event::Progress {
             fraction,
             message: message.to_owned(),
         });
     }
 
-    pub fn log(&mut self, level: LogLevel, text: &str) {
-        self.events.push(Event::Log {
+    /// Logs a line at a level. It goes out before the run's outputs.
+    pub fn log(&self, level: LogLevel, text: &str) {
+        self.events.borrow_mut().push(Event::Log {
             level,
             text: text.to_owned(),
         });
     }
 
     pub(crate) fn take(self) -> (Option<WireValue>, Vec<Event>) {
-        (self.state, self.events)
+        (self.state, self.events.into_inner())
     }
 }
