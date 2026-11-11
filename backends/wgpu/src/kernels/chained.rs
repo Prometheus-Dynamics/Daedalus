@@ -27,6 +27,8 @@ const SETS: usize = 4;
 /// One op of a batch: what its stage binds, and how many workgroups it runs.
 pub(crate) struct Op {
     kernel: Kernel,
+    /// The index in `SPECS` of the shader this op runs.
+    spec: usize,
     /// The input, the output, the counts, and a table or status where the op has one. Each
     /// with the bytes of it that are bound.
     buffers: [Option<(wgpu::Buffer, u64)>; 4],
@@ -48,7 +50,7 @@ pub(crate) struct Chains {
 fn key(ops: &[Op]) -> u128 {
     let mut key = ops.len() as u128;
     for (at, op) in ops.iter().enumerate() {
-        key |= (op.kernel.index() as u128 + 1) << (8 + 4 * at);
+        key |= (op.spec as u128 + 1) << (8 + 4 * at);
     }
     key
 }
@@ -70,12 +72,13 @@ pub(crate) fn add(
     if elsewhere {
         return Err(KernelError::Size("a buffer is on another device".into()));
     }
-    let Some((params, counts)) = kernels.plan(kernel, src, dst, n)? else {
+    let Some((params, counts, spec)) = kernels.plan(kernel, src, dst, n)? else {
         return Ok(());
     };
     let whole = |storage: &Storage| Some((storage.buffer().clone(), storage.size));
     ops.push(Op {
         kernel,
+        spec,
         buffers: [
             whole(src),
             whole(dst),
@@ -123,7 +126,7 @@ impl Chains {
         }
         let mut pipelines = Vec::with_capacity(ops.len());
         for op in ops {
-            let spec = &SPECS[op.kernel.index()];
+            let spec = &SPECS[op.spec];
             let built = context.shaders().chained(&context.device, spec);
             pipelines.push(built.ok_or_else(|| format!("`{}` can't be built", spec.name))?);
         }
