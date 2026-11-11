@@ -79,7 +79,7 @@ pub struct Planned {
     pub regions: Regions,
     pub stitched: Stitched,
     pub form: Form,
-    /// One per `stitched.transfers`. `None` where the loader binds it, or outside the steps form.
+    /// One per `stitched.transfers`. `None` outside the steps form, which makes no steps.
     pub transfer_steps: Vec<Option<Step>>,
     /// What the lints found. Empty unless the config turned them on.
     pub warnings: Vec<Diagnostic>,
@@ -225,7 +225,8 @@ fn table_of(graph: &Graph) -> TypeTable {
     types
 }
 
-/// Makes the step for each transfer the plan uses.
+/// Makes the step for each transfer the plan uses. A backend's own move is made by that backend,
+/// and a `#[transfer]` is bound by the backend that wrote its body.
 fn transfer_steps(
     regions: &Regions,
     stitched: &Stitched,
@@ -247,22 +248,35 @@ fn transfer_steps(
     let mut steps: Vec<Option<Step>> = Vec::with_capacity(stitched.transfers.len());
     for used in &stitched.transfers {
         let made = match regions.routing.table[used.table].owner {
-            MoveOwner::Record(_) => None,
             MoveOwner::Backend { backend, index } => {
                 let table = backends[usize::from(backend)].transfers();
-                match (table[index as usize].make)(&cx) {
-                    Ok(step) => Some(step),
-                    Err(refusal) => {
-                        steps.drain(..).flatten().for_each(Step::discard);
-                        return Err(PlanError::TransferUnavailable {
-                            id: used.id.clone(),
-                            reason: refusal.reason,
-                        });
-                    }
-                }
+                (table[index as usize].make)(&cx).map_err(|refusal| refusal.reason)
+            }
+            MoveOwner::Record(record) => {
+                let bound = backends
+                    .iter()
+                    .filter(|backend| backend.id() == record.body.backend)
+                    .find_map(|backend| backend.bind_transfer(record.body.code, &cx));
+                bound
+                    .unwrap_or_else(|| {
+                        Err(daedalus_backend::Refusal::whole_region(&format!(
+                            "no backend `{}` is present to bind it",
+                            record.body.backend
+                        )))
+                    })
+                    .map_err(|refusal| refusal.reason)
             }
         };
-        steps.push(made);
+        match made {
+            Ok(step) => steps.push(Some(step)),
+            Err(reason) => {
+                steps.drain(..).flatten().for_each(Step::discard);
+                return Err(PlanError::TransferUnavailable {
+                    id: used.id.clone(),
+                    reason,
+                });
+            }
+        }
     }
     Ok(steps)
 }

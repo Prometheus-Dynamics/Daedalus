@@ -97,6 +97,8 @@ pub trait Backend: Send + Sync {
     fn transfers(&self) -> Vec<Transfer>;
     fn can_take(&self, offer: &Offer) -> Vec<NodeRef>;
     fn compile(&self, region: &Region, cx: &CompileCx) -> Result<Compiled, Refusal>;
+    // Makes the step for a `#[transfer]` this backend wrote. The default says it wrote none.
+    fn bind_transfer(&self, code: &(dyn Any + Send + Sync), cx: &CompileCx) -> Option<Result<Step, Refusal>>;
 }
 
 pub enum Compiled {
@@ -220,6 +222,13 @@ Writing a handler by hand is one function, for types that need more:
 #[transfer(from = "dmabuf.block", to = "wgpu.buffer", cost = import, backend = daedalus_wgpu_author)]
 fn to_gpu(image: &Image, gpu: &GpuCx) -> Texture { gpu.import_external(&image.describe()) }
 ```
+
+The function takes the value it moves, by reference or by value, and returns the moved value or a
+`Result` of it. A CPU handler takes the value and nothing else: its step reads one cell and writes
+one, and needs no context, because the CPU has no device to reach. A handler that needs a device
+takes a context too. The backend that owns the device builds that context inside its own
+`bind_transfer`, so the planner never sees it. A failing handler is a fault that names the transfer,
+and the fault names the transfer, not a node.
 
 ### What it costs
 
@@ -447,8 +456,12 @@ documents the patch and refresh JSON.
   may change on this machine, and a cached plan is only reused under the same version.
 - The assignment search has a rank lower bound, checked against brute force. Regions are laid out
   in topological order, and `UnitInfo.may_pend` says whether a unit can wait on a fence.
-- `#[transfer]` records carry no step of their own: the loader binds them. `ConstOf.value` is a
-  `&Lit`, and `Step::discard` frees a step that was compiled and not used.
+- A `#[transfer]` record is bound by the backend that wrote its body, through `bind_transfer`, when
+  the plan is made. The body's `backend` names that backend, and the record's payload is passed
+  to it as it is. The planner makes one step per move the plan uses, so `LoadedHost::load` runs
+  every move. Only the steps form has steps, so a `#[transfer]` isn't built into the blob or
+  source forms yet. `ConstOf.value` is a `&Lit`, and `Step::discard` frees a step that was compiled
+  and not used.
 - `core/graph` grew additive fields: `NodeDoc::new`, `host_inputs`, `sync_groups`, the `inputs` and
   `outputs` lists, and `control`. The schema is regenerated with
   `cargo run -p daedalus-graph --bin graph_schema`.

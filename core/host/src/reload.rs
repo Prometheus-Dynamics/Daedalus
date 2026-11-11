@@ -127,6 +127,7 @@ impl LoadedHost {
         self.fault_seen.resize(parts.covers.len(), 0);
         self.covers = parts.covers;
         self.same_as = parts.same_as;
+        self.moves = parts.moves;
         self.node_names = parts.node_names;
         self.consts.seed(&planned);
         self.reapply_off_nodes();
