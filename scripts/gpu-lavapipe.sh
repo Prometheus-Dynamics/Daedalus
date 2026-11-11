@@ -147,4 +147,18 @@ if [[ -n "$layer" ]]; then
     exit 1
   fi
   echo "gpu-lavapipe: validation is clean"
+
+  # A clean log means nothing unless a real error would have been in it. One call that is
+  # wrong on purpose, alone, with a log of its own: the layer has to name the rule it breaks.
+  planted="$work/planted.log"
+  rule=$(sed -n 's/.*PLANTED_RULE: &str = "\(.*\)";/\1/p' backends/vk-sys/src/planted.rs)
+  VK_KHRONOS_VALIDATION_LOG_FILENAME="$planted" DAEDALUS_PLANT_VALIDATION_ERROR=1 \
+    cargo test -q -p daedalus-vk-sys planted -- --test-threads=1 >/dev/null 2>&1 || true
+  if [[ -z "$rule" ]] || ! grep -qF "$rule" "$planted" 2>/dev/null; then
+    echo "gpu-lavapipe: a call that breaks $rule was made, and the layer's log doesn't have it:" >&2
+    echo "  the lane would pass with real validation errors. The log:" >&2
+    head -20 "$planted" >&2 2>/dev/null || echo "  (no log was written)" >&2
+    exit 1
+  fi
+  echo "gpu-lavapipe: a planted invalid call was caught ($rule)"
 fi

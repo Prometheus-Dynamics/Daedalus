@@ -11,6 +11,8 @@ mod error;
 pub mod image;
 #[cfg(target_os = "linux")]
 pub mod memory;
+#[cfg(all(test, target_os = "linux"))]
+mod planted;
 #[cfg(target_os = "linux")]
 pub mod semaphore;
 #[cfg(target_os = "linux")]
