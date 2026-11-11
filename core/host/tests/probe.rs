@@ -7,8 +7,8 @@ use daedalus_abi::{Slots, Step, StepCx, StepEnd, StepWord};
 use daedalus_host::{Host, PlanReport, Ports, TickOverheadWindow};
 use daedalus_plan::Span;
 use daedalus_runner::{
-    Memory, Plan, Recovery, Runner, SlotKind, SlotSpec, StepHistogram, StepMeta, TickProbe,
-    TickSample,
+    Memory, Plan, ProbeClock, Recovery, Runner, SlotKind, SlotSpec, StepHistogram, StepMeta,
+    TickProbe, TickSample, best_clock,
 };
 use daedalus_types::TypeKey;
 
@@ -259,4 +259,55 @@ fn changing_k_between_windows_applies_from_the_next_tick() {
     }
     let report = second.report();
     assert_eq!((report.ticks, report.timed_ticks, report.steps), (4, 2, 8));
+}
+
+/// A clock of its own, so these tests do not share `NOW`: 100 ns a read.
+static EXACT: AtomicU64 = AtomicU64::new(0);
+fn exact_clock() -> u64 {
+    EXACT.fetch_add(100, Ordering::Relaxed)
+}
+
+#[test]
+fn a_serial_tick_adds_up_exactly_on_a_fake_clock() {
+    // Reads: the tick's start, the end of each of two steps, and the tick's end. The steps take
+    // 100 ns each, and the runner's own work is the 100 ns after the last step.
+    let probe: &'static TickProbe<'static> = Box::leak(Box::new(TickProbe::new(exact_clock)));
+    let mut runner = runner(2);
+    runner.set_probe(probe);
+    runner.tick().unwrap();
+    let mut sample = TickSample::default();
+    probe.take_tick(&mut sample);
+    assert_eq!(sample.steps, 2);
+    assert_eq!(sample.tick_ns, 300);
+    assert_eq!(sample.body_ns, 200);
+    assert_eq!(sample.overhead_ns(), 100);
+}
+
+#[test]
+fn a_serial_tick_on_the_best_clock_is_monotonic_and_adds_up() {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    fn fallback() -> u64 {
+        static START: OnceLock<Instant> = OnceLock::new();
+        START.get_or_init(Instant::now).elapsed().as_nanos() as u64
+    }
+    let clock: ProbeClock = best_clock(fallback);
+    let probe: &'static TickProbe<'static> = Box::leak(Box::new(TickProbe::sampled_by(clock, 1)));
+    let mut runner = runner(4);
+    runner.set_probe(probe);
+    let mut window = TickOverheadWindow::new(64);
+    let mut last_end = 0u64;
+    for _ in 0..64 {
+        runner.tick().unwrap();
+        let mut sample = TickSample::default();
+        probe.peek_tick(&mut sample);
+        // A body is inside its tick, and the tick's total is its body plus the runner's own time.
+        assert!(sample.body_ns <= sample.tick_ns, "{sample:?}");
+        assert_eq!(sample.overhead_ns(), sample.tick_ns - sample.body_ns);
+        assert_eq!(sample.steps, 4);
+        last_end = last_end.max(sample.tick_ns);
+        window.record(probe);
+    }
+    assert!(last_end > 0, "the best clock gives times");
+    assert!(window.report().p50_ns > 0);
 }

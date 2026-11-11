@@ -1,6 +1,6 @@
 //! The tick probe: relaxed-atomic time sums and counts for each tick, behind one `None` check when
-//! no probe is attached. `take_tick` moves a finished tick out. The probe never allocates, and the
-//! clock is a function the host supplies, because the runner has no clock of its own.
+//! no probe is attached. `take_tick` moves a finished tick out. The probe never allocates. Its
+//! clock is the host's function, or the platform's counter where `best_clock` finds one.
 
 use daedalus_abi::Word;
 
@@ -113,9 +113,79 @@ impl TickSample {
 /// Reads the host's clock, in nanoseconds.
 pub type ClockFn = fn() -> u64;
 
+/// Where a probe's times come from. `Host` is the host's clock function. The other variant is the
+/// platform's cheapest reading, which a probe takes where the platform allows it from user space.
+#[derive(Clone, Copy)]
+pub enum ProbeClock {
+    /// The host's clock, in nanoseconds from some fixed point.
+    Host(ClockFn),
+    /// The aarch64 virtual counter: one register read, scaled to nanoseconds by `mult`, which is
+    /// `(1e9 << 32) / frequency` for the counter's frequency.
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    Counter { mult: u64 },
+}
+
+impl ProbeClock {
+    #[inline(always)]
+    fn now(self) -> u64 {
+        match self {
+            ProbeClock::Host(clock) => clock(),
+            #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+            ProbeClock::Counter { mult } => ticks_to_ns(counter_ticks(), mult),
+        }
+    }
+}
+
+/// The cheapest clock this platform has for a probe, and `fallback` where it has none. A probe
+/// takes only differences of readings, so the clock's starting point does not matter. The
+/// counter's frequency is read here, once.
+pub fn best_clock(fallback: ClockFn) -> ProbeClock {
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    {
+        let frequency = counter_frequency();
+        if frequency != 0 {
+            let mult = ((1_000_000_000u128 << 32) / u128::from(frequency)) as u64;
+            if mult != 0 {
+                return ProbeClock::Counter { mult };
+            }
+        }
+    }
+    ProbeClock::Host(fallback)
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[inline(always)]
+fn counter_ticks() -> u64 {
+    let ticks: u64;
+    // SAFETY: `cntvct_el0` is the virtual counter. Linux lets user space read it, and the read
+    // changes no state and touches no memory.
+    unsafe {
+        core::arch::asm!("mrs {}, cntvct_el0", out(reg) ticks, options(nomem, nostack, preserves_flags))
+    };
+    ticks
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+fn counter_frequency() -> u64 {
+    let frequency: u64;
+    // SAFETY: `cntfrq_el0` holds the counter's frequency. Linux lets user space read it, and the
+    // read changes no state and touches no memory.
+    unsafe {
+        core::arch::asm!("mrs {}, cntfrq_el0", out(reg) frequency, options(nomem, nostack, preserves_flags))
+    };
+    frequency
+}
+
+/// Nanoseconds for `ticks` of a counter, with `mult` as in [`ProbeClock::Counter`].
+#[cfg(any(test, all(target_arch = "aarch64", target_os = "linux")))]
+#[inline(always)]
+fn ticks_to_ns(ticks: u64, mult: u64) -> u64 {
+    ((u128::from(ticks) * u128::from(mult)) >> 32) as u64
+}
+
 /// One graph's probe. A runner borrows it for as long as it is attached.
 pub struct TickProbe<'a> {
-    clock: ClockFn,
+    clock: ProbeClock,
     tick_ns: Sum,
     body_ns: Sum,
     steps: Sum,
@@ -132,6 +202,10 @@ pub struct TickProbe<'a> {
     running_timed: Word,
     /// Whether the tick last finished was timed.
     last_timed: Word,
+    /// Whether the tick now running runs its steps one after another. Then a step's time is the
+    /// difference of two readings and the body time is the last reading less the first, so no
+    /// step adds to it.
+    serial: Word,
     /// One per step, for the profile level. Empty means no histograms.
     histograms: &'a [StepHistogram],
 }
@@ -144,6 +218,11 @@ impl<'a> TickProbe<'a> {
     /// A probe that times every `every`th tick, and counts the steps of every tick. `every` of 1
     /// times every tick, which is what `new` does. A value of 0 is taken as 1.
     pub const fn sampled(clock: ClockFn, every: u32) -> TickProbe<'a> {
+        TickProbe::sampled_by(ProbeClock::Host(clock), every)
+    }
+
+    /// `sampled`, with the clock given as a [`ProbeClock`], such as `best_clock` returns.
+    pub const fn sampled_by(clock: ProbeClock, every: u32) -> TickProbe<'a> {
         TickProbe {
             clock,
             tick_ns: Sum::new(),
@@ -155,6 +234,7 @@ impl<'a> TickProbe<'a> {
             every: Word::new(if every == 0 { 1 } else { every }),
             running_timed: Word::new(0),
             last_timed: Word::new(0),
+            serial: Word::new(0),
             histograms: &[],
         }
     }
@@ -172,7 +252,7 @@ impl<'a> TickProbe<'a> {
     /// A probe that also fills one histogram per step.
     pub const fn with_histograms(clock: ClockFn, histograms: &'a [StepHistogram]) -> TickProbe<'a> {
         TickProbe {
-            clock,
+            clock: ProbeClock::Host(clock),
             tick_ns: Sum::new(),
             body_ns: Sum::new(),
             steps: Sum::new(),
@@ -182,45 +262,60 @@ impl<'a> TickProbe<'a> {
             every: Word::new(1),
             running_timed: Word::new(0),
             last_timed: Word::new(0),
+            serial: Word::new(0),
             histograms,
         }
     }
 
     /// Starts a tick. Returns the clock reading at its start when the tick is timed, and `None`
-    /// when it is not, in which case the clock is not read.
-    pub(crate) fn begin_tick(&self) -> Option<u64> {
+    /// when it is not, in which case the clock is not read. `serial` is true for a tick whose
+    /// steps run one after another, which is the only case where a step's time can be taken from
+    /// the readings alone.
+    pub(crate) fn begin_tick(&self, serial: bool) -> Option<u64> {
         let number = self.ticks.get();
         self.ticks.add(1);
         let timed = number.is_multiple_of(u64::from(self.every.get().max(1)));
         self.running_timed.set(u32::from(timed));
+        self.serial.set(u32::from(serial));
         timed.then(|| {
-            let now = (self.clock)();
+            let now = self.clock.now();
             self.mark.set(now);
             now
         })
     }
 
-    /// Counts a step that ran. On a timed tick it also takes the step's time: from the previous
-    /// reading to this step's end, which is the step's own call and the runner's work since the
-    /// step before it. That is one clock read a step rather than two.
+    /// Takes the time of a step that ran, on a timed tick: from the previous reading to this
+    /// step's end, which is the step's own call and the runner's work since the step before it.
+    /// That is one clock read and one store a step. A parallel tick also adds the time to the
+    /// body sum, since its steps overlap and the readings cannot be telescoped.
     pub(crate) fn add_step(&self, step: usize) {
-        self.steps.add(1);
         if self.running_timed.get() == 0 {
             return;
         }
-        let now = (self.clock)();
+        let now = self.clock.now();
         let nanos = now.saturating_sub(self.mark.get());
         self.mark.set(now);
-        self.body_ns.add(nanos);
+        if self.serial.get() == 0 {
+            self.body_ns.add(nanos);
+        }
         if let Some(histogram) = self.histograms.get(step) {
             histogram.record(nanos);
         }
     }
 
-    /// Finishes a tick that `begin_tick` started with `start`.
-    pub(crate) fn finish_tick(&self, start: Option<u64>) {
+    /// Finishes a tick that `begin_tick` started with `start`, and that called `steps` step bodies.
+    /// Every tick counts its steps, timed or not. A serial tick's body time is the last reading
+    /// less the first, which is the sum of its steps' times exactly.
+    pub(crate) fn finish_tick(&self, start: Option<u64>, steps: u32) {
+        if steps != 0 {
+            self.steps.add(u64::from(steps));
+        }
         if let Some(start) = start {
-            self.tick_ns.set((self.clock)().saturating_sub(start));
+            let end = self.clock.now();
+            self.tick_ns.set(end.saturating_sub(start));
+            if self.serial.get() != 0 {
+                self.body_ns.add(self.mark.get().saturating_sub(start));
+            }
         }
         self.last_timed.set(u32::from(start.is_some()));
         self.finished.set(1);
@@ -266,5 +361,23 @@ impl<'a> Runner<'a> {
     /// Detaches the probe.
     pub fn clear_probe(&mut self) {
         self.probe = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ticks_to_ns;
+
+    #[test]
+    fn a_counter_at_54_mhz_reads_in_nanoseconds_to_within_one() {
+        let mult = ((1_000_000_000u128 << 32) / 54_000_000) as u64;
+        assert!(ticks_to_ns(54_000_000, mult).abs_diff(1_000_000_000) <= 1);
+        assert!(ticks_to_ns(27, mult).abs_diff(500) <= 1);
+        let mut last = 0;
+        for ticks in (0..10_000u64).map(|n| n * 37) {
+            let ns = ticks_to_ns(ticks, mult);
+            assert!(ns >= last, "monotonic at {ticks}");
+            last = ns;
+        }
     }
 }

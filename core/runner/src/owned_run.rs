@@ -16,7 +16,7 @@ use crate::cancel::CancelWord;
 use crate::error::LoadError;
 use crate::fault_log::StepFault;
 use crate::owned::InlineCell;
-use crate::probe::{ClockFn, TickProbe};
+use crate::probe::{ProbeClock, TickProbe};
 use crate::reuse::{InputVersion, ReuseEntry, ReuseMemory};
 use crate::step::{Queue, SlotSpec, SlotStamp, StepMeta};
 use crate::{Memory, Pending, Plan, Runner, StepHealth};
@@ -155,7 +155,7 @@ pub fn build(
     slots: Vec<SlotSpec>,
     slot_stamps: Vec<SlotStamp>,
     host_inputs: &[u32],
-    clock: Option<ClockFn>,
+    clock: Option<ProbeClock>,
 ) -> Result<(Runner<'static>, RunBuffers), LoadError> {
     let count = steps.len();
     let words = words_for(count);
@@ -194,7 +194,7 @@ pub fn build(
         cancel: Arc::new(CancelWord::new()),
         _faults: Raw::new(vec![StepFault::EMPTY; count]),
         _progress: Raw::new((0..count).map(|_| Progress::new()).collect()),
-        probe: clock.map(|clock| Raw::new(vec![TickProbe::new(clock)])),
+        probe: clock.map(|clock| Raw::new(vec![TickProbe::sampled_by(clock, 1)])),
     };
     // SAFETY: each buffer is borrowed exactly once here, and `RunBuffers` keeps them alive until
     // the runner is gone, as the function's documentation requires of the caller.

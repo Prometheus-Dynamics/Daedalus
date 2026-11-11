@@ -91,7 +91,9 @@ pub use owned::{INLINE_BYTES, InlineCell, Untyped, place};
 #[cfg(feature = "alloc")]
 pub use owned::{TypedOps, typed_ops, typed_raw};
 pub use policy::Recovery;
-pub use probe::{ClockFn, HISTOGRAM_BUCKETS, StepHistogram, TickProbe, TickSample};
+pub use probe::{
+    ClockFn, HISTOGRAM_BUCKETS, ProbeClock, StepHistogram, TickProbe, TickSample, best_clock,
+};
 pub use reuse::{
     InputVersion, ReuseEntry, ReuseMarker, ReuseMemory, ReuseReason, ReuseRefused, check_reuse,
 };
