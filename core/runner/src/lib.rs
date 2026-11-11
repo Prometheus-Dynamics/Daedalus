@@ -408,15 +408,6 @@ impl<'a> Runner<'a> {
         self.pending_len
     }
 
-    /// Whether a pending step writes `slot`. Its value is not there yet: a host reads nothing
-    /// from the slot until the fence resolves.
-    pub fn held_back(&self, slot: u32) -> bool {
-        self.pending[..self.pending_len].iter().any(|entry| {
-            let meta = self.meta[entry.step as usize];
-            crate::spanned(self.table, meta.outputs).contains(&slot)
-        })
-    }
-
     /// Whether a step is woken for a tick that hasn't run yet.
     pub fn has_woken(&self) -> bool {
         self.dirty.iter().any(|word| *word != 0)
@@ -449,6 +440,10 @@ impl Drop for Runner<'_> {
                 let at = queue.base + (queue.head + offset) % queue.cap;
                 // SAFETY: each queued entry owns its reference, and the queue forgets it here.
                 unsafe { owned::release(&self.storage[at as usize]) };
+            }
+            if let Some(at) = self.queues[index].take_hidden() {
+                // SAFETY: the queue owned its hidden entry, and `take_hidden` forgot it.
+                unsafe { owned::release(&self.storage[at]) };
             }
             self.queues[index].head = 0;
             self.queues[index].len = 0;

@@ -48,6 +48,7 @@ impl Runner<'_> {
                 FencePoll::Ready => {
                     let index = entry.step as usize;
                     let meta: StepMeta = self.meta[index];
+                    self.show(entry);
                     for &to in crate::spanned(self.table, meta.wake) {
                         self.wake(to);
                     }
@@ -61,21 +62,34 @@ impl Runner<'_> {
         self.pending_len = kept;
     }
 
-    /// Removes what a failed step published, so no reader ever sees its work. The step's newest
-    /// value in each output it stored is the one it put there: nothing else writes that slot while
-    /// the step is pending.
-    fn take_back(&mut self, entry: Pending) {
+    /// The queues of the outputs `entry`'s step stored, by index.
+    fn stored(&self, entry: Pending) -> impl Iterator<Item = usize> + use<> {
         let meta = self.meta[entry.step as usize];
-        for (at, &slot) in crate::spanned(self.table, meta.outputs).iter().enumerate() {
-            if slot == daedalus_abi::NO_SLOT || at >= 32 || entry.kept & (1 << at) == 0 {
-                continue;
+        let outputs = crate::spanned(self.table, meta.outputs);
+        let slots = self.slots;
+        let mut found = [usize::MAX; 32];
+        for (at, &slot) in outputs.iter().enumerate().take(32) {
+            if slot != daedalus_abi::NO_SLOT && entry.kept & (1 << at) != 0 {
+                found[at] = slot as usize;
             }
-            let Some(queue) = self.queues.get_mut(slot as usize) else {
-                continue;
-            };
-            if let Some(index) = queue.take_tail() {
-                // SAFETY: the queue owned this entry, and `take_tail` removed it from the queue, so
-                // its reference is released exactly once here.
+        }
+        found.into_iter().filter(move |slot| *slot < slots)
+    }
+
+    /// Shows readers what a finished step stored while it was working.
+    fn show(&mut self, entry: Pending) {
+        let now = self.cx.now_ns;
+        for slot in self.stored(entry) {
+            self.queues[slot].show_hidden(self.storage, now);
+        }
+    }
+
+    /// Releases what a failed step stored. No reader ever saw it.
+    fn take_back(&mut self, entry: Pending) {
+        for slot in self.stored(entry) {
+            if let Some(index) = self.queues[slot].take_hidden() {
+                // SAFETY: the queue owned this entry, and `take_hidden` forgot it, so its
+                // reference is released exactly once here.
                 unsafe { crate::owned::release(&self.storage[index]) };
             }
         }
