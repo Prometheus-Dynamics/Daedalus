@@ -42,6 +42,9 @@ pub const TRANSFERS_PER_REGION: u64 = 0;
 /// A region of shaders that bind buffers is recorded with Vulkan itself into a command buffer
 /// it uses again, so nothing is allocated.
 pub const ALLOCATIONS_PER_STEP: u64 = 0;
+/// Allocations by a batch of kernel ops, recorded, submitted and waited for, once a batch of
+/// the same ops has run: the batch is a chain recorded the same way.
+pub const ALLOCATIONS_PER_KERNEL_BATCH: u64 = 0;
 
 /// A measure that is over its budget, or under one that has to be exact.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -209,4 +212,28 @@ pub fn boundaries(backend: &WgpuBackend, bytes: usize) -> Counted {
     release(upload);
     release(readback);
     counted
+}
+
+/// Allocations by one batch of `ops` kernel copies of 4 KiB, recorded, submitted and waited
+/// for, after batches of the same ops have run.
+pub fn kernel_batch(backend: &WgpuBackend, ops: usize) -> u64 {
+    use daedalus_wgpu::Storage;
+    use daedalus_wgpu::kernels::{Kernel, Kernels};
+    let kernels = Kernels::new(backend).expect("a device");
+    let (src, dst) = (
+        Storage::new(backend, 4096).expect("a buffer"),
+        Storage::new(backend, 4096).expect("a buffer"),
+    );
+    let mut count = 0;
+    for _ in 0..8 {
+        let ((), allocations) = daedalus_abi::counting::counted(|| {
+            let mut batch = kernels.batch();
+            for _ in 0..ops {
+                batch.add(Kernel::Copy, &src, &dst, 4096).expect("fits");
+            }
+            batch.submit().wait().expect("finishes");
+        });
+        count = allocations as u64;
+    }
+    count
 }

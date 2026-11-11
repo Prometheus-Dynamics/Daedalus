@@ -107,31 +107,11 @@ fn allocation(backend: &WgpuBackend) {
             counted.allocations
         );
     }
-    // The least this backend does for a submit: one op, recorded and submitted, with no
-    // region around it. What a region allocates beyond this is the region's own.
-    let kernels = Kernels::new(backend).expect("a device");
-    let (src, dst) = (
-        Storage::new(backend, 4096).expect("a buffer"),
-        Storage::new(backend, 4096).expect("a buffer"),
-    );
-    let one = |ops: usize| {
-        let mut count = 0;
-        for _ in 0..8 {
-            let ((), allocations) = daedalus_abi::counting::counted(|| {
-                let mut batch = kernels.batch();
-                for _ in 0..ops {
-                    batch.add(Kernel::Copy, &src, &dst, 4096).expect("fits");
-                }
-                batch.submit().wait().expect("finishes");
-            });
-            count = allocations;
-        }
-        count
-    };
+    // One op, recorded and submitted, with no region around it, and eight in one batch.
     println!(
         "one op recorded and submitted alone: {} allocations, eight in one batch: {}",
-        one(1),
-        one(8)
+        daedalus_gpu_budgets::kernel_batch(backend, 1),
+        daedalus_gpu_budgets::kernel_batch(backend, 8)
     );
     let (_, warm) = merged_chain(backend, 2, 4096);
     println!(

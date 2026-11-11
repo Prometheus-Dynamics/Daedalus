@@ -9,6 +9,8 @@
 //! The per-value conversions are also [`PixelSpec`]s, [`HALF_TO_F32`] and [`F32_TO_UNORM8`], so
 //! a chain of pixel bodies that includes one is still one shader.
 
+#[cfg(target_os = "linux")]
+mod chained;
 mod codec;
 mod crc;
 mod ops;

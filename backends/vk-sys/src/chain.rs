@@ -74,6 +74,7 @@ pub struct Chain {
     /// Buffers a run copies from, kept until the next run begins.
     sources: Vec<wgpu::Buffer>,
     recording: bool,
+    runs: u64,
     device: wgpu::Device,
 }
 
@@ -121,6 +122,7 @@ impl Chain {
             sources: Vec::with_capacity(copies),
             stages: stages.into(),
             recording: false,
+            runs: 0,
             device: device.clone(),
         })
     }
@@ -218,8 +220,9 @@ impl Chain {
         Ok(())
     }
 
-    /// Submits the run. Never waits for the device. On an error nothing was submitted.
-    pub fn submit(&mut self) -> Result<(), Error> {
+    /// Submits the run, and gives its number for [`Chain::is_done`]. Never waits for the
+    /// device. On an error nothing was submitted.
+    pub fn submit(&mut self) -> Result<u64, Error> {
         if !self.recording {
             return Err(Error::Range);
         }
@@ -251,7 +254,14 @@ impl Chain {
         // SAFETY: what is recorded is valid for the reasons above, and everything it uses is
         // held by this chain until `begin` or `Drop`, both of which wait for this submit first.
         unsafe { self.submitter.submit(record, &[]) }?;
-        Ok(())
+        self.runs += 1;
+        Ok(self.runs)
+    }
+
+    /// Whether run `run` has finished: a later run has begun, or nothing is running. Never
+    /// blocks.
+    pub fn is_done(&self, run: u64) -> bool {
+        run < self.runs || self.submitter.is_idle()
     }
 
     /// Whether the last run has finished. Never blocks.
