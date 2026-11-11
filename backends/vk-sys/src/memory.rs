@@ -19,6 +19,10 @@ use crate::device::Raw;
 pub enum Placement {
     /// Device memory, not mapped and not cleared. For buffers their producer writes in full.
     Device,
+    /// Device memory, not cleared, and mapped where the device's memory is the host's too: on
+    /// a GPU that shares memory with the CPU, every device-local type is host-visible. On any
+    /// other GPU it is [`Placement::Device`].
+    DeviceReachable,
     /// Host-visible memory, device-local when there is such a type. On a GPU that shares memory
     /// with the CPU, uploads and readbacks are then plain copies.
     HostMapped,
@@ -66,6 +70,15 @@ impl HostMapping {
         // SAFETY: `start + bytes.len()` is within the mapping, which is live and can't overlap
         // a Rust slice.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(start), bytes.len()) };
+        Ok(())
+    }
+
+    /// Writes `len` zero bytes at `offset`.
+    pub fn zero(&self, offset: u64, len: usize) -> Result<(), Error> {
+        let start = self.range(offset, len)?;
+        let _one = self.access.lock().unwrap_or_else(PoisonError::into_inner);
+        // SAFETY: `start + len` is within the mapping, which is live.
+        unsafe { std::ptr::write_bytes(self.ptr.add(start), 0, len) };
         Ok(())
     }
 
@@ -137,8 +150,15 @@ pub fn storage_buffer(
     };
     let host = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
     let local = vk::MemoryPropertyFlags::DEVICE_LOCAL;
+    // Shared memory: there is no device-local type the host can't see.
+    let shared = types
+        .iter()
+        .all(|ty| !ty.property_flags.contains(local) || ty.property_flags.contains(host));
     let index = match placement {
-        Placement::Device => pick(local).or_else(|| pick(vk::MemoryPropertyFlags::empty())),
+        Placement::DeviceReachable if shared => pick(host | local).or_else(|| pick(local)),
+        Placement::Device | Placement::DeviceReachable => {
+            pick(local).or_else(|| pick(vk::MemoryPropertyFlags::empty()))
+        }
         Placement::HostMapped => pick(host | local).or_else(|| pick(host)),
         Placement::HostCached => pick(host | vk::MemoryPropertyFlags::HOST_CACHED)
             .or_else(|| pick(host | local))
@@ -176,7 +196,15 @@ pub fn storage_buffer(
         return Err(error.into());
     }
     let mut mapped = None;
-    if placement != Placement::Device {
+    let visible = types
+        .get(index)
+        .is_some_and(|ty| ty.property_flags.contains(host));
+    let map = match placement {
+        Placement::Device => false,
+        Placement::DeviceReachable => shared && visible,
+        Placement::HostMapped | Placement::HostCached => true,
+    };
+    if map {
         // SAFETY: host-visible memory, mapped once and never unmapped before it is freed.
         let map =
             unsafe { vk_device.map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()) };

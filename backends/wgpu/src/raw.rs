@@ -57,6 +57,6 @@ impl Storage {
     /// The Vulkan buffer behind this one, for a raw recording to bind. `None` off Vulkan. The
     /// storage has to outlive every submit that uses the handle.
     pub fn raw_buffer(&self) -> Option<vk::Buffer> {
-        daedalus_vk_sys::memory::handle(&self.buffer)
+        daedalus_vk_sys::memory::handle(self.buffer())
     }
 }

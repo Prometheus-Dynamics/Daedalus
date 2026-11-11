@@ -316,7 +316,7 @@ impl ImageCopy {
             ));
         }
         let source = |offset, bytes_per_row: Option<u64>, rows: u32| wgpu::TexelCopyBufferInfo {
-            buffer: &buffer.buffer,
+            buffer: buffer.buffer(),
             layout: wgpu::TexelCopyBufferLayout {
                 offset,
                 bytes_per_row: bytes_per_row.map(|bytes| bytes as u32),

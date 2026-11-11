@@ -74,7 +74,7 @@ pub(crate) struct Context {
     /// Buffers of device memory nothing has cleared, let go by their last holder and kept to be
     /// handed out again: allocating device memory is slow on some devices.
     #[cfg(target_os = "linux")]
-    spare: Mutex<Vec<wgpu::Buffer>>,
+    spare: Mutex<Vec<Spare>>,
     /// Regions that record with Vulkan itself, for a wait to cover their work too.
     #[cfg(target_os = "linux")]
     chains: Mutex<Vec<Weak<Mutex<daedalus_vk_sys::chain::Chain>>>>,
@@ -83,6 +83,10 @@ pub(crate) struct Context {
 /// Bytes the queue may hold for writing before it is submitted. A 16 MiB write alone is over the
 /// budget, so it is submitted with the write that made it.
 const WRITE_BUDGET: u64 = 8 << 20;
+
+/// A buffer kept to hand out again, with its mapping where it has one.
+#[cfg(target_os = "linux")]
+pub(crate) type Spare = (wgpu::Buffer, Option<daedalus_vk_sys::memory::HostMapping>);
 
 /// The most buffers kept to hand out again, and the most bytes they hold together.
 #[cfg(target_os = "linux")]
@@ -271,23 +275,23 @@ impl Context {
 
     /// Keeps a buffer of uncleared device memory that its last holder let go.
     #[cfg(target_os = "linux")]
-    pub(crate) fn keep_spare(&self, buffer: wgpu::Buffer) {
+    pub(crate) fn keep_spare(&self, kept: Spare) {
         if self.is_lost() {
             return;
         }
         let mut spare = self.spare.lock().unwrap_or_else(PoisonError::into_inner);
-        let held: u64 = spare.iter().map(wgpu::Buffer::size).sum();
-        if spare.len() < SPARE_BUFFERS && held + buffer.size() <= SPARE_BYTES {
-            spare.push(buffer);
+        let held: u64 = spare.iter().map(|(buffer, _)| buffer.size()).sum();
+        if spare.len() < SPARE_BUFFERS && held + kept.0.size() <= SPARE_BYTES {
+            spare.push(kept);
         }
     }
 
     /// A kept buffer of exactly `size` bytes, if there is one and the device has finished
     /// everything it was given: then nothing still reads or writes a buffer that was let go.
     #[cfg(target_os = "linux")]
-    pub(crate) fn take_spare(&self, size: u64) -> Option<wgpu::Buffer> {
+    pub(crate) fn take_spare(&self, size: u64) -> Option<Spare> {
         let mut spare = self.spare.lock().unwrap_or_else(PoisonError::into_inner);
-        let at = spare.iter().position(|buffer| buffer.size() == size)?;
+        let at = spare.iter().position(|(buffer, _)| buffer.size() == size)?;
         let idle = self
             .device
             .poll(wgpu::PollType::Poll)

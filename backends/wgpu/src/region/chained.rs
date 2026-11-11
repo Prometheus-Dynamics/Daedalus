@@ -99,11 +99,11 @@ impl RegionStep {
                 for (arg, bound) in args.iter_mut().zip(bound) {
                     *arg = match *bound {
                         Bound::Storage(storage) => Arg::Storage {
-                            buffer: &storage.buffer,
+                            buffer: storage.buffer(),
                             size: storage.size,
                         },
                         Bound::Uniform(bytes) => Arg::Bytes(bytes),
-                        Bound::UniformFrom(storage) => Arg::Copy(&storage.buffer),
+                        Bound::UniformFrom(storage) => Arg::Copy(storage.buffer()),
                         Bound::Texture(_) | Bound::Sampler => {
                             return Err((at, "a chained region binds only buffers".into()));
                         }

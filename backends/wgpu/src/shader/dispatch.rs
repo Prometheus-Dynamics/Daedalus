@@ -243,7 +243,7 @@ impl Shader {
                         return Err(self.mismatch(at, "the buffer is on another device"));
                     }
                     let whole = wgpu::BufferBinding {
-                        buffer: &storage.buffer,
+                        buffer: storage.buffer(),
                         offset: 0,
                         size: std::num::NonZeroU64::new(storage.size),
                     };
@@ -483,7 +483,7 @@ impl Shader {
             ) = (&binding.kind, bound, owned)
             {
                 let bytes = u64::from(*size).next_multiple_of(4);
-                encoder.copy_buffer_to_buffer(&storage.buffer, 0, buffer, 0, bytes);
+                encoder.copy_buffer_to_buffer(storage.buffer(), 0, buffer, 0, bytes);
             }
         }
     }
