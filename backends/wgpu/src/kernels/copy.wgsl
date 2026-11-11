@@ -20,9 +20,9 @@ fn keep(lane: u32, rest: u32) -> u32 {
     return (1u << ((rest - first) * 8u)) - 1u;
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn copy_quads(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let t = gid.x + gid.y * groups.x * 64u;
+    let t = gid.x + gid.y * groups.x * WG;
     if (t >= params.threads) {
         return;
     }

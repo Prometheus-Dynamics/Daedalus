@@ -92,10 +92,12 @@ fn seven_ops_batch_into_one_pass_and_one_submit() {
         batch.submit()
     });
     ticket.wait().expect("finishes");
+    // A copy whose length isn't a whole number of vectors is two dispatches: the vector copy of
+    // the whole vectors, and the word copy of the tail. The 9001-byte copy is that case.
     assert_eq!(
         (counted.dispatches, counted.passes, counted.submits),
-        (7, 1, 1),
-        "seven ops, one pass, one submit"
+        (8, 1, 1),
+        "seven ops (eight dispatches, the odd copy's tail is one more), one pass, one submit"
     );
     assert_eq!(counted.pipelines, 0, "nothing is built by a warm run");
     for (kernel, n, input, _, dst) in &work {

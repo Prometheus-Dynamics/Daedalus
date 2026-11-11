@@ -22,8 +22,6 @@ struct Params {
 // The CRC-32 table.
 @group(0) @binding(4) var<storage, read> table: array<u32>;
 
-const WG: u32 = 64u;
-
 fn thread_index(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
     return gid.x + gid.y * groups.x * WG;
 }
@@ -42,7 +40,7 @@ fn tail_mask(t: u32, word: u32) -> u32 {
     return word & ((1u << (keep * 8u)) - 1u);
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn f32_from_le(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
@@ -50,14 +48,14 @@ fn f32_from_le(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workg
     dst[t] = src[t];
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn f16_to_f32(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
     dst[t] = half_to_f32_bits((src[t >> 1u] >> ((t & 1u) * 16u)) & 0xffffu);
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn f32_to_unorm8(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
@@ -71,23 +69,24 @@ fn f32_to_unorm8(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_wor
     dst[t] = word;
 }
 
-// Eight words an invocation, not one: a word-a-thread copy of 4 MiB is a million invocations, and
-// the device spends its time starting them. `threads` counts the invocations, and the last of
-// them may have fewer words to write.
-@compute @workgroup_size(64)
+// Four words an invocation: the measured best of 1 to 16 on the CM5 at 256 a workgroup. Word
+// `params.unused` is the first one copied, so a copy can start past a vector prefix (the tail of
+// a length that isn't a whole number of vectors). `threads` counts the invocations, and the last
+// of them may have fewer words to write.
+@compute @workgroup_size(WG)
 fn copy_words(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
     let words = (params.out_len + 3u) / 4u;
-    for (var k = 0u; k < 8u; k++) {
-        let w = t * 8u + k;
+    for (var k = 0u; k < 4u; k++) {
+        let w = params.unused + t * 4u + k;
         if (w < words) {
             dst[w] = tail_mask(w, src[w]);
         }
     }
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn hex_lower(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
@@ -99,7 +98,7 @@ fn hex_lower(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgro
     dst[t] = tail_mask(t, word);
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn base64_encode(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
@@ -140,7 +139,7 @@ fn b64_group(g: u32, pad: u32, last: u32) -> u32 {
     return x;
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn base64_decode(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
@@ -176,7 +175,7 @@ const CRC_CHUNK: u32 = 4096u;
 
 // The CRC-32 of each 4 KiB chunk: invocation t takes the bytes from 4096t. The host combines
 // them.
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn crc32_chunks(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }

@@ -21,9 +21,9 @@ struct Params {
 
 // Four output vectors for forty-eight input bytes: three input vectors, sixteen groups of
 // three bytes, four symbols each. Counts that are multiples of 48 have no padded group.
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn base64_encode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let t = gid.x + gid.y * groups.x * 64u;
+    let t = gid.x + gid.y * groups.x * WG;
     if (t >= params.threads) { return; }
     let v0 = src[3u * t];
     let v1 = src[3u * t + 1u];
@@ -122,9 +122,9 @@ fn byte_w(i: u32) -> u32 {
     return (src[i / 16u][(i % 16u) / 4u] >> ((i % 4u) * 8u)) & 0xffu;
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(WG)
 fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
-    let t = gid.x + gid.y * groups.x * 64u;
+    let t = gid.x + gid.y * groups.x * WG;
     if (t >= params.threads) { return; }
     let n = params.n;
     let last = n / 4u - 1u;

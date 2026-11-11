@@ -142,6 +142,26 @@ pub fn run(backend: &WgpuBackend) {
             ms(cpu_time)
         );
     }
+    // A copy of 4 MiB and four bytes: the vector copy over the whole vectors, then a word copy of
+    // the tail. An odd length costs what an even one does.
+    {
+        let n = INPUT + 4;
+        let input = pattern(n as usize, 7);
+        let src = Storage::new(backend, word_size(n)).expect("a buffer");
+        src.write(0, &input).expect("in range");
+        let dst = Storage::new(backend, word_size(n)).expect("a buffer");
+        let copied = median(WARM, RUNS, || {
+            kernels
+                .run(Kernel::Copy, &src, &dst, n)
+                .expect("runs")
+                .wait()
+                .expect("finishes");
+        });
+        println!(
+            "Copy, 4 MiB + 4 bytes (vector prefix, word tail): submit to done {:.3} ms",
+            ms(copied)
+        );
+    }
     // Diagnostic: a decode of one invocation, to see the host path's share of the 4 MiB decode.
     {
         let text = cpu::base64_encode(&pattern(48, 9)).into_bytes();

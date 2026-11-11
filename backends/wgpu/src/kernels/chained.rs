@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use daedalus_vk_sys::chain::{Arg, Chain};
 
-use super::ops::{Kernels, SPECS};
+use super::ops::Kernels;
 use super::{Kernel, KernelError};
 use crate::buffer::Storage;
 use crate::fence::{Ticket, chain_ticket};
@@ -75,25 +75,28 @@ pub(crate) fn add(
     if elsewhere {
         return Err(KernelError::Size("a buffer is on another device".into()));
     }
-    let Some((params, counts, spec)) = kernels.plan(kernel, src, dst, n)? else {
-        return Ok(());
-    };
     let whole = |storage: &Storage| Some((storage.buffer().clone(), storage.size));
-    // Plain bindings first, then the extras: contiguous, so the flattened list is in binding order.
-    let mut buffers = [const { None }; MAX_OP_BUFFERS];
-    let all = [whole(src), whole(dst), whole(&params)];
-    for (slot, buffer) in buffers
-        .iter_mut()
-        .zip(all.into_iter().chain(extras.iter().map(|e| whole(e))))
+    for (params, counts, spec) in kernels
+        .plan_parts(kernel, src, dst, n)?
+        .into_iter()
+        .flatten()
     {
-        *slot = buffer;
+        // Plain bindings first, then the extras: contiguous, so the flattened list is in binding order.
+        let mut buffers = [const { None }; MAX_OP_BUFFERS];
+        let all = [whole(src), whole(dst), whole(&params)];
+        for (slot, buffer) in buffers
+            .iter_mut()
+            .zip(all.into_iter().chain(extras.iter().map(|e| whole(e))))
+        {
+            *slot = buffer;
+        }
+        ops.push(Op {
+            kernel,
+            spec,
+            buffers,
+            counts,
+        });
     }
-    ops.push(Op {
-        kernel,
-        spec,
-        buffers,
-        counts,
-    });
     Ok(())
 }
 
@@ -102,7 +105,7 @@ impl Chains {
     pub(crate) fn begin(&self, kernels: &Kernels) -> Option<Vec<Op>> {
         let able = *self.able.get_or_init(|| {
             let context = &kernels.context;
-            let copy = &SPECS[Kernel::Copy.index()];
+            let copy = kernels.specs[Kernel::Copy.index()];
             context.shaders().chained(&context.device, copy).is_some()
         });
         if !able {
@@ -133,7 +136,7 @@ impl Chains {
         }
         let mut pipelines = Vec::with_capacity(ops.len());
         for op in ops {
-            let spec = &SPECS[op.spec];
+            let spec = kernels.specs[op.spec];
             let built = context.shaders().chained(&context.device, spec);
             pipelines.push(built.ok_or_else(|| format!("`{}` can't be built", spec.name))?);
         }
