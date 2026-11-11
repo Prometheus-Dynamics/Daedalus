@@ -16,7 +16,7 @@ pub struct Apis(u8);
 
 impl Apis {
     pub const VULKAN: Apis = Apis(1);
-    pub const METAL: Apis = Apis(2);
+    pub(crate) const METAL: Apis = Apis(2);
     pub const DX12: Apis = Apis(4);
     pub const GL: Apis = Apis(8);
     pub const ALL: Apis = Apis(15);

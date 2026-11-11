@@ -17,19 +17,19 @@ impl Fourcc {
     /// One channel, 8 bits.
     pub const R8: Fourcc = Fourcc::from_bytes(*b"R8  ");
     /// Two channels, 8 bits each: R then G in memory.
-    pub const GR88: Fourcc = Fourcc::from_bytes(*b"GR88");
+    pub(crate) const GR88: Fourcc = Fourcc::from_bytes(*b"GR88");
     /// B, G, R, X in memory.
-    pub const XRGB8888: Fourcc = Fourcc::from_bytes(*b"XR24");
+    pub(crate) const XRGB8888: Fourcc = Fourcc::from_bytes(*b"XR24");
     /// B, G, R, A in memory.
-    pub const ARGB8888: Fourcc = Fourcc::from_bytes(*b"AR24");
+    pub(crate) const ARGB8888: Fourcc = Fourcc::from_bytes(*b"AR24");
     /// R, G, B, X in memory.
-    pub const XBGR8888: Fourcc = Fourcc::from_bytes(*b"XB24");
+    pub(crate) const XBGR8888: Fourcc = Fourcc::from_bytes(*b"XB24");
     /// R, G, B, A in memory.
     pub const ABGR8888: Fourcc = Fourcc::from_bytes(*b"AB24");
     /// A full-size Y plane, then a half-size plane of interleaved U and V.
     pub const NV12: Fourcc = Fourcc::from_bytes(*b"NV12");
     /// Three planes: Y, then quarter-size U and V.
-    pub const YUV420: Fourcc = Fourcc::from_bytes(*b"YU12");
+    pub(crate) const YUV420: Fourcc = Fourcc::from_bytes(*b"YU12");
 
     pub const fn to_bytes(self) -> [u8; 4] {
         self.0.to_le_bytes()
@@ -186,7 +186,7 @@ pub struct Layout {
 }
 
 impl Described<'_> {
-    pub fn is_linear(&self) -> bool {
+    pub(crate) fn is_linear(&self) -> bool {
         self.modifier.is_none_or(|modifier| modifier == MOD_LINEAR)
     }
 
