@@ -238,7 +238,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         // `slots` and `cx` are exclusive to this call, and they stay valid until it returns.
         let end = unsafe { run(data, &mut slots, cx) };
         if let Some(probe) = probe {
-            probe.add_step(index, probe.now());
+            probe.add_step(index);
         }
         let health = env.health(index);
         health.calls = health.calls.saturating_add(1);

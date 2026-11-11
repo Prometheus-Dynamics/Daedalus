@@ -1,6 +1,7 @@
 //! The CPU timings a board run records. It runs on boards and by hand, not in the gate:
 //! `cargo run --release -p daedalus-cpu-timings -- SECTION [BATCHES] [LIBRARY]`, with the
-//! sections `host_round_trip`, `host_idle_step`, `probe_off`, `probe_on`, `clock_read` and `plugin_tick`.
+//! sections `host_round_trip`, `host_idle_step`, `probe_off`, `probe_on`, `probe_sampled` (with
+//! EVERY as the third argument), `clock_read` and `plugin_tick`.
 //!
 //! Each section warms up, then times BATCHES batches of operations and prints the median of the
 //! per-operation times of the batches, in nanoseconds. A batch is 1,000 operations, so the clock's
@@ -154,7 +155,13 @@ fn probe_off(batches: usize) {
 /// window's figures for the last batch are printed too: `overhead_ns` is the tick time outside the
 /// step bodies.
 fn probe_on(batches: usize) {
-    let probe: &'static TickProbe<'static> = Box::leak(Box::new(TickProbe::new(clock)));
+    probe_every(batches, 1);
+}
+
+/// The chain with a probe timing every `every`th tick. The window records every tick, so its
+/// step count is exact and its timing figures are over the timed ticks it holds.
+fn probe_every(batches: usize, every: u32) {
+    let probe: &'static TickProbe<'static> = Box::leak(Box::new(TickProbe::sampled(clock, every)));
     let mut host = chain(16, Stage::Plain, false);
     host.host().runner().set_probe(probe);
     let mut window = TickOverheadWindow::new(PER_BATCH as usize);
@@ -164,11 +171,17 @@ fn probe_on(batches: usize) {
         assert_eq!(chain_tick(&mut host, value), value.wrapping_add(16));
         window.record(probe);
     });
-    report("probe_on", &times);
+    report(&format!("probe_every_{every}"), &times);
     let figures = window.report();
     println!(
-        "probe_on window ticks {} p50_tick_ns {} p99_tick_ns {} mean_tick_ns {:.1} mean_overhead_ns {:.1}",
-        figures.ticks, figures.p50_ns, figures.p99_ns, figures.mean_ns, figures.mean_overhead_ns
+        "probe_every_{every} window ticks {} timed_ticks {} steps {} p50_tick_ns {} p99_tick_ns {} mean_tick_ns {:.1} mean_overhead_ns {:.1}",
+        figures.ticks,
+        figures.timed_ticks,
+        figures.steps,
+        figures.p50_ns,
+        figures.p99_ns,
+        figures.mean_ns,
+        figures.mean_overhead_ns
     );
 }
 
@@ -204,6 +217,12 @@ fn main() {
         "host_idle_step" => idle_step(batches),
         "probe_off" => probe_off(batches),
         "probe_on" => probe_on(batches),
+        "probe_sampled" => {
+            let every = args
+                .get(2)
+                .map_or(1, |text| text.parse().expect("EVERY is a number"));
+            probe_every(batches, every);
+        }
         "clock_read" => clock_read(batches),
         "plugin_tick" => {
             let library = args.get(2).expect("plugin_tick needs the library's path");

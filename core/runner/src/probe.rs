@@ -89,6 +89,9 @@ impl StepHistogram {
 /// The finished figures of one tick, or of a tick still being measured.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TickSample {
+    /// Whether this tick was timed. A tick the probe skipped has no clock readings: its `tick_ns`
+    /// and `body_ns` are zero, and only `steps` is counted.
+    pub timed: bool,
     /// The whole tick.
     pub tick_ns: u64,
     /// Time inside step bodies, measured from one step's end to the next: each step's own call,
@@ -121,12 +124,26 @@ pub struct TickProbe<'a> {
     mark: Sum,
     /// Set when a tick has finished and not yet been taken.
     finished: Word,
+    /// Ticks begun. Tick `n` is timed when `n` is a multiple of `every`.
+    ticks: Sum,
+    /// How often a tick is timed: every `every`th tick. Always at least 1.
+    every: Word,
+    /// Whether the tick now running is timed.
+    running_timed: Word,
+    /// Whether the tick last finished was timed.
+    last_timed: Word,
     /// One per step, for the profile level. Empty means no histograms.
     histograms: &'a [StepHistogram],
 }
 
 impl<'a> TickProbe<'a> {
     pub const fn new(clock: ClockFn) -> TickProbe<'a> {
+        TickProbe::sampled(clock, 1)
+    }
+
+    /// A probe that times every `every`th tick, and counts the steps of every tick. `every` of 1
+    /// times every tick, which is what `new` does. A value of 0 is taken as 1.
+    pub const fn sampled(clock: ClockFn, every: u32) -> TickProbe<'a> {
         TickProbe {
             clock,
             tick_ns: Sum::new(),
@@ -134,8 +151,22 @@ impl<'a> TickProbe<'a> {
             steps: Sum::new(),
             mark: Sum::new(),
             finished: Word::new(0),
+            ticks: Sum::new(),
+            every: Word::new(if every == 0 { 1 } else { every }),
+            running_timed: Word::new(0),
+            last_timed: Word::new(0),
             histograms: &[],
         }
+    }
+
+    /// Changes how often ticks are timed, from the next tick on. Zero is taken as one.
+    pub fn set_every(&self, every: u32) {
+        self.every.set(every.max(1));
+    }
+
+    /// How often ticks are timed.
+    pub fn every(&self) -> u32 {
+        self.every.get()
     }
 
     /// A probe that also fills one histogram per step.
@@ -147,34 +178,51 @@ impl<'a> TickProbe<'a> {
             steps: Sum::new(),
             mark: Sum::new(),
             finished: Word::new(0),
+            ticks: Sum::new(),
+            every: Word::new(1),
+            running_timed: Word::new(0),
+            last_timed: Word::new(0),
             histograms,
         }
     }
 
-    pub(crate) fn now(&self) -> u64 {
-        (self.clock)()
+    /// Starts a tick. Returns the clock reading at its start when the tick is timed, and `None`
+    /// when it is not, in which case the clock is not read.
+    pub(crate) fn begin_tick(&self) -> Option<u64> {
+        let number = self.ticks.get();
+        self.ticks.add(1);
+        let timed = number.is_multiple_of(u64::from(self.every.get().max(1)));
+        self.running_timed.set(u32::from(timed));
+        timed.then(|| {
+            let now = (self.clock)();
+            self.mark.set(now);
+            now
+        })
     }
 
-    /// Starts a tick at clock reading `now`.
-    pub(crate) fn begin_tick(&self, now: u64) {
-        self.mark.set(now);
-    }
-
-    /// Counts a step that ran, which ended at clock reading `now`. The step's time is from the
-    /// previous reading to this one: the step's own call, and the runner's work since the step
-    /// before it. That is one clock read a step rather than two.
-    pub(crate) fn add_step(&self, step: usize, now: u64) {
+    /// Counts a step that ran. On a timed tick it also takes the step's time: from the previous
+    /// reading to this step's end, which is the step's own call and the runner's work since the
+    /// step before it. That is one clock read a step rather than two.
+    pub(crate) fn add_step(&self, step: usize) {
+        self.steps.add(1);
+        if self.running_timed.get() == 0 {
+            return;
+        }
+        let now = (self.clock)();
         let nanos = now.saturating_sub(self.mark.get());
         self.mark.set(now);
         self.body_ns.add(nanos);
-        self.steps.add(1);
         if let Some(histogram) = self.histograms.get(step) {
             histogram.record(nanos);
         }
     }
 
-    pub(crate) fn finish_tick(&self, nanos: u64) {
-        self.tick_ns.set(nanos);
+    /// Finishes a tick that `begin_tick` started with `start`.
+    pub(crate) fn finish_tick(&self, start: Option<u64>) {
+        if let Some(start) = start {
+            self.tick_ns.set((self.clock)().saturating_sub(start));
+        }
+        self.last_timed.set(u32::from(start.is_some()));
         self.finished.set(1);
     }
 
@@ -190,11 +238,13 @@ impl<'a> TickProbe<'a> {
         self.body_ns.set(0);
         self.steps.set(0);
         self.finished.set(0);
+        self.last_timed.set(0);
     }
 
     /// Copies the current figures into `sample`, leaving the probe as it is.
     pub fn peek_tick(&self, sample: &mut TickSample) {
         *sample = TickSample {
+            timed: self.last_timed.get() != 0,
             tick_ns: self.tick_ns.get(),
             body_ns: self.body_ns.get(),
             steps: self.steps.get() as u32,
