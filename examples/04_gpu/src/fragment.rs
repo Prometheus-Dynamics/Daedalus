@@ -47,7 +47,7 @@ pub fn on_cpu(pixels: &[u32]) -> Vec<u32> {
         .collect()
 }
 
-/// Runs the chain on the GPU. Returns the mask, and how many passes the device ran for it.
+/// Runs the chain on the GPU. Returns the mask, and how many times a shader ran for it.
 pub fn on_gpu(pixels: &[u32]) -> Result<(Vec<u32>, u64), String> {
     let gpu = gpu()?;
     let mut loaded = load(
@@ -56,7 +56,7 @@ pub fn on_gpu(pixels: &[u32]) -> Result<(Vec<u32>, u64), String> {
         &gpu,
     )?;
     let passes =
-        |gpu: &daedalus_wgpu::WgpuBackend| gpu.shader_stats().map_or(0, |stats| stats.passes);
+        |gpu: &daedalus_wgpu::WgpuBackend| gpu.shader_stats().map_or(0, |stats| stats.dispatches);
     let before = passes(&gpu);
     let host = loaded.host();
     host.feed_typed("pixels", Arc::new(Words::new(pixels)))
@@ -74,12 +74,12 @@ pub fn run() -> Result<String, String> {
     }
     if passes != 1 {
         return Err(format!(
-            "three per-pixel nodes ran as {passes} passes, not one"
+            "three per-pixel nodes ran as {passes} shaders, not one"
         ));
     }
     let lit = mask.iter().filter(|c| **c == 255).count();
     Ok(format!(
-        "fragment: three per-pixel nodes ran as {passes} pass over {} pixels, {lit} are lit, as on the CPU\n",
+        "fragment: three per-pixel nodes ran as {passes} shader over {} pixels, {lit} are lit, as on the CPU\n",
         mask.len()
     ))
 }

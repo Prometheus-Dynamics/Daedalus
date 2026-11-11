@@ -352,9 +352,29 @@ fn two_ops_in_one_encoder_each_see_their_own_counts() {
         .unwrap();
     kernels.submit(encoder).wait().expect("finishes");
     let after = backend.shader_stats().expect("open");
+    // Recorded one at a time into a caller's encoder, each op is a pass of its own.
     assert_eq!(
-        (after.passes - before.passes, after.submits - before.submits),
-        (2, 1)
+        (
+            after.dispatches - before.dispatches,
+            after.passes - before.passes,
+            after.submits - before.submits
+        ),
+        (2, 2, 1)
+    );
+    // A batch shares one pass, and each op still sees its own counts.
+    let before = backend.shader_stats().expect("open");
+    let mut batch = kernels.batch();
+    batch.add(Kernel::HexLower, &src_a, &dst_a, 40).unwrap();
+    batch.add(Kernel::HexLower, &src_b, &dst_b, 7).unwrap();
+    batch.submit().wait().expect("finishes");
+    let after = backend.shader_stats().expect("open");
+    assert_eq!(
+        (
+            after.dispatches - before.dispatches,
+            after.passes - before.passes,
+            after.submits - before.submits
+        ),
+        (2, 1, 1)
     );
     assert_eq!(read(&dst_a, 80), r::hex_lower(&a));
     assert_eq!(read(&dst_b, 14), r::hex_lower(&b));

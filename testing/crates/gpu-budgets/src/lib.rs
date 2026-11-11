@@ -1,4 +1,4 @@
-//! The GPU budgets that are counted, not timed: how many submits, passes, pipelines, transfers
+//! The GPU budgets that are counted, not timed: how many submits, passes, shader runs, pipelines, transfers
 //! and allocations the wgpu backend makes for a piece of work. Each is a constant here, and
 //! `tests/budgets.rs` measures the backend against it on whatever device the lane has, which in
 //! CI is lavapipe. A count doesn't depend on the device's speed, so it is the same everywhere.
@@ -22,11 +22,13 @@ use daedalus_wgpu_conformance::{AFFINE, Counted, In, Net, filled, measure, port,
 
 /// A region is one submit, whatever is in it.
 pub const SUBMITS_PER_REGION: u64 = 1;
-/// A whole-shader node is one pass.
-pub const PASSES_PER_SHADER_NODE: u64 = 1;
-/// A chain of pixel bodies is one pass, whatever its length.
-pub const PASSES_PER_MERGED_CHAIN: u64 = 1;
-/// And one pipeline, built once.
+/// A region of shader nodes is one compute pass: its nodes' dispatches share it.
+pub const PASSES_PER_REGION: u64 = 1;
+/// A whole-shader node runs once.
+pub const DISPATCHES_PER_SHADER_NODE: u64 = 1;
+/// A chain of pixel bodies runs once, whatever its length.
+pub const DISPATCHES_PER_MERGED_CHAIN: u64 = 1;
+/// And is one pipeline, built once.
 pub const PIPELINES_PER_MERGED_CHAIN: u64 = 1;
 /// Running builds nothing: every pipeline is built when the region compiles.
 pub const PIPELINES_PER_RUN: u64 = 0;
@@ -37,12 +39,12 @@ pub const DOWNLOADS_PER_BOUNDARY: u64 = 1;
 /// A region moves nothing between the host and the device by itself.
 pub const TRANSFERS_PER_REGION: u64 = 0;
 /// Allocations by one run of a region's step after warm-up: at most this many, and
-/// [`ALLOCATIONS_PER_PASS`] more for each pass. They are inside wgpu, which allocates for every
-/// encoder, pass and submit. The design's goal is none, and these are what is true today. The
-/// count moves by one or two from run to run, as wgpu's own tables grow, so this is a ceiling
-/// with [`ALLOCATION_SLACK`] of room over what is usually measured.
-pub const ALLOCATIONS_PER_STEP: u64 = 24;
-pub const ALLOCATIONS_PER_PASS: u64 = 10;
+/// [`ALLOCATIONS_PER_DISPATCH`] more for each shader run. They are inside wgpu, which allocates
+/// for an encoder, a pass and a submit. The count moves by one or two from run to run, as
+/// wgpu's own tables grow, so this is a ceiling with [`ALLOCATION_SLACK`] of room over what is
+/// usually measured.
+pub const ALLOCATIONS_PER_STEP: u64 = 32;
+pub const ALLOCATIONS_PER_DISPATCH: u64 = 2;
 pub const ALLOCATION_SLACK: u64 = 4;
 
 /// A measure that is over its budget, or under one that has to be exact.
@@ -88,10 +90,12 @@ pub fn at_most(what: &'static str, measured: u64, budget: u64) -> Result<(), Mis
     }
 }
 
-/// What a region may ask of the device in one run, by how many passes it has.
-pub fn region(counted: &Counted, passes: u64) -> Result<(), Miss> {
+/// What a region of shader nodes may ask of the device in one run, by how many times a
+/// shader runs in it.
+pub fn region(counted: &Counted, dispatches: u64) -> Result<(), Miss> {
     exactly("submits per region", counted.submits, SUBMITS_PER_REGION)?;
-    exactly("passes per region", counted.passes, passes)?;
+    exactly("passes per region", counted.passes, PASSES_PER_REGION)?;
+    exactly("shader runs per region", counted.dispatches, dispatches)?;
     exactly(
         "pipelines built by a run",
         counted.pipelines,
@@ -105,7 +109,7 @@ pub fn region(counted: &Counted, passes: u64) -> Result<(), Miss> {
     at_most(
         "allocations per step",
         counted.allocations,
-        ALLOCATIONS_PER_STEP + ALLOCATIONS_PER_PASS * passes,
+        ALLOCATIONS_PER_STEP + ALLOCATIONS_PER_DISPATCH * dispatches,
     )
 }
 

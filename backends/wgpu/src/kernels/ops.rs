@@ -9,7 +9,7 @@ use crate::buffer::Storage;
 use crate::context::Context;
 use crate::fence::{Ticket, TicketState};
 use crate::record::RecordCx;
-use crate::shader::{BindingKind, BindingSpec, Bound, Dispatch, Shader, ShaderSpec};
+use crate::shader::{BindingKind, BindingSpec, Bound, Dispatch, OpenPass, Shader, ShaderSpec};
 
 const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("kernels.wgsl"));
 const WORKGROUP: u32 = 64;
@@ -169,12 +169,20 @@ impl Kernels {
         if kernel == Kernel::Crc32Chunks {
             return self.encode_crc32_chunks(encoder, src, dst, n);
         }
-        self.encode_with(encoder, kernel, src, dst, n, None)
+        self.encode_with(
+            (&mut OpenPass::default(), encoder),
+            kernel,
+            src,
+            dst,
+            n,
+            None,
+        )
     }
 
+    /// Records one op into `into`: the pass kept open, and the encoder it is in.
     pub(super) fn encode_with(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        (open, encoder): (&mut OpenPass, &mut wgpu::CommandEncoder),
         kernel: Kernel,
         src: &Storage,
         dst: &Storage,
@@ -222,8 +230,18 @@ impl Kernels {
             None => &plain,
         };
         shader
-            .encode_sized(encoder, bound, [x as u32, y as u32, 1])
+            .encode_sized_in(open, encoder, bound, [x as u32, y as u32, 1])
             .map_err(KernelError::Shader)
+    }
+
+    /// Several ops recorded together: one pass for all of them, and one submit. This is the
+    /// cheapest way to run more than one op, on every device.
+    pub fn batch(&self) -> Batch<'_> {
+        Batch {
+            open: OpenPass::default(),
+            encoder: self.encoder(),
+            kernels: self,
+        }
     }
 
     /// An encoder on this device, to record ops into.
@@ -288,5 +306,49 @@ impl Kernels {
             encoder.copy_buffer_to_buffer(&src.buffer, 0, &dst.buffer, 0, n);
         }
         Ok(())
+    }
+}
+
+/// Ops being recorded together. They share one compute pass, and [`Batch::submit`] submits
+/// them all at once.
+pub struct Batch<'k> {
+    /// Declared before the encoder: the pass ends before the encoder is finished or dropped.
+    open: OpenPass,
+    encoder: wgpu::CommandEncoder,
+    kernels: &'k Kernels,
+}
+
+impl Batch<'_> {
+    /// Records `kernel` over `n` elements of `src` into `dst`. Base64 decode isn't batched: it
+    /// reports a length, which [`Kernels::base64_decode`] reads.
+    pub fn add(
+        &mut self,
+        kernel: Kernel,
+        src: &Storage,
+        dst: &Storage,
+        n: u64,
+    ) -> Result<(), KernelError> {
+        match kernel {
+            Kernel::Base64Decode => Err(KernelError::Size(
+                "base64 decode reports a length: run it with `base64_decode`".into(),
+            )),
+            Kernel::Crc32Chunks => {
+                let table = self.kernels.crc_table()?;
+                let (open, encoder) = (&mut self.open, &mut self.encoder);
+                self.kernels
+                    .encode_with((open, encoder), kernel, src, dst, n, Some(table))
+            }
+            _ => {
+                let (open, encoder) = (&mut self.open, &mut self.encoder);
+                self.kernels
+                    .encode_with((open, encoder), kernel, src, dst, n, None)
+            }
+        }
+    }
+
+    /// Submits everything recorded and gives the ticket for it. Never waits.
+    pub fn submit(mut self) -> Ticket {
+        self.open.close();
+        self.kernels.submit(self.encoder)
     }
 }

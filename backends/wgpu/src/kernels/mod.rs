@@ -17,7 +17,7 @@ use std::fmt;
 
 pub use codec::Decoding;
 pub use crc::Checksum;
-pub use ops::Kernels;
+pub use ops::{Batch, Kernels};
 
 use crate::buffer::StorageError;
 use crate::context::OpenError;

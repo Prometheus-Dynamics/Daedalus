@@ -255,7 +255,7 @@ fn private() -> Option<WgpuBackend> {
 }
 
 #[test]
-fn eight_nodes_run_as_one_submit_and_eight_passes() {
+fn eight_nodes_run_as_one_submit_one_pass_and_eight_dispatches() {
     let Some(backend) = private() else { return };
     let made = chain(8);
     let mut unit = compile(&backend, &made, &[port(7, 0)]);
@@ -271,7 +271,12 @@ fn eight_nodes_run_as_one_submit_and_eight_passes() {
         1,
         "one submit for the region"
     );
-    assert_eq!(after.passes - before.passes, 8, "one pass per node");
+    assert_eq!(
+        after.dispatches - before.dispatches,
+        8,
+        "each node ran once"
+    );
+    assert_eq!(after.passes - before.passes, 1, "in one pass");
 
     let want: Vec<u32> = xs
         .iter()

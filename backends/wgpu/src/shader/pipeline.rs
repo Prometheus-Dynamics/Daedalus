@@ -20,8 +20,10 @@ pub struct ShaderStats {
     pub evicted: u64,
     /// Queue submits of shader work.
     pub submits: u64,
-    /// Compute passes recorded.
+    /// Compute and render passes begun. Shaders recorded one after the other share one.
     pub passes: u64,
+    /// Shader dispatches and draws: one for each time a shader ran.
+    pub dispatches: u64,
 }
 
 pub(crate) struct Pipeline {

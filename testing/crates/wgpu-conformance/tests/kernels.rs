@@ -62,7 +62,7 @@ const OPS: [(Kernel, u64); 7] = [
 ];
 
 #[test]
-fn each_op_is_one_pass_and_seven_batch_into_one_submit() {
+fn seven_ops_batch_into_one_pass_and_one_submit() {
     let Some(backend) = private() else { return };
     let kernels = Kernels::new(&backend).expect("a device");
     let work: Vec<(Kernel, u64, Vec<u8>, Storage, Storage)> = OPS
@@ -85,19 +85,17 @@ fn each_op_is_one_pass_and_seven_batch_into_one_submit() {
             .expect("finishes");
     }
     let (ticket, counted) = measure(&backend, || {
-        let mut encoder = kernels.encoder();
+        let mut batch = kernels.batch();
         for (kernel, n, _, src, dst) in &work {
-            kernels
-                .encode(&mut encoder, *kernel, src, dst, *n)
-                .expect("fits");
+            batch.add(*kernel, src, dst, *n).expect("fits");
         }
-        kernels.submit(encoder)
+        batch.submit()
     });
     ticket.wait().expect("finishes");
     assert_eq!(
-        (counted.passes, counted.submits),
-        (7, 1),
-        "a pass an op, one submit"
+        (counted.dispatches, counted.passes, counted.submits),
+        (7, 1, 1),
+        "seven ops, one pass, one submit"
     );
     assert_eq!(counted.pipelines, 0, "nothing is built by a warm run");
     for (kernel, n, input, _, dst) in &work {

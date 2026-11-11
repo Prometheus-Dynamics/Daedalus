@@ -12,6 +12,7 @@ use crate::context::Context;
 use crate::fence::{Ticket, TicketState};
 use crate::record::RecordCx;
 use crate::shader::Bound;
+use crate::shader::OpenPass;
 use crate::shader::pipeline::MAX_BINDINGS;
 use crate::texture::Texture;
 
@@ -129,6 +130,7 @@ fn fragment_chain(
     inputs: &[Slot],
     owned: &[Owned],
     context: &Arc<Context>,
+    open: &mut OpenPass,
     encoder: &mut wgpu::CommandEncoder,
 ) -> Result<Option<(usize, Arc<Texture>)>, String> {
     let Some(chain) = node.pixel.as_mut() else {
@@ -191,7 +193,7 @@ fn fragment_chain(
     }
     let Some(first_config) = chain.config_buffers.first() else {
         // No configs: bind the textures alone.
-        draw(chain, &textures[..count], &[], &target, encoder)?;
+        draw(chain, &textures[..count], &[], &target, open, encoder)?;
         return Ok(Some((chain.output, target)));
     };
     let mut buffers = [first_config; MAX_BINDINGS];
@@ -219,7 +221,7 @@ fn fragment_chain(
         };
     }
     let buffers = &buffers[..chain.configs.len()];
-    draw(chain, &textures[..count], buffers, &target, encoder)?;
+    draw(chain, &textures[..count], buffers, &target, open, encoder)?;
     Ok(Some((chain.output, target)))
 }
 
@@ -230,11 +232,14 @@ fn draw(
     textures: &[&Texture],
     buffers: &[&Storage],
     target: &Arc<Texture>,
+    open: &mut OpenPass,
     encoder: &mut wgpu::CommandEncoder,
 ) -> Result<(), String> {
     let Some((_, pass)) = &chain.pass else {
         return Err("the chain has no pass".into());
     };
+    // A draw is a render pass of its own: the compute pass before it ends here.
+    open.close();
     let binding = pass
         .bind(textures, buffers)
         .map_err(|error| error.to_string())?;
@@ -249,11 +254,14 @@ impl RegionStep {
         inputs: &[Slot],
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<(), (u32, String)> {
+        // Shader nodes one after the other share one compute pass. Anything else ends it.
+        let mut open = OpenPass::default();
         for node in &mut self.nodes {
             let at = node.index.0;
             // A chain of pixel bodies that is given a texture draws to one.
-            let drawn = fragment_chain(node, inputs, &self.owned, &self.context, encoder)
-                .map_err(|reason| (at, reason))?;
+            let drawn =
+                fragment_chain(node, inputs, &self.owned, &self.context, &mut open, encoder)
+                    .map_err(|reason| (at, reason))?;
             if let Some((output, texture)) = drawn {
                 self.owned[output].texture = Some(texture);
                 continue;
@@ -314,6 +322,8 @@ impl RegionStep {
                             *slot = owned.kept.get(owned.current).map(|storage| &**storage);
                         }
                     }
+                    // The body records what it likes into the encoder.
+                    open.close();
                     let mut cx = RecordCx {
                         device: &self.context.device,
                         context: &self.context,
@@ -379,7 +389,7 @@ impl RegionStep {
                 }
             }
             shader
-                .encode(encoder, &bound[..node.sources.len()])
+                .encode_in(&mut open, encoder, &bound[..node.sources.len()])
                 .map_err(|error| (at, error.to_string()))?;
         }
         Ok(())

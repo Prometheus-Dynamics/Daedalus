@@ -64,6 +64,32 @@ pub enum Bound<'a> {
     Sampler,
 }
 
+/// A compute pass kept open across several shaders' dispatches. While it is open nothing else
+/// can be recorded into its encoder: close it before a copy, a render pass, or finishing.
+#[derive(Default)]
+pub(crate) struct OpenPass(Option<wgpu::ComputePass<'static>>);
+
+impl OpenPass {
+    /// Ends the pass, if one is open.
+    pub(crate) fn close(&mut self) {
+        self.0 = None;
+    }
+
+    /// The open pass, begun in `encoder` when there is none.
+    fn pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        context: &Context,
+    ) -> &mut wgpu::ComputePass<'static> {
+        self.0.get_or_insert_with(|| {
+            context.count_pass();
+            encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor::default())
+                .forget_lifetime()
+        })
+    }
+}
+
 /// What a run did.
 pub enum Run {
     /// Submitted. The ticket is done when the device has finished.
@@ -348,6 +374,100 @@ impl Shader {
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(x, y, z);
         context.count_pass();
+        context.count_dispatch();
+    }
+
+    /// The bind group for these resources, found or made.
+    fn group(
+        &self,
+        resources: [(u64, Option<wgpu::BindingResource<'_>>); MAX_BINDINGS],
+    ) -> wgpu::BindGroup {
+        let context = &self.context;
+        let mut ids = [0; MAX_BINDINGS];
+        for (id, (have, _)) in ids.iter_mut().zip(&resources) {
+            *id = *have;
+        }
+        let key: GroupKey = (self.key, ids);
+        if let Some(group) = context.shaders().group(&key) {
+            return group;
+        }
+        let entries: Vec<wgpu::BindGroupEntry<'_>> = self
+            .spec
+            .bindings
+            .iter()
+            .zip(resources)
+            .filter_map(|(binding, (_, resource))| {
+                Some(wgpu::BindGroupEntry {
+                    binding: binding.index,
+                    resource: resource?,
+                })
+            })
+            .collect();
+        let group = context
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.pipeline.layout,
+                entries: &entries,
+            });
+        context.shaders().keep_group(key, group.clone());
+        group
+    }
+
+    /// Records one dispatch of this shader into the pass `open` keeps, beginning one when
+    /// none is open. Shaders recorded one after the other share a pass: each dispatch is its
+    /// own scope for what it reads and writes, so one may read what the one before wrote. A
+    /// uniform filled from a buffer needs a copy first, which can't be inside a pass, so that
+    /// closes the open one.
+    fn dispatch_in(
+        &self,
+        open: &mut OpenPass,
+        encoder: &mut wgpu::CommandEncoder,
+        bound: &[Bound<'_>],
+        counts: [u32; 3],
+    ) -> Result<(), ShaderError> {
+        let resources = self.resources(bound)?;
+        let max = self.context.record.compute.max_workgroups_per_dimension;
+        if let Some(&count) = counts.iter().find(|&&count| count > max) {
+            return Err(ShaderError::Shape { count, max });
+        }
+        if bound
+            .iter()
+            .any(|bound| matches!(bound, Bound::UniformFrom(_)))
+        {
+            open.close();
+            self.copy_uniforms(encoder, bound);
+        }
+        let group = self.group(resources);
+        let pass = open.pass(encoder, &self.context);
+        pass.set_pipeline(&self.pipeline.pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(counts[0], counts[1], counts[2]);
+        self.context.count_dispatch();
+        Ok(())
+    }
+
+    /// Checks `bound` and records one dispatch of this shader, in the pass `open` keeps. For
+    /// a region, which records every node's dispatch and submits once.
+    pub(crate) fn encode_in(
+        &self,
+        open: &mut OpenPass,
+        encoder: &mut wgpu::CommandEncoder,
+        bound: &[Bound<'_>],
+    ) -> Result<(), ShaderError> {
+        let counts = self.counts(bound)?;
+        self.dispatch_in(open, encoder, bound, counts)
+    }
+
+    /// [`Shader::encode_in`] with the workgroup counts given.
+    pub(crate) fn encode_sized_in(
+        &self,
+        open: &mut OpenPass,
+        encoder: &mut wgpu::CommandEncoder,
+        bound: &[Bound<'_>],
+        counts: [u32; 3],
+    ) -> Result<(), ShaderError> {
+        self.dispatch_in(open, encoder, bound, counts)
     }
 
     /// Records the copies that fill uniforms whose bytes are on the device. `bound` has been
@@ -365,38 +485,6 @@ impl Shader {
                 encoder.copy_buffer_to_buffer(&storage.buffer, 0, buffer, 0, bytes);
             }
         }
-    }
-
-    /// Checks `bound` and records one pass of this shader into `encoder`, for a region that
-    /// submits several passes together. Nothing is submitted here.
-    pub(crate) fn encode(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        bound: &[Bound<'_>],
-    ) -> Result<(), ShaderError> {
-        let resources = self.resources(bound)?;
-        let counts = self.counts(bound)?;
-        self.copy_uniforms(encoder, bound);
-        self.pass(encoder, resources, counts, None);
-        Ok(())
-    }
-
-    /// [`Shader::encode`] with the workgroup counts given, for a shader whose run is sized by
-    /// something other than its table says.
-    pub(crate) fn encode_sized(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        bound: &[Bound<'_>],
-        counts: [u32; 3],
-    ) -> Result<(), ShaderError> {
-        let resources = self.resources(bound)?;
-        let max = self.context.record.compute.max_workgroups_per_dimension;
-        if let Some(&count) = counts.iter().find(|&&count| count > max) {
-            return Err(ShaderError::Shape { count, max });
-        }
-        self.copy_uniforms(encoder, bound);
-        self.pass(encoder, resources, counts, None);
-        Ok(())
     }
 
     /// Runs the shader once, as one compute pass, and submits it. Never waits: the ticket says

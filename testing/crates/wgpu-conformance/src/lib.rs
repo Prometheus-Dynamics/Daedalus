@@ -212,7 +212,10 @@ pub enum In<'a> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Counted {
     pub submits: u64,
+    /// Compute and render passes begun. Shaders in one region share one.
     pub passes: u64,
+    /// Times a shader ran.
+    pub dispatches: u64,
     pub pipelines: u64,
     pub uploads: u64,
     pub downloads: u64,
@@ -225,6 +228,7 @@ fn since(backend: &WgpuBackend, before: &Counted, allocations: usize) -> Counted
     Counted {
         submits: now.submits - before.submits,
         passes: now.passes - before.passes,
+        dispatches: now.dispatches - before.dispatches,
         pipelines: now.pipelines - before.pipelines,
         uploads: now.uploads - before.uploads,
         downloads: now.downloads - before.downloads,
@@ -238,6 +242,7 @@ fn snapshot(backend: &WgpuBackend) -> Counted {
     Counted {
         submits: shaders.submits,
         passes: shaders.passes,
+        dispatches: shaders.dispatches,
         pipelines: shaders.pipelines,
         uploads: moved.uploads,
         downloads: moved.downloads,

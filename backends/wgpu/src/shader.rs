@@ -10,6 +10,7 @@ pub use spec::{
     BindingKind, BindingSpec, Dispatch, SampleKind, ShaderSpec, TextureAccess, port_bindings,
 };
 
+pub(crate) use dispatch::OpenPass;
 pub(crate) use pipeline::ShaderCache;
 
 #[cfg(test)]

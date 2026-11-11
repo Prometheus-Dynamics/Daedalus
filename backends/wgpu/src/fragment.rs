@@ -298,6 +298,7 @@ impl FragmentPass {
             multiview_mask: None,
         });
         self.context.count_pass();
+        self.context.count_dispatch();
         if count == 0 {
             return;
         }

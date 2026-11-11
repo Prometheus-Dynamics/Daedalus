@@ -76,13 +76,11 @@ fn batching(backend: &WgpuBackend) {
         let eight = start.elapsed();
 
         let start = Instant::now();
-        let mut encoder = kernels.encoder();
+        let mut batch = kernels.batch();
         for (src, dst) in &work {
-            kernels
-                .encode(&mut encoder, Kernel::Copy, src, dst, n)
-                .expect("fits");
+            batch.add(Kernel::Copy, src, dst, n).expect("fits");
         }
-        kernels.submit(encoder).wait().expect("finishes");
+        batch.submit().wait().expect("finishes");
         if round >= 5 {
             apart.push(eight);
             together.push(start.elapsed());
@@ -100,6 +98,32 @@ fn allocation(backend: &WgpuBackend) {
             counted.allocations
         );
     }
+    // The least this backend does for a submit: one op, recorded and submitted, with no
+    // region around it. What a region allocates beyond this is the region's own.
+    let kernels = Kernels::new(backend).expect("a device");
+    let (src, dst) = (
+        Storage::new(backend, 4096).expect("a buffer"),
+        Storage::new(backend, 4096).expect("a buffer"),
+    );
+    let one = |ops: usize| {
+        let mut count = 0;
+        for _ in 0..8 {
+            let ((), allocations) = daedalus_abi::counting::counted(|| {
+                let mut batch = kernels.batch();
+                for _ in 0..ops {
+                    batch.add(Kernel::Copy, &src, &dst, 4096).expect("fits");
+                }
+                batch.submit().wait().expect("finishes");
+            });
+            count = allocations;
+        }
+        count
+    };
+    println!(
+        "one op recorded and submitted alone: {} allocations, eight in one batch: {}",
+        one(1),
+        one(8)
+    );
     let (_, warm) = merged_chain(backend, 2, 4096);
     println!(
         "a merged chain of 4 pixel bodies: {} allocations in a warm run",

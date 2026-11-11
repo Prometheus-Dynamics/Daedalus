@@ -198,7 +198,8 @@ enum In<'a> {
     Word(u32),
 }
 
-/// Runs the step once and returns its outputs, with how many passes and submits it took.
+/// Runs the step once and returns its outputs, with how many shader runs and submits it
+/// took. Shaders in one region share a pass, so a pass says nothing about merging: a run does.
 fn run(
     backend: &WgpuBackend,
     unit: &mut StepUnit,
@@ -241,7 +242,7 @@ fn run(
         .collect();
     (
         out,
-        after.passes - before.passes,
+        after.dispatches - before.dispatches,
         after.submits - before.submits,
     )
 }
@@ -502,7 +503,10 @@ fn the_fragment_form_gives_what_the_compute_form_gives() {
         .expect("finishes");
     let after = backend.shader_stats().expect("open");
     assert_eq!(
-        (after.passes - before.passes, after.submits - before.submits),
+        (
+            after.dispatches - before.dispatches,
+            after.submits - before.submits
+        ),
         (1, 1)
     );
     let mut read = vec![0; texels.len()];
@@ -587,7 +591,7 @@ fn draw(
         }
     }
     let out = take_typed::<Texture>(&mut written[0]).expect("a texture out");
-    (out, after.passes - before.passes)
+    (out, after.dispatches - before.dispatches)
 }
 
 #[test]

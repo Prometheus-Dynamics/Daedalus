@@ -3,7 +3,7 @@
 use daedalus_abi::StepEnd;
 use daedalus_abi::testing::release;
 use daedalus_conformance::{CheckResult, Scenario, check};
-use daedalus_gpu_budgets::{ALLOCATIONS_PER_PASS, ALLOCATIONS_PER_STEP};
+use daedalus_gpu_budgets::{ALLOCATIONS_PER_DISPATCH, ALLOCATIONS_PER_STEP};
 use daedalus_wgpu::{Options, WgpuBackend};
 use daedalus_wgpu_conformance::{AFFINE, IDLE, In, Net, filled, port, private, run, words};
 
@@ -62,7 +62,7 @@ fn a_warm_step_allocates_within_its_budget_and_not_yet_nothing() {
         .unwrap_or_else(|| panic!("failed some other way: {failure}"));
     // The suite's region is its three nodes, one pass each.
     assert!(
-        count <= ALLOCATIONS_PER_STEP + 3 * ALLOCATIONS_PER_PASS,
+        count <= ALLOCATIONS_PER_STEP + 3 * ALLOCATIONS_PER_DISPATCH,
         "{failure}"
     );
 }
