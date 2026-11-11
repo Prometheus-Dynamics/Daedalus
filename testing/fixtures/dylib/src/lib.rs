@@ -3,8 +3,20 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use daedalus_abi::{Fence, FencePoll, FenceWord, Slot, SlotState, Slots, StepCx, StepEnd};
-use daedalus_loader::export::{NodeDef, PluginDef, PortDef};
+use daedalus_abi::{
+    Fence, FencePoll, FenceWord, PlainData, Slot, SlotState, Slots, StepCx, StepEnd,
+};
+use daedalus_derive::PlainData;
+use daedalus_loader::export::{CodecDef, NodeDef, PluginDef, PortDef};
+
+/// A plain-data type the fixture's codec converts.
+#[repr(C)]
+#[derive(Clone, Copy, PlainData)]
+#[plain(key = "dylib.number")]
+struct Number {
+    value: u32,
+}
+
 
 /// How many polls the gated node's fence waits for before it is ready. The runner polls once a
 /// tick, so its output appears on the fourth tick after the node ran.
@@ -109,8 +121,47 @@ static NODES: [NodeDef; 4] = [
     },
 ];
 
+/// Plugin bytes to the host value: one more than the number's value.
+fn number_to_value(input: &[u8]) -> Option<Vec<u8>> {
+    let value = u32::from_ne_bytes(input.try_into().ok()?);
+    Some(value.checked_add(1)?.to_ne_bytes().to_vec())
+}
+
+/// The host value to plugin bytes. A value of zero has no number, so it is refused.
+fn value_to_number(input: &[u8]) -> Option<Vec<u8>> {
+    let value = u32::from_ne_bytes(input.try_into().ok()?);
+    Some(value.checked_sub(1)?.to_ne_bytes().to_vec())
+}
+
+/// Plugin bytes to the wire form, big-endian.
+fn number_to_wire(input: &[u8]) -> Option<Vec<u8>> {
+    let value = u32::from_ne_bytes(input.try_into().ok()?);
+    Some(value.to_be_bytes().to_vec())
+}
+
+/// The wire form to plugin bytes.
+fn wire_to_number(input: &[u8]) -> Option<Vec<u8>> {
+    let value = u32::from_be_bytes(input.try_into().ok()?);
+    Some(value.to_ne_bytes().to_vec())
+}
+
+static CODECS: [CodecDef; 1] = [CodecDef {
+    key: Number::KEY,
+    value_key: "u32",
+    wire_key: "bytes",
+    backend: "fixture.cpu",
+    layout: Number::LAYOUT,
+    cost: 1,
+    lossy: false,
+    to_value: number_to_value,
+    from_value: value_to_number,
+    to_bytes: number_to_wire,
+    from_bytes: wire_to_number,
+}];
+
 daedalus_loader::export_plugin!(PluginDef {
     name: "dylib-fixture",
     backends: &["fixture.cpu"],
     nodes: &NODES,
+    codecs: &CODECS,
 });

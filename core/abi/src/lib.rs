@@ -23,6 +23,7 @@ mod handle;
 mod layout;
 mod message;
 mod out;
+mod plain;
 mod slots;
 mod status;
 mod step;
@@ -33,8 +34,8 @@ mod version;
 mod word;
 
 pub use backend::{
-    BackendTable, BoundaryPort, CanTakeFn, CompileFn, ENTRY_SYMBOL, EntryFn, NodeC, PluginEntry,
-    PortC, RegionView, ReleaseEntryFn, Text, UnitOut,
+    BackendTable, BoundaryPort, ByteCodecFn, CanTakeFn, CodecC, CompileFn, ENTRY_SYMBOL, EntryFn,
+    NodeC, PluginEntry, PortC, RegionView, ReleaseEntryFn, Text, UnitOut,
 };
 pub use features::Features;
 pub use fence::{Fence, FencePoll, FenceWord};
@@ -47,6 +48,7 @@ pub use handle::Handle;
 pub use layout::{LAYOUT_HASH, SHAPES, layout_hash};
 pub use message::MessageSink;
 pub use out::{Written, write_out, write_text};
+pub use plain::PlainData;
 pub use slots::{NO_SLOT, Slot, SlotState, Slots};
 pub use status::Status;
 pub use step::OwnedStep;

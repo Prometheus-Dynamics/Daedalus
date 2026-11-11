@@ -1,16 +1,19 @@
-//! Plain data: a repr(C) type that crosses as its bytes, tagged with its type key and layout hash.
-//! A receiver whose type has another layout refuses it, and the error names both hashes.
+//! Plain data: a type whose bytes are its value, tagged with its key and layout hash. A receiver
+//! whose type has another layout refuses the block, and the error names both hashes.
 
 use std::fmt;
+use std::mem::size_of;
+use std::ptr;
+use std::sync::Arc;
 
-use crate::owned::SharedBytes;
+use daedalus_abi::PlainData;
 
-/// A plain-data block: its type key, its layout hash, and its bytes.
+/// A plain-data block: its type key, its layout hash, and a copy of its bytes.
 #[derive(Clone, Debug)]
 pub struct PodBlock {
     key: String,
     layout: u64,
-    bytes: SharedBytes,
+    bytes: Arc<[u8]>,
 }
 
 /// Why a block was refused.
@@ -23,6 +26,12 @@ pub enum PodError {
         key: String,
         expected: u64,
         found: u64,
+    },
+    /// The block's bytes are not the size of the type it is read as.
+    Size {
+        key: String,
+        expected: usize,
+        found: usize,
     },
 }
 
@@ -40,6 +49,14 @@ impl fmt::Display for PodError {
                 f,
                 "type {key} has layout {found:#018x} here, the receiver expects {expected:#018x}"
             ),
+            PodError::Size {
+                key,
+                expected,
+                found,
+            } => write!(
+                f,
+                "a block of type {key} has {found} bytes, the receiver expects {expected}"
+            ),
         }
     }
 }
@@ -47,12 +64,22 @@ impl fmt::Display for PodError {
 impl std::error::Error for PodError {}
 
 impl PodBlock {
-    pub fn new(key: &str, layout: u64, bytes: SharedBytes) -> PodBlock {
+    /// A block of type `key` and `layout`, holding a copy of `bytes`.
+    pub fn new(key: &str, layout: u64, bytes: &[u8]) -> PodBlock {
         PodBlock {
             key: key.to_owned(),
             layout,
-            bytes,
+            bytes: Arc::from(bytes),
         }
+    }
+
+    /// A block holding a copy of `value`, named by its type's key and layout.
+    pub fn of<T: PlainData>(value: &T) -> PodBlock {
+        // SAFETY: `T` is plain data, so each of its `size_of::<T>()` bytes is part of the value.
+        // `value` is a valid reference for that many bytes, and the slice does not outlive it.
+        let bytes =
+            unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size_of::<T>()) };
+        PodBlock::new(T::KEY, T::LAYOUT, bytes)
     }
 
     pub fn key(&self) -> &str {
@@ -74,6 +101,21 @@ impl PodBlock {
                 found: self.layout,
             });
         }
-        Ok(self.bytes.bytes())
+        Ok(&self.bytes)
+    }
+
+    /// The block as a value of `T`, if its key and layout are `T`'s and its size is `T`'s.
+    pub fn read<T: PlainData>(&self) -> Result<T, PodError> {
+        let bytes = self.accept(T::KEY, T::LAYOUT)?;
+        if bytes.len() != size_of::<T>() {
+            return Err(PodError::Size {
+                key: T::KEY.to_owned(),
+                expected: size_of::<T>(),
+                found: bytes.len(),
+            });
+        }
+        // SAFETY: the length is `T`'s size, and `T` is plain data, so any bytes of that length are
+        // a valid `T`. The read is unaligned, so the bytes need no alignment.
+        Ok(unsafe { ptr::read_unaligned(bytes.as_ptr().cast::<T>()) })
     }
 }

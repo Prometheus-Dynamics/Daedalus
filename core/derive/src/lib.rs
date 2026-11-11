@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod plain;
 mod ty;
 
 use proc_macro::TokenStream;
@@ -38,4 +39,14 @@ fn local_key_check(ty: &syn::Type) -> Tokens {
             ::daedalus_registry::__private::require_local_key(&KEY, ::core::module_path!())
         };
     }
+}
+
+/// Gives a `repr(C)` struct the key in `#[plain(key = "...")]` and a layout hash, as
+/// `daedalus_abi::PlainData`. The crate using it must depend on `daedalus-abi`.
+#[proc_macro_derive(PlainData, attributes(plain))]
+pub fn derive_plain_data(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    plain::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }

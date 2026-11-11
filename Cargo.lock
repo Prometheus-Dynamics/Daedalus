@@ -674,6 +674,7 @@ dependencies = [
 name = "daedalus-derive"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus-abi",
  "daedalus-author-fixture",
  "daedalus-macros",
  "daedalus-registry",

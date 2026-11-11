@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 daedalus-loader = { path = "../../../core/loader" }
 daedalus-abi = { path = "../../../core/abi" }
+daedalus-derive = { path = "../../../core/derive" }
 
 # Builds on its own, outside the root workspace.
 [workspace]

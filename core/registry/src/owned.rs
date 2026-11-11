@@ -8,7 +8,8 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use crate::{
-    BodyRecord, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, RegError, Registry, SourceAt, TypeRef,
+    BodyRecord, Conversion, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, RegError, Registry,
+    SourceAt, TypeRef,
 };
 
 #[derive(Clone, Debug)]
@@ -31,6 +32,8 @@ pub struct OwnedDecl {
     pub inputs: Vec<OwnedPort>,
     pub outputs: Vec<OwnedPort>,
     pub body: OwnedBody,
+    /// Set for a one-in, one-out node that is a conversion between its two types.
+    pub conversion: Option<Conversion>,
 }
 
 fn leak(text: String) -> &'static str {
@@ -80,7 +83,7 @@ fn promote(decl: OwnedDecl) -> &'static NodeRecord {
         fire: Fire::default(),
         reusable: false,
         shareable: false,
-        conversion: None,
+        conversion: decl.conversion,
         group: None,
     }));
     Box::leak(Box::new(NodeRecord {

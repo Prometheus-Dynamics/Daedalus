@@ -89,6 +89,7 @@ pub fn registry() -> Registry {
                     backend: "process".into(),
                     text: decl.id.clone(),
                 },
+                conversion: None,
             })
             .expect("the canonical declarations register");
     }

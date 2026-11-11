@@ -133,6 +133,46 @@ pub struct BackendTable {
     pub compile: CompileFn,
 }
 
+/// Turns one byte buffer into another, with the all-or-nothing buffer pattern of `write_out` (see `out.rs`): with
+/// `cap` too small it sets `needed` and writes nothing.
+pub type ByteCodecFn = unsafe extern "C" fn(
+    input: *const u8,
+    input_len: usize,
+    out: *mut u8,
+    cap: usize,
+    needed: *mut usize,
+) -> Status;
+
+/// A codec a plugin declares for one of its plain-data types. It converts the type's bytes to and
+/// from two other forms: the host's value form, named by `value_key`, and the wire form, named by
+/// `wire_key`. Each conversion is a function over bytes, and each may refuse its input.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CodecC {
+    /// The plugin's type key.
+    pub key: Text,
+    /// The host value type the `to_value` and `from_value` functions convert to and from.
+    pub value_key: Text,
+    /// The wire type the `to_bytes` and `from_bytes` functions convert to and from.
+    pub wire_key: Text,
+    /// The backend the conversion nodes name.
+    pub backend: Text,
+    /// The layout hash of the plugin's type.
+    pub layout: u64,
+    /// The cost of a conversion, for the planner.
+    pub cost: u32,
+    /// Whether a conversion can lose information.
+    pub lossy: bool,
+    /// The plugin's bytes to the host value form.
+    pub to_value: ByteCodecFn,
+    /// The host value form to the plugin's bytes.
+    pub from_value: ByteCodecFn,
+    /// The plugin's bytes to the wire form.
+    pub to_bytes: ByteCodecFn,
+    /// The wire form to the plugin's bytes.
+    pub from_bytes: ByteCodecFn,
+}
+
 /// Frees what a plugin's entry points to: its node, port and backend tables. The host calls it
 /// once, after it has copied every table, and does not read the entry again.
 pub type ReleaseEntryFn = unsafe extern "C" fn(entry: *const PluginEntry);
@@ -149,6 +189,8 @@ pub struct PluginEntry {
     pub node_count: usize,
     pub backends: *const BackendTable,
     pub backend_count: usize,
+    pub codecs: *const CodecC,
+    pub codec_count: usize,
     /// Frees the tables above. A plugin that leaves it unset keeps its tables for its lifetime.
     pub release: Option<ReleaseEntryFn>,
 }

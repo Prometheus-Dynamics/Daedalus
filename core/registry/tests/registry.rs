@@ -298,6 +298,7 @@ fn an_owned_declaration_joins_like_a_record() {
             backend: backend.into(),
             text: String::new(),
         },
+        conversion: None,
     };
     registry.register_owned(worker("process", "out")).unwrap();
     assert_eq!(registry.entry("demo.blur").unwrap().bodies.len(), 2);
