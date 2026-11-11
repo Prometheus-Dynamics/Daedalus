@@ -244,6 +244,7 @@ fn transfer_steps(
         fifo_capacity: 0,
         merge_allowed: false,
         freeze_params: false,
+        sharing: &[],
     };
     let mut steps: Vec<Option<Step>> = Vec::with_capacity(stitched.transfers.len());
     for used in &stitched.transfers {

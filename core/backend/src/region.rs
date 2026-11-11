@@ -92,6 +92,30 @@ pub struct HostBinding<'a> {
     pub policy: &'a EdgePolicyDoc,
 }
 
+/// What the consumers of one output do with its value, as the planner worked out from the graph.
+/// A backend may keep an output's memory and refill it for the next tick only when the planner says
+/// so: a value that is taken by value cannot have a second holder left behind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Sharing {
+    /// Nothing is kept. The output is made new each tick.
+    #[default]
+    Fresh,
+    /// Every consumer reads the value by reference, on the same backend. The producer may keep
+    /// the value and refill it once no consumer holds it.
+    Readers,
+    /// Exactly one consumer takes the value by value, on the same backend. The value moves to
+    /// that consumer, and the producer may keep a reference to refill it once the consumer has
+    /// taken it.
+    Taker,
+}
+
+/// The sharing of one output port of a region's node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutputSharing {
+    pub port: PortRef,
+    pub sharing: Sharing,
+}
+
 /// Only what a backend needs. It never sees the planner or the registry.
 #[derive(Clone, Copy, Debug)]
 pub struct CompileCx<'a> {
@@ -109,4 +133,6 @@ pub struct CompileCx<'a> {
     pub merge_allowed: bool,
     /// Treat every constant as fixed, even one the graph marks as changeable.
     pub freeze_params: bool,
+    /// How each output of the region's nodes is consumed. A port that is not listed is `Fresh`.
+    pub sharing: &'a [OutputSharing],
 }

@@ -34,6 +34,7 @@ fn cx() -> CompileCx<'static> {
         fifo_capacity: 1,
         merge_allowed: true,
         freeze_params: false,
+        sharing: &[],
     }
 }
 

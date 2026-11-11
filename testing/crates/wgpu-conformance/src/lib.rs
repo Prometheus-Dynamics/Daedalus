@@ -194,6 +194,7 @@ impl Net {
             fifo_capacity: 1,
             merge_allowed: true,
             freeze_params: false,
+            sharing: &[],
         };
         match backend.compile(&region, &cx)? {
             Compiled::Steps(mut units) if units.len() == 1 => Ok(units.remove(0)),

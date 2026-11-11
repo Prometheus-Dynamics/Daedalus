@@ -68,6 +68,7 @@ fn a_steady_state_run_allocates_nothing_on_the_host_thread() {
         fifo_capacity: 64,
         merge_allowed: false,
         freeze_params: false,
+        sharing: &[],
     };
     let mut step = match backend.compile(&region, &cx) {
         Ok(Compiled::Steps(mut units)) => units.pop().expect("a unit").step,

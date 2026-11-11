@@ -1,7 +1,10 @@
 //! What the body expansion builds on. The expansion is in `daedalus-cpu-author`, and everything it
 //! names lives here.
 
+pub mod keep;
 pub mod ports;
+
+pub use keep::{Keep, Keeper, Keeping, Kept, keep_array};
 
 use core::marker::PhantomData;
 use core::mem::size_of;

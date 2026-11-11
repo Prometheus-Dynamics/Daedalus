@@ -11,7 +11,7 @@ use daedalus_types::{FromLiteral, Literal, NodeIndex};
 pub use alloc::string::String as StepString;
 pub use daedalus_graph::Lit;
 
-use super::{ConstTable, Kind, LitOf, ports};
+use super::{ConstTable, Keep, Kind, LitOf, ports};
 use daedalus_abi::Slot;
 
 /// What one node in one graph needs from the plan.
@@ -19,6 +19,9 @@ pub struct Setup<'a> {
     pub node: NodeIndex,
     pub inputs: u16,
     pub consts: &'a [ConstOf<'a>],
+    /// What each output of the node keeps between ticks, by output index. An output not listed
+    /// is `Fresh`.
+    pub keep: &'a [super::Keep],
 }
 
 impl Setup<'_> {
@@ -130,7 +133,7 @@ pub fn store_const<T: Send + Sync + 'static>(
     let decoded =
         decode(value).ok_or_else(|| format!("the constant for port `{port}` doesn't fit"))?;
     consts[at] = Some(Held::new(|buf, slot| {
-        ports::encode(decoded, kind, buf, slot);
+        ports::encode(decoded, kind, Keep::Fresh, &mut (), buf, slot);
     }));
     Ok(())
 }

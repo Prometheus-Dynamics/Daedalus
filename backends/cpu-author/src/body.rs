@@ -22,12 +22,17 @@ macro_rules! __daedalus_body {
             returns = (
                 $flow:ident,
                 $pattern:tt,
-                [$($okind:ident $oat:literal $oname:ident : $oty:ty,)*]
+                [$($okind:ident $oat:tt $oname:ident : $oty:ty,)*]
             )
         ),
         decl = $decl:ident
     ) => {{
         const __OUTPUTS: usize = [$($oat),*].len();
+        // Whether each output is written inline, which keeps nothing between ticks.
+        const __WRITE: [bool; __OUTPUTS] = [$({
+            const __KIND: $crate::__cpu::Kind<$oty> = $crate::__kind!($oty);
+            __KIND.write.is_some()
+        }),*];
         const _: () = ::core::assert!(
             $crate::__cpu::total(&[$($crate::__is_fanin!($role)),*]) < 2,
             "a CPU node takes at most one FanIn"
@@ -40,6 +45,8 @@ macro_rules! __daedalus_body {
             config: $crate::__or_unit!($($config)?),
             consts: __K,
             outs: [[u8; 16]; __OUTPUTS],
+            sharing: [$crate::__cpu::Keep; __OUTPUTS],
+            keep: ($($crate::__cpu::Keeping<$oty, { __WRITE[$oat] }>,)*),
         }
 
         #[allow(unused_mut, unused_variables, clippy::all)]
@@ -82,6 +89,8 @@ macro_rules! __daedalus_body {
                 config: $crate::__config!(__setup; $($config)?),
                 consts: __consts,
                 outs: [[0; 16]; __OUTPUTS],
+                sharing: $crate::__cpu::keep_array::<__OUTPUTS>(__setup.keep),
+                keep: ($($crate::__emit_default!($oty),)*),
             }))
         }
         }
@@ -150,6 +159,8 @@ macro_rules! __arena {
                     config: (),
                     consts: $crate::__cpu::NoConsts,
                     outs: [[0; 16]; __OUTPUTS],
+                    sharing: [$crate::__cpu::Keep::Fresh; __OUTPUTS],
+                    keep: ($($crate::__emit_default!($oty),)*),
                 }
             }
         }
@@ -499,14 +510,37 @@ macro_rules! __unfail {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __emit {
-    (value $at:literal $name:ident: $ty:ty; $out:ident, $this:ident) => {{
+    (value $at:tt $name:ident: $ty:ty; $out:ident, $this:ident) => {{
         const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
-        $crate::__cpu::ports::encode($name, __KIND, &mut $this.outs[$at], &mut $out[$at]);
+        $crate::__cpu::ports::encode(
+            $name,
+            __KIND,
+            $this.sharing[$at],
+            &mut $this.keep.$at,
+            &mut $this.outs[$at],
+            &mut $out[$at],
+        );
     }};
-    (option $at:literal $name:ident: $ty:ty; $out:ident, $this:ident) => {{
+    (option $at:tt $name:ident: $ty:ty; $out:ident, $this:ident) => {{
         if let ::core::option::Option::Some(__value) = $name {
             const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
-            $crate::__cpu::ports::encode(__value, __KIND, &mut $this.outs[$at], &mut $out[$at]);
+            $crate::__cpu::ports::encode(
+                __value,
+                __KIND,
+                $this.sharing[$at],
+                &mut $this.keep.$at,
+                &mut $this.outs[$at],
+                &mut $out[$at],
+            );
         }
     }};
+}
+
+/// The starting value of one output's kept memory.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __emit_default {
+    ($ty:ty) => {
+        ::core::default::Default::default()
+    };
 }

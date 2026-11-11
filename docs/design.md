@@ -244,6 +244,21 @@ The planner knows every value's consumers before anything runs, so nothing is co
 per tick. A handler is registered by type, from one memory to another, with a cost class of
 `handoff`, `import` or `copy`. The planner picks the lowest-cost path.
 
+A CPU node's output that is not plain data costs no allocation once the graph is warm. The planner
+says how each output is consumed (`Sharing` in `core/backend`), and the producer keeps what it needs:
+
+| How the output's consumers use it | What the producer keeps | What a tick costs |
+|---|---|---|
+| Every consumer reads it, on the same backend | A small pool of values. A value that no consumer holds any more is refilled for the next tick | Nothing, once warm |
+| One consumer takes it by value, on the same backend | A small pool of shared cells. The consumer moves the value out of a cell, and the producer refills the cell once the consumer lets go of it | Nothing, once warm. The value is moved, never copied |
+| Every reader is the host or a consumer on the same backend, and none takes the value | A small pool of values, as above. A host's typed `take::<T>` copies a value the producer still holds | Nothing, once warm |
+| Anything else: another backend, or a value taken by a host or another backend | Nothing. The output is made new each tick | One allocation |
+
+A value taken out of its cell is moved to the stage that takes it. Each stage keeps its own pool of
+cells for what it returns, so a chain of stages that take and return values makes nothing once
+warm. A panic in a body leaves nothing behind: a cell that was taken holds nothing, and dropping it
+frees only what was not taken.
+
 ### Memory backends
 
 A backend doesn't have to run nodes. A memory backend declares memory spaces and the handlers
@@ -498,7 +513,8 @@ documents the patch and refresh JSON.
   no parsing of its own. The roles are `read`, `take`, `modify`, each with an `opt_` form, and `state`,
   `config_ref`, `config_val`, `ctx`, `fanin`.
 - A CPU value at most 16 bytes long and `Copy` travels inline, in a buffer the step owns until it's
-  published. Anything else is an `Arc` written at plan-time-known cost. A body's error is a `FixedError`
+  published. Anything else is put behind an `Arc`, and the producer keeps that `Arc` (or the cell it
+  moves through) for the next tick, as the planner's sharing says. A body's error is a `FixedError`
   (a code and at most 64 bytes of reason), which is why a `String` error doesn't compile on this path.
 - A config's text and lists become `'static` once per plan, because `Literal` holds them that way.
   Replanning a graph with string constants keeps that memory.

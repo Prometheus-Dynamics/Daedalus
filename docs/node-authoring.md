@@ -61,11 +61,13 @@ that defines the type may use. Daedalus has no built-in value types beyond the s
 belongs to whoever wrote the nodes that use it.
 
 A value of 16 bytes or less that is `Copy` travels in place. Anything else travels behind a
-handle and is never copied on the way. An output that is not plain data costs one allocation on
-each tick, for its handle, unless the node returns a handle it already has: a node that takes
-`Arc<T>` and returns it, or returns an `Arc<T>` it keeps, allocates nothing. To change a large
-value in place and hand it on, take `Arc<T>` and use `Arc::make_mut`, which copies only when
-someone else still holds the value.
+handle and is never copied on the way. An output that is not plain data allocates nothing once
+the graph is warm when the nodes that consume it are on the CPU backend, and it reads or takes the
+value the way the graph does. Its memory is kept from one tick to the next and refilled. A node
+that is read by the host, or by another backend, gets a new handle each tick, one allocation.
+A node that takes `Arc<T>` and returns it, or returns an `Arc<T>` it keeps, allocates nothing. To
+change a large value in place and hand it on, take `Arc<T>` and use `Arc::make_mut`, which copies
+only when someone else still holds the value.
 
 ## Constants and config
 

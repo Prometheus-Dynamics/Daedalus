@@ -293,6 +293,7 @@ fn a_type_that_describes_itself_is_imported_by_its_transfer() {
         fifo_capacity: 1,
         merge_allowed: true,
         freeze_params: false,
+        sharing: &[],
     };
     let mut step = (transfer.make)(&cx).expect("a step");
 
