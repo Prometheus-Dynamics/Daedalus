@@ -333,3 +333,82 @@ fn a_dma_heap_buffer_is_one_memory_for_the_host_and_the_device() {
     heap.read_into(0, &mut seen).expect("in range");
     assert_eq!(seen, reversed);
 }
+
+/// A dma-heap buffer on this machine, or `None` where there is none to test on.
+fn heap_or_skip(backend: &WgpuBackend, bytes: u64) -> Option<Storage> {
+    match Storage::new_dma_heap(backend, bytes) {
+        Ok(heap) => Some(heap),
+        Err(StorageError::Unsupported(what)) => {
+            assert!(
+                std::env::var_os("DAEDALUS_DMA_HEAP_REQUIRED").is_none(),
+                "{what}"
+            );
+            None
+        }
+        Err(other) => panic!("a dma-heap buffer: {other}"),
+    }
+}
+
+/// Runs `COPY` from `source` into `dest` and waits for the device's work to finish.
+fn copy_on_device(backend: &WgpuBackend, source: &Storage, dest: &Storage) {
+    use daedalus_wgpu::shader::{Bound, Run, Shader};
+    let shader = Shader::load(backend, &COPY).expect("loads");
+    let bound = [Bound::Storage(source), Bound::Storage(dest)];
+    loop {
+        match shader.run(&bound).expect("runs") {
+            Run::Started(ticket) => break ticket.wait().expect("finishes"),
+            Run::Busy(oldest) => oldest.wait().expect("finishes"),
+        }
+    }
+}
+
+#[test]
+fn a_read_after_a_device_write_sees_the_devices_bytes() {
+    let Some(backend) = private() else { return };
+    let Some(heap) = heap_or_skip(&backend, 1 << 16) else {
+        return;
+    };
+    let source = Storage::new(&backend, 1 << 16).expect("a buffer");
+    let reversed: Vec<u8> = pattern(1 << 16).into_iter().rev().collect();
+    source.write(0, &reversed).expect("in range");
+    // The device writes the heap buffer. The work's fence is waited on inside `copy_on_device`
+    // before the host reads, as the fixed transfer test does.
+    copy_on_device(&backend, &source, &heap);
+    let mut seen = vec![0; 1 << 16];
+    heap.read_into(0, &mut seen).expect("in range");
+    assert_eq!(seen, reversed, "the read sees what the device wrote");
+}
+
+#[test]
+fn a_read_with_no_device_use_in_between_does_no_sync() {
+    let Some(backend) = private() else { return };
+    let Some(heap) = heap_or_skip(&backend, 1 << 16) else {
+        return;
+    };
+    let data = pattern(1 << 16);
+    heap.write(0, &data).expect("in range");
+    let mut seen = vec![0; 1 << 16];
+    // A new buffer may have been written, so the first read syncs.
+    heap.read_into(0, &mut seen).expect("in range");
+    assert_eq!(heap.cpu_access_syncs(), 1, "the first read syncs");
+    assert_eq!(seen, data);
+    // Nothing on the device has touched the buffer since: the second read does no sync.
+    heap.read_into(0, &mut seen).expect("in range");
+    let mut part = [0u8; 4];
+    heap.read_into(4, &mut part).expect("in range");
+    assert_eq!(part, data[4..8]);
+    assert_eq!(heap.cpu_access_syncs(), 1, "no device use, no sync");
+    assert_eq!(seen, data);
+    // The device writes again, so the next read syncs once, and the one after does not.
+    let source = Storage::new(&backend, 1 << 16).expect("a buffer");
+    source.write(0, &data).expect("in range");
+    copy_on_device(&backend, &source, &heap);
+    heap.read_into(0, &mut seen).expect("in range");
+    assert_eq!(
+        heap.cpu_access_syncs(),
+        2,
+        "the device used it, so this read syncs"
+    );
+    heap.read_into(0, &mut seen).expect("in range");
+    assert_eq!(heap.cpu_access_syncs(), 2);
+}

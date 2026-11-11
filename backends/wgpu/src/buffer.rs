@@ -2,6 +2,8 @@
 
 use std::fmt;
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "linux")]
 use std::sync::{Mutex, PoisonError};
@@ -64,6 +66,12 @@ enum Mapping {
     Heap {
         buf: daedalus_dma_sys::DmaBuf,
         map: daedalus_dma_sys::Mapping,
+        /// Set whenever the device is given the buffer, and cleared by a read's sync. While it is
+        /// clear the device can't have written the buffer since the host last synced, so a read
+        /// has nothing to invalidate. Starts set: a new buffer may be written before it is read.
+        device_may_have_written: AtomicBool,
+        /// How many read syncs have run, for tests and budgets.
+        syncs: AtomicU64,
     },
 }
 #[cfg(not(target_os = "linux"))]
@@ -78,7 +86,7 @@ impl Mapping {
             Mapping::Device(map) => map
                 .write(offset, bytes)
                 .map_err(|error| StorageError::Device(error.to_string())),
-            Mapping::Heap { buf, map } => {
+            Mapping::Heap { buf, map, .. } => {
                 buf.as_ref()
                     .begin_cpu_access(Access::Write)
                     .map_err(failed)?;
@@ -96,12 +104,27 @@ impl Mapping {
             Mapping::Device(map) => map
                 .read(offset, out)
                 .map_err(|error| StorageError::Device(error.to_string())),
-            Mapping::Heap { buf, map } => {
-                buf.as_ref()
-                    .begin_cpu_access(Access::Read)
-                    .map_err(failed)?;
+            Mapping::Heap {
+                buf,
+                map,
+                device_may_have_written,
+                syncs,
+            } => {
+                // Nothing the device did can be waiting in the cache, so the sync is skipped.
+                if !device_may_have_written.swap(false, Ordering::AcqRel) {
+                    return map.read(offset, out).map_err(failed);
+                }
+                syncs.fetch_add(1, Ordering::Relaxed);
+                // A sync that fails leaves the buffer as possibly written, so the next read syncs.
+                if let Err(error) = buf.as_ref().begin_cpu_access(Access::Read) {
+                    device_may_have_written.store(true, Ordering::Release);
+                    return Err(failed(error));
+                }
                 let read = map.read(offset, out);
-                buf.as_ref().end_cpu_access(Access::Read).map_err(failed)?;
+                if let Err(error) = buf.as_ref().end_cpu_access(Access::Read) {
+                    device_may_have_written.store(true, Ordering::Release);
+                    return Err(failed(error));
+                }
                 read.map_err(failed)
             }
         }
@@ -238,6 +261,15 @@ impl Storage {
     /// The buffer, for the device to use. The first call for a new buffer writes the zeroes it
     /// still owes.
     pub(crate) fn buffer(&self) -> &wgpu::Buffer {
+        // Every device use of the buffer comes through here, so the flag is right for the sync.
+        #[cfg(target_os = "linux")]
+        if let Some(Mapping::Heap {
+            device_may_have_written,
+            ..
+        }) = &self.mapping
+        {
+            device_may_have_written.store(true, Ordering::Release);
+        }
         #[cfg(target_os = "linux")]
         if let Some(fresh) = &self.fresh
             && !fresh.seen.load(Ordering::Acquire)
@@ -375,7 +407,12 @@ impl Storage {
             size,
             id: Context::next_id(),
             space: crate::memory::SPACE_DMA_HEAP,
-            mapping: Some(Mapping::Heap { buf, map }),
+            mapping: Some(Mapping::Heap {
+                buf,
+                map,
+                device_may_have_written: AtomicBool::new(true),
+                syncs: AtomicU64::new(0),
+            }),
             #[cfg(target_os = "linux")]
             fresh: None,
             context,
@@ -453,6 +490,17 @@ impl Storage {
     /// another one.
     pub fn wgpu(&self) -> &wgpu::Buffer {
         self.buffer()
+    }
+
+    /// How many CPU-access syncs the host's reads of this buffer have run. Zero for a buffer that
+    /// is not a dma-heap buffer. A test uses it to see that a read with no device use in between
+    /// does no sync.
+    #[cfg(target_os = "linux")]
+    pub fn cpu_access_syncs(&self) -> u64 {
+        match &self.mapping {
+            Some(Mapping::Heap { syncs, .. }) => syncs.load(Ordering::Relaxed),
+            _ => 0,
+        }
     }
 
     /// The id of the memory space this buffer is in.
