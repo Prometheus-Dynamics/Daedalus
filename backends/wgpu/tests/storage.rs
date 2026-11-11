@@ -46,6 +46,36 @@ fn host_mapped_storage_round_trips_without_staging() {
     assert_eq!(stats, StagingStats::default(), "no staging buffer was used");
 }
 
+/// A buffer nothing cleared goes back to its device when it is dropped, and is handed out
+/// again once the device has finished everything it was given.
+#[cfg(target_os = "linux")]
+#[test]
+fn uninit_storage_is_handed_out_again_once_the_device_is_idle() {
+    let Some(backend) = private() else { return };
+    // A size no other test here uses, so the buffer kept is this test's.
+    let size = (1 << 16) + 1028;
+    let first = Storage::new_uninit(&backend, size).expect("uninit");
+    first.write(0, &pattern(size as usize)).expect("in range");
+    let mut seen = vec![0; size as usize];
+    // The read waits for the device, so nothing is in flight after it.
+    first.read_into(0, &mut seen).expect("a readback");
+    let was = first.wgpu().clone();
+    drop(first);
+    let again = Storage::new_uninit(&backend, size).expect("uninit");
+    assert_eq!(again.wgpu(), &was, "the same buffer, not a new one");
+    assert_eq!((again.size(), again.space()), (size, SPACE_DEVICE));
+    // It still holds what the last holder wrote: nothing cleared it, as the name says.
+    again.read_into(0, &mut seen).expect("a readback");
+    assert_eq!(seen, pattern(size as usize));
+    // A buffer that was cleared for its holder isn't one of these.
+    let cleared = Storage::new(&backend, size).expect("a buffer");
+    let was = cleared.wgpu().clone();
+    drop(cleared);
+    drop(again);
+    let next = Storage::new_uninit(&backend, size).expect("uninit");
+    assert_ne!(next.wgpu(), &was);
+}
+
 #[test]
 fn uninit_storage_takes_kernel_output() {
     let Some(backend) = private() else { return };
