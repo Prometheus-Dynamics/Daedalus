@@ -56,6 +56,16 @@ and none between two GPU nodes. Memory that is already somewhere the device can 
 a dma-buf, is imported and not copied: the type's owner describes the memory, and a transfer
 registered for that type does the import.
 
+A value that goes back to the host has two routes. `wgpu.readback` copies it into host-mapped
+memory, which the host reads uncached, and `wgpu.readback.heap` copies it into dma-heap memory,
+which the host reads through its cache: on the CM5 a 16 MiB readback costs about 12 ms that way
+against about 17 ms into host-mapped memory. The heap route is offered only by a device that is
+open, imports dma-bufs, and whose system dma-heap opens. The planner reads that from the open
+device, and never opens one to ask. A plan made before the device opens is correct and uses the
+host-mapped route alone. Planning on an open device prefers the heap route, since it costs less.
+The planner takes the cheaper route, so a backend that cannot import dma-bufs gets the
+host-mapped readback without any change to the graph.
+
 ## Waiting
 
 A GPU step does not block the tick. It submits and returns a fence, the runner polls the fence,

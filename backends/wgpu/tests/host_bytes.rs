@@ -96,11 +96,12 @@ fn host_ports_are_on_the_host_unless_the_options_say_the_device() {
 fn a_type_that_is_bytes_gets_its_own_moves_which_the_planner_prefers() {
     let plain = WgpuBackend::open(Options::default());
     let typed = WgpuBackend::open(Options::default()).with_bytes::<Samples>();
-    assert_eq!(typed.transfers().len(), plain.transfers().len() + 2);
+    // Upload, map and the map from dma-heap memory.
+    assert_eq!(typed.transfers().len(), plain.transfers().len() + 3);
     // Told twice, it lists them once.
     let typed = typed.with_bytes::<Samples>();
     let table = typed.transfers();
-    assert_eq!(table.len(), plain.transfers().len() + 2);
+    assert_eq!(table.len(), plain.transfers().len() + 3);
 
     let up = find_transfer(&table, &Samples::KEY, HOST_SPACE, SPACE_DEVICE).expect("an upload");
     assert_eq!(up.id, "wgpu.upload:test:samples");

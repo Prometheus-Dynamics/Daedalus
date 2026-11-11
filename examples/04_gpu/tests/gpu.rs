@@ -102,3 +102,23 @@ fn a_wrong_answer_is_caught() {
     assert_eq!(mixed::on_cpu(3), 4 + 7 + 10);
     assert_eq!(fragment::on_cpu(&[0, 100, 200, 255]), [255, 255, 0, 0]);
 }
+
+/// The round trip reads back through the heap route when the device imports dma-bufs, and through
+/// the host-mapped one when it does not. Either way the planner's choice is the one the device
+/// can run.
+#[test]
+fn the_readback_takes_the_route_the_device_can_run() {
+    let Some(_turn) = has_gpu() else { return };
+    let gpu = daedalus_example_gpu::gpu().expect("a device");
+    let imports = gpu.caps().expect("open").dma_heap;
+    let route = upload_download::readback_route(&gpu).expect("plans");
+    // The typed map's id carries the payload's key, so the ids are matched by their prefix.
+    let (readback, map) = if imports {
+        ("wgpu.readback.heap", "wgpu.map.dmaheap:")
+    } else {
+        ("wgpu.readback", "wgpu.map:")
+    };
+    assert_eq!(route.len(), 2, "{route:?}");
+    assert_eq!(route[0], readback, "{route:?}");
+    assert!(route[1].starts_with(map), "{route:?}");
+}

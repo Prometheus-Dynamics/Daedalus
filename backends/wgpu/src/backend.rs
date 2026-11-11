@@ -283,7 +283,12 @@ impl Backend for WgpuBackend {
     }
 
     fn transfers(&self) -> Vec<Transfer> {
-        let mut table = crate::handoff::transfers(self.link.named.as_ref());
+        // Only a device that is open is asked: a plan made before it opens offers the host-mapped
+        // readback alone, and the heap route is then not planned for.
+        let heap = self
+            .open_context()
+            .is_some_and(|context| context.record.dma_heap);
+        let mut table = crate::handoff::transfers(self.link.named.as_ref(), heap);
         table.extend(self.link.offered());
         table
     }

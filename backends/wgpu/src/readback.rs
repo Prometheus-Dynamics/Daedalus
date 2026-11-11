@@ -20,9 +20,12 @@ fn fault(cx: &mut StepCx, reason: &str) -> StepEnd {
     StepEnd::Fault
 }
 
-/// Copies a device buffer into a host-mapped one of the step's own.
+/// Copies a device buffer into a buffer of the step's own, in host-mapped memory or, for the
+/// heap route, in dma-heap memory. A heap target that can't be made faults the step: the step never
+/// writes into a space other than the one it declared.
 struct ReadbackStep {
     kept: Vec<Arc<Storage>>,
+    heap: bool,
 }
 
 impl OwnedStep for ReadbackStep {
@@ -53,11 +56,27 @@ impl OwnedStep for ReadbackStep {
             return fault(cx, "the device is lost");
         }
         let size = source.size;
+        let heap = self.heap;
         let made = pooled(&mut self.kept, size, || {
+            if heap {
+                #[cfg(target_os = "linux")]
+                return Storage::dma_heap_on(Arc::clone(&context), size);
+                #[cfg(not(target_os = "linux"))]
+                return Err(crate::StorageError::Unsupported(
+                    "dma-heaps are a Linux interface",
+                ));
+            }
             Storage::placed_on(Arc::clone(&context), size, SPACE_HOST_MAPPED)
         });
-        let Ok(target) = made else {
-            return fault(cx, "a readback couldn't make its buffer");
+        let target = match made {
+            Ok(target) => target,
+            Err(error) if heap => {
+                return fault(
+                    cx,
+                    &format!("a readback couldn't allocate its dma-heap buffer: {error}"),
+                );
+            }
+            Err(_) => return fault(cx, "a readback couldn't make its buffer"),
         };
         let mut encoder = context
             .device
@@ -95,7 +114,18 @@ impl OwnedStep for MapStep {
 }
 
 pub(crate) fn make(_: &CompileCx<'_>) -> Result<Step, Refusal> {
-    Ok(Step::boxed(ReadbackStep { kept: Vec::new() }))
+    Ok(Step::boxed(ReadbackStep {
+        kept: Vec::new(),
+        heap: false,
+    }))
+}
+
+/// The readback into dma-heap memory.
+pub(crate) fn make_heap(_: &CompileCx<'_>) -> Result<Step, Refusal> {
+    Ok(Step::boxed(ReadbackStep {
+        kept: Vec::new(),
+        heap: true,
+    }))
 }
 
 pub(crate) fn make_map(_: &CompileCx<'_>) -> Result<Step, Refusal> {

@@ -58,12 +58,12 @@ pub fn gpu() -> Result<WgpuBackend, String> {
     Ok(backend)
 }
 
-/// Plans `graph` for the GPU and the CPU, and loads it.
-pub fn load(
+/// Plans `graph` for the GPU and the CPU.
+pub fn planned(
     graph: &str,
     nodes: &[&'static NodeRecord],
     gpu: &WgpuBackend,
-) -> Result<LoadedHost, String> {
+) -> Result<Planned, String> {
     let mut registry = Registry::new();
     registry
         .register_all(nodes)
@@ -71,13 +71,22 @@ pub fn load(
     let graph = GraphDoc::parse(graph)
         .map_err(|error| error.to_string())?
         .graph;
-    let planned = plan(
+    plan(
         &graph,
         &registry,
         &[gpu, &daedalus_cpu::CpuBackend],
         &Config::default(),
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| error.to_string())
+}
+
+/// Plans `graph` for the GPU and the CPU, and loads it.
+pub fn load(
+    graph: &str,
+    nodes: &[&'static NodeRecord],
+    gpu: &WgpuBackend,
+) -> Result<LoadedHost, String> {
+    let planned = planned(graph, nodes, gpu)?;
     LoadedHost::load(planned, LoadOptions::default()).map_err(|error| error.to_string())
 }
 

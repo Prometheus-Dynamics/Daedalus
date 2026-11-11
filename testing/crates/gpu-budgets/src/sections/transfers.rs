@@ -19,6 +19,7 @@ pub fn run(backend: &WgpuBackend) {
     let mut upload = transfer(backend, daedalus_wgpu::UPLOAD);
     let mut mapped_upload = transfer(backend, daedalus_wgpu::UPLOAD_MAPPED);
     let mut readback = transfer(backend, daedalus_wgpu::READBACK);
+    let mut readback_heap = transfer(backend, daedalus_wgpu::READBACK_HEAP);
     for bytes in SIZES {
         let payload: Arc<[u8]> = pattern(bytes, 13).into();
         let kib = bytes >> 10;
@@ -52,6 +53,23 @@ pub fn run(backend: &WgpuBackend) {
                 mapped.read_into(0, &mut out_bytes).expect("a readback");
             },
         );
+        // The heap readback step: the same device buffer, into dma-heap memory.
+        let down_heap = median_with_setup(
+            WARM,
+            RUNS,
+            || {
+                let device = Storage::new(backend, word_size(bytes as u64)).expect("a buffer");
+                device.write(0, &payload).expect("in range");
+                device
+            },
+            |device| {
+                let mut cell = Slot::EMPTY;
+                put_typed(&mut cell, ty, space, Arc::new(device));
+                let mut back = through(&mut readback_heap, cell);
+                let heap = take_typed::<Storage>(&mut back).expect("a buffer");
+                heap.read_into(0, &mut out_bytes).expect("a readback");
+            },
+        );
         // The same bytes straight to and from each kind of memory, without a step.
         let mut direct = |make: &dyn Fn(u64) -> Result<Storage, StorageError>| {
             let storage = make(word_size(bytes as u64)).expect("a buffer");
@@ -71,6 +89,10 @@ pub fn run(backend: &WgpuBackend) {
             ms(down),
         );
         println!(
+            "{kib} KiB: step readback device to dma-heap {:.3} ms (with the host read)",
+            ms(down_heap),
+        );
+        println!(
             "{kib} KiB direct: device write {:.3} ms, read {:.3} ms; mapped write {:.3} ms, read {:.3} ms; dma-heap {}",
             ms(dev_w),
             ms(dev_r),
@@ -82,6 +104,7 @@ pub fn run(backend: &WgpuBackend) {
     release(upload);
     release(mapped_upload);
     release(readback);
+    release(readback_heap);
 }
 
 fn direct_heap(backend: &WgpuBackend, bytes: usize, payload: &[u8], out: &mut [u8]) -> String {

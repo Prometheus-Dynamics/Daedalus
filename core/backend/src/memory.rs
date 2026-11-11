@@ -31,6 +31,9 @@ pub enum TransferCost {
     Handoff,
     /// The destination gets at the same memory. Often cached per buffer.
     Import,
+    /// The bytes are copied into memory the host reads through its cache, which is cheaper to read
+    /// than uncached memory the host maps. Dearer than an import, cheaper than a plain copy.
+    CopyCached,
     /// The bytes are copied.
     Copy,
 }

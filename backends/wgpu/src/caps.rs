@@ -191,6 +191,9 @@ pub struct CapsRecord {
     pub adapter: AdapterInfo,
     pub profile: DeviceProfile,
     pub compute: ComputeCaps,
+    /// The device imports dma-bufs and the system dma-heap opens: a readback can go into heap
+    /// memory. Set when the device opens; a record made before that says false.
+    pub dma_heap: bool,
 }
 
 impl CapsRecord {
@@ -203,6 +206,7 @@ impl CapsRecord {
         CapsRecord {
             profile: DeviceProfile::classify(&adapter),
             compute: ComputeCaps::from_wgpu(limits, enabled),
+            dma_heap: false,
             adapter,
         }
     }

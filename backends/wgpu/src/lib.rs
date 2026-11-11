@@ -60,7 +60,8 @@ pub use storage_pool::{StoragePool, StoragePoolStats};
 pub use texture::{Format, Texture, TextureDesc, TextureError};
 pub use timer::TimeSource;
 pub use transfer::{
-    HOST_SPACE, MAP, MAP_CACHED, MAP_HEAP, READBACK, TransferStats, UPLOAD, UPLOAD_MAPPED,
+    HOST_SPACE, MAP, MAP_CACHED, MAP_HEAP, READBACK, READBACK_HEAP, TransferStats, UPLOAD,
+    UPLOAD_MAPPED,
 };
 pub use wait::{DEFAULT_WAIT_TIMEOUT, WaitError};
 
