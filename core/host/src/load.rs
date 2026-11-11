@@ -19,9 +19,9 @@ use daedalus_plan::Span;
 use daedalus_planner::Planned;
 use daedalus_planner::stitch::Item;
 use daedalus_planner::stitch::{HostPort, Stitched};
-use daedalus_runner::ClockFn;
 use daedalus_runner::owned_run;
 use daedalus_runner::{Fire, Recovery, SlotKind, SlotSpec, SlotStamp, StepMeta};
+use daedalus_runner::{ProbeClock, best_clock};
 use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey};
 use daedalus_value::{Overflow, Pressure};
 
@@ -599,7 +599,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         .collect();
     let ports = port_table(planned, &meta, &table)?;
     let types = type_keys(planned);
-    let clock = (options.overhead_window > 0).then_some(monotonic_ns as ClockFn);
+    let clock: Option<ProbeClock> = (options.overhead_window > 0).then(|| best_clock(monotonic_ns));
     let host_inputs: Vec<u32> = planned
         .stitched
         .host_inputs

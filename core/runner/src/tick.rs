@@ -33,10 +33,10 @@ impl Runner<'_> {
             ..TickReport::default()
         };
         let probe = self.probe;
-        let start = probe.and_then(|probe| probe.begin_tick());
+        let start = probe.and_then(|probe| probe.begin_tick(true));
         let result = self.run_tick(&mut report);
         if let Some(probe) = probe {
-            probe.finish_tick(start);
+            probe.finish_tick(start, report.step_calls);
         }
         self.counters.absorb(&report);
         result.map(|()| report)
