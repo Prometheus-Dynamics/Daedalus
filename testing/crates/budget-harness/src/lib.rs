@@ -22,10 +22,17 @@ fn stage(x: u64) -> u64 {
     x.wrapping_add(1)
 }
 
-/// A stage with one more operation in it than [`stage`]: the planted regression.
+/// A stage that does clearly more work than [`stage`]: the planted regression. One more
+/// operation is a handful of instructions, which is less than the count moves by when the
+/// compiler lays the chain out differently, so the planted work is a loop that no layout hides.
 #[node(id = "budget.stage_extra", inputs(x), outputs(y))]
 fn stage_extra(x: u64) -> u64 {
-    std::hint::black_box(x.wrapping_mul(3)).wrapping_add(1)
+    let mut mixed = x;
+    for round in 0..512u64 {
+        mixed = std::hint::black_box(mixed.wrapping_mul(3).wrapping_add(round));
+    }
+    std::hint::black_box(mixed);
+    x.wrapping_add(1)
 }
 
 /// A stage that allocates once a call: the planted regression for the allocation rows.

@@ -146,11 +146,16 @@ def main():
     if have_valgrind:
         plain = measured.get("fused_chain_16_tick") or instructions("chain {n} 16", fixture)
         extra = instructions("chain {n} 16 extra", fixture)
-        # The row's limit, were it set to what the chain costs: one more op must be over it.
-        if extra <= plain:
-            planted_failures.append(f"a stage with one more op ({extra} Ir) passed a limit of {plain}")
+        # The row's limit, were it set to what the chain costs with its tolerance: a stage that
+        # does a loop of extra work must be over it.
+        tolerance = next(row["tolerance_percent"] for row in rows
+                         if row["name"] == "fused_chain_16_tick")
+        ceiling = plain * (100 + tolerance) // 100
+        if extra <= ceiling:
+            planted_failures.append(
+                f"a stage with a loop of extra work ({extra} Ir) passed a limit of {ceiling}")
         else:
-            print(f"  ok   planted: one more op ({extra} Ir) fails a limit of {plain} Ir")
+            print(f"  ok   planted: a loop of extra work ({extra} Ir) fails a limit of {ceiling} Ir")
     elif REQUIRE_ALL:
         planted_failures.append("the planted instruction row needs valgrind")
     else:

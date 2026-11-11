@@ -74,7 +74,7 @@ itself is unchanged.
 ## The planted regressions
 
 Every run of the check also measures two fixtures that must fail: a chain with a stage that
-allocates once a tick, against `alloc_fused_tick`, and a chain with one more operation in one
+allocates once a tick, against `alloc_fused_tick`, and a chain with a loop of extra work in one
 stage, against a limit set to what the plain chain costs. `scripts/ci.sh budgets --self-test`
 runs only those.
 
