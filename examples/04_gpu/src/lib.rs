@@ -7,7 +7,7 @@ pub mod fragment;
 pub mod mixed;
 pub mod upload_download;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use daedalus::prelude::*;
 use daedalus_wgpu::{HostBytes, Options, WgpuBackend};
@@ -81,25 +81,17 @@ pub fn load(
     LoadedHost::load(planned, LoadOptions::default()).map_err(|error| error.to_string())
 }
 
-/// Ticks until `take` finds a value at the output port `name`. The device works while the
-/// host does other things, so a tick ends when a step is waiting on it and a later tick picks
-/// the work up: a host that has nothing else to do ticks again.
+/// Waits until the graph settles, then takes the value at the output port `name`. The device works
+/// while the host waits: the host ticks until nothing is left on it, and sleeps between ticks only
+/// while a fence is the one thing left. The wait gives up after ten seconds.
 pub fn when_ready<T>(
     host: &mut Host<'static>,
     name: &str,
     take: impl Fn(&mut Host<'static>, &str) -> Result<Option<T>, String>,
 ) -> Result<T, String> {
-    let give_up = Instant::now() + Duration::from_secs(10);
-    loop {
-        host.step().map_err(|error| error.to_string())?;
-        if let Some(value) = take(host, name)? {
-            return Ok(value);
-        }
-        if Instant::now() > give_up {
-            return Err(format!("nothing arrived at `{name}`"));
-        }
-        std::thread::sleep(Duration::from_micros(200));
-    }
+    host.step_until_settled(Duration::from_secs(10))
+        .map_err(|error| error.to_string())?;
+    take(host, name)?.ok_or_else(|| format!("nothing arrived at `{name}`"))
 }
 
 /// [`when_ready`] for a value of the examples' own type.

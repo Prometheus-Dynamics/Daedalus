@@ -47,6 +47,8 @@ mod reload;
 mod report;
 mod serializers;
 #[cfg(feature = "std")]
+mod settle;
+#[cfg(feature = "std")]
 mod snapshot;
 mod state;
 #[cfg(feature = "std")]
@@ -88,6 +90,8 @@ pub use reload::ReloadError;
 #[cfg(feature = "std")]
 pub use report::ReloadReport;
 pub use serializers::{SerializerEntry, ValueDeserializer, ValueSerializer, ValueSerializers};
+#[cfg(feature = "std")]
+pub use settle::{WaitOutcome, Waited};
 pub use state::{Codec, StateCodec, StateStore};
 #[cfg(feature = "std")]
 pub use state::{SnapshotError, restore_json, snapshot_json};

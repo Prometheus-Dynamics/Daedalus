@@ -399,6 +399,11 @@ impl<'a> Runner<'a> {
     pub fn pending(&self) -> usize {
         self.pending_len
     }
+
+    /// Whether a step is woken for a tick that hasn't run yet.
+    pub fn has_woken(&self) -> bool {
+        self.dirty.iter().any(|word| *word != 0)
+    }
 }
 
 /// A span the load already checked, so it always fits.
