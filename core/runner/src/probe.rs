@@ -91,7 +91,10 @@ impl StepHistogram {
 pub struct TickSample {
     /// The whole tick.
     pub tick_ns: u64,
-    /// Time inside step bodies.
+    /// Time inside step bodies, measured from one step's end to the next: each step's own call,
+    /// and the runner's work between it and the step before. A tick reads the clock once at its
+    /// start and once after each step that runs, so the time the runner spends between steps is
+    /// counted in the body time of the step after it.
     pub body_ns: u64,
     /// Step bodies called.
     pub steps: u32,
@@ -113,6 +116,9 @@ pub struct TickProbe<'a> {
     tick_ns: Sum,
     body_ns: Sum,
     steps: Sum,
+    /// The last clock reading the probe took in this tick: the start of the tick, or the end of
+    /// the last step that ran. Each step's time runs from here to its own end.
+    mark: Sum,
     /// Set when a tick has finished and not yet been taken.
     finished: Word,
     /// One per step, for the profile level. Empty means no histograms.
@@ -126,6 +132,7 @@ impl<'a> TickProbe<'a> {
             tick_ns: Sum::new(),
             body_ns: Sum::new(),
             steps: Sum::new(),
+            mark: Sum::new(),
             finished: Word::new(0),
             histograms: &[],
         }
@@ -138,6 +145,7 @@ impl<'a> TickProbe<'a> {
             tick_ns: Sum::new(),
             body_ns: Sum::new(),
             steps: Sum::new(),
+            mark: Sum::new(),
             finished: Word::new(0),
             histograms,
         }
@@ -147,7 +155,17 @@ impl<'a> TickProbe<'a> {
         (self.clock)()
     }
 
-    pub(crate) fn add_body(&self, step: usize, nanos: u64) {
+    /// Starts a tick at clock reading `now`.
+    pub(crate) fn begin_tick(&self, now: u64) {
+        self.mark.set(now);
+    }
+
+    /// Counts a step that ran, which ended at clock reading `now`. The step's time is from the
+    /// previous reading to this one: the step's own call, and the runner's work since the step
+    /// before it. That is one clock read a step rather than two.
+    pub(crate) fn add_step(&self, step: usize, now: u64) {
+        let nanos = now.saturating_sub(self.mark.get());
+        self.mark.set(now);
         self.body_ns.add(nanos);
         self.steps.add(1);
         if let Some(histogram) = self.histograms.get(step) {

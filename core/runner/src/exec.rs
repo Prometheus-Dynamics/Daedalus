@@ -225,7 +225,6 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         load_cells(env, meta);
         let flags = env.health(index).call_flags();
         let probe = env.probe();
-        let start = probe.map_or(0, |probe| probe.now());
         let progress = env.progress(index);
         let (cells, cx) = env.parts();
         cx.flags = flags;
@@ -239,7 +238,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         // `slots` and `cx` are exclusive to this call, and they stay valid until it returns.
         let end = unsafe { run(data, &mut slots, cx) };
         if let Some(probe) = probe {
-            probe.add_body(index, probe.now().saturating_sub(start));
+            probe.add_step(index, probe.now());
         }
         let health = env.health(index);
         health.calls = health.calls.saturating_add(1);
