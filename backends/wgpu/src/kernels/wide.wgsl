@@ -53,6 +53,14 @@ fn f32_to_unorm8_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
     dst[t] = words;
 }
 
+// The two hex digits of each byte, packed low first: a lookup, in place of two digit formulas.
+@group(0) @binding(3) var<storage, read> hex_table: array<u32>;
+
+// Four hex digits of two bytes: the byte table's two entries, the first in the low half.
+fn hex_pair(a: u32, b: u32) -> u32 {
+    return hex_table[a] | (hex_table[b] << 16u);
+}
+
 // Invocation t takes one input vector, sixteen bytes, and writes two output vectors: the eight
 // output words, four hex digits each, that the word text writes for the same bytes.
 @compute @workgroup_size(64)
@@ -60,14 +68,15 @@ fn hex_lower_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_wo
     let t = gid.x + gid.y * groups.x * 64u;
     if (t >= params.threads) { return; }
     let v = src[t];
-    var words: array<u32, 8>;
-    for (var j = 0u; j < 8u; j++) {
-        let a = vec_byte(v, 2u * j);
-        let b = vec_byte(v, 2u * j + 1u);
-        words[j] = hex_digit(a >> 4u) | (hex_digit(a & 15u) << 8u) | (hex_digit(b >> 4u) << 16u)
-            | (hex_digit(b & 15u) << 24u);
-    }
-    dst[2u * t] = vec4<u32>(words[0], words[1], words[2], words[3]);
-    dst[2u * t + 1u] = vec4<u32>(words[4], words[5], words[6], words[7]);
+    let w0 = hex_pair(vec_byte(v, 0u), vec_byte(v, 1u));
+    let w1 = hex_pair(vec_byte(v, 2u), vec_byte(v, 3u));
+    let w2 = hex_pair(vec_byte(v, 4u), vec_byte(v, 5u));
+    let w3 = hex_pair(vec_byte(v, 6u), vec_byte(v, 7u));
+    let w4 = hex_pair(vec_byte(v, 8u), vec_byte(v, 9u));
+    let w5 = hex_pair(vec_byte(v, 10u), vec_byte(v, 11u));
+    let w6 = hex_pair(vec_byte(v, 12u), vec_byte(v, 13u));
+    let w7 = hex_pair(vec_byte(v, 14u), vec_byte(v, 15u));
+    dst[2u * t] = vec4<u32>(w0, w1, w2, w3);
+    dst[2u * t + 1u] = vec4<u32>(w4, w5, w6, w7);
 }
 

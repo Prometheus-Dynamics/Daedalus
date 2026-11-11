@@ -29,9 +29,9 @@ pub(crate) struct Op {
     kernel: Kernel,
     /// The index in `SPECS` of the shader this op runs.
     spec: usize,
-    /// The input, the output, the counts, and a table or status where the op has one. Each
-    /// with the bytes of it that are bound.
-    buffers: [Option<(wgpu::Buffer, u64)>; 4],
+    /// The input, the output, the counts, and then the op's extra buffers, in the order its spec
+    /// binds them. Each with the bytes of it that are bound.
+    buffers: [Option<(wgpu::Buffer, u64)>; MAX_OP_BUFFERS],
     counts: [u32; 3],
 }
 
@@ -45,6 +45,9 @@ pub(crate) struct Chains {
     /// Lists of ops, kept for their capacity.
     lists: Mutex<Vec<Vec<Op>>>,
 }
+
+/// The most buffers one op binds: the three plain ones and the extras of the largest shape.
+const MAX_OP_BUFFERS: usize = 6;
 
 /// What names a sequence of ops: its length, and four bits an op.
 fn key(ops: &[Op]) -> u128 {
@@ -62,12 +65,12 @@ pub(crate) fn add(
     kernel: Kernel,
     [src, dst]: [&Storage; 2],
     n: u64,
-    extra: Option<&Storage>,
+    extras: &[&Storage],
 ) -> Result<(), KernelError> {
     let here = kernels.context.key;
-    let elsewhere = [Some(src), Some(dst), extra]
+    let elsewhere = [src, dst]
         .into_iter()
-        .flatten()
+        .chain(extras.iter().copied())
         .any(|storage| storage.context.key != here);
     if elsewhere {
         return Err(KernelError::Size("a buffer is on another device".into()));
@@ -76,15 +79,19 @@ pub(crate) fn add(
         return Ok(());
     };
     let whole = |storage: &Storage| Some((storage.buffer().clone(), storage.size));
+    // Plain bindings first, then the extras: contiguous, so the flattened list is in binding order.
+    let mut buffers = [const { None }; MAX_OP_BUFFERS];
+    let all = [whole(src), whole(dst), whole(&params)];
+    for (slot, buffer) in buffers
+        .iter_mut()
+        .zip(all.into_iter().chain(extras.iter().map(|e| whole(e))))
+    {
+        *slot = buffer;
+    }
     ops.push(Op {
         kernel,
         spec,
-        buffers: [
-            whole(src),
-            whole(dst),
-            whole(&params),
-            extra.and_then(whole),
-        ],
+        buffers,
         counts,
     });
     Ok(())
@@ -147,7 +154,7 @@ impl Chains {
             let mut chain = shared.lock().unwrap_or_else(PoisonError::into_inner);
             chain.begin();
             for (stage, op) in ops.iter().enumerate() {
-                let mut args = [Arg::Bytes(&[]); 4];
+                let mut args = [Arg::Bytes(&[]); daedalus_vk_sys::compute::MAX_BINDINGS];
                 let mut count = 0;
                 for (arg, (buffer, size)) in args.iter_mut().zip(op.buffers.iter().flatten()) {
                     *arg = Arg::Storage {

@@ -80,7 +80,7 @@ impl Kernels {
             src,
             dst,
             n,
-            Some(table),
+            &[table],
         )
     }
 

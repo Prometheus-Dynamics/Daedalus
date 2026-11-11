@@ -16,6 +16,8 @@ struct Params {
 @group(0) @binding(2) var<storage, read> params: Params;
 // decode: [offset of the first invalid symbol, or 0xffffffff; decoded length].
 @group(0) @binding(3) var<storage, read_write> status: array<atomic<u32>>;
+// decode: the six bits of each byte, or 0xff for a byte that is no symbol.
+@group(0) @binding(4) var<storage, read> dec_table: array<u32>;
 
 // Four output vectors for forty-eight input bytes: three input vectors, sixteen groups of
 // three bytes, four symbols each. Counts that are multiples of 48 have no padded group.
@@ -152,13 +154,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v0.x;
         let g = 16u * t + 0u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -173,13 +175,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v0.y;
         let g = 16u * t + 1u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -194,13 +196,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v0.z;
         let g = 16u * t + 2u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -215,13 +217,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v0.w;
         let g = 16u * t + 3u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -236,13 +238,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v1.x;
         let g = 16u * t + 4u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -257,13 +259,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v1.y;
         let g = 16u * t + 5u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -278,13 +280,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v1.z;
         let g = 16u * t + 6u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -299,13 +301,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v1.w;
         let g = 16u * t + 7u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -320,13 +322,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v2.x;
         let g = 16u * t + 8u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -341,13 +343,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v2.y;
         let g = 16u * t + 9u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -362,13 +364,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v2.z;
         let g = 16u * t + 10u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -383,13 +385,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v2.w;
         let g = 16u * t + 11u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -404,13 +406,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v3.x;
         let g = 16u * t + 12u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -425,13 +427,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v3.y;
         let g = 16u * t + 13u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -446,13 +448,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v3.z;
         let g = 16u * t + 14u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
@@ -467,13 +469,13 @@ fn base64_decode_wide(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(nu
         let s = v3.w;
         let g = 16u * t + 15u;
         let used = select(4u, 4u - pad, g == last);
-        let d0 = b64_value((s >> 0u) & 0xffu);
+        let d0 = dec_table[(s >> 0u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 0u, 0u < used && d0 == 0xffu));
-        let d1 = b64_value((s >> 8u) & 0xffu);
+        let d1 = dec_table[(s >> 8u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 1u, 1u < used && d1 == 0xffu));
-        let d2 = b64_value((s >> 16u) & 0xffu);
+        let d2 = dec_table[(s >> 16u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 2u, 2u < used && d2 == 0xffu));
-        let d3 = b64_value((s >> 24u) & 0xffu);
+        let d3 = dec_table[(s >> 24u) & 0xffu];
         first = min(first, select(0xffffffffu, 4u * g + 3u, 3u < used && d3 == 0xffu));
         let x = select(0u, (d0 & 63u) << 18u, 0u < used) | select(0u, (d1 & 63u) << 12u, 1u < used) | select(0u, (d2 & 63u) << 6u, 2u < used) | select(0u, (d3 & 63u) << 0u, 3u < used);
         if (g == last && pad > 0u) {
