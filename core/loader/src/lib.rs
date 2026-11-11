@@ -35,6 +35,6 @@ pub fn run_step(
 }
 pub use generation::Generation;
 pub use open::LoadError;
-pub use owned::SharedBytes;
+pub use owned::{SharedBytes, bytes_copied, bytes_released};
 pub use pod::{PodBlock, PodError};
 pub use retry::{Retry, load_with_retry};

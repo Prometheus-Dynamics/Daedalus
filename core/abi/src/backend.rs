@@ -177,6 +177,25 @@ pub struct CodecC {
 /// once, after it has copied every table, and does not read the entry again.
 pub type ReleaseEntryFn = unsafe extern "C" fn(entry: *const PluginEntry);
 
+/// Frees bytes a plugin handed out, given the `data` it handed out with them. The host calls it once,
+/// when the last host value of those bytes is dropped, and the plugin's library is still loaded then.
+pub type BytesReleaseFn = unsafe extern "C" fn(data: *mut ());
+
+/// Bytes a plugin hands the host without a copy. The bytes at `ptr` stay valid and unchanged for `len`
+/// bytes until `release` is called with `data`. A plugin that hands out no bytes leaves `release` unset.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct BytesC {
+    pub ptr: *const u8,
+    pub len: usize,
+    pub data: *mut (),
+    pub release: Option<BytesReleaseFn>,
+}
+
+/// Makes the bytes for `index`, into `out`, which the host owns. Writes `out` only on OK. A plugin
+/// returns NOT_SUPPORTED for an index it does not make.
+pub type ProduceBytesFn = unsafe extern "C" fn(index: u32, out: *mut BytesC) -> Status;
+
 /// What a plugin declares. The loader copies each string into host-owned storage at load, then
 /// calls `release` so the tables do not outlive the load.
 #[repr(C)]
@@ -191,6 +210,8 @@ pub struct PluginEntry {
     pub backend_count: usize,
     pub codecs: *const CodecC,
     pub codec_count: usize,
+    /// Makes bytes for the host, without a copy. Unset for a plugin that makes none.
+    pub produce: Option<ProduceBytesFn>,
     /// Frees the tables above. A plugin that leaves it unset keeps its tables for its lifetime.
     pub release: Option<ReleaseEntryFn>,
 }

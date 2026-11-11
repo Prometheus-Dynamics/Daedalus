@@ -135,6 +135,12 @@ layout refuses it with an error that names both hashes. A codec holds its plugin
 library stays open while a codec does. The entry's tables are handed back to the plugin once the host
 has copied them, so a reload does not grow the host's memory.
 
+A plugin can also hand the host bytes without a copy. Its entry gives a `produce` function that
+makes the bytes for an index and returns them as a `BytesC`: a pointer, a length, an opaque `data`
+and a `release`. The host holds the bytes in place, and the value it makes keeps the plugin's library
+open. The plugin's `release` runs once, when the last value of those bytes is dropped, so the bytes
+stay valid exactly as long as a value points at them, across a reload too.
+
 ## Writing a node
 
 There is one macro. It reads the id, ports and state. For the body it expands to a call into the

@@ -34,8 +34,9 @@ mod version;
 mod word;
 
 pub use backend::{
-    BackendTable, BoundaryPort, ByteCodecFn, CanTakeFn, CodecC, CompileFn, ENTRY_SYMBOL, EntryFn,
-    NodeC, PluginEntry, PortC, RegionView, ReleaseEntryFn, Text, UnitOut,
+    BackendTable, BoundaryPort, ByteCodecFn, BytesC, BytesReleaseFn, CanTakeFn, CodecC, CompileFn,
+    ENTRY_SYMBOL, EntryFn, NodeC, PluginEntry, PortC, ProduceBytesFn, RegionView, ReleaseEntryFn,
+    Text, UnitOut,
 };
 pub use features::Features;
 pub use fence::{Fence, FencePoll, FenceWord};

@@ -6,8 +6,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 
 use daedalus_abi::{
-    BackendTable, ByteCodecFn, CodecC, LAYOUT_HASH, NodeC, OwnedStep, PluginEntry, PortC,
-    RegionView, Slots, Status, Step, StepCx, StepEnd, Text, UnitOut, guard_or,
+    BackendTable, ByteCodecFn, BytesC, CodecC, LAYOUT_HASH, NodeC, OwnedStep, PluginEntry, PortC,
+    ProduceBytesFn, RegionView, Slots, Status, Step, StepCx, StepEnd, Text, UnitOut, guard_or,
 };
 use daedalus_abi::{CanTakeFn, CompileFn, write_out};
 
@@ -43,7 +43,13 @@ pub struct PluginDef {
     pub backends: &'static [&'static str],
     pub nodes: &'static [NodeDef],
     pub codecs: &'static [CodecDef],
+    /// Makes the bytes for an index, for the host to take without a copy. `None` for an index the
+    /// plugin does not make. Unset for a plugin that makes none.
+    pub produce: Option<ProduceFn>,
 }
+
+/// The bytes a plugin makes for an index.
+pub type ProduceFn = fn(u32) -> Option<Vec<u8>>;
 
 /// The most codecs one plugin may declare.
 pub const MAX_CODECS: usize = 4;
@@ -145,6 +151,7 @@ pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> S
     let node_ptr = hand_over(nodes);
     let table_ptr = hand_over(tables);
     let codec_ptr = hand_over(codecs);
+    let produce = def.produce.map(|_| produce_at::<P> as ProduceBytesFn);
     let entry = PluginEntry {
         layout: LAYOUT_HASH,
         name: Text::of(def.name),
@@ -154,6 +161,7 @@ pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> S
         backend_count: table_ptr.1,
         codecs: codec_ptr.0,
         codec_count: codec_ptr.1,
+        produce,
         release: Some(release_entry),
     };
     // SAFETY: `out` is writable, as this function's contract says.
@@ -265,6 +273,44 @@ unsafe fn region_nodes<'a>(view: &RegionView) -> &'a [Text] {
     }
     // SAFETY: the host passes `node_count` texts at `nodes`, valid for the call.
     unsafe { std::slice::from_raw_parts(view.nodes, view.node_count) }
+}
+
+/// Makes the bytes for `index` with the plugin's `produce`, and hands them over in a box that
+/// `release_bytes` frees. The bytes are not copied.
+///
+/// # Safety
+/// As [`ProduceBytesFn`]: `out` is writable for one `BytesC`.
+unsafe extern "C" fn produce_at<P: PluginSpec>(index: u32, out: *mut BytesC) -> Status {
+    guard_or(Status::PANIC, || {
+        if out.is_null() {
+            return Status::from_errno(22);
+        }
+        let Some(produce) = P::def().produce else {
+            return Status::NOT_SUPPORTED;
+        };
+        let Some(bytes) = produce(index) else {
+            return Status::NOT_SUPPORTED;
+        };
+        let boxed = Box::new(bytes);
+        let made = BytesC {
+            ptr: boxed.as_ptr(),
+            len: boxed.len(),
+            data: Box::into_raw(boxed).cast(),
+            release: Some(release_bytes),
+        };
+        // SAFETY: `out` is writable, as this function's contract says.
+        unsafe { out.write(made) };
+        Status::OK
+    })
+}
+
+/// Frees a buffer `produce_at` handed out. The host calls it once, when its last value is dropped.
+///
+/// # Safety
+/// `data` must be the box `produce_at` made, and it must not be freed twice.
+unsafe extern "C" fn release_bytes(data: *mut ()) {
+    // SAFETY: as this function's contract says.
+    drop(unsafe { Box::from_raw(data.cast::<Vec<u8>>()) });
 }
 
 /// The four conversion functions for each codec index, in the order to_value, from_value,

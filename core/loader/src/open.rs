@@ -35,6 +35,8 @@ pub enum LoadError {
     Compile { backend: String, status: Status },
     /// A codec conversion refused its input, or the plugin returned a status the host does not expect.
     Codec { key: String, status: Status },
+    /// A plugin could not make the bytes asked for, or does not make any.
+    Produce { plugin: String, status: Status },
 }
 
 impl fmt::Display for LoadError {
@@ -71,6 +73,9 @@ impl fmt::Display for LoadError {
             }
             LoadError::Codec { key, status } => {
                 write!(f, "codec for {key} refused with status {}", status.0)
+            }
+            LoadError::Produce { plugin, status } => {
+                write!(f, "plugin {plugin} made no bytes: status {}", status.0)
             }
         }
     }
