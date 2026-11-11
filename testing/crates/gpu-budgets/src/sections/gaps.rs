@@ -218,6 +218,14 @@ pub fn heap_read(backend: &WgpuBackend) {
     let storage_read = median(WARM, RUNS, || {
         storage.read_into(0, &mut out).expect("a readback")
     });
+    // A four-byte read is the storage's sync, its begin and end of CPU access, and four bytes of copy.
+    let storage_sync = median(WARM, RUNS, || {
+        storage.read_into(0, &mut out[..4]).expect("a sync")
+    });
+    println!(
+        "16 MiB dma-heap storage one-byte read (sync and four bytes): {:.3} ms",
+        ms(storage_sync)
+    );
     let Ok(heap) = DmaHeap::open("system") else {
         println!("heap read: skipped, no /dev/dma_heap/system");
         return;
@@ -233,11 +241,66 @@ pub fn heap_read(backend: &WgpuBackend) {
             map.read(0, &mut out).expect("in range");
             buf.as_ref().end_cpu_access(Access::Read).expect("end");
         });
+        let sync = median(WARM, RUNS, || {
+            buf.as_ref().begin_cpu_access(Access::Read).expect("begin");
+            buf.as_ref().end_cpu_access(Access::Read).expect("end");
+        });
         println!("16 MiB dma-heap raw read ({label}): {:.3} ms", ms(read));
+        println!(
+            "16 MiB dma-heap raw sync only ({label}): {:.3} ms",
+            ms(sync)
+        );
     };
     println!(
         "16 MiB dma-heap storage read_into: {:.3} ms",
         ms(storage_read)
+    );
+    // The same read again, after the one-byte reads, as a check on what the first read left behind.
+    // The reference reads after a GPU kernel has written the imported buffer. Here the device
+    // writes the storage (a copy from a host-written source), then the same sync and read run.
+    let kernels = daedalus_wgpu::kernels::Kernels::new(backend).expect("a device");
+    let source = Storage::new(backend, bytes as u64).expect("a buffer");
+    source.write(0, &payload).expect("in range");
+    let gpu_write = |storage: &Storage| {
+        kernels
+            .run(
+                daedalus_wgpu::kernels::Kernel::Copy,
+                &source,
+                storage,
+                bytes as u64,
+            )
+            .expect("runs")
+            .wait()
+            .expect("finishes");
+    };
+    gpu_write(&storage);
+    let timed_after_gpu = |bytes_out: &mut [u8]| -> std::time::Duration {
+        let mut times = Vec::new();
+        for round in 0..(WARM + RUNS) {
+            gpu_write(&storage);
+            let start = std::time::Instant::now();
+            storage.read_into(0, bytes_out).expect("a readback");
+            if round >= WARM {
+                times.push(start.elapsed());
+            }
+        }
+        median_of(&mut times)
+    };
+    let mut gpu_out = vec![0u8; bytes];
+    let after_gpu_sync = timed_after_gpu(&mut gpu_out[..4]);
+    let after_gpu_read = timed_after_gpu(&mut gpu_out);
+    println!(
+        "16 MiB dma-heap storage after a GPU write: one-byte read {:.3} ms, full read {:.3} ms",
+        ms(after_gpu_sync),
+        ms(after_gpu_read)
+    );
+    let mut again_out = vec![0u8; bytes];
+    let storage_again = median(WARM, RUNS, || {
+        storage.read_into(0, &mut again_out).expect("a readback")
+    });
+    println!(
+        "16 MiB dma-heap storage read_into, repeated: {:.3} ms",
+        ms(storage_again)
     );
     raw_read("no device buffer on it");
     drop(storage);
