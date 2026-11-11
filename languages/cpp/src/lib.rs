@@ -9,6 +9,18 @@ use std::process::Command;
 
 use daedalus_backend_process::WorkerSpec;
 
+/// The CMake build directory for the SDK under `target_tmp`, named `name` and keyed by the SDK's
+/// source path. A CMake cache belongs to one source directory, so two clones that share a target
+/// directory must not share a build directory.
+pub fn build_dir(target_tmp: &Path, name: &str) -> PathBuf {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in env!("CARGO_MANIFEST_DIR").as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    target_tmp.join(format!("{name}-{hash:016x}"))
+}
+
 /// Configures and builds the fixture worker in `build_dir` with CMake. Returns its path.
 pub fn build(build_dir: &Path) -> io::Result<PathBuf> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("sdk");

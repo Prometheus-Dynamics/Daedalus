@@ -16,6 +16,8 @@ pub trait Wire: Sized {
 
 /// The inputs of a node, looked up by port name.
 pub fn input<T: Wire>(inputs: &[(&'static str, WireValue)], name: &str) -> Result<T, NodeError> {
+    // A parameter named `r#in` is the port `in`: the keyword needs its raw prefix in the name.
+    let name = name.strip_prefix("r#").unwrap_or(name);
     let (_, value) = inputs
         .iter()
         .find(|(port, _)| *port == name)

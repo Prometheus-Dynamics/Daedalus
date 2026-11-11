@@ -11,6 +11,7 @@ daedalus-registry = { path = "../../core/registry" }
 daedalus-types = { path = "../../core/types" }
 daedalus-wire = { path = "../../core/wire" }
 daedalus-macros = { path = "../../core/macros" }
+daedalus-derive = { path = "../../core/derive" }
 
 [dev-dependencies]
 daedalus-backend-process = { path = "../../backends/process" }
@@ -19,6 +20,10 @@ daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance"
 [[bin]]
 name = "daedalus-rust-fixture-worker"
 path = "fixtures/worker.rs"
+
+[[bin]]
+name = "daedalus-rust-serve-worker"
+path = "fixtures/serve_worker.rs"
 
 [lints]
 workspace = true

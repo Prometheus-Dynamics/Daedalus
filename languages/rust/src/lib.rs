@@ -14,7 +14,7 @@ pub use context::{Context, Event};
 /// The registry records `#[node]` writes into.
 pub use daedalus_registry as registry;
 pub use daedalus_wire::WireValue;
-pub use serve::{NodeError, NodeFn, RustBody, serve};
+pub use serve::{NodeError, NodeFn, RustBody, serve, state_type};
 
 /// The body macro `#[node]` calls for a function of this crate. A Rust node's body is a function
 /// that takes its inputs by name and returns its outputs.
@@ -47,7 +47,10 @@ macro_rules! __daedalus_body {
                     let out: $ret = ($($name)*)($($pname),*);
                     ::core::result::Result::Ok(<$ret as $crate::Pack>::pack(out))
                 }
-                $crate::RustBody { run: __adapter }
+                $crate::RustBody {
+                    run: __adapter,
+                    state: ::core::option::Option::None,
+                }
             },
             text: "",
         }

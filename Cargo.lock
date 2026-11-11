@@ -891,6 +891,7 @@ name = "daedalus-lang-rust"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-backend-process",
+ "daedalus-derive",
  "daedalus-macros",
  "daedalus-registry",
  "daedalus-types",
