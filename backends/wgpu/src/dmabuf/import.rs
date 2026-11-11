@@ -93,6 +93,11 @@ pub struct ImportStats {
     pub imports: u64,
     /// Cached imports let go to make room.
     pub evictions: u64,
+    /// Buffers copied through the CPU, because the exporter is not a dma-heap and so the device
+    /// is not kept coherent with the bytes the exporter's CPU writes put in memory.
+    pub copies: u64,
+    /// The bytes those copies moved.
+    pub copied_bytes: u64,
 }
 
 /// Imports a device keeps. A producer cycles through a few buffers, so a few are enough.
