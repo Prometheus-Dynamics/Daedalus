@@ -4,7 +4,7 @@
 //! leaves the step held, and the next wait finishes it.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use daedalus_abi::testing::run_once;
@@ -23,6 +23,9 @@ use daedalus_registry::Registry;
 /// One gate for each test, so tests running at once don't share a fence.
 static GATES: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
 
+/// How many times each gate's fence has been polled while it was still closed.
+static PENDING_POLLS: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
 /// The fence a held step waits on. Its word is the gate's index.
 struct Gate;
 
@@ -31,6 +34,7 @@ impl FenceWord for Gate {
         if GATES[word].load(Ordering::Acquire) {
             FencePoll::Ready
         } else {
+            PENDING_POLLS[word].fetch_add(1, Ordering::AcqRel);
             FencePoll::Pending
         }
     }
@@ -161,6 +165,11 @@ fn one_call_returns_once_the_fence_completes_with_the_output_present() {
     let mut host = load(0);
     host.host().feed_typed("x", Arc::new(20u32)).unwrap();
     let opener = std::thread::spawn(|| {
+        // Open only once the wait has seen the fence pending, so it ticks while the fence is
+        // closed whatever the scheduler does.
+        while PENDING_POLLS[0].load(Ordering::Acquire) == 0 {
+            std::thread::yield_now();
+        }
         std::thread::sleep(Duration::from_millis(30));
         GATES[0].store(true, Ordering::Release);
     });
