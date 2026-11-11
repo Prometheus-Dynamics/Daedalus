@@ -302,7 +302,7 @@ impl Canon {
 }
 
 /// The canonical bytes of a graph as given.
-pub fn graph_bytes(graph: &GraphBody) -> Vec<u8> {
+pub(crate) fn graph_bytes(graph: &GraphBody) -> Vec<u8> {
     let GraphBody {
         nodes,
         edges,
@@ -320,7 +320,11 @@ pub fn graph_bytes(graph: &GraphBody) -> Vec<u8> {
 
 /// The canonical bytes of everything else a plan depends on: the config, what each backend
 /// offers, in the order they'll be tried, and what the registry declares.
-pub fn settings_bytes(config: &Config, registry: &Registry, backends: &[&dyn Backend]) -> Vec<u8> {
+pub(crate) fn settings_bytes(
+    config: &Config,
+    registry: &Registry,
+    backends: &[&dyn Backend],
+) -> Vec<u8> {
     let mut out = Canon::default();
     out.config(config);
     let ordered = by_priority(backends, &config.priority);

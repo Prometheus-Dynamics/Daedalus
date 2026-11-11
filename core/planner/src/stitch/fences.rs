@@ -12,12 +12,12 @@ pub(super) struct Fences {
 }
 
 impl Fences {
-    pub fn record_write(&mut self, value: u32, unit: UnitId) {
+    pub(crate) fn record_write(&mut self, value: u32, unit: UnitId) {
         self.pending_writer.insert(value, unit);
     }
 
     /// The unit to wait for before `region` reads `value`, the first time only.
-    pub fn wait_for(&mut self, value: u32, region: u32) -> Option<UnitId> {
+    pub(crate) fn wait_for(&mut self, value: u32, region: u32) -> Option<UnitId> {
         let unit = *self.pending_writer.get(&value)?;
         (unit.region != region && self.waited.insert(unit)).then_some(unit)
     }

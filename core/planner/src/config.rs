@@ -7,7 +7,7 @@ use crate::form::Form;
 use crate::solve::rewrite::Rewrite;
 
 /// The FIFO capacity of [`Config`] unless it says otherwise.
-pub const DEFAULT_FIFO_CAPACITY: u32 = 4;
+pub(crate) const DEFAULT_FIFO_CAPACITY: u32 = 4;
 
 #[derive(Clone)]
 pub struct Config {

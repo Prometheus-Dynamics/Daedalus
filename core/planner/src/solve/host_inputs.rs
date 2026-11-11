@@ -95,7 +95,7 @@ fn find_host(graph: &GraphBody, host: HostNode<'_>) -> Result<usize, HostInputEr
 }
 
 /// The values the host pushes into this bridge, each named once.
-pub fn host_input_ports<'a>(
+pub(crate) fn host_input_ports<'a>(
     graph: &'a GraphBody,
     host: impl Into<HostNode<'a>>,
 ) -> Result<Vec<&'a str>, HostInputError> {

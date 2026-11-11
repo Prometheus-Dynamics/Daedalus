@@ -6,7 +6,7 @@ use daedalus_types::TypeExpr;
 const MARKER: &str = "generic";
 
 /// Whether this text names the generic marker, in any case: `generic` or `generic:<var>`.
-pub fn generic_text(text: &str) -> bool {
+pub(crate) fn generic_text(text: &str) -> bool {
     let head = text.split(':').next().unwrap_or(text);
     head.eq_ignore_ascii_case(MARKER)
 }
@@ -20,7 +20,7 @@ fn key_text(ty: &TypeRef) -> Option<&str> {
 }
 
 /// Whether a type is the generic marker. `Some` holds the variable's name, when it has one.
-pub fn generic_var(ty: &TypeRef) -> Option<Option<&str>> {
+pub(crate) fn generic_var(ty: &TypeRef) -> Option<Option<&str>> {
     let text = key_text(ty)?;
     if !generic_text(text) {
         return None;
