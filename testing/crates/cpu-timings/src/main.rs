@@ -1,7 +1,7 @@
 //! The CPU timings a board run records. It runs on boards and by hand, not in the gate:
 //! `cargo run --release -p daedalus-cpu-timings -- SECTION [BATCHES] [LIBRARY]`, with the
 //! sections `host_round_trip`, `host_idle_step`, `probe_off`, `probe_on`, `probe_sampled` (with
-//! EVERY as the third argument), `clock_read` and `plugin_tick`.
+//! EVERY as the third argument), `clock_read`, `detector_fused`, `detector_unfused` and `plugin_tick`.
 //!
 //! Each section warms up, then times BATCHES batches of operations and prints the median of the
 //! per-operation times of the batches, in nanoseconds. A batch is 1,000 operations, so the clock's
@@ -185,6 +185,24 @@ fn probe_every(batches: usize, every: u32) {
     );
 }
 
+/// The detector-shaped graph (five stages, six outputs) a frame at a time, fused or unfused.
+fn detector_frame(batches: usize, merge: bool) {
+    use daedalus_budget_harness::detector::{detector_with, frame, picture};
+    let mut host = detector_with(merge);
+    let picture = picture();
+    let times = per_call(batches, || {
+        assert_eq!(frame(&mut host, &picture), 3);
+    });
+    report(
+        if merge {
+            "detector_fused"
+        } else {
+            "detector_unfused"
+        },
+        &times,
+    );
+}
+
 /// One read of the probe's clock, as a probe takes it: the cost of a step boundary.
 fn clock_read(batches: usize) {
     let times = per_call(batches, || {
@@ -224,6 +242,8 @@ fn main() {
             probe_every(batches, every);
         }
         "clock_read" => clock_read(batches),
+        "detector_fused" => detector_frame(batches, true),
+        "detector_unfused" => detector_frame(batches, false),
         "plugin_tick" => {
             let library = args.get(2).expect("plugin_tick needs the library's path");
             plugin_tick_section(batches, Path::new(library));
