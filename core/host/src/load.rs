@@ -59,7 +59,8 @@ impl Default for LoadOptions {
 pub enum LoadError {
     /// The plan isn't in the steps form, so it has nothing to run in this process.
     NotSteps,
-    /// The plan has a transfer with no step, which only a binding loader can run.
+    /// A move in the plan has no step. The planner makes one for every move of a steps-form plan,
+    /// so this means the plan was changed by hand.
     TransferUnbound { id: String },
     /// Two host ports share a name, so the host couldn't tell them apart.
     DuplicatePort { name: String },
@@ -166,6 +167,7 @@ struct Built {
     edges: EdgeRules,
     covers: Vec<Vec<u32>>,
     same_as: Vec<Option<String>>,
+    transfers: Vec<Option<&'static str>>,
 }
 
 /// The pressure each edge declared, by the slot it lands on.
@@ -200,12 +202,13 @@ fn span(table: &mut Vec<u32>, values: &[u32]) -> Span {
 /// Builds the plan's steps in layout order, with each step's slots and join rules.
 fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadError> {
     let mut units = take_steps(planned);
-    let mut transfers = mem::take(&mut planned.transfer_steps);
+    let mut move_steps = mem::take(&mut planned.transfer_steps);
     let stitched = &planned.stitched;
     let mut steps = Vec::new();
     let mut drafts = Vec::new();
     let mut step_covers = Vec::new();
     let mut same_as = Vec::new();
+    let mut transfers = Vec::new();
     let entries = node_entries(planned);
     let mut edges = EdgeRules::new();
     let host_spaces = host_spaces(stitched);
@@ -226,6 +229,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                 steps.push(step);
                 step_covers.push(covers.clone());
                 same_as.push(Some(same_step(planned, &entries, covers, &info)));
+                transfers.push(None);
                 let connected = connected_reads(planned, &info, reads);
                 let (fire, required) = join_for(planned, covers, &connected);
                 for (slot, edge) in &connected {
@@ -250,14 +254,17 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                 to_slot,
                 transfer,
             } => {
-                let Some(step) = transfers.get_mut(*transfer as usize).and_then(Option::take)
+                let id = &stitched.transfers[*transfer as usize].id;
+                let Some(step) = move_steps
+                    .get_mut(*transfer as usize)
+                    .and_then(Option::take)
                 else {
-                    let id = stitched.transfers[*transfer as usize].id.clone();
-                    return Err(LoadError::TransferUnbound { id });
+                    return Err(LoadError::TransferUnbound { id: id.clone() });
                 };
                 steps.push(step);
                 step_covers.push(Vec::new());
                 same_as.push(None);
+                transfers.push(Some(intern(id)));
                 drafts.push(Draft {
                     reads: vec![*from_slot],
                     writes: vec![*to_slot],
@@ -273,7 +280,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
             Item::Wait { .. } => {}
         }
     }
-    planned.transfer_steps = transfers;
+    planned.transfer_steps = move_steps;
     let slots = slot_specs(planned, options, &edges);
     let (meta, table) = wire(&drafts);
     Ok(Built {
@@ -284,6 +291,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
         edges,
         covers: step_covers,
         same_as,
+        transfers,
     })
 }
 
@@ -545,6 +553,8 @@ pub struct LoadedHost {
     pub(crate) off_nodes: BTreeSet<String>,
     pub(crate) overhead: Option<TickOverheadWindow>,
     pub(crate) same_as: Vec<Option<String>>,
+    /// For each step that is a move, the transfer it makes.
+    pub(crate) moves: Vec<Option<&'static str>>,
 }
 
 /// Everything one version of the graph brings.
@@ -552,6 +562,8 @@ pub(crate) struct Parts {
     pub(crate) host: Host<'static>,
     /// For each step, what a step of another plan must equal to stand in for it.
     pub(crate) same_as: Vec<Option<String>>,
+    /// For each step that is a move, the transfer it makes.
+    pub(crate) moves: Vec<Option<&'static str>>,
     pub(crate) nodes: Vec<NodeEntry>,
     pub(crate) bridges: Vec<String>,
     pub(crate) covers: Vec<&'static [&'static str]>,
@@ -572,6 +584,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         edges,
         covers,
         same_as,
+        transfers,
     } = built;
     let node_names: Vec<&'static str> = nodes.iter().map(|node| intern(&node.key)).collect();
     let covers = covers
@@ -614,6 +627,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
     Ok(Parts {
         host,
         same_as,
+        moves: transfers,
         nodes,
         bridges,
         covers,
@@ -648,6 +662,7 @@ impl LoadedHost {
                 .then(|| TickOverheadWindow::new(options.overhead_window)),
             host: parts.host,
             same_as: parts.same_as,
+            moves: parts.moves,
             nodes: parts.nodes,
             bridges: parts.bridges,
             covers: parts.covers,

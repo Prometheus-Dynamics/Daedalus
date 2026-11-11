@@ -10,12 +10,22 @@ use daedalus_runner::StepFault;
 
 use crate::load::LoadedHost;
 
+/// Where a failed step is: what it covers, the node it named, and the transfer it makes.
+#[derive(Clone, Copy)]
+pub(crate) struct Site {
+    pub(crate) covers: &'static [&'static str],
+    pub(crate) at: Option<&'static str>,
+    pub(crate) transfer: Option<&'static str>,
+}
+
 /// One failure of one step. A merged region is reported as a whole.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FaultReport {
     pub step: u32,
     /// Every node the step runs, from the plan.
     pub covers: &'static [&'static str],
+    /// The transfer the step makes, when it is a move. A move runs no node, so `covers` is empty.
+    pub transfer: Option<&'static str>,
     /// The node the body said failed, if it said.
     pub at: Option<&'static str>,
     /// Failures in a row.
@@ -28,19 +38,15 @@ pub struct FaultReport {
 }
 
 impl FaultReport {
-    fn new(
-        step: u32,
-        covers: &'static [&'static str],
-        at: Option<&'static str>,
-        fault: &StepFault,
-    ) -> FaultReport {
+    fn new(step: u32, site: Site, fault: &StepFault) -> FaultReport {
         let text = fault.reason().as_bytes();
         let mut reason = [0; REASON_CAPACITY];
         reason[..text.len()].copy_from_slice(text);
         FaultReport {
             step,
-            covers,
-            at,
+            covers: site.covers,
+            transfer: site.transfer,
+            at: site.at,
             consecutive: fault.consecutive,
             until_ns: fault.until_ns,
             tick: fault.tick,
@@ -113,8 +119,13 @@ impl LoadedHost {
             let at = fault
                 .at()
                 .and_then(|node| self.node_names.get(node as usize).copied());
+            let site = Site {
+                covers: self.covers[step],
+                at,
+                transfer: self.moves[step],
+            };
             self.faults
-                .push(FaultReport::new(step as u32, self.covers[step], at, &fault));
+                .push(FaultReport::new(step as u32, site, &fault));
         }
     }
 

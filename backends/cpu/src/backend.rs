@@ -1,11 +1,13 @@
 //! The backend itself.
 
+use core::any::Any;
+
 use alloc::borrow::Cow;
 use alloc::format;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use daedalus_abi::Step;
+use daedalus_abi::{NO_NODE, Step};
 use daedalus_backend::{
     Backend, CompileCx, Compiled, MemorySpace, NodeBody, NodeRef, Offer, PortRef, Refusal, Region,
     SpaceKind, StepUnit, Transfer, UnitInfo,
@@ -107,5 +109,26 @@ impl Backend for CpuBackend {
         }
         let units = region.nodes.iter().map(|&node| unit(node, cx));
         Ok(Compiled::Steps(units.collect::<Result<_, _>>()?))
+    }
+
+    /// A `#[transfer]` written for this backend. It takes the value and nothing else, so its
+    /// step has one input cell and one output cell, and no node to name in a fault.
+    fn bind_transfer(
+        &self,
+        code: &(dyn Any + Send + Sync),
+        cx: &CompileCx<'_>,
+    ) -> Option<Result<Step, Refusal>> {
+        let cpu = code.downcast_ref::<CpuBody>()?;
+        if cpu.shape.params.len() != 1 {
+            return Some(Err(Refusal::whole_region(
+                "a CPU transfer takes the value and nothing else",
+            )));
+        }
+        let setup = Setup {
+            node: NodeIndex(NO_NODE),
+            inputs: 1,
+            consts: cx.consts,
+        };
+        Some((cpu.make)(&setup).map_err(|reason| Refusal::whole_region(&reason)))
     }
 }

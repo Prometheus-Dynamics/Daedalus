@@ -4,6 +4,10 @@
 
 #![forbid(unsafe_code)]
 
+use std::any::Any;
+
+use daedalus_abi::Step;
+
 mod compiled;
 mod memory;
 mod offer;
@@ -39,4 +43,16 @@ pub trait Backend: Send + Sync {
 
     /// Turns the nodes it was given into something runnable. It may merge them.
     fn compile(&self, region: &Region<'_>, cx: &CompileCx<'_>) -> Result<Compiled, Refusal>;
+
+    /// Makes the step for a memory handler this backend wrote, a `#[transfer]`. `code` is that
+    /// handler's payload, which only the backend that wrote it can read. `None` means `code` is
+    /// not one of this backend's, so another backend with the same id may be asked.
+    fn bind_transfer(
+        &self,
+        code: &(dyn Any + Send + Sync),
+        cx: &CompileCx<'_>,
+    ) -> Option<Result<Step, Refusal>> {
+        let _ = (code, cx);
+        None
+    }
 }
