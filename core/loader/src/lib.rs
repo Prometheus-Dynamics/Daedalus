@@ -33,8 +33,9 @@ pub fn run_step(
     // holds its generation open through `Pinned`. `slots` and `cx` are exclusive for this call.
     unsafe { (step.run)(step.data, slots, cx) }
 }
+pub use daedalus_abi::SharedBytes;
 pub use generation::Generation;
 pub use open::LoadError;
-pub use owned::{SharedBytes, bytes_copied, bytes_released};
+pub use owned::{bytes_copied, bytes_released};
 pub use pod::{PodBlock, PodError};
 pub use retry::{Retry, load_with_retry};

@@ -56,7 +56,40 @@ pub fn read<'a, T: 'static, C: ConstTable>(
         *hold = (handle.share)(slot);
         return hold.as_ref();
     }
+    if let Some(bytes) = handed_bytes(slot) {
+        *hold = (kind.from_bytes?)(bytes);
+        return hold.as_ref();
+    }
     typed_view::<T>(slot)
+}
+
+/// Takes the handed bytes a full cell holds, by move.
+pub fn take_handed_bytes(cell: &mut Slot) -> Option<daedalus_abi::SharedBytes> {
+    daedalus_runner::take_handed(cell)
+}
+
+/// Another handle on the handed bytes a full cell holds. The cell keeps its own.
+pub fn share_handed_bytes(cell: &Slot) -> Option<daedalus_abi::SharedBytes> {
+    daedalus_runner::share_handed(cell)
+}
+
+/// Puts handed bytes in a cell as they are: the handle's count moves into it.
+pub fn put_handed_bytes(value: daedalus_abi::SharedBytes, slot: &mut Slot) {
+    // The unstamped indexes: a handed value keeps the type and space its producer gave it.
+    daedalus_runner::put_handed(
+        slot,
+        daedalus_types::TypeIndex(0),
+        daedalus_types::SpaceIndex(0),
+        value,
+    );
+}
+
+/// The bytes of a handed cell, for a parameter that is copied out of them.
+fn handed_bytes(slot: &Slot) -> Option<&[u8]> {
+    if slot.owner != daedalus_abi::OWNER_HANDED {
+        return None;
+    }
+    slot.bytes()
 }
 
 /// Takes input `at` by value. A constant is copied, since it stays for the next tick.
@@ -80,7 +113,15 @@ pub fn take<T: 'static, C: ConstTable>(
         if slot.owner == INLINE {
             return (kind.read?)(slot);
         }
+        if let Some(bytes) = handed_bytes(slot) {
+            return (kind.from_bytes?)(bytes);
+        }
         return typed_view::<T>(slot).and_then(|value| kind.clone.map(|clone| clone(value)));
+    }
+    if let Some(bytes) = handed_bytes(cell) {
+        // A by-value parameter that is not a handle copies the bytes out: the one copy a handed
+        // value makes.
+        return (kind.from_bytes?)(bytes);
     }
     if cell.owner == INLINE {
         return (kind.read?)(cell);

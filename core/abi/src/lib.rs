@@ -19,6 +19,7 @@ mod features;
 mod fence;
 mod foreign;
 mod guard;
+mod handed;
 mod handle;
 mod layout;
 mod message;
@@ -35,8 +36,8 @@ mod word;
 
 pub use backend::{
     BackendTable, BoundaryPort, ByteCodecFn, BytesC, BytesReleaseFn, CanTakeFn, CodecC, CompileFn,
-    ENTRY_SYMBOL, EntryFn, NodeC, PluginEntry, PortC, ProduceBytesFn, RegionView, ReleaseEntryFn,
-    Text, UnitOut,
+    ENTRY_SYMBOL, EntryFn, NO_BYTES, NodeC, PluginEntry, PortC, ProduceBytesFn, RegionView,
+    ReleaseEntryFn, Text, UnitOut,
 };
 pub use features::Features;
 pub use fence::{Fence, FencePoll, FenceWord};
@@ -45,6 +46,9 @@ pub use foreign::{
     ForeignRef, ProvideForeign, foreign_layout_hash,
 };
 pub use guard::{guard, guard_or};
+pub use handed::{
+    HANDOVER_PENDING, HandedRecord, OWNER_HANDED, SharedBytes, handed_release, handed_retain,
+};
 pub use handle::Handle;
 pub use layout::{LAYOUT_HASH, SHAPES, layout_hash};
 pub use message::MessageSink;

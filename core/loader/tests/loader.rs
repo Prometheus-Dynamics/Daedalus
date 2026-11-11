@@ -37,6 +37,7 @@ fn a_plugin_declares_its_nodes_and_backend() {
             "fixture.pass",
             "fixture.boom",
             "fixture.abort",
+            "fixture.handover",
             "fixture.gated"
         ]
     );

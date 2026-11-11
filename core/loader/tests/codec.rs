@@ -116,7 +116,7 @@ fn the_four_conversions_join_the_registry_as_conversion_nodes() {
     let from_bytes = find("dylib.number.from_bytes");
     assert_eq!(from_bytes.from, TypeKey::shared("bytes").expect("key"));
     // The plugin's nodes are still the only nodes it declares.
-    assert_eq!(plugin.nodes().len(), 4);
+    assert_eq!(plugin.nodes().len(), 5);
 }
 
 #[test]

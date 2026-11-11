@@ -20,7 +20,7 @@ use std::process::ExitCode;
 
 use daedalus_abi::counting::{CountingAlloc, counted};
 use daedalus_budget_harness::detector::{detector, frame, picture};
-use daedalus_budget_harness::plugin::{plugin_node, plugin_tick};
+use daedalus_budget_harness::plugin::{handover_node, handover_tick, plugin_node, plugin_tick};
 use daedalus_budget_harness::{
     Stage, big, chain, chain_tick, idle_tick, large_feed, large_handle, large_step,
 };
@@ -135,6 +135,26 @@ fn plugin_allocations(library: &Path) {
         }
     });
     println!("alloc_plugin_node_tick {}", count as u64 / TICKS);
+
+    // A hand-over of a megabyte, taken by the host each tick: no bytes are copied, and the
+    // allocations are the handles' headers alone.
+    let mut host = handover_node(library);
+    for value in 0..WARM_UP as u32 {
+        handover_tick(&mut host, value);
+    }
+    let (sizes, count) = counted(|| {
+        let mut sizes = 0usize;
+        for value in 0..TICKS as u32 {
+            sizes += handover_tick(&mut host, value);
+        }
+        sizes
+    });
+    assert_eq!(
+        sizes,
+        TICKS as usize * (1 << 20),
+        "every hand-over arrives whole"
+    );
+    println!("alloc_plugin_handover_tick {}", count as u64 / TICKS);
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -188,6 +208,15 @@ fn run(args: &[String]) -> Result<(), String> {
             let library = args.get(2).ok_or("plugin needs the library's path")?;
             if args.get(3).map(String::as_str) == Some("allocations") {
                 plugin_allocations(Path::new(library));
+                return Ok(());
+            }
+            if args.get(3).map(String::as_str) == Some("handover") {
+                let mut host = handover_node(Path::new(library));
+                let mut bytes = 0usize;
+                for value in 0..ticks {
+                    bytes += black_box(handover_tick(&mut host, value as u32));
+                }
+                println!("handover: {ticks} ticks, {bytes} bytes");
                 return Ok(());
             }
             let mut host = plugin_node(Path::new(library));

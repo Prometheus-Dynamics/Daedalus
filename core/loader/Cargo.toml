@@ -15,6 +15,10 @@ libloading = { workspace = true }
 
 [dev-dependencies]
 daedalus-abi = { path = "../abi", features = ["count-alloc", "test-run"] }
+daedalus-graph = { path = "../graph" }
+daedalus-value = { path = "../value" }
+daedalus-host = { path = "../host", features = ["std"] }
+daedalus-planner = { path = "../planner" }
 
 # This crate may use unsafe, so it carries its own lint table.
 [lints.rust]

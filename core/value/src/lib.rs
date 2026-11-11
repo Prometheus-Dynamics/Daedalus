@@ -23,6 +23,7 @@ mod ring;
 mod value;
 
 pub use access::Access;
+pub use daedalus_abi::SharedBytes;
 pub use inline::InlineBytes;
 pub use owner::{Owner, OwnerKind};
 pub use policy::*;

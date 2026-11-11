@@ -19,6 +19,8 @@ pub enum Owner {
     Shared(alloc::sync::Arc<[u8]>),
     #[cfg(feature = "alloc")]
     Typed(alloc::sync::Arc<dyn core::any::Any + Send + Sync>),
+    /// Bytes a plugin handed over, held by one count. No allocation to hold or to take.
+    Handed(crate::SharedBytes),
 }
 
 /// The `owner` field of a raw [`daedalus_abi::Slot`].
@@ -31,6 +33,8 @@ pub enum OwnerKind {
     Host = 3,
     Shared = 4,
     Typed = 5,
+    /// Bytes a plugin handed over: one count on a `HandedRecord`.
+    Handed = 6,
 }
 
 impl Owner {
@@ -44,6 +48,7 @@ impl Owner {
             Owner::Shared(_) => OwnerKind::Shared,
             #[cfg(feature = "alloc")]
             Owner::Typed(_) => OwnerKind::Typed,
+            Owner::Handed(_) => OwnerKind::Handed,
         }
     }
 }

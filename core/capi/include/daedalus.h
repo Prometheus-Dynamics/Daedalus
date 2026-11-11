@@ -140,7 +140,14 @@ daedalus_status_t daedalus_selftest_panic(void);
 daedalus_status_t daedalus_host_create(daedalus_handle_t *out);
 /* Releases a host. DAEDALUS_BUSY while it has graphs. */
 daedalus_status_t daedalus_host_release(daedalus_handle_t host);
-/* Loads the plugin at `path`: its nodes join the host's, and its backends run them. */
+/*
+ * Loads the plugin at `path`: its nodes join the host's, and its backends run them.
+ *
+ * A plugin may hand bytes to the host without a copy: a node marks an output cell as a hand-over
+ * (owner 6, reserved 1) and describes the bytes with a release. The host calls that release once,
+ * when the last host value of the bytes is dropped, on whichever thread drops it. The release must
+ * therefore be safe to call from any thread.
+ */
 daedalus_status_t daedalus_host_install(daedalus_handle_t host, const uint8_t *path, size_t len);
 /* The host's nodes, as JSON text. */
 daedalus_status_t daedalus_host_schemas(daedalus_handle_t host, uint8_t *buf, size_t cap, size_t *len);

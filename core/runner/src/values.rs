@@ -128,6 +128,31 @@ pub fn put_typed<T: Send + Sync + 'static>(
     put(cell, owned::typed_raw(ty, space, value));
 }
 
+/// Writes handed bytes into an output cell, releasing the cell's previous payload. The handle's
+/// count moves into the cell, with no copy and no allocation.
+pub fn put_handed(
+    cell: &mut Slot,
+    ty: TypeIndex,
+    space: SpaceIndex,
+    bytes: daedalus_abi::SharedBytes,
+) {
+    let record = bytes.into_record();
+    // SAFETY: the count just given up is still held by the record, so it is live.
+    let fields = unsafe { record.as_ref() };
+    let raw = Slot {
+        state: SlotState::Full as u32,
+        space: u32::from(space.0),
+        type_index: ty.0,
+        owner: daedalus_abi::OWNER_HANDED,
+        version: 0,
+        reserved: 0,
+        data: fields.bytes.ptr.cast_mut(),
+        len: fields.bytes.len,
+        cap: record.as_ptr().expose_provenance(),
+    };
+    put(cell, raw);
+}
+
 /// Writes shared bytes into an output cell, releasing the cell's previous payload.
 #[cfg(feature = "alloc")]
 pub fn put_shared(
@@ -194,4 +219,34 @@ pub fn put_inline(cell: &mut Slot, ty: TypeIndex, space: SpaceIndex, bytes: &[u8
         },
     );
     Some(())
+}
+
+/// Takes the count a full handed cell holds, and leaves the cell moved, so the runner doesn't
+/// release it again. The count moves into the returned handle, with no copy and no allocation.
+pub fn take_handed(slot: &mut Slot) -> Option<daedalus_abi::SharedBytes> {
+    if slot.state != SlotState::Full as u32 || slot.owner != daedalus_abi::OWNER_HANDED {
+        return None;
+    }
+    let record = core::ptr::NonNull::new(core::ptr::with_exposed_provenance_mut::<
+        daedalus_abi::HandedRecord,
+    >(slot.cap))?;
+    slot.state = SlotState::Moved as u32;
+    // SAFETY: the cell held one count on the record, and that count moves into the handle, which
+    // is what the cell now no longer holds.
+    Some(unsafe { daedalus_abi::SharedBytes::from_record(record) })
+}
+
+/// Another handle on a full handed cell's bytes. The cell keeps its own count, and the new handle
+/// takes one more, with no copy and no allocation.
+pub fn share_handed(slot: &Slot) -> Option<daedalus_abi::SharedBytes> {
+    if slot.state != SlotState::Full as u32 || slot.owner != daedalus_abi::OWNER_HANDED {
+        return None;
+    }
+    let record = core::ptr::NonNull::new(core::ptr::with_exposed_provenance_mut::<
+        daedalus_abi::HandedRecord,
+    >(slot.cap))?;
+    // SAFETY: the cell holds a count on the live record, and the new handle takes its own.
+    unsafe { daedalus_abi::handed_retain(record.as_ptr()) };
+    // SAFETY: the count just taken moves into the handle.
+    Some(unsafe { daedalus_abi::SharedBytes::from_record(record) })
 }

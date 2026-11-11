@@ -141,6 +141,13 @@ and a `release`. The host holds the bytes in place, and the value it makes keeps
 open. The plugin's `release` runs once, when the last value of those bytes is dropped, so the bytes
 stay valid exactly as long as a value points at them, across a reload too.
 
+A plugin's node can also hand bytes over as an output cell, with the owner `OwnerKind::Handed`.
+The cell holds one count on a `HandedRecord` in `core/abi`, and the loader's step wrapper makes the
+record from a pool made at load (a counted copy when the pool is empty). A value is a `SharedBytes`,
+the handle over that count, which clones by taking another count and drops by giving one back. The
+last count releases the bytes, recycles the record and drops the plugin generation it keeps. The
+release may be called from any thread.
+
 ## Writing a node
 
 There is one macro. It reads the id, ports and state. For the body it expands to a call into the

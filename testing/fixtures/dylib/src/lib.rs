@@ -4,7 +4,8 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use daedalus_abi::{
-    Fence, FencePoll, FenceWord, PlainData, Slot, SlotState, Slots, StepCx, StepEnd,
+    BytesC, Fence, FencePoll, FenceWord, HANDOVER_PENDING, OWNER_HANDED, PlainData, Slot, SlotState,
+    Slots, StepCx, StepEnd,
 };
 use daedalus_derive::PlainData;
 use daedalus_loader::export::{CodecDef, NodeDef, PluginDef, PortDef};
@@ -71,6 +72,42 @@ fn abort(_slots: &mut Slots, _cx: &mut StepCx) -> StepEnd {
     std::process::abort();
 }
 
+/// The megabyte the handover node hands out. It is made once, and every hand-over points at it, so
+/// a tick costs the hand-over alone.
+static HANDED: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+
+/// Hands a megabyte over without a copy. Output cell 1 is the hand-over: the bytes are described in
+/// `cx.handover[0]`, and the loader turns the cell into a record once the step returns.
+fn handover(slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
+    let Some(out) = slots.cell(1) else {
+        return StepEnd::Fault;
+    };
+    let bytes = HANDED.get_or_init(|| vec![7u8; 1 << 20].into_boxed_slice());
+    let (ptr, len) = (bytes.as_ptr(), bytes.len());
+    cx.handover[0] = BytesC {
+        ptr,
+        len,
+        data: std::ptr::null_mut(),
+        release: Some(release_handed),
+    };
+    *out = Slot {
+        state: SlotState::Full as u32,
+        owner: OWNER_HANDED,
+        reserved: HANDOVER_PENDING,
+        data: ptr.cast_mut(),
+        len,
+        ..Slot::EMPTY
+    };
+    StepEnd::Done
+}
+
+/// Called once when the last value of a hand-over is dropped. The megabyte is static, so there is
+/// nothing to free: the release is where a plugin would free its own bytes.
+///
+/// # Safety
+/// Takes no pointer it reads.
+unsafe extern "C" fn release_handed(_data: *mut ()) {}
+
 static PASS_IN: [PortDef; 1] = [PortDef {
     name: "in",
     key: "u32",
@@ -82,7 +119,13 @@ static PASS_OUT: [PortDef; 1] = [PortDef {
     optional: false,
 }];
 
-static NODES: [NodeDef; 4] = [
+static HANDED_OUT: [PortDef; 1] = [PortDef {
+    name: "out",
+    key: "bytes",
+    optional: false,
+}];
+
+static NODES: [NodeDef; 5] = [
     NodeDef {
         id: "fixture.pass",
         source: "dylib-fixture",
@@ -109,6 +152,15 @@ static NODES: [NodeDef; 4] = [
         inputs: &PASS_IN,
         outputs: &PASS_OUT,
         run: abort,
+    },
+    NodeDef {
+        id: "fixture.handover",
+        source: "dylib-fixture",
+        backend: "fixture.cpu",
+        text: "handover",
+        inputs: &PASS_IN,
+        outputs: &HANDED_OUT,
+        run: handover,
     },
     NodeDef {
         id: "fixture.gated",

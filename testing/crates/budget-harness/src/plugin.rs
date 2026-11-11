@@ -101,6 +101,37 @@ pub fn plugin_node(library: &Path) -> LoadedHost {
     LoadedHost::load(planned, LoadOptions::default()).expect("the plan loads")
 }
 
+/// The dylib fixture's node that hands a megabyte to the host: `in` is a u32, `out` is the bytes.
+pub fn handover_node(library: &Path) -> LoadedHost {
+    let plugin = Arc::new(Loader::new().open(library).expect("the plugin loads"));
+    let mut registry = Registry::new();
+    plugin.join(&mut registry).expect("the plugin's nodes join");
+    let backend = OneNode { plugin };
+    let graph = GraphBody {
+        nodes: vec![
+            bridge(&[("in", "u32"), ("out", "bytes")]),
+            NodeDoc::new("fixture.handover"),
+        ],
+        edges: vec![edge(0, "in", 1, "in"), edge(1, "out", 0, "out")],
+        groups: Vec::new(),
+    };
+    let planned =
+        plan(&graph, &registry, &[&backend], &Config::default()).expect("the graph plans");
+    LoadedHost::load(planned, LoadOptions::default()).expect("the plan loads")
+}
+
+/// One tick of the hand-over node, taken as the host takes any value, then dropped: the bytes are
+/// released here. Returns how many bytes came out.
+pub fn handover_tick(host: &mut LoadedHost, value: u32) -> usize {
+    let io = host.host();
+    io.feed_inline("in", &value.to_le_bytes()).expect("a feed");
+    io.step().expect("a tick");
+    let taken = io.take_value("out").expect("a take").expect("a value");
+    let len = taken.bytes().expect("bytes").len();
+    drop(taken);
+    len
+}
+
 /// One tick of the plugin node: fed in place, stepped, taken.
 pub fn plugin_tick(host: &mut LoadedHost, value: u32) -> u32 {
     let io = host.host();

@@ -38,6 +38,18 @@ A crate that writes CPU nodes depends on `daedalus`, on `daedalus-cpu-author` an
 - Returning `Option<T>` sends nothing on a tick where it is `None`.
 - Returning `Result<T, Fault>` reports a failure. See [Failure](#failure).
 
+## Bytes a plugin handed over
+
+A plugin's node can hand bytes to the host without a copy (see [plugins.md](plugins.md#handing-bytes-over)).
+A node that takes them receives a `SharedBytes`, the one type for bytes with an owner:
+
+- `x: SharedBytes` takes the handle by value. Taking it moves the count the cell holds, so the bytes
+  are not copied and nothing is allocated. Returning the same `SharedBytes` hands the bytes on
+  unchanged.
+- `x: Vec<u8>` copies the bytes out, and the copy is counted in `bytes_copied`. A `Vec<u8>` owns
+  its memory, so a copy is the one thing it can't avoid. Expect it, and take a `SharedBytes` when
+  the bytes only pass through.
+
 ## Value types
 
 A scalar (`bool`, the integers, `f32`, `f64`, `String`, `Vec<u8>`, `()`) has a type key already.
