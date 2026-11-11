@@ -379,6 +379,8 @@ fn a_read_after_a_device_write_sees_the_devices_bytes() {
     assert_eq!(seen, reversed, "the read sees what the device wrote");
 }
 
+// The sync counter is Linux-only (the dma-heap buffers are), so this test is too.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_read_with_no_device_use_in_between_does_no_sync() {
     let Some(backend) = private() else { return };
