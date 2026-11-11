@@ -1,6 +1,6 @@
 //! Images that arrive as bytes in a buffer, made into textures a shader can sample.
 //!
-//! A camera's image is rows of pixels in a dma-buf. Imported as a storage buffer it costs
+//! An image is rows of pixels in a dma-buf. Imported as a storage buffer it costs
 //! nothing, and a copy on the device then turns it into a texture. That copy takes rows that
 //! start 256 bytes apart, so an image whose rows don't is folded: several rows are laid side by
 //! side in a wider texture by one copy, and a small pass puts them back.

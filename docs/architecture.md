@@ -119,8 +119,8 @@ This happens when a node has more than one body, such as a blur written for both
 
 | Option | blur, sharpen | detect | overlay | Backend jumps |
 |---|---|---|---|---|
-| **A** | GPU | GPU | CPU | **2:** camera to GPU, GPU to CPU |
-| **B** | CPU | GPU | CPU | 3: camera to CPU, CPU to GPU, GPU to CPU |
+| **A** | GPU | GPU | CPU | **2:** a source to GPU, GPU to CPU |
+| **B** | CPU | GPU | CPU | 3: a source to CPU, CPU to GPU, GPU to CPU |
 
 The planner picks A. The rules, in order:
 

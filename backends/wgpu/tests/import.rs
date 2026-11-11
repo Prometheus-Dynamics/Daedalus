@@ -232,7 +232,7 @@ fn dmabuf_import_rejects_non_dmabuf_and_short_buffers() {
     }
 }
 
-/// A value that is an image in a dma-buf, as a camera's frame type would be.
+/// A value that is an image in a dma-buf, as a producer's frame type would be.
 struct Frame {
     buf: DmaBuf,
     width: u32,
