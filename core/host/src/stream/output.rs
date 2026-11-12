@@ -103,15 +103,6 @@ impl GraphOutput {
         GraphOutput { port }
     }
 
-    /// Sets this port's pressure policy.
-    pub fn set_policy(&self, policy: Pressure) {
-        *self
-            .port
-            .policy
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = policy;
-    }
-
     /// The oldest value waiting, if any.
     pub fn try_recv(&self) -> Option<Value> {
         self.port.lock().items.pop_front()

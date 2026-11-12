@@ -174,24 +174,6 @@ pub fn put_shared(
     );
 }
 
-/// Writes static bytes into an output cell, releasing the cell's previous payload.
-pub fn put_static(cell: &mut Slot, ty: TypeIndex, space: SpaceIndex, bytes: &'static [u8]) {
-    put(
-        cell,
-        Slot {
-            state: SlotState::Full as u32,
-            space: u32::from(space.0),
-            type_index: ty.0,
-            owner: daedalus_value::OwnerKind::Static as u32,
-            version: 0,
-            reserved: 0,
-            data: bytes.as_ptr().cast_mut(),
-            len: bytes.len(),
-            cap: bytes.len(),
-        },
-    );
-}
-
 /// Writes up to [`INLINE_BYTES`] bytes into an output cell. The bytes are copied when the step's
 /// outputs are published, so they only need to live until the step returns. `None` when `bytes`
 /// is too long.

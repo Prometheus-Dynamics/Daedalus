@@ -18,11 +18,3 @@ pub(crate) fn bump_transfer(index: usize) {
 pub fn ran(node: u32) -> u32 {
     NODES[node as usize % SLOTS].load(Ordering::Relaxed)
 }
-
-/// How many transfer steps have run in this process, in total.
-pub fn transfers_ran() -> u32 {
-    TRANSFERS
-        .iter()
-        .map(|count| count.load(Ordering::Relaxed))
-        .sum()
-}
