@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::output;
 
-pub const COMMANDS: &str = "\
+pub(crate) const COMMANDS: &str = "\
 commands:
   ping
   load-plugin PATH
@@ -199,7 +199,7 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 }
 
 /// A scalar value written as `TYPE:VALUE`.
-pub fn parse_value(text: &str) -> Result<TypedValue, String> {
+pub(crate) fn parse_value(text: &str) -> Result<TypedValue, String> {
     let (name, rest) = text.split_once(':').unwrap_or((text, ""));
     let scalar = output::SCALAR_NAMES
         .iter()
