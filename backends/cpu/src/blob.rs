@@ -19,7 +19,7 @@ pub use write::{
 };
 
 /// Most inputs or outputs a node may have.
-pub const MAX_PORTS: usize = 8;
+pub(crate) const MAX_PORTS: usize = 8;
 /// Most nodes in a library, or a plan.
 pub const MAX_NODES: usize = 256;
 
