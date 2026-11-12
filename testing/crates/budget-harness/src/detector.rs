@@ -35,7 +35,7 @@ pub struct Runs {
     pub spans: [u32; 16],
 }
 
-pub struct Quads {
+pub(crate) struct Quads {
     pub count: u32,
     pub corners: [[u32; 4]; 8],
 }

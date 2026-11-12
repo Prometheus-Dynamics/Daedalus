@@ -24,7 +24,7 @@ use daedalus_wgpu_conformance::{
 /// A region is one submit, whatever is in it.
 pub const SUBMITS_PER_REGION: u64 = 1;
 /// A region of shader nodes is one compute pass: its nodes' dispatches share it.
-pub const PASSES_PER_REGION: u64 = 1;
+pub(crate) const PASSES_PER_REGION: u64 = 1;
 /// A whole-shader node runs once.
 pub const DISPATCHES_PER_SHADER_NODE: u64 = 1;
 /// A chain of pixel bodies runs once, whatever its length.
@@ -32,13 +32,13 @@ pub const DISPATCHES_PER_MERGED_CHAIN: u64 = 1;
 /// And is one pipeline, built once.
 pub const PIPELINES_PER_MERGED_CHAIN: u64 = 1;
 /// Running builds nothing: every pipeline is built when the region compiles.
-pub const PIPELINES_PER_RUN: u64 = 0;
+pub(crate) const PIPELINES_PER_RUN: u64 = 0;
 /// A value that goes from the host to the device is uploaded once.
 pub const UPLOADS_PER_BOUNDARY: u64 = 1;
 /// And one that comes back is copied once.
 pub const DOWNLOADS_PER_BOUNDARY: u64 = 1;
 /// A region moves nothing between the host and the device by itself.
-pub const TRANSFERS_PER_REGION: u64 = 0;
+pub(crate) const TRANSFERS_PER_REGION: u64 = 0;
 /// Allocations by one run of a region's step after warm-up, however many shaders run in it.
 /// A region of shaders that bind buffers is recorded with Vulkan itself into a command buffer
 /// it uses again, so nothing is allocated.
@@ -75,7 +75,7 @@ pub fn exactly(what: &'static str, measured: u64, budget: u64) -> Result<(), Mis
 }
 
 /// A count that may be at most its budget.
-pub fn at_most(what: &'static str, measured: u64, budget: u64) -> Result<(), Miss> {
+pub(crate) fn at_most(what: &'static str, measured: u64, budget: u64) -> Result<(), Miss> {
     match measured <= budget {
         true => Ok(()),
         false => Err(Miss {
