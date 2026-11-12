@@ -9,7 +9,6 @@ mod caps;
 mod context;
 mod copy_limiter;
 pub mod devices;
-pub mod dmabuf;
 #[cfg(target_os = "linux")]
 mod dmabuf_value;
 mod driver;
@@ -19,7 +18,6 @@ mod fence_tests;
 pub mod fragment;
 pub mod handoff;
 mod host_bytes;
-pub mod image;
 mod inflight;
 mod loss;
 mod mapped;

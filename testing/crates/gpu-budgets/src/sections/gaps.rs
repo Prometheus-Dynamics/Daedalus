@@ -408,36 +408,6 @@ pub(crate) fn heap_alone(backend: &WgpuBackend, which: &str) {
             });
             println!("alone raw sync, copy, sync: {:.3} ms", ms(read));
         }
-        "imported" => {
-            // A raw buffer of the storage's own length, imported into the device and kept alive
-            // while the raw mapping is read: does the import change the host's read?
-            use daedalus_wgpu::dmabuf::Fourcc;
-            use daedalus_wgpu::image::ExternalBuffer;
-            let heap = DmaHeap::open("system").expect("heap");
-            let len = bytes as u64 + 256;
-            let buf = heap.allocate(len).expect("buffer");
-            let map = buf.as_ref().map().expect("mapping");
-            buf.as_ref().begin_cpu_access(Access::Write).expect("begin");
-            map.write(0, &payload).expect("in range");
-            buf.as_ref().end_cpu_access(Access::Write).expect("end");
-            let imported = backend.import_storage(ExternalBuffer {
-                fd: buf.try_clone().expect("clone").into_fd(),
-                width: bytes as u32,
-                height: 1,
-                fourcc: Fourcc::R8,
-                planes: vec![(0, bytes as u64)],
-            });
-            println!(
-                "import for the test: {}",
-                if imported.is_ok() { "ok" } else { "refused" }
-            );
-            let read = median(WARM, RUNS, || {
-                buf.as_ref().begin_cpu_access(Access::Read).expect("begin");
-                map.read(0, &mut out).expect("read");
-                buf.as_ref().end_cpu_access(Access::Read).expect("end");
-            });
-            println!("alone raw read after a device import: {:.3} ms", ms(read));
-        }
         other => println!("alone: unknown variant {other}"),
     }
 }

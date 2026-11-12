@@ -377,14 +377,15 @@ let volts = graph.take();</code></pre></div>
 <li><b>Who owns it:</b> so it can be handed over without a copy.</li>
 </ul>
 <pre><code>#[derive(Type)]
-struct Image { fd: OwnedFd, width: u32, height: u32, stride: u32 }
+struct Block { fd: OwnedFd, len: u64 }
 
-#[node(id = "acme.read", outputs("image"), memory(image = dmabuf))]
-fn read(source: &amp;mut Source) -&gt; Image { .. }
+#[node(id = "acme.read", outputs("block"))]
+fn read(source: &amp;mut Source) -&gt; Block { .. }
 
-// The GPU backend publishes the import. The type's owner only describes the memory.
-impl ImportExternal for Image {
-    fn describe(&amp;self) -&gt; ExternalImage { .. }
+// The GPU backend publishes the import of a dma-buf's bytes. The type's owner only says where the
+// bytes are, and the backend is given `with_dmabuf::&lt;Block&gt;()`.
+impl DmaBufBacked for Block {
+    fn dmabuf(&amp;self) -&gt; Option&lt;(BorrowedFd&lt;'_&gt;, u64)&gt; { .. }
 }</code></pre>
 <h3>What it costs</h3>
 <div class="scroll"><table><thead><tr><th>Between two nodes</th><th>At run time</th></tr></thead><tbody>

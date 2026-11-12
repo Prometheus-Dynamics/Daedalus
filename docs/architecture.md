@@ -342,14 +342,15 @@ Daedalus needs three facts about any value:
 
 ```rust
 #[derive(Type)]
-struct Image { fd: OwnedFd, width: u32, height: u32, stride: u32 }
+struct Block { fd: OwnedFd, len: u64 }
 
-#[node(id = "acme.read", outputs("image"), memory(image = dmabuf))]
-fn read(source: &mut Source) -> Image { .. }
+#[node(id = "acme.read", outputs("block"))]
+fn read(source: &mut Source) -> Block { .. }
 
-// The GPU backend publishes the import. The type's owner only describes the memory.
-impl ImportExternal for Image {
-    fn describe(&self) -> ExternalImage { .. }
+// The GPU backend publishes the import of a dma-buf's bytes. The type's owner only says where the
+// bytes are, and the backend is given `with_dmabuf::<Block>()`.
+impl DmaBufBacked for Block {
+    fn dmabuf(&self) -> Option<(BorrowedFd<'_>, u64)> { .. }
 }
 ```
 

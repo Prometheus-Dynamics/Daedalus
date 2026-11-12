@@ -219,11 +219,11 @@ A node says what it outputs and what it needs. The planner matches the types and
 memory handler between them. It works the same for any program.
 
 ```text
-node A: I output acme.image, in dmabuf memory
-node B: I need acme.image, in GPU memory
+node A: I output acme.block, in dmabuf memory
+node B: I need acme.block, in GPU memory
 
 planner: same type, different memory
-         -> look up the handler for acme.image from dmabuf to GPU, and put it between them
+         -> look up the handler for acme.block from dmabuf to GPU, and put it between them
          -> no handler: planning fails, naming both ports and both memories
 ```
 
@@ -231,24 +231,30 @@ A value has a type key, a memory space and an owner. The core stores and passes 
 nothing else. There is no frame or image type in Daedalus. A type belongs to whoever wrote the
 nodes that use it, and can be a plain Rust struct.
 
+Movers don't know what they move. A transfer moves opaque bytes from one memory space to another,
+and nothing in Daedalus or its backends knows what a frame, an image or a camera is: no pixel
+formats, plane layouts or format modifiers. Whoever produces a value describes it and answers for
+its contents.
+
 ```rust
 #[derive(Type)]
-struct Image { fd: OwnedFd, width: u32, height: u32, stride: u32 }
+struct Block { fd: OwnedFd, len: u64 }
 
-#[node(id = "acme.read", outputs("image"), memory(image = dmabuf))]
-fn read(source: &mut Source) -> Image { .. }
+#[node(id = "acme.read", outputs("block"))]
+fn read(source: &mut Source) -> Block { .. }
 
-// The GPU backend publishes the import. The type's owner only describes the memory.
-impl ImportExternal for Image {
-    fn describe(&self) -> ExternalImage { .. }
+// The GPU backend publishes the import of a dma-buf's bytes. The type's owner only says where the
+// bytes are, and the backend is given `with_dmabuf::<Block>()`.
+impl DmaBufBacked for Block {
+    fn dmabuf(&self) -> Option<(BorrowedFd<'_>, u64)> { .. }
 }
 ```
 
 Writing a handler by hand is one function, for types that need more:
 
 ```rust
-#[transfer(from = "dmabuf.block", to = "wgpu.buffer", cost = import, backend = daedalus_wgpu_author)]
-fn to_gpu(image: &Image, gpu: &GpuCx) -> Texture { gpu.import_external(&image.describe()) }
+#[transfer(from = "acme.mem", to = "wgpu.buffer", cost = copy, backend = daedalus_wgpu_author)]
+fn to_gpu(block: &Block, gpu: &GpuCx) -> Storage { gpu.upload(block.bytes()) }
 ```
 
 The function takes the value it moves, by reference or by value, and returns the moved value or a

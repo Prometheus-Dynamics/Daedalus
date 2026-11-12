@@ -170,11 +170,6 @@ pub struct Texture {
     /// Unique to this texture, for the bind group cache.
     pub(crate) id: u64,
     desc: TextureDesc,
-    /// The half-size plane of U and V, when this is the Y plane of an imported NV12 image.
-    chroma: Option<Box<Texture>>,
-    /// What this texture's memory belongs to, kept for as long as the texture is. For one
-    /// frame of an imported image, that is the producer's value for that frame.
-    hold: Option<Arc<dyn std::any::Any + Send + Sync>>,
     context: Arc<Context>,
 }
 
@@ -226,88 +221,8 @@ impl Texture {
             texture,
             id: Context::next_id(),
             desc,
-            chroma: None,
-            hold: None,
             context,
         })
-    }
-
-    /// A texture over an image imported from external memory. An NV12 image is two planes in
-    /// one image: this is its Y plane, as one channel, and [`Texture::chroma`] is the other.
-    #[cfg(target_os = "linux")]
-    pub(crate) fn imported(
-        context: Arc<Context>,
-        texture: wgpu::Texture,
-        format: crate::dmabuf::ImageFormat,
-        width: u32,
-        height: u32,
-    ) -> Texture {
-        use crate::dmabuf::ImageFormat;
-        let plane = |aspect, format: Format, width, height| Texture {
-            view: texture.create_view(&wgpu::TextureViewDescriptor {
-                aspect,
-                format: Some(format.to_wgpu()),
-                ..wgpu::TextureViewDescriptor::default()
-            }),
-            texture: texture.clone(),
-            id: Context::next_id(),
-            desc: TextureDesc {
-                format,
-                width,
-                height,
-            },
-            chroma: None,
-            hold: None,
-            context: Arc::clone(&context),
-        };
-        let all = wgpu::TextureAspect::All;
-        match format {
-            ImageFormat::R8 => plane(all, Format::R8, width, height),
-            ImageFormat::Rg8 => plane(all, Format::Rg8, width, height),
-            ImageFormat::Rgba8 => plane(all, Format::Rgba8, width, height),
-            ImageFormat::Bgra8 => plane(all, Format::Bgra8, width, height),
-            ImageFormat::Nv12 => {
-                let mut luma = plane(wgpu::TextureAspect::Plane0, Format::R8, width, height);
-                let chroma = plane(
-                    wgpu::TextureAspect::Plane1,
-                    Format::Rg8,
-                    width / 2,
-                    height / 2,
-                );
-                luma.chroma = Some(Box::new(chroma));
-                luma
-            }
-        }
-    }
-
-    /// The same texture, holding `hold` for as long as this value lives. An import is cached
-    /// and outlives every frame, so each frame gets a value of its own that holds that frame's
-    /// producer buffer and lets it go when the last reader is done.
-    #[cfg(target_os = "linux")]
-    pub(crate) fn holding(&self, hold: Arc<dyn std::any::Any + Send + Sync>) -> Texture {
-        Texture {
-            texture: self.texture.clone(),
-            view: self.view.clone(),
-            id: self.id,
-            desc: self.desc,
-            chroma: self
-                .chroma
-                .as_ref()
-                .map(|chroma| Box::new(chroma.holding(Arc::clone(&hold)))),
-            hold: Some(hold),
-            context: Arc::clone(&self.context),
-        }
-    }
-
-    /// Whether this value holds something of its producer's.
-    pub fn holds_its_source(&self) -> bool {
-        self.hold.is_some()
-    }
-
-    /// The U and V plane of an imported NV12 image, at half the size each way, as two channels.
-    /// `None` for any other texture.
-    pub fn chroma(&self) -> Option<&Texture> {
-        self.chroma.as_deref()
     }
 
     pub fn desc(&self) -> TextureDesc {

@@ -65,9 +65,7 @@ pub(crate) const OPTIONAL_FEATURES: wgpu::Features = wgpu::Features::SHADER_F16
     .union(wgpu::Features::SUBGROUP)
     .union(wgpu::Features::TIMESTAMP_QUERY)
     .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
-    .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
-    // For importing NV12 as one image.
-    .union(wgpu::Features::TEXTURE_FORMAT_NV12);
+    .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
 
 impl ComputeCaps {
     /// The WebGPU default limits, which every conforming device meets, with no optional feature.

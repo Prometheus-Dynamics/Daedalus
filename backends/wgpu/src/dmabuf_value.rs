@@ -8,7 +8,8 @@
 //! gets. Whoever hands a dma-buf over answers for its contents being readable by a device.
 
 use std::marker::PhantomData;
-use std::os::fd::BorrowedFd;
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::sync::Arc;
 
 use daedalus_abi::{OwnedStep, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{CompileCx, Refusal, Transfer, TransferCost};
@@ -16,9 +17,9 @@ use daedalus_runner::{UNSTAMPED, put_typed, typed_view};
 use daedalus_types::Typed;
 
 use crate::backend::WgpuBackend;
-use crate::dmabuf::Fourcc;
+use crate::buffer::Storage;
+use crate::context::Context;
 use crate::handoff::on_device;
-use crate::image::ExternalBuffer;
 use crate::memory::SPACE_DEVICE;
 use crate::transfer::{HOST_SPACE, intern};
 
@@ -60,31 +61,44 @@ impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
         let Ok(context) = crate::devices::context(self.slot) else {
             return fault(cx, "an import has no device to go to");
         };
-        let Ok(width) = u32::try_from(want) else {
-            return fault(
-                cx,
-                "a value of more than 4 GiB can't be imported as one row",
-            );
-        };
-        let image = ExternalBuffer {
-            fd,
-            width,
-            height: 1,
-            // A code that is no format: the value is bytes, which only have to be there. An image's
-            // layout would pad the row to the device's pitch, and a value is not an image.
-            fourcc: Fourcc::from_bytes(*b"BYTE"),
-            planes: vec![(0, want)],
-        };
-        let imported = match WgpuBackend::import_sized(&context, image, Some(want)) {
-            Ok(imported) => imported,
+        let storage = match import_bytes(&context, fd, want) {
+            Ok(storage) => storage,
             Err(error) => return fault(cx, &format!("an import was refused: {error}")),
         };
         let Some(out) = slots.cell(1) else {
             return fault(cx, "an import has no output");
         };
-        put_typed(out, UNSTAMPED.0, UNSTAMPED.1, imported.storage);
+        put_typed(out, UNSTAMPED.0, UNSTAMPED.1, storage);
         StepEnd::Done
     }
+}
+
+/// The first `want` bytes of the dma-buf `fd` as a device buffer, with nothing copied. Refused when
+/// the device can't import a dma-buf, or needs more memory behind a buffer of `want` bytes than the
+/// dma-buf has.
+fn import_bytes(context: &Arc<Context>, fd: OwnedFd, want: u64) -> Result<Arc<Storage>, String> {
+    use daedalus_vk_sys::Error;
+    use daedalus_vk_sys::memory::{dma_buf_bytes_needed, import_dma_buf};
+    let refused = |error: Error| match error {
+        Error::NoDmaBufImport | Error::NotVulkan => {
+            "this device can't import a dma-buf".to_string()
+        }
+        other => other.to_string(),
+    };
+    let len = daedalus_dma_sys::DmaBufRef::from_fd(fd.as_fd())
+        .len()
+        .map_err(|error| format!("the dma-buf's size: {error}"))?;
+    let need = dma_buf_bytes_needed(&context.device, want).map_err(refused)?;
+    if need > len {
+        return Err(Error::TooSmall { have: len, need }.to_string());
+    }
+    let imported = import_dma_buf(&context.device, fd, want, len, None).map_err(refused)?;
+    context.moved.import();
+    Ok(Arc::new(Storage::imported(
+        Arc::clone(context),
+        imported,
+        want,
+    )))
 }
 
 type Make = fn(&CompileCx<'_>) -> Result<Step, Refusal>;
