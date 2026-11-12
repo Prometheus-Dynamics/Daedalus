@@ -130,11 +130,6 @@ impl GraphInput {
         GraphInput { port, shared }
     }
 
-    /// Sets this port's policy, used from the next feed on.
-    pub fn set_policy(&self, policy: PortPolicy) {
-        self.port.lock().policy = policy;
-    }
-
     /// Queues `value` for the graph.
     pub fn feed(&self, value: Value) -> StreamFeed {
         let outcome = self.port.feed(value);

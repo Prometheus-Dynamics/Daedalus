@@ -33,11 +33,6 @@ impl Readiness {
             self.fd.signal();
         }
     }
-
-    fn clear(&self) {
-        self.signalled.store(false, Ordering::Release);
-        self.fd.clear();
-    }
 }
 
 /// A descriptor that is readable while input is pending.
@@ -58,18 +53,6 @@ impl InboundFd {
 
     fn readiness(&self) -> &Readiness {
         self.signal.fd.get().expect("set in new")
-    }
-
-    /// Clears the descriptor. Input fed after this signals it again.
-    pub fn clear(&self) {
-        self.readiness().clear();
-    }
-
-    /// After a drain, signals the descriptor again if input is still pending.
-    pub fn rearm(&self) {
-        if self.signal.is_pending() {
-            self.readiness().signal();
-        }
     }
 }
 

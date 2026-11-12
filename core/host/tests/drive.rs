@@ -211,9 +211,7 @@ fn one_poll_drives_a_host_fd_and_the_inbound_fd() {
             seen_host_fd = true;
         }
         if ready[1] {
-            inbound.clear();
             graph.tick_ready().unwrap();
-            inbound.rearm();
             seen_graph = true;
         }
         if seen_host_fd && seen_graph {

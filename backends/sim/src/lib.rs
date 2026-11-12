@@ -10,7 +10,7 @@ mod memory_only;
 mod steps;
 
 pub use backend::{SimBackend, SimConfig, SimForm};
-pub use counters::{ran, transfers_ran};
+pub use counters::ran;
 pub use memory_only::SimMemory;
 
 pub const BACKEND_ID: &str = "sim";

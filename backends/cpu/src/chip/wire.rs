@@ -75,15 +75,6 @@ impl<'a> Reader<'a> {
         Ok((v >> 1) as i64 ^ -((v & 1) as i64))
     }
 
-    /// A sequence length, bounded by the bytes left (each element takes at least one).
-    pub fn seq_len(&mut self) -> Result<usize, WireError> {
-        let len = self.varint()?;
-        if len > self.buf.len() as u64 {
-            return Err(WireError);
-        }
-        Ok(len as usize)
-    }
-
     /// A [`Scalar`]: its [`ScalarKind`] tag, then the value.
     pub fn scalar(&mut self) -> Result<Scalar, WireError> {
         let kind = ScalarKind::from_u8(self.u8()?).ok_or(WireError)?;
