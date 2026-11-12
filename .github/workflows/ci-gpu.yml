@@ -25,7 +25,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # lavapipe: Vulkan on the CPU. And the validation layer, which the lane runs under.
-      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-validationlayers
+      - run: ./scripts/apt-install.sh mesa-vulkan-drivers libvulkan1 vulkan-validationlayers
       - run: ./scripts/gpu-lavapipe.sh --self-test
       - run: ./scripts/gpu-lavapipe.sh
         env:

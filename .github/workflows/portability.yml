@@ -28,7 +28,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
-      - run: sudo apt-get update && sudo apt-get install -y qemu-user libc6-riscv64-cross
+      - run: ./scripts/apt-install.sh qemu-user libc6-riscv64-cross
       - run: ./scripts/cross.sh
 
   windows:
