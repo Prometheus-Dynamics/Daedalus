@@ -22,9 +22,9 @@
 use daedalus_plan::crc32;
 
 /// The tag byte that starts a chunk frame.
-pub const CHUNK_TAG: u8 = b'C';
+pub(crate) const CHUNK_TAG: u8 = b'C';
 /// Bytes of a chunk frame before its payload.
-pub const CHUNK_HEADER: usize = 11;
+pub(crate) const CHUNK_HEADER: usize = 11;
 /// Bytes a chunk frame adds to its payload (header and CRC-32).
 pub const CHUNK_OVERHEAD: usize = CHUNK_HEADER + 4;
 

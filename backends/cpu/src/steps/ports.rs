@@ -64,17 +64,17 @@ pub fn read<'a, T: 'static, C: ConstTable>(
 }
 
 /// Takes the handed bytes a full cell holds, by move.
-pub fn take_handed_bytes(cell: &mut Slot) -> Option<daedalus_abi::SharedBytes> {
+pub(crate) fn take_handed_bytes(cell: &mut Slot) -> Option<daedalus_abi::SharedBytes> {
     daedalus_runner::take_handed(cell)
 }
 
 /// Another handle on the handed bytes a full cell holds. The cell keeps its own.
-pub fn share_handed_bytes(cell: &Slot) -> Option<daedalus_abi::SharedBytes> {
+pub(crate) fn share_handed_bytes(cell: &Slot) -> Option<daedalus_abi::SharedBytes> {
     daedalus_runner::share_handed(cell)
 }
 
 /// Puts handed bytes in a cell as they are: the handle's count moves into it.
-pub fn put_handed_bytes(value: daedalus_abi::SharedBytes, slot: &mut Slot) {
+pub(crate) fn put_handed_bytes(value: daedalus_abi::SharedBytes, slot: &mut Slot) {
     // The unstamped indexes: a handed value keeps the type and space its producer gave it.
     daedalus_runner::put_handed(
         slot,
@@ -171,7 +171,7 @@ pub fn encode<T: Send + Sync + 'static, S: Keeper<T>>(
 
 /// Takes the handle a cell holds. A value kept in a carrier is moved into a new handle.
 #[cfg(feature = "alloc")]
-pub fn take_handle<U: Send + Sync + 'static>(cell: &mut Slot) -> Option<Arc<U>> {
+pub(crate) fn take_handle<U: Send + Sync + 'static>(cell: &mut Slot) -> Option<Arc<U>> {
     if let Some(handle) = take_typed::<U>(cell) {
         return Some(handle);
     }
@@ -180,13 +180,13 @@ pub fn take_handle<U: Send + Sync + 'static>(cell: &mut Slot) -> Option<Arc<U>> 
 
 /// Another handle to what a cell holds, leaving the cell's own where it is.
 #[cfg(feature = "alloc")]
-pub fn share_handle<U: Send + Sync + 'static>(cell: &Slot) -> Option<Arc<U>> {
+pub(crate) fn share_handle<U: Send + Sync + 'static>(cell: &Slot) -> Option<Arc<U>> {
     daedalus_runner::share_typed(cell)?.downcast::<U>().ok()
 }
 
 /// Puts a handle in a cell as it is: the value isn't moved and no handle is made.
 #[cfg(feature = "alloc")]
-pub fn put_handle<U: Send + Sync + 'static>(value: Arc<U>, slot: &mut Slot) {
+pub(crate) fn put_handle<U: Send + Sync + 'static>(value: Arc<U>, slot: &mut Slot) {
     put_typed(slot, UNSTAMPED.0, UNSTAMPED.1, value);
 }
 
