@@ -323,6 +323,12 @@ impl<'a> Host<'a> {
         self.runner.tick().map_err(HostError::Run)
     }
 
+    /// Sets the failure policy: the backoff, and whether a fault stops the run (`fail_fast`).
+    /// Every step's own recovery still applies first.
+    pub fn set_failure_policy(&mut self, policy: daedalus_runner::FailurePolicy) {
+        self.runner.set_failure_policy(policy);
+    }
+
     /// Sets the host's clock, in nanoseconds: what freshness rules and backoff measure against.
     pub fn set_clock(&mut self, now_ns: u64) {
         self.now_ns = now_ns;

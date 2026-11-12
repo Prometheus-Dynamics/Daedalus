@@ -87,6 +87,27 @@ Nothing is turned off automatically.
   fails. It is never done automatically.
 - `patch_const(node, port, value)`: change a constant between ticks without a reload.
 
+## Recovery per step
+
+What a fault does is set per step, from the node's metadata when the plan loads. Without a key a
+step fails: the tick is contained and the step backs off, as above.
+
+| Key (node metadata) | Value | Effect |
+|---|---|---|
+| `daedalus.node.recovery` | `"fail"` (the default), `"skip"`, `"restart"` | `skip` drops the tick and the run goes on, even under fail-fast. `restart` marks the next call so the body resets its own state. |
+| `daedalus.node.retries` | an integer from 1 | The body runs again in the same tick, on the same inputs, up to that many times. The fault stands after the last retry. |
+
+- Set one of the two keys, not both. A non-integer, zero or unknown value is refused at load with
+  `LoadError::Recovery`, naming the node. The same names are exported as `RECOVERY_KEY` and
+  `RETRIES_KEY`.
+- Nodes merged into one step must agree. Two nodes in one step that ask for different recoveries
+  are refused at load; set `daedalus.node.fusion` to `false` on one of them to keep them apart.
+- A graph-wide default is not read: set the key on each node.
+- Nothing is switched off automatically by these keys. Turn a failing node off by hand with
+  `set_node_on(node, false)`; it is not called until it is turned on again. A merged step can't be
+  switched by node name, so keep the node unmerged first.
+- Retries don't sleep. Backoff after a fault is still capped at 8 s by the failure rule.
+
 ## Running continuously
 
 `loaded.start()` gives a `StreamGraph`: a worker thread ticks the graph, and the caller feeds

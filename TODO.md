@@ -151,3 +151,15 @@ A third-party backend that proves the interface, the budget harness, examples, d
 - [x] [I6](docs/prs/I6.md) Capability audit against dev (wave 1; needs nothing)
 - [x] [I7](docs/prs/I7.md) Finish: package surface, semver, lockfile, ready for other repositories (wave 20; needs A2, A13, B3, B5, B10, B11, B12, B14, B15, C6, C7, C8, C12, C13, C16, C17, C18, C20, C21, C22, C23, C24, D2, D9, D10, D12, D13, E10, E11, E12, E15, E17, G3, G5, G6, G7, G8, G9, G11, G12, H5, H6, I1, I3, I5, I8)
 - [x] [I8](docs/prs/I8.md) GPU examples on lavapipe (wave 17; needs E3, E6, I4)
+
+## J. After the plan
+
+Runtime features on top of the landed host, runner and planner, from the 2026-11-11 agreement. Each is its own PR, in order.
+
+- [ ] [J1](docs/prs/J1.md) Retry and skip per step, read from the graph (wave 21; needs C5, C12)
+- [ ] [J2](docs/prs/J2.md) Fail-fast cancels the steps running beside a failed one (wave 21; needs C6, C7)
+- [ ] [J3](docs/prs/J3.md) Lists and structs as graph constants (wave 21; needs D1, A4)
+- [ ] [J4](docs/prs/J4.md) Group expansion keeps node metadata (wave 21; needs A6, B1)
+- [ ] [J5](docs/prs/J5.md) Progress readable during parallel runs (wave 21; needs C7, C11)
+- [ ] J6 A location-only dma-buf memory space with transfers to the wgpu spaces
+- [ ] J7 An optional GPU-lease hook on the wgpu backend
