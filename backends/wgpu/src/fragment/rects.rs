@@ -84,7 +84,7 @@ impl FragmentRects {
         &self.buffer
     }
 
-    /// Sets the rectangles to draw, each `[x, y, width, height]` in pixels of a target of
+    /// Sets the rectangles to draw, each `[x, y, width, height]` in texels of a target of
     /// `target_size`. They travel with the next submit.
     pub fn write(
         &mut self,

@@ -4,7 +4,7 @@
 
 use std::process::Command;
 
-use daedalus_example_gpu::{fragment, gpu, mixed, upload_download};
+use daedalus_example_gpu::{element, gpu, mixed, upload_download};
 
 /// The examples share the process's one device, and one of them counts its passes: a test at
 /// a time.
@@ -47,19 +47,19 @@ fn binary_prints(path: &str, line: &str) {
 }
 
 #[test]
-fn fragment_matches_cpu() {
+fn element_matches_cpu() {
     let Some(_turn) = has_gpu() else { return };
     for len in [1u32, 63, 64, 65, 4096, 10_001] {
-        let pixels: Vec<u32> = (0..len)
+        let elements: Vec<u32> = (0..len)
             .map(|at| at.wrapping_mul(2_654_435_761) >> 8)
             .collect();
-        let (mask, passes) = fragment::on_gpu(&pixels).expect("runs");
-        assert_eq!(mask, fragment::on_cpu(&pixels), "{len} pixels");
+        let (result, passes) = element::on_gpu(&elements).expect("runs");
+        assert_eq!(result, element::on_cpu(&elements), "{len} elements");
         assert_eq!(passes, 1, "three nodes, one shader");
     }
-    let line = "fragment: three per-pixel nodes ran as 1 shader over 4096 pixels, 2688 are lit, as on the CPU\n";
-    assert_eq!(fragment::run().as_deref(), Ok(line));
-    binary_prints(env!("CARGO_BIN_EXE_fragment"), line);
+    let line = "element: three element-wise nodes ran as 1 shader over 4096 elements, 2688 are 255, as on the CPU\n";
+    assert_eq!(element::run().as_deref(), Ok(line));
+    binary_prints(env!("CARGO_BIN_EXE_element"), line);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn a_wrong_answer_is_caught() {
     // What each example compares against is the CPU's own arithmetic, so a GPU that got it
     // wrong would differ here.
     assert_eq!(mixed::on_cpu(3), 4 + 7 + 10);
-    assert_eq!(fragment::on_cpu(&[0, 100, 200, 255]), [255, 255, 0, 0]);
+    assert_eq!(element::on_cpu(&[0, 100, 200, 255]), [255, 255, 0, 0]);
 }
 
 /// The shader writes the round trip's result straight into memory the host reads: dma-heap memory

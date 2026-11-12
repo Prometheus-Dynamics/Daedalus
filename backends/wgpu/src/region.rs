@@ -89,15 +89,15 @@ pub(crate) struct Owned {
     pub(crate) kept: Vec<Arc<Storage>>,
     /// The one this run uses, as an index into `kept`.
     pub(crate) current: usize,
-    /// Set for a run in which the value is a texture and not a buffer: a chain of pixel bodies
+    /// Set for a run in which the value is a texture and not a buffer: a chain of element bodies
     /// that was given a texture writes one.
     pub(crate) texture: Option<Arc<crate::texture::Texture>>,
 }
 
-/// A merged chain of pixel bodies, kept so it can run as a fragment pass when its input turns
+/// A merged chain of element bodies, kept so it can run as a fragment pass when its input turns
 /// out to be a texture. Whether a value is a buffer or a texture is only known when it arrives.
-pub(crate) struct PixelChain {
-    pub(crate) specs: Vec<crate::merge::PixelSpec>,
+pub(crate) struct ElementChain {
+    pub(crate) specs: Vec<crate::merge::ElementSpec>,
     /// Every side input in chain order, and every config with its size, as a fragment pass
     /// binds them.
     pub(crate) sides: Vec<Source>,
@@ -129,8 +129,8 @@ pub(crate) struct Node {
     /// The buffers this node writes, which are sized before it runs: (position, buffer). The
     /// position is a binding's for a shader and an output port's for a recording body.
     pub(crate) makes: Vec<(usize, usize)>,
-    /// Set for a merged chain of pixel bodies.
-    pub(crate) pixel: Option<PixelChain>,
+    /// Set for a merged chain of element bodies.
+    pub(crate) element: Option<ElementChain>,
 }
 
 fn refuse(node: NodeIndex, reason: impl AsRef<str>) -> Refusal {
@@ -230,7 +230,7 @@ fn source_for(
     }
 }
 
-/// One node for a whole chain of pixel bodies: a single shader, generated from their functions,
+/// One node for a whole chain of element bodies: a single shader, generated from their functions,
 /// that reads the first node's input and writes the last node's output. Nothing is written for
 /// the values in between.
 fn merged_node(
@@ -242,18 +242,21 @@ fn merged_node(
     owned: &mut Vec<Owned>,
     made: &mut Vec<(PortRef, usize)>,
 ) -> Result<Node, Refusal> {
-    use crate::merge::{PixelSpec, Slot};
+    use crate::merge::{ElementSpec, Slot};
     let (head, tail) = (chain[0], chain[chain.len() - 1]);
-    let mut specs: Vec<&PixelSpec> = Vec::with_capacity(chain.len());
+    let mut specs: Vec<&ElementSpec> = Vec::with_capacity(chain.len());
     for &node in chain {
         let body = body_of(node, cx)?;
-        let Some(spec) = body.code.downcast_ref::<PixelSpec>() else {
-            return Err(refuse(node, "a chain holds a node that isn't a pixel body"));
+        let Some(spec) = body.code.downcast_ref::<ElementSpec>() else {
+            return Err(refuse(
+                node,
+                "a chain holds a node that isn't an element body",
+            ));
         };
         if spec.inputs.len() != usize::from(body.inputs) || body.outputs != 1 {
             return Err(refuse(
                 node,
-                "a pixel body has one output, and a port for each parameter",
+                "an element body has one output, and a port for each parameter",
             ));
         }
         specs.push(spec);
@@ -282,8 +285,8 @@ fn merged_node(
         };
         let source = match slot {
             Slot::Input => {
-                let pixel = port_of(0, specs[0].params[0]);
-                let source = match pixel {
+                let element = port_of(0, specs[0].params[0]);
+                let source = match element {
                     Some(port) => source_for(port, false, region, cx, made)?,
                     None => None,
                 };
@@ -339,7 +342,7 @@ fn merged_node(
         work: Work::Shader(shader),
         sources,
         makes,
-        pixel: Some(PixelChain {
+        element: Some(ElementChain {
             specs: specs.iter().map(|spec| **spec).collect(),
             sides,
             configs,
@@ -365,7 +368,7 @@ pub(crate) fn compile(
     let mut made: Vec<(PortRef, usize)> = Vec::new();
     let mut nodes = Vec::with_capacity(region.nodes.len());
 
-    // Pixel bodies run as merged chains, each where its last node stands.
+    // Element bodies run as merged chains, each where its last node stands.
     let chains = crate::merge::segments(region, cx, &context.record.compute)
         .map_err(|(node, reason)| refuse(node, reason))?;
 
@@ -434,7 +437,7 @@ pub(crate) fn compile(
                 work: Work::Record(*record),
                 sources,
                 makes,
-                pixel: None,
+                element: None,
             });
             continue;
         }
@@ -522,7 +525,7 @@ pub(crate) fn compile(
             work: Work::Shader(shader),
             sources: resolved,
             makes,
-            pixel: None,
+            element: None,
         });
     }
 

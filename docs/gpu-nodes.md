@@ -24,12 +24,12 @@ Pick the lowest that does the job.
 
 | Level | You write | What the backend can do with it |
 |---|---|---|
-| Per-pixel function | One WGSL function, `apply`, of a pixel | Merge it with its neighbours into one shader, one pass |
+| Element-wise function | One WGSL function, `apply`, of one element of its input | Merge it with its neighbours into one shader, one pass |
 | Whole shader | A compute shader with its own bindings | Share one submit with the other nodes of its region |
 | Your own recording | Rust that records into the encoder | Order it, and nothing more |
 
-Per-pixel bodies that feed each other, with nothing else reading the values between them, become
-one shader. A second reader of a value, or a node that is not a per-pixel body, ends a chain.
+Element-wise bodies that feed each other, with nothing else reading the values between them, become
+one shader. A second reader of a value, or a node that is not an element-wise body, ends a chain.
 
 ## Opening a device
 
@@ -98,7 +98,7 @@ backend opens the device again and the region runs again: it is not turned off.
 
 - A region of whole-shader nodes is one queue submit, however many nodes it has, and one pass a
   node.
-- A chain of merged per-pixel bodies is one pass and one pipeline.
+- A chain of merged element-wise bodies is one pass and one pipeline.
 - On Vulkan, a region whose nodes are all shaders that bind storage and uniform buffers is
   recorded with Vulkan itself, into a command buffer the region uses again. A warm step of it
   allocates nothing, and the lavapipe lane holds it to that.

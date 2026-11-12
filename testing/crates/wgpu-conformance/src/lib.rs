@@ -20,7 +20,7 @@ use daedalus_backend::{
 use daedalus_graph::EdgePolicyDoc;
 use daedalus_runner::{drop_owned, put_inline, put_typed, take_typed};
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex, SpaceIndex, TypeIndex};
-use daedalus_wgpu::merge::{PixelSpec, source_hash};
+use daedalus_wgpu::merge::{ElementSpec, source_hash};
 use daedalus_wgpu::shader::{BindingKind, BindingSpec, Bound, Dispatch, Run, Shader, ShaderSpec};
 use daedalus_wgpu::{Options, Storage, Ticket, WgpuBackend};
 
@@ -135,8 +135,8 @@ impl Op {
     }
 }
 
-const fn pixel(name: &'static str, source: &'static str) -> PixelSpec {
-    PixelSpec {
+const fn element(name: &'static str, source: &'static str) -> ElementSpec {
+    ElementSpec {
         name,
         source,
         names: &["apply"],
@@ -152,14 +152,14 @@ const fn pixel(name: &'static str, source: &'static str) -> PixelSpec {
     }
 }
 
-/// A pixel body: `c * 3 + 1`. Bodies like it, one after the other, merge into one shader.
-pub const TRIPLE: PixelSpec = pixel(
+/// An element body: `c * 3 + 1`. Bodies like it, one after the other, merge into one shader.
+pub const TRIPLE: ElementSpec = element(
     "conformance.triple",
     "fn apply(c: u32) -> u32 { return c * 3u + 1u; }\n",
 );
 
-/// A pixel body: `c ^ 0x5a5a5a5a`.
-pub const FLIP: PixelSpec = pixel(
+/// An element body: `c ^ 0x5a5a5a5a`.
+pub const FLIP: ElementSpec = element(
     "conformance.flip",
     "fn apply(c: u32) -> u32 { return c ^ 0x5a5a5a5au; }\n",
 );

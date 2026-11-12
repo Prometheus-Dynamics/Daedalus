@@ -15,7 +15,7 @@ use daedalus_abi::{Slot, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{Backend, CompileCx};
 use daedalus_runner::{drop_owned, put_shared, put_typed, take_typed};
 use daedalus_types::{SpaceIndex, TypeIndex};
-use daedalus_wgpu::merge::PixelSpec;
+use daedalus_wgpu::merge::ElementSpec;
 use daedalus_wgpu::{Storage, WgpuBackend};
 use daedalus_wgpu_conformance::{
     AFFINE, Counted, FLIP, In, Net, TRIPLE, filled, measure, port, run, words,
@@ -27,7 +27,7 @@ pub const SUBMITS_PER_REGION: u64 = 1;
 pub(crate) const PASSES_PER_REGION: u64 = 1;
 /// A whole-shader node runs once.
 pub const DISPATCHES_PER_SHADER_NODE: u64 = 1;
-/// A chain of pixel bodies runs once, whatever its length.
+/// A chain of element bodies runs once, whatever its length.
 pub const DISPATCHES_PER_MERGED_CHAIN: u64 = 1;
 /// And is one pipeline, built once.
 pub const PIPELINES_PER_MERGED_CHAIN: u64 = 1;
@@ -131,12 +131,12 @@ pub fn shader_line(backend: &WgpuBackend, nodes: usize, len: u32) -> Counted {
     last
 }
 
-/// The chain the merge budgets run: two small pixel bodies, `pairs` times over.
-pub fn chain(pairs: usize) -> Vec<&'static PixelSpec> {
+/// The chain the merge budgets run: two small element bodies, `pairs` times over.
+pub fn chain(pairs: usize) -> Vec<&'static ElementSpec> {
     (0..pairs).flat_map(|_| [&TRIPLE, &FLIP]).collect()
 }
 
-/// A chain of pixel bodies as a region: what compiling it built, and one warm run.
+/// A chain of element bodies as a region: what compiling it built, and one warm run.
 pub fn merged_chain(backend: &WgpuBackend, pairs: usize, len: u32) -> (Counted, Counted) {
     let codes: Vec<&'static (dyn Any + Send + Sync)> = chain(pairs)
         .into_iter()

@@ -150,7 +150,7 @@ That is `origin/dev` when this audit was written. Its crate directories:
 | Transfers | `crates/gpu` | E3 |
 | Whole-shader nodes and WGSL inference | `crates/gpu`, `crates/wgsl-infer` | E4 |
 | Shared submit | `crates/gpu` | E5 |
-| Per-pixel merge | `crates/gpu` | E6 |
+| Element-wise merge | `crates/gpu` | E6 |
 | Recording code | `crates/gpu` | E7 |
 | Fences and bounded waits | `crates/gpu` | E8 |
 | dma-buf kernel calls | `crates/gpu` | E9 |

@@ -4,7 +4,7 @@
 //!
 //! A region runs this way when the device is on Vulkan, every node is a shader, and every
 //! binding is a storage or uniform buffer. A run of it that is given a texture, as a chain of
-//! pixel bodies may be, goes through the encoder instead: both are in order on the queue.
+//! element bodies may be, goes through the encoder instead: both are in order on the queue.
 
 use std::sync::{Arc, Mutex, PoisonError};
 

@@ -1,7 +1,7 @@
 //! Fragment passes: a draw over a whole target, or over rectangles of it, that reads textures
 //! and buffers and writes render targets.
 //!
-//! On a tile-based GPU this is the fast way to do per-pixel work. The backend supplies the
+//! On a tile-based GPU this is the fast way to do per-element work. The backend supplies the
 //! vertex stage, so a pass is one WGSL fragment function named `fs` with `@location` outputs.
 //! Its bindings are all in group 0: input textures first, from binding 0, then storage buffers.
 //! The pipeline's layout is taken from the shader, so every binding the shader declares has to
@@ -22,7 +22,7 @@ use crate::texture::{Format, Texture};
 pub use rects::FragmentRects;
 pub(crate) use rects::{INSTANCE_BYTES, instance};
 
-/// The vertex stage of every fragment pass: one rectangle per instance, in pixels.
+/// The vertex stage of every fragment pass: one rectangle per instance, in texels.
 const RECT_VERTEX: &str = "
 @vertex fn daedalus_rect(
     @builtin(vertex_index) v: u32,
@@ -80,7 +80,7 @@ fn invalid(text: impl Into<String>) -> FragmentError {
 
 /// Builds the render pipeline of a fragment pass: the backend's rectangle vertex stage and the
 /// fragment function `fs` of `wgsl`, writing `targets`. The one builder, for a pass an author
-/// writes and for a merged per-pixel chain.
+/// writes and for a merged element-wise chain.
 pub(crate) fn fragment_pipeline(
     device: &wgpu::Device,
     wgsl: &str,

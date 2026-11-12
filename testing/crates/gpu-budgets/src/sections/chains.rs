@@ -1,4 +1,4 @@
-//! A chain of four pixel bodies as one merged shader against the same four as four separate
+//! A chain of four element bodies as one merged shader against the same four as four separate
 //! shaders, one after the other with the values carried between them in buffers.
 
 use daedalus_gpu_budgets::chain;
@@ -55,7 +55,7 @@ pub fn run(backend: &WgpuBackend) {
         }
     });
     println!(
-        "four pixel bodies, {VALUES} values: one merged shader {:.3} ms; four separate shaders {:.3} ms",
+        "four element bodies, {VALUES} values: one merged shader {:.3} ms; four separate shaders {:.3} ms",
         ms(one),
         ms(apart)
     );

@@ -1,12 +1,12 @@
-//! Reads a per-pixel body: one WGSL function, `apply`, of the pixel it is given.
+//! Reads a per-element body: one WGSL function, `apply`, of the element it is given.
 //!
-//! A pixel body can be merged with its neighbours into one shader, because it can't see any
-//! pixel but its own: it has no bindings, no workgroup memory, and no barriers or atomics.
+//! An element body can be merged with its neighbours into one shader, because it can't see any
+//! element but its own: it has no bindings, no workgroup memory, and no barriers or atomics.
 //! Anything else is a whole shader, and says so here, when the node is compiled.
 
 use naga::{Block, Statement, TypeInner};
 
-/// One parameter of `apply` after the pixel.
+/// One parameter of `apply` after the element.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Side {
     pub(crate) name: String,
@@ -15,7 +15,7 @@ pub(crate) struct Side {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Pixel {
+pub(crate) struct Element {
     /// Every top-level name, to be prefixed when bodies are put together.
     pub(crate) names: Vec<String>,
     pub(crate) input: String,
@@ -39,13 +39,13 @@ pub(crate) fn source_hash(source: &str) -> u64 {
     (hash ^ 0xff).wrapping_mul(FNV_PRIME)
 }
 
-/// The WGSL name of a type a pixel can be: a number, a vector of them, or a struct.
+/// The WGSL name of a type an element can be: a number, a vector of them, or a struct.
 fn type_name(module: &naga::Module, ty: naga::Handle<naga::Type>) -> Result<String, String> {
     let scalar = |scalar: &naga::Scalar| match (scalar.kind, scalar.width) {
         (naga::ScalarKind::Float, 4) => Ok("f32"),
         (naga::ScalarKind::Uint, 4) => Ok("u32"),
         (naga::ScalarKind::Sint, 4) => Ok("i32"),
-        _ => Err("a pixel is made of f32, u32 or i32".to_string()),
+        _ => Err("an element is made of f32, u32 or i32".to_string()),
     };
     let declared = &module.types[ty];
     match &declared.inner {
@@ -57,7 +57,7 @@ fn type_name(module: &naga::Module, ty: naga::Handle<naga::Type>) -> Result<Stri
             .name
             .clone()
             .ok_or_else(|| "a struct with no name".to_string()),
-        _ => Err("a pixel is a number, a vector of numbers, or a struct of them".to_string()),
+        _ => Err("an element is a number, a vector of numbers, or a struct of them".to_string()),
     }
 }
 
@@ -78,37 +78,37 @@ fn forbidden(block: &Block) -> Option<&'static str> {
     })
 }
 
-/// Reads `source` as a pixel body.
-pub(crate) fn read(source: &str) -> Result<Pixel, String> {
+/// Reads `source` as an element body.
+pub(crate) fn read(source: &str) -> Result<Element, String> {
     let module = naga::front::wgsl::parse_str(source).map_err(|error| {
         let text = error.emit_to_string(source);
         text.trim_end().trim_start_matches("error: ").to_string()
     })?;
     if let Some(point) = module.entry_points.first() {
         return Err(format!(
-            "`{}` is an entry point: a pixel body is functions only, and `apply` is called for each pixel",
+            "`{}` is an entry point: an element body is functions only, and `apply` is called for each element",
             point.name
         ));
     }
     if let Some((_, global)) = module.global_variables.iter().next() {
         return Err(format!(
-            "`{}` is a global: a pixel body sees only the pixel `apply` is given, so it declares no bindings and no memory",
+            "`{}` is a global: an element body sees only the element `apply` is given, so it declares no bindings and no memory",
             global.name.as_deref().unwrap_or("?")
         ));
     }
     if module.overrides.iter().next().is_some() {
-        return Err("a pixel body has no overrides".into());
+        return Err("an element body has no overrides".into());
     }
     let apply = module
         .functions
         .iter()
         .map(|(_, function)| function)
         .find(|function| function.name.as_deref() == Some("apply"))
-        .ok_or("a pixel body has a function named `apply`")?;
+        .ok_or("an element body has a function named `apply`")?;
     for (_, function) in module.functions.iter() {
         if let Some(what) = forbidden(&function.body) {
             let name = function.name.as_deref().unwrap_or("?");
-            return Err(format!("`{name}` uses {what}, which a pixel body can't"));
+            return Err(format!("`{name}` uses {what}, which an element body can't"));
         }
     }
 
@@ -119,15 +119,15 @@ pub(crate) fn read(source: &str) -> Result<Pixel, String> {
     let stride = |ty| layouter[ty].to_stride();
 
     let mut arguments = apply.arguments.iter();
-    let pixel = arguments
+    let element = arguments
         .next()
-        .ok_or("`apply` takes the pixel as its first parameter")?;
+        .ok_or("`apply` takes the element as its first parameter")?;
     let result = apply
         .result
         .as_ref()
-        .ok_or("`apply` returns the pixel it makes")?;
+        .ok_or("`apply` returns the element it makes")?;
     let name_of = |argument: &naga::FunctionArgument| argument.name.clone().unwrap_or_default();
-    let mut params = vec![name_of(pixel)];
+    let mut params = vec![name_of(element)];
     let mut config = None;
     let mut sides = Vec::new();
     for argument in arguments {
@@ -188,12 +188,12 @@ pub(crate) fn read(source: &str) -> Result<Pixel, String> {
         ));
     }
 
-    Ok(Pixel {
+    Ok(Element {
         names,
-        input: type_name(&module, pixel.ty).map_err(|why| format!("the pixel: {why}"))?,
+        input: type_name(&module, element.ty).map_err(|why| format!("the element: {why}"))?,
         output: type_name(&module, result.ty)
             .map_err(|why| format!("what `apply` returns: {why}"))?,
-        input_stride: stride(pixel.ty),
+        input_stride: stride(element.ty),
         output_stride: stride(result.ty),
         config,
         sides,
@@ -206,8 +206,8 @@ mod tests {
     use super::{Side, read, source_hash};
 
     #[test]
-    fn a_pixel_body_is_read_from_its_function() {
-        let pixel = read(
+    fn a_element_body_is_read_from_its_function() {
+        let element = read(
             "struct Config { gain: f32, bias: f32 }
              const HALF: f32 = 0.5;
              fn scale(x: vec4<f32>, by: f32) -> vec4<f32> { return x * by; }
@@ -215,30 +215,30 @@ mod tests {
                  return scale(c, cfg.gain * HALF) * mask + vec4<f32>(cfg.bias);
              }",
         )
-        .expect("a pixel body");
-        assert_eq!(pixel.names, ["Config", "HALF", "apply", "scale"]);
+        .expect("an element body");
+        assert_eq!(element.names, ["Config", "HALF", "apply", "scale"]);
         assert_eq!(
-            (pixel.input.as_str(), pixel.output.as_str()),
+            (element.input.as_str(), element.output.as_str()),
             ("vec4<f32>", "vec4<f32>")
         );
-        assert_eq!((pixel.input_stride, pixel.output_stride), (16, 16));
-        assert_eq!(pixel.config, Some(("Config".to_string(), 8)));
+        assert_eq!((element.input_stride, element.output_stride), (16, 16));
+        assert_eq!(element.config, Some(("Config".to_string(), 8)));
         let mask = Side {
             name: "mask".into(),
             ty: "f32".into(),
             stride: 4,
         };
-        assert_eq!(pixel.sides, [mask]);
-        assert_eq!(pixel.params, ["c", "mask", "cfg"]);
+        assert_eq!(element.sides, [mask]);
+        assert_eq!(element.params, ["c", "mask", "cfg"]);
         // vec3 pads to 16 in an array.
         let padded = read("fn apply(c: vec3<f32>) -> u32 { return u32(c.x); }").expect("a body");
         assert_eq!((padded.input_stride, padded.output_stride), (16, 4));
     }
 
     #[test]
-    fn what_can_see_past_its_own_pixel_is_not_a_pixel_body() {
+    fn what_can_see_past_its_own_element_is_not_a_element_body() {
         let refused = |source: &str, text: &str| {
-            let error = read(source).expect_err("not a pixel body");
+            let error = read(source).expect_err("not an element body");
             assert!(error.contains(text), "{error}");
         };
         refused(
@@ -260,16 +260,16 @@ mod tests {
         );
         refused(
             "fn apply() -> u32 { return 1u; }",
-            "the pixel as its first parameter",
+            "the element as its first parameter",
         );
-        refused("fn apply(c: u32) { }", "returns the pixel");
+        refused("fn apply(c: u32) { }", "returns the element");
         refused(
             "fn apply(c: u32, cfg: u32) -> u32 { return c + cfg; }",
             "`cfg` is a struct",
         );
         refused(
             "fn apply(c: mat2x2<f32>) -> f32 { return c[0][0]; }",
-            "the pixel: a pixel is",
+            "the element: an element is",
         );
         refused(
             "struct Config { apply: f32 } fn apply(c: f32, cfg: Config) -> f32 { return c; }",

@@ -8,14 +8,14 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
-use super::{Form, PixelSpec, chain_key, generate, layout};
+use super::{ElementSpec, Form, chain_key, generate, layout};
 use crate::shader::{BindingSpec, Dispatch, ShaderSpec};
 
 /// Chains this process has generated, by [`chain_key`].
 static MERGED: Mutex<Option<HashMap<u64, &'static ShaderSpec>>> = Mutex::new(None);
 
 /// The compute shader for `chain`, generated the first time this content is seen.
-pub(crate) fn merged(chain: &[&PixelSpec]) -> &'static ShaderSpec {
+pub(crate) fn merged(chain: &[&ElementSpec]) -> &'static ShaderSpec {
     let key = chain_key(chain, Form::Compute);
     let mut kept = MERGED.lock().unwrap_or_else(PoisonError::into_inner);
     let kept = kept.get_or_insert_default();

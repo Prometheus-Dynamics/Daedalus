@@ -1,4 +1,4 @@
-//! The timings the board procedures asked for that had no harness: the fragment form of a pixel
+//! The timings the board procedures asked for that had no harness: the fragment form of an element
 //! chain beside its buffer forms at 1280x800, the busy answer of a run, and the host-cached
 //! buffer at 16 MiB. Each is the median of the runs after warm-up.
 
@@ -7,21 +7,21 @@ use std::time::Instant;
 
 use daedalus_macros::node;
 use daedalus_registry::NodeRecord;
-use daedalus_wgpu::merge::{PixelSpec, chain_shader, fragment_pass};
+use daedalus_wgpu::merge::{ElementSpec, chain_shader, fragment_pass};
 use daedalus_wgpu::shader::{Bound, Run};
 use daedalus_wgpu::{Format, Storage, Texture, TextureDesc, WgpuBackend};
 use daedalus_wgpu_conformance::{Net, filled, port, run};
 
 use super::{MIB, RUNS, WARM, median, median_of, ms, us};
 
-/// The frame the pixel forms run on, as the procedures name it.
+/// The target the element forms run on, as the procedures name it.
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 800;
 
-#[node(id = "gaps.inc4", inputs(c), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, out: u32))]
+#[node(id = "gaps.inc4", inputs(c), outputs(out), backend = daedalus_wgpu_author(element, c: u32, out: u32))]
 const INC4: &str = "fn apply(c: vec4<u32>) -> vec4<u32> { return c + vec4<u32>(1u, 2u, 3u, 4u); }";
 
-#[node(id = "gaps.twice4", inputs(c), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, out: u32))]
+#[node(id = "gaps.twice4", inputs(c), outputs(out), backend = daedalus_wgpu_author(element, c: u32, out: u32))]
 const TWICE4: &str = "fn apply(c: vec4<u32>) -> vec4<u32> { return c * 2u; }";
 
 /// `count` nodes, alternating: each is an input of the next.
@@ -37,20 +37,20 @@ fn nodes(count: usize) -> Vec<&'static NodeRecord> {
         .collect()
 }
 
-fn spec(record: &'static NodeRecord) -> &'static PixelSpec {
+fn spec(record: &'static NodeRecord) -> &'static ElementSpec {
     (record.body.code as &dyn std::any::Any)
         .downcast_ref()
-        .expect("a pixel body")
+        .expect("an element body")
 }
 
-/// The pixel forms of chains of 4 and 8 nodes on a 1280x800 frame: one fragment pass over a
+/// The element forms of chains of 4 and 8 nodes on a 1280x800 target: one fragment pass over a
 /// texture, one merged compute pass over a buffer, and one compute region per node.
-pub(crate) fn pixel_forms(backend: &WgpuBackend) {
-    let pixels = (WIDTH * HEIGHT) as usize;
+pub(crate) fn element_forms(backend: &WgpuBackend) {
+    let elements = (WIDTH * HEIGHT) as usize;
     for count in [4usize, 8] {
         let records = nodes(count);
-        // Compute: u32 per channel, four channels a pixel.
-        let words_in: Vec<u32> = (0..pixels * 4)
+        // Compute: one u32 per word, four words an element.
+        let words_in: Vec<u32> = (0..elements * 4)
             .map(|at| (at as u32).wrapping_mul(7) & 0xfff)
             .collect();
         let input = filled(backend, &words_in);
@@ -102,8 +102,8 @@ pub(crate) fn pixel_forms(backend: &WgpuBackend) {
             std::hint::black_box(first);
         });
 
-        // Fragment: the same chain drawn over a texture of the same pixels.
-        let chain: Vec<&PixelSpec> = records.iter().map(|record| spec(record)).collect();
+        // Fragment: the same chain drawn over a texture of the same elements.
+        let chain: Vec<&ElementSpec> = records.iter().map(|record| spec(record)).collect();
         let pass = fragment_pass(backend, &chain, Format::Rgba16Uint).expect("a pass");
         let desc = TextureDesc {
             format: Format::Rgba16Uint,
@@ -125,7 +125,7 @@ pub(crate) fn pixel_forms(backend: &WgpuBackend) {
                 .expect("finishes");
         });
         println!(
-            "pixel chain of {count} nodes, {WIDTH}x{HEIGHT}: fragment pass {:.3} ms; merged compute pass {:.3} ms; {count} compute regions {:.3} ms",
+            "element chain of {count} nodes, {WIDTH}x{HEIGHT}: fragment pass {:.3} ms; merged compute pass {:.3} ms; {count} compute regions {:.3} ms",
             ms(fragment),
             ms(compute_merged),
             ms(compute_apart)

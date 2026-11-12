@@ -48,7 +48,7 @@ pub struct DeviceProfile {
     pub family: Family,
     /// The PCI vendor id, when the adapter reports one.
     pub vendor: Option<u32>,
-    /// Tile-based rendering: a fragment pass over a target beats compute for per-pixel work.
+    /// Tile-based rendering: a fragment pass over a target beats compute for per-element work.
     pub tile_based: bool,
     /// Threads that execute together, when known.
     pub warp_width: Option<u32>,
@@ -59,7 +59,7 @@ pub struct DeviceProfile {
 }
 
 impl DeviceProfile {
-    /// Whether per-pixel work should run as fragment passes.
+    /// Whether per-element work should run as fragment passes.
     pub fn prefer_fragment_passes(&self) -> bool {
         self.tile_based
     }

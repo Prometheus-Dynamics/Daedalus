@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use super::{Form, PixelSpec, Slot, layout};
+use super::{ElementSpec, Form, Slot, layout};
 use crate::WgpuBackend;
 use crate::fragment::{FragmentError, FragmentPass};
 use crate::shader::BindingKind;
@@ -64,7 +64,7 @@ fn prefix_of(at: usize) -> String {
 }
 
 /// Each body with its names prefixed, one after the other.
-fn bodies(chain: &[&PixelSpec]) -> String {
+fn bodies(chain: &[&ElementSpec]) -> String {
     let mut out = String::new();
     for (at, spec) in chain.iter().enumerate() {
         let _ = writeln!(out, "// {}", spec.name);
@@ -77,7 +77,7 @@ fn bodies(chain: &[&PixelSpec]) -> String {
 /// The calls, in chain order: `let c1 = n0_apply(c0, ..);` and so on. `side` and `config` say
 /// how a node's other arguments are read.
 fn calls(
-    chain: &[&PixelSpec],
+    chain: &[&ElementSpec],
     side: impl Fn(usize, usize) -> String,
     config: impl Fn(usize) -> String,
 ) -> String {
@@ -104,8 +104,8 @@ fn calls(
     out
 }
 
-/// The compute form: one pass over storage buffers, one invocation per pixel.
-pub(crate) fn compute(chain: &[&PixelSpec]) -> String {
+/// The compute form: one pass over storage buffers, one invocation per element.
+pub(crate) fn compute(chain: &[&ElementSpec]) -> String {
     let mut out = bodies(chain);
     let ty = |at: usize, text: &str| prefixed(text, chain[at].names, &prefix_of(at));
     for (binding, (slot, kind, name)) in layout(chain).iter().enumerate() {
@@ -160,7 +160,7 @@ fn texel(format: Format) -> &'static str {
 /// The fragment form: one render pass over textures. Bindings are the input texture, then each
 /// node's side textures in chain order, then each node's config as a storage buffer in chain
 /// order, which is the order [`FragmentPass::bind`] takes them in.
-pub(crate) fn fragment(chain: &[&PixelSpec], scalar: &str) -> String {
+pub(crate) fn fragment(chain: &[&ElementSpec], scalar: &str) -> String {
     let mut out = bodies(chain);
     let mut binding = 0;
     let _ = writeln!(
@@ -205,7 +205,7 @@ pub(crate) fn fragment(chain: &[&PixelSpec], scalar: &str) -> String {
 /// order as a storage buffer.
 pub fn fragment_pass(
     backend: &WgpuBackend,
-    chain: &[&PixelSpec],
+    chain: &[&ElementSpec],
     format: Format,
 ) -> Result<FragmentPass, FragmentError> {
     let context = backend.context().map_err(FragmentError::Open)?;
@@ -215,7 +215,7 @@ pub fn fragment_pass(
 /// [`fragment_pass`] on `context`'s device.
 pub(crate) fn fragment_pass_on(
     context: std::sync::Arc<crate::context::Context>,
-    chain: &[&PixelSpec],
+    chain: &[&ElementSpec],
     format: Format,
 ) -> Result<FragmentPass, FragmentError> {
     let scalar = texel(format);

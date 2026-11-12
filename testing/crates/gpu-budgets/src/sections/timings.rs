@@ -96,7 +96,7 @@ pub fn region8(backend: &WgpuBackend) {
     );
 }
 
-/// A box filter over the input's pixels, as WGSL: the mean of the `radius`-neighbourhood, clamped at
+/// A box filter over the input's texels, as WGSL: the mean of the `radius`-neighbourhood, clamped at
 /// the edges, in one red channel. Nothing in the crate names a box filter; the record needs one.
 fn box_wgsl(radius: i32, width: u32, height: u32) -> String {
     format!(
@@ -119,7 +119,7 @@ fn box_wgsl(radius: i32, width: u32, height: u32) -> String {
     )
 }
 
-/// A box filter on an R8 image of 1280x800, 3x3 and 5x5: submit to done, median of 200 after 20
+/// A box filter on an R8 target of 1280x800, 3x3 and 5x5: submit to done, median of 200 after 20
 /// warm-up runs.
 pub fn fragment_box(backend: &WgpuBackend) {
     let (width, height) = (1280u32, 800u32);

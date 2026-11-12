@@ -5,7 +5,7 @@
 
 #[cfg(target_os = "linux")]
 pub mod dmabuf;
-pub mod fragment;
+pub mod element;
 pub mod mixed;
 pub mod upload_download;
 

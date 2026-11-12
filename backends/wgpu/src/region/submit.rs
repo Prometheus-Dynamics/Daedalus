@@ -5,7 +5,7 @@ use std::sync::Arc;
 use daedalus_abi::{OwnedStep, Slot, Slots, StepCx, StepEnd};
 use daedalus_runner::{UNSTAMPED, put_typed, share_typed, typed_view};
 
-use super::{Node, Owned, PixelChain, Place, Size, Source, Work};
+use super::{ElementChain, Node, Owned, Place, Size, Source, Work};
 use crate::backend::Link;
 use crate::buffer::Storage;
 use crate::context::Context;
@@ -150,7 +150,7 @@ fn fragment_chain(
     open: &mut OpenPass,
     encoder: &mut wgpu::CommandEncoder,
 ) -> Result<Option<(usize, Arc<Texture>)>, String> {
-    let Some(chain) = node.pixel.as_mut() else {
+    let Some(chain) = node.element.as_mut() else {
         return Ok(None);
     };
     let Some(&first) = node.sources.first() else {
@@ -165,7 +165,7 @@ fn fragment_chain(
         .as_ref()
         .is_some_and(|(format, _)| *format == desc.format)
     {
-        let specs: Vec<&crate::merge::PixelSpec> = chain.specs.iter().collect();
+        let specs: Vec<&crate::merge::ElementSpec> = chain.specs.iter().collect();
         let pass = crate::merge::fragment_pass_on(Arc::clone(context), &specs, desc.format)
             .map_err(|error| error.to_string())?;
         chain.pass = Some((desc.format, pass));
@@ -245,7 +245,7 @@ fn fragment_chain(
 /// Binds and records a chain's fragment pass, and notes the texture it drew as the chain's
 /// output for this run.
 fn draw(
-    chain: &PixelChain,
+    chain: &ElementChain,
     textures: &[&Texture],
     buffers: &[&Storage],
     target: &Arc<Texture>,
@@ -377,7 +377,7 @@ impl RegionStep {
         let mut open = OpenPass::default();
         for node in &mut self.nodes {
             let at = node.index.0;
-            // A chain of pixel bodies that is given a texture draws to one.
+            // A chain of element bodies that is given a texture draws to one.
             let drawn =
                 fragment_chain(node, inputs, &self.owned, &self.context, &mut open, encoder)
                     .map_err(|reason| (at, reason))?;
@@ -453,7 +453,11 @@ impl RegionStep {
             owned.current = 0;
             owned.texture = None;
         }
-        for chain in self.nodes.iter_mut().filter_map(|node| node.pixel.as_mut()) {
+        for chain in self
+            .nodes
+            .iter_mut()
+            .filter_map(|node| node.element.as_mut())
+        {
             chain.pass = None;
             chain.targets.clear();
             chain.config_buffers.clear();
