@@ -1,10 +1,11 @@
-//! Per-pixel functions merged into one shader.
+//! Element-wise functions merged into one shader.
 //!
-//! A pixel body is one WGSL function, `apply`, of the pixel it is given: it can't see any other
-//! pixel. So a chain of them, each fed only by the one before, is one loop over the pixels with
-//! the functions called in turn, and the values between them never leave the shader. That is
-//! what this module generates, in two forms: a compute pass over storage buffers, and a fragment
-//! pass over textures for tile-based devices.
+//! An element body is one WGSL function, `apply`, of one element of its input: it sees no other
+//! element. So a chain of them, each fed only by the one before, is one loop over the elements
+//! with the functions called in turn, and the values between them never leave the shader. That
+//! is what this module generates, in two GPU execution forms: a compute pass over storage
+//! buffers, which is the general form, and a render pass over textures, which a tile-based GPU
+//! can run faster.
 
 mod cache;
 mod chain;
@@ -18,9 +19,9 @@ pub(crate) use generate::fragment_pass_on;
 
 use crate::shader::{BindingKind, BindingSpec};
 
-/// One more input of a pixel body, read at the same pixel from a buffer of its own.
+/// One more input of an element body, read at the same position from a buffer of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PixelSide {
+pub struct ElementSide {
     /// The parameter's name, which is the port's.
     pub name: &'static str,
     /// Its WGSL type.
@@ -29,16 +30,16 @@ pub struct PixelSide {
     pub stride: u32,
 }
 
-/// A per-pixel function, as the authoring macro read it.
+/// A per-element function, as the authoring macro read it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PixelSpec {
+pub struct ElementSpec {
     pub name: &'static str,
     /// The WGSL as written: `fn apply(..) -> ..` and whatever it uses.
     pub source: &'static str,
     /// Every top-level name in `source`. They are prefixed when bodies are put together, so two
     /// bodies can both have a `Config` or a `helper`.
     pub names: &'static [&'static str],
-    /// The WGSL type of the pixel it takes, and of the one it returns.
+    /// The WGSL type of the element it takes, and of the one it returns.
     pub input: &'static str,
     pub output: &'static str,
     /// Bytes of one element of an array of each.
@@ -47,8 +48,8 @@ pub struct PixelSpec {
     /// The type and size of its `cfg` parameter, when it has one.
     pub config: Option<(&'static str, u32)>,
     /// Its other parameters, in the order `apply` takes them.
-    pub sides: &'static [PixelSide],
-    /// The parameters of `apply` in order: the pixel, then sides and `cfg` as written.
+    pub sides: &'static [ElementSide],
+    /// The parameters of `apply` in order: the element, then sides and `cfg` as written.
     pub params: &'static [&'static str],
     /// For each of the node's input ports, in the order it declares them, the position in
     /// `params` of the parameter that port feeds.
@@ -70,14 +71,14 @@ pub const fn fnv(mut hash: u64, bytes: &[u8]) -> u64 {
     (hash ^ 0xff).wrapping_mul(FNV_PRIME)
 }
 
-/// FNV-1a of a pixel body's source, as the macro computes it.
+/// FNV-1a of an element body's source, as the macro computes it.
 pub const fn source_hash(source: &str) -> u64 {
     fnv(FNV_OFFSET, source.as_bytes())
 }
 
 /// For each port, the position in `params` of the parameter with its name. The authoring macro
 /// calls this in a const, so a port that names no parameter fails the build.
-pub const fn pixel_ports<const N: usize>(
+pub const fn element_ports<const N: usize>(
     ports: &[daedalus_registry::PortDecl],
     params: &[&str],
 ) -> [u32; N] {
@@ -108,12 +109,12 @@ pub const fn pixel_ports<const N: usize>(
     out
 }
 
-/// A chain of pixel bodies as one compute shader on `backend`'s device, for a chain run by
+/// A chain of element bodies as one compute shader on `backend`'s device, for a chain run by
 /// hand: in a graph, a region merges the chains it finds. It binds the input buffer, the output
 /// buffer, then each body's config and side inputs in chain order.
 pub fn chain_shader(
     backend: &crate::WgpuBackend,
-    chain: &[&PixelSpec],
+    chain: &[&ElementSpec],
 ) -> Result<crate::shader::Shader, crate::shader::ShaderError> {
     use crate::shader::ShaderError;
     if chain.is_empty() {
@@ -142,7 +143,7 @@ pub enum Form {
 /// What a merged chain binds, in binding order, and which node each binding belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Slot {
-    /// The first node's pixel input.
+    /// The first node's element input.
     Input,
     /// The last node's output.
     Output,
@@ -154,8 +155,9 @@ pub(crate) enum Slot {
 
 /// The bindings of a chain in its compute form: the input, the output, then each node's config
 /// and sides in chain order.
-pub(crate) fn layout(chain: &[&PixelSpec]) -> Vec<(Slot, BindingKind, String)> {
-    let stride = |spec: Option<&&PixelSpec>, of: fn(&PixelSpec) -> u32| spec.map_or(0, |s| of(s));
+pub(crate) fn layout(chain: &[&ElementSpec]) -> Vec<(Slot, BindingKind, String)> {
+    let stride =
+        |spec: Option<&&ElementSpec>, of: fn(&ElementSpec) -> u32| spec.map_or(0, |s| of(s));
     let mut out = vec![
         (
             Slot::Input,
@@ -196,7 +198,7 @@ pub(crate) fn layout(chain: &[&PixelSpec]) -> Vec<(Slot, BindingKind, String)> {
 /// The stable key of a chain in a form: FNV-1a over each node's name and source hash in order,
 /// the binding table, the workgroup size and the form. It depends on content only, so it means
 /// the same in every process, and the same chain compiled twice is one pipeline.
-pub fn chain_key(chain: &[&PixelSpec], form: Form) -> u64 {
+pub fn chain_key(chain: &[&ElementSpec], form: Form) -> u64 {
     let mut hash = FNV_OFFSET;
     for spec in chain {
         hash = fnv(hash, spec.name.as_bytes());

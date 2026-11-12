@@ -1,4 +1,4 @@
-//! Per-pixel bodies as an author writes them, merged by the backend when it compiles a region:
+//! Per-element bodies as an author writes them, merged by the backend when it compiles a region:
 //! which nodes become one shader, where a chain is cut, and that the merged shader gives what
 //! the nodes give one at a time.
 
@@ -16,10 +16,10 @@ use daedalus_macros::node;
 use daedalus_registry::NodeRecord;
 use daedalus_runner::{drop_owned, put_inline, put_typed, take_typed};
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex, SpaceIndex, TypeIndex};
-use daedalus_wgpu::merge::{Form, PixelSpec, chain_key, fragment_pass, source_hash};
+use daedalus_wgpu::merge::{ElementSpec, Form, chain_key, fragment_pass, source_hash};
 use daedalus_wgpu::{Format, Options, Storage, Texture, TextureDesc, WgpuBackend};
 
-#[node(id = "p.inc", inputs(c), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, out: u32))]
+#[node(id = "p.inc", inputs(c), outputs(out), backend = daedalus_wgpu_author(element, c: u32, out: u32))]
 const INC: &str = "
     const STEP: u32 = 1u;
     fn helper(x: u32) -> u32 { return x + STEP; }
@@ -27,20 +27,20 @@ const INC: &str = "
 ";
 
 /// The same top-level names as `INC`, meaning other things: the bodies are put side by side.
-#[node(id = "p.triple", inputs(c), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, out: u32))]
+#[node(id = "p.triple", inputs(c), outputs(out), backend = daedalus_wgpu_author(element, c: u32, out: u32))]
 const TRIPLE: &str = "
     const STEP: u32 = 3u;
     fn helper(x: u32) -> u32 { return x * STEP; }
     fn apply(c: u32) -> u32 { return helper(c); }
 ";
 
-#[node(id = "p.mask", inputs(c, cfg), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, cfg: u32, out: u32))]
+#[node(id = "p.mask", inputs(c, cfg), outputs(out), backend = daedalus_wgpu_author(element, c: u32, cfg: u32, out: u32))]
 const MASK: &str = "
     struct Config { mask: u32 }
     fn apply(c: u32, cfg: Config) -> u32 { return c ^ cfg.mask; }
 ";
 
-#[node(id = "p.plus", inputs(c, other), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, other: u32, out: u32))]
+#[node(id = "p.plus", inputs(c, other), outputs(out), backend = daedalus_wgpu_author(element, c: u32, other: u32, out: u32))]
 const PLUS: &str = "fn apply(c: u32, other: u32) -> u32 { return c + other; }";
 
 /// Reads its neighbour, so it is a whole shader and can't join a chain.
@@ -55,10 +55,10 @@ const NEIGHBOUR: &str = "
     }
 ";
 
-#[node(id = "p.inc4", inputs(c), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, out: u32))]
+#[node(id = "p.inc4", inputs(c), outputs(out), backend = daedalus_wgpu_author(element, c: u32, out: u32))]
 const INC4: &str = "fn apply(c: vec4<u32>) -> vec4<u32> { return c + vec4<u32>(1u, 2u, 3u, 4u); }";
 
-#[node(id = "p.twice4", inputs(c), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, out: u32))]
+#[node(id = "p.twice4", inputs(c), outputs(out), backend = daedalus_wgpu_author(element, c: u32, out: u32))]
 const TWICE4: &str = "fn apply(c: vec4<u32>) -> vec4<u32> { return c * 2u; }";
 
 fn port(node: u32, port: u16) -> PortRef {
@@ -249,10 +249,10 @@ fn run(
     )
 }
 
-fn spec(record: &'static NodeRecord) -> &'static PixelSpec {
+fn spec(record: &'static NodeRecord) -> &'static ElementSpec {
     (record.body.code as &dyn Any)
         .downcast_ref()
-        .expect("a pixel body")
+        .expect("an element body")
 }
 
 #[test]
@@ -388,7 +388,7 @@ fn a_second_consumer_ends_the_chain() {
 #[test]
 fn a_long_chain_is_cut_into_pieces_that_each_fit_any_device() {
     let Some(backend) = backend() else { return };
-    // Nine nodes, each with a buffer of its own beside the pixel.
+    // Nine nodes, each with a buffer of its own beside the element.
     let mut net = Net::default();
     for at in 0..9 {
         let node = net.add(&PLUS_NODE);
@@ -456,12 +456,12 @@ fn the_fragment_form_gives_what_the_compute_form_gives() {
     let Some(backend) = backend() else { return };
     let records: [&'static NodeRecord; 4] = [&INC4_NODE, &TWICE4_NODE, &INC4_NODE, &TWICE4_NODE];
     let (width, height) = (9u32, 5u32);
-    let pixels: Vec<[u32; 4]> = (0..width * height)
+    let elements: Vec<[u32; 4]> = (0..width * height)
         .map(|at| [at, at * 2 + 1, 7, at % 5])
         .collect();
 
-    // The compute form, through a region, on a buffer of the same pixels.
-    let flat: Vec<u32> = pixels.iter().flatten().copied().collect();
+    // The compute form, through a region, on a buffer of the same elements.
+    let flat: Vec<u32> = elements.iter().flatten().copied().collect();
     let mut unit = Net::chain(&records).compile(&backend, &[port(3, 0)]);
     let (compute, passes, _) = run(
         &backend,
@@ -471,17 +471,17 @@ fn the_fragment_form_gives_what_the_compute_form_gives() {
     );
     assert_eq!(passes, 1);
     release(unit.step);
-    let by_hand: Vec<u32> = pixels
+    let by_hand: Vec<u32> = elements
         .iter()
-        .flat_map(|pixel| {
+        .flat_map(|element| {
             let add = [1, 2, 3, 4];
-            std::array::from_fn::<u32, 4, _>(|at| ((pixel[at] + add[at]) * 2 + add[at]) * 2)
+            std::array::from_fn::<u32, 4, _>(|at| ((element[at] + add[at]) * 2 + add[at]) * 2)
         })
         .collect();
     assert_eq!(compute[0], by_hand);
 
     // The fragment form: one render pass over a texture of them.
-    let chain: Vec<&PixelSpec> = records.iter().map(|record| spec(record)).collect();
+    let chain: Vec<&ElementSpec> = records.iter().map(|record| spec(record)).collect();
     let pass = fragment_pass(&backend, &chain, Format::Rgba16Uint).expect("a pass");
     let desc = TextureDesc {
         format: Format::Rgba16Uint,
@@ -521,18 +521,18 @@ fn the_fragment_form_gives_what_the_compute_form_gives() {
         .collect();
     assert_eq!(fragment, compute[0], "bit for bit");
 
-    // A chain of another pixel type can't be drawn to this target.
+    // A chain of another element type can't be drawn to this target.
     let wrong = fragment_pass(&backend, &[spec(&INC_NODE)], Format::Rgba16Uint);
     assert!(wrong.is_err());
 }
 
-#[node(id = "p.mask4", inputs(c, cfg), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, cfg: u32, out: u32))]
+#[node(id = "p.mask4", inputs(c, cfg), outputs(out), backend = daedalus_wgpu_author(element, c: u32, cfg: u32, out: u32))]
 const MASK4: &str = "
     struct Config { mask: u32 }
     fn apply(c: vec4<u32>, cfg: Config) -> vec4<u32> { return c ^ vec4<u32>(cfg.mask); }
 ";
 
-#[node(id = "p.plus4", inputs(c, other), outputs(out), backend = daedalus_wgpu_author(pixel, c: u32, other: u32, out: u32))]
+#[node(id = "p.plus4", inputs(c, other), outputs(out), backend = daedalus_wgpu_author(element, c: u32, other: u32, out: u32))]
 const PLUS4: &str = "fn apply(c: vec4<u32>, other: vec4<u32>) -> vec4<u32> { return c + other; }";
 
 fn texture_of(backend: &WgpuBackend, desc: TextureDesc, words: &[u32]) -> Arc<Texture> {
@@ -606,20 +606,20 @@ fn a_chain_given_a_texture_draws_one() {
         height: 5,
     };
     let count = desc.width * desc.height * 4;
-    let pixels: Vec<u32> = (0..count).map(|at| at * 3 + 1).collect();
+    let elements: Vec<u32> = (0..count).map(|at| at * 3 + 1).collect();
     let others: Vec<u32> = (0..count).map(|at| 1000 - at).collect();
     let mask = 0b0101_1010;
     let by_hand = |mask: u32| -> Vec<u32> {
         let add = [1, 2, 3, 4];
-        pixels
+        elements
             .iter()
             .zip(&others)
             .enumerate()
-            .map(|(at, (pixel, other))| (((pixel + add[at % 4]) ^ mask) + other) * 2)
+            .map(|(at, (element, other))| (((element + add[at % 4]) ^ mask) + other) * 2)
             .collect()
     };
 
-    // Inputs: the chain's pixels, the mask's config, the other side of the sum.
+    // Inputs: the chain's elements, the mask's config, the other side of the sum.
     let net = || {
         let mut net = Net::chain(&records);
         net.inputs.push(port(2, 1));
@@ -628,7 +628,7 @@ fn a_chain_given_a_texture_draws_one() {
     };
     let mut unit = net().compile(&backend, &[port(3, 0)]);
     let (source, other) = (
-        texture_of(&backend, desc, &pixels),
+        texture_of(&backend, desc, &elements),
         texture_of(&backend, desc, &others),
     );
     let (first, passes) = draw(&backend, &mut unit, &[&source, &other], Some(mask));
@@ -641,7 +641,7 @@ fn a_chain_given_a_texture_draws_one() {
         &backend,
         &mut unit,
         &[
-            In::Buffer(&filled(&backend, &pixels)),
+            In::Buffer(&filled(&backend, &elements)),
             In::Buffer(&filled(&backend, &others)),
             In::Word(mask),
         ],
@@ -660,7 +660,7 @@ fn a_chain_given_a_texture_draws_one() {
     assert_eq!(Arc::as_ptr(&third), kept, "drawn to again, not made again");
     assert_eq!(texels(&third), by_hand(mask));
 
-    // A texture for the pixels and a buffer for the other side is refused, by name.
+    // A texture for the elements and a buffer for the other side is refused, by name.
     let mut cells = vec![Slot::EMPTY; 4];
     put_typed(
         &mut cells[0],

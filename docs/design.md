@@ -167,19 +167,19 @@ the authoring macro.
 #[node(id = "demo.track", inputs("boxes"), outputs("tracks"))]
 fn track(boxes: &Boxes) -> Tracks { .. }
 
-// A per-pixel GPU function.
-#[node(id = "demo.normalize", backend = wgpu(pixel), inputs("image"), outputs("image"))]
+// An element-wise GPU function.
+#[node(id = "demo.normalize", backend = wgpu(element), inputs("x"), outputs("y"))]
 const NORMALIZE: &str = "fn apply(c: vec4f, cfg: Config) -> vec4f { return (c - cfg.mean) / cfg.std; }";
 
 // Hardware Daedalus has never heard of.
-#[node(id = "vision.detect", backend = acme_npu(model = "yolo.rknn"), inputs("image"), outputs("boxes"))]
+#[node(id = "acme.infer", backend = acme_npu(model = "net.rknn"), inputs("x"), outputs("y"))]
 struct Detect;
 ```
 
-**GPU nodes come in three levels.** A per-pixel function can be merged into one shader with its
+**GPU nodes come in three levels.** An element-wise function can be merged into one shader with its
 neighbours. A whole shader can share a submit but not merge. Your own recording code gets the
 encoder and controls everything. The merge rule: the second node reads only the first node's result
-at the same pixel.
+at the same element.
 
 ### One node, several backends
 
@@ -187,10 +187,10 @@ The id is the node. A node's definition has two parts: what the graph sees, and 
 `#[node]` emits one constant record holding both, and the registry joins records with the same id.
 
 ```rust
-#[node(id = "demo.blur", inputs("image"), outputs("image"))]
-fn blur_cpu(image: &Image) -> Image { .. }
+#[node(id = "demo.blur", inputs("x"), outputs("y"))]
+fn blur_cpu(x: &Values) -> Values { .. }
 
-#[node(id = "demo.blur", backend = wgpu, inputs("image"), outputs("image"))]
+#[node(id = "demo.blur", backend = wgpu, inputs("x"), outputs("y"))]
 const BLUR: &str = include_str!("blur.wgsl");
 ```
 
@@ -447,7 +447,7 @@ owned declarations that a worker sends when it starts.
 
 **Where things live.**
 - There is no frame type, no frame library, and no dependency on Lemnos. Device selection is in
-  the wgpu backend. Pixel conversions and colorimetry are not carried: they belong to whoever owns
+  the wgpu backend. Format conversions and colorimetry are not carried: they belong to whoever owns
   the type.
 - There is no library of byte kernels (copy, hex, base64, CRC, float conversions) and no
   acceleration matrix for one. Nothing in Daedalus calls such functions: a node that needs one

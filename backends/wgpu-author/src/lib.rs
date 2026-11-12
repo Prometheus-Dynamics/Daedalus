@@ -3,8 +3,8 @@
 #![forbid(unsafe_code)]
 
 mod bindings;
+mod element;
 mod infer;
-mod pixel;
 
 use proc_macro::TokenStream;
 

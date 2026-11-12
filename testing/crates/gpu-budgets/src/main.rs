@@ -30,7 +30,7 @@ const SECTIONS: [&str; 21] = [
     "chains",
     "fences",
     "alloc16",
-    "pixels",
+    "elements",
     "busy",
     "cached",
     "heap-read",
@@ -128,7 +128,7 @@ fn allocation(backend: &WgpuBackend) {
     }
     let (_, warm) = merged_chain(backend, 2, 4096);
     println!(
-        "a merged chain of 4 pixel bodies: {} allocations in a warm run",
+        "a merged chain of 4 element bodies: {} allocations in a warm run",
         warm.allocations
     );
 }
@@ -198,7 +198,7 @@ fn main() -> std::process::ExitCode {
             #[cfg(target_os = "linux")]
             "dma-1mib" => sections::timings::dma_1mib(),
             "alloc16" => sections::allocations::run(),
-            "pixels" => sections::gaps::pixel_forms(&backend),
+            "elements" => sections::gaps::element_forms(&backend),
             "busy" => sections::gaps::busy(&backend),
             "cached" => sections::gaps::host_cached(&backend),
             #[cfg(target_os = "linux")]

@@ -69,8 +69,8 @@ struct Args {
     per: Option<Ident>,
     /// The body is the author's own recording, not a shader.
     record: bool,
-    /// The body is a per-pixel function, which can merge with its neighbours.
-    pixel: bool,
+    /// The body is a per-element function, which can merge with its neighbours.
+    element: bool,
 }
 
 fn parse_args(input: ParseStream<'_>) -> Result<Args> {
@@ -80,8 +80,8 @@ fn parse_args(input: ParseStream<'_>) -> Result<Args> {
         let bare = input.is_empty() || input.peek(Token![,]);
         if name == "record" && bare {
             args.record = true;
-        } else if name == "pixel" && bare {
-            args.pixel = true;
+        } else if name == "element" && bare {
+            args.element = true;
         } else if input.parse::<Token![:]>().is_ok() {
             args.ports.push((name, input.parse()?));
         } else {
@@ -201,13 +201,13 @@ fn recording(name: &TokenStream, args: &Args) -> TokenStream {
     }}
 }
 
-/// A per-pixel body: the record holds a `PixelSpec`, which the backend merges with the pixel
+/// A per-element body: the record holds a `ElementSpec`, which the backend merges with the element
 /// bodies around it when it compiles a region.
-fn pixel_body(
+fn element_body(
     name: &TokenStream,
     decl: &Ident,
     args: &Args,
-    pixel: &crate::pixel::Pixel,
+    element: &crate::element::Element,
     text: &str,
 ) -> TokenStream {
     let ports = args.ports.iter().map(|(port, ty)| {
@@ -219,26 +219,26 @@ fn pixel_body(
     });
     let merge = quote!(::daedalus_wgpu::merge);
     let label = name.to_token_stream().to_string();
-    let (names, params) = (&pixel.names, &pixel.params);
-    let (input, output) = (&pixel.input, &pixel.output);
-    let (input_stride, output_stride) = (pixel.input_stride, pixel.output_stride);
-    let config = match &pixel.config {
+    let (names, params) = (&element.names, &element.params);
+    let (input, output) = (&element.input, &element.output);
+    let (input_stride, output_stride) = (element.input_stride, element.output_stride);
+    let config = match &element.config {
         Some((ty, size)) => quote!(::core::option::Option::Some((#ty, #size))),
         None => quote!(::core::option::Option::None),
     };
-    let sides = pixel.sides.iter().map(|side| {
+    let sides = element.sides.iter().map(|side| {
         let (name, ty, stride) = (&side.name, &side.ty, side.stride);
-        quote!(#merge::PixelSide { name: #name, ty: #ty, stride: #stride })
+        quote!(#merge::ElementSide { name: #name, ty: #ty, stride: #stride })
     });
-    let hash = crate::pixel::source_hash(text);
+    let hash = crate::element::source_hash(text);
     quote! {{
         const PARAMS: &[&str] = &[#(#params),*];
         // Which parameter each declared port feeds. A port with no parameter of its name
         // fails here, and so does a node with more or fewer than one output.
-        const INPUTS: [u32; #decl.inputs.len()] = #merge::pixel_ports(#decl.inputs, PARAMS);
+        const INPUTS: [u32; #decl.inputs.len()] = #merge::element_ports(#decl.inputs, PARAMS);
         const _: () = ::core::assert!(
             #decl.outputs.len() == 1,
-            "a pixel body has exactly one output: the pixel `apply` returns"
+            "an element body has exactly one output: the element `apply` returns"
         );
         ::daedalus_registry::BodyRecord {
             backend: "wgpu",
@@ -247,7 +247,7 @@ fn pixel_body(
             state: ::core::option::Option::None,
             ports: &[#(#ports),*],
             memory: &[],
-            code: &#merge::PixelSpec {
+            code: &#merge::ElementSpec {
                 name: #label,
                 source: #name,
                 names: &[#(#names),*],
@@ -286,9 +286,9 @@ pub(crate) fn expand(input: TokenStream) -> Result<TokenStream> {
         return Ok(recording(&name, &args));
     }
     let (text, at) = source(init)?;
-    if args.pixel {
-        let pixel = crate::pixel::read(&text).map_err(|error| Error::new(at, error))?;
-        return Ok(pixel_body(&name, &decl, &args, &pixel, &text));
+    if args.element {
+        let element = crate::element::read(&text).map_err(|error| Error::new(at, error))?;
+        return Ok(element_body(&name, &decl, &args, &element, &text));
     }
     let entry = args.entry.as_ref().map(LitStr::value);
     let shader = infer::read(&text, entry.as_deref()).map_err(|error| Error::new(at, error))?;

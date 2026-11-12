@@ -1,4 +1,4 @@
-//! Chains of pixel bodies in a region: one shader for the chain, the same numbers as the bodies
+//! Chains of element bodies in a region: one shader for the chain, the same numbers as the bodies
 //! run one at a time, and a whole shader in the middle cutting the chain around it.
 
 use std::any::Any;
@@ -63,7 +63,7 @@ fn a_chain_is_one_pipeline_and_one_pass_and_gives_what_its_bodies_give() {
 #[test]
 fn a_whole_shader_cuts_the_chain_around_it() {
     let Some(backend) = private() else { return };
-    // Two pixel bodies, a shader that isn't one, two more: a pass, a pass, a pass.
+    // Two element bodies, a shader that isn't one, two more: a pass, a pass, a pass.
     let codes: [Code; 5] = [&TRIPLE, &FLIP, &AFFINE, &TRIPLE, &FLIP];
     let net = Net::line(&codes);
     let mut unit = net.compile(&backend, &[port(4, 0)]).expect("compiles");

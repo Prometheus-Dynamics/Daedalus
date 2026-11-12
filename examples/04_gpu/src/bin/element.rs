@@ -3,13 +3,13 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)] // an example's output is what it is for
 
 fn main() -> std::process::ExitCode {
-    match daedalus_example_gpu::fragment::run() {
+    match daedalus_example_gpu::element::run() {
         Ok(line) => {
             print!("{line}");
             std::process::ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("fragment: {error}");
+            eprintln!("element: {error}");
             std::process::ExitCode::FAILURE
         }
     }

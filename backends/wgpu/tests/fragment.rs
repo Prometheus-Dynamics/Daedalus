@@ -1,4 +1,4 @@
-//! Fragment passes on a real device: every target format, inputs read at the pass's own pixel,
+//! Fragment passes on a real device: every target format, inputs read at the pass's own texel,
 //! rectangles, and what is refused.
 
 mod common;
@@ -45,7 +45,7 @@ fn every_target_format_renders_and_reads_back() {
     let Some(backend) = private() else { return };
     for format in Format::ALL {
         let (ty, integer) = output_of(format);
-        // Each pixel writes its own x and y, so a wrong pixel is a wrong value.
+        // Each texel writes its own x and y, so a wrong texel is a wrong value.
         let value = if integer {
             "vec4<u32>(u32(pos.x), u32(pos.y), 7u, 9u)"
         } else {
@@ -63,10 +63,10 @@ fn every_target_format_renders_and_reads_back() {
             .wait()
             .expect("finishes");
         let bytes = read(&target);
-        let pixel = format.bytes_per_pixel() as usize;
-        for (at, got) in bytes.chunks(pixel).enumerate() {
+        let texel = format.bytes_per_pixel() as usize;
+        for (at, got) in bytes.chunks(texel).enumerate() {
             let (x, y) = ((at % 5) as u32, (at / 5) as u32);
-            // The position of a pixel is its centre.
+            // The position of a texel is its centre.
             let (fx, fy) = ((x as f32 + 0.5) / 16.0, (y as f32 + 0.5) / 16.0);
             let want: Vec<u8> = match format {
                 Format::R8 => vec![(fx * 255.0).round() as u8],
@@ -126,7 +126,7 @@ fn pairs(bytes: &[u8]) -> Vec<(u32, u32)> {
 }
 
 #[test]
-fn pass_reads_inputs_at_its_own_pixel() {
+fn pass_reads_inputs_at_its_own_texel() {
     let Some(backend) = private() else { return };
     let (width, height) = (7, 4);
     let source = texture(&backend, Format::Rg32Uint, width, height);
@@ -200,7 +200,7 @@ const FILL: &str = "
 ";
 
 #[test]
-fn rects_draw_only_their_pixels() {
+fn rects_draw_only_their_texels() {
     let Some(backend) = private() else { return };
     let (width, height) = (8u32, 6u32);
     let pass = FragmentPass::new(&backend, FILL, &[Format::R8Uint]).expect("a pass");

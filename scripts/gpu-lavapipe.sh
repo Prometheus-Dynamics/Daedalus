@@ -124,7 +124,7 @@ cargo test --release "${packages[@]}" 2>&1 | tee -a "$out"
 
 # The GPU examples: each binary checks its own answer against the CPU's and exits 0, and has
 # no way to skip.
-for example in fragment mixed upload_download; do
+for example in element mixed upload_download; do
   cargo run -q -p daedalus-example-gpu --bin "$example"
 done
 

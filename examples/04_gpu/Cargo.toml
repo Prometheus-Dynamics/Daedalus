@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-example-gpu"
-description = "Shader nodes: a merged per-pixel chain, a CPU node around a GPU node, and the round trip between the host and the device."
+description = "Shader nodes: a merged per-element chain, a CPU node around a GPU node, and the round trip between the host and the device."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -105,7 +105,7 @@ The planner groups GPU nodes today, but each one still records and submits on it
 | **RX 6800 XT** | 0.37 ms | 0.15 ms | One submit |
 | **V3D (Pi)** | 1.30 ms | 1.32 ms | Only fewer passes: merged shaders |
 
-Shaders can merge when the second reads only the first's result at the same pixel. If it reads neighbouring pixels, merging would run the first shader once per neighbour, so they stay as two passes, sharing one submit.
+Shaders can merge when the second reads only the first's result at the same element. If it reads neighbouring elements, merging would run the first shader once per neighbour, so they stay as two passes, sharing one submit.
 
 ### When a merged region fails
 
@@ -156,8 +156,8 @@ fn track(boxes: Boxes, state: &mut Tracker) -> Tracks {
 ### A GPU node that can merge
 
 ```rust
-#[node(id = "demo.normalize", backend = wgpu(pixel),
-       inputs("image"), outputs("image"))]
+#[node(id = "demo.normalize", backend = wgpu(element),
+       inputs("x"), outputs("y"))]
 const NORMALIZE: &str = "
     fn apply(c: vec4f, cfg: Config) -> vec4f {
         return (c - cfg.mean) / cfg.std;
@@ -167,20 +167,20 @@ const NORMALIZE: &str = "
 ### Hardware Daedalus has never heard of
 
 ```rust
-#[node(id = "vision.detect",
-       backend = acme_npu(model = "yolo.rknn"),
-       inputs("image"), outputs("boxes"))]
+#[node(id = "acme.infer",
+       backend = acme_npu(model = "net.rknn"),
+       inputs("x"), outputs("y"))]
 struct Detect;
 ```
 
 ### One node, several backends: same id
 
 ```rust
-#[node(id = "demo.blur", inputs("image"), outputs("image"))]
-fn blur_cpu(image: &Image) -> Image { .. }
+#[node(id = "demo.blur", inputs("x"), outputs("y"))]
+fn blur_cpu(x: &Values) -> Values { .. }
 
 #[node(id = "demo.blur", backend = wgpu,
-       inputs("image"), outputs("image"))]
+       inputs("x"), outputs("y"))]
 const BLUR: &str = include_str!("blur.wgsl");
 ```
 
@@ -192,7 +192,7 @@ const BLUR: &str = include_str!("blur.wgsl");
 
 ```rust
 demo.blur
-  declaration:  image -> image
+  declaration:  x -> y
   bodies:
     cpu       from crate blur
     wgpu      from crate blur
@@ -212,7 +212,7 @@ Order and crate don't matter, because every record has to agree with the same de
 |---|---|
 | Id, port names, directions and types, config ports and their defaults. The graph is wired against these before anyone knows which body will run | Backend, code, what it needs from that backend (a model file, say), and its state. A GPU body holding a texture and a CPU body holding a buffer have nothing to share |
 
-**Types when there is no Rust signature:** a shader has no function to read. Its backend's authoring crate supplies the types instead (`wgpu(pixel)` means texture in, texture out), and they are compared the same way as types read from a function.
+**Types when there is no Rust signature:** a shader has no function to read. Its backend's authoring crate supplies the types instead (`wgpu(element)` means buffer in, buffer out), and they are compared the same way as types read from a function.
 
 **What the planner does with it:** the graph only ever names `demo.blur`, or forces a backend. Each backend is offered only the nodes it has a body for. A body whose backend isn't present is unavailable, and that alone is no error. The node fails only if nothing can take it, and the message lists each body and why it was out. A node keeps its body while the graph runs. If a reload moves it to a different body, its state starts fresh and that is reported.
 
@@ -224,11 +224,11 @@ Order and crate don't matter, because every record has to agree with the same de
 
 | You write | The backend can |
 |---|---|
-| **A per-pixel function** | Merge it into a shader with its neighbours |
+| **An element-wise function** | Merge it into a shader with its neighbours |
 | **A whole shader** | Share a submit, but not merge it |
 | **Your own recording code** | Hand you the encoder, as `encode_bound` does today. You control everything |
 
-A shader is data, so it can cross any boundary. A Python worker could supply a per-pixel shader, and it would merge like any other.
+A shader is data, so it can cross any boundary. A Python worker could supply an element-wise shader, and it would merge like any other.
 
 ## On a regular Linux device
 
