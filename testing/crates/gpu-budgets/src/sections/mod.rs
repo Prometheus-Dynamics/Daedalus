@@ -7,6 +7,7 @@ pub mod fences;
 pub mod gaps;
 #[cfg(target_os = "linux")]
 pub mod images;
+pub mod timings;
 pub mod transfers;
 
 use std::time::{Duration, Instant};

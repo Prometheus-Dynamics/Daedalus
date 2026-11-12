@@ -19,7 +19,7 @@ static COUNTING: CountingAlloc = CountingAlloc;
 
 mod sections;
 
-const SECTIONS: [&str; 16] = [
+const SECTIONS: [&str; 21] = [
     "limits",
     "batching",
     "allocation",
@@ -36,6 +36,11 @@ const SECTIONS: [&str; 16] = [
     "heap-read",
     "heap-probe",
     "heap-alone",
+    "region8",
+    "fragment-box",
+    "raw-submit",
+    "timer-source",
+    "dma-1mib",
 ];
 const RUNS: usize = 200;
 
@@ -186,6 +191,12 @@ fn main() -> std::process::ExitCode {
             "transfers" => sections::transfers::run(&backend),
             "chains" => sections::chains::run(&backend),
             "fences" => sections::fences::run(&backend),
+            "region8" => sections::timings::region8(&backend),
+            "fragment-box" => sections::timings::fragment_box(&backend),
+            "raw-submit" => sections::timings::raw_submit(&backend),
+            "timer-source" => sections::timings::timer_source(&backend),
+            #[cfg(target_os = "linux")]
+            "dma-1mib" => sections::timings::dma_1mib(),
             "alloc16" => sections::allocations::run(),
             "pixels" => sections::gaps::pixel_forms(&backend),
             "busy" => sections::gaps::busy(&backend),
