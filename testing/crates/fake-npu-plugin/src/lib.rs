@@ -10,7 +10,7 @@ use daedalus_fake_npu::{BACKEND_ID, run_op};
 use daedalus_loader::export::{NodeDef, PluginDef, PortDef};
 use daedalus_runner::INLINE_BYTES;
 
-pub const PLUGIN_NAME: &str = "fake-npu-plugin";
+pub(crate) const PLUGIN_NAME: &str = "fake-npu-plugin";
 
 thread_local! {
     /// Where a node's output bytes are kept until the runner has taken them. A plugin's step

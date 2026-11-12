@@ -45,7 +45,7 @@ fn spec(record: &'static NodeRecord) -> &'static PixelSpec {
 
 /// The pixel forms of chains of 4 and 8 nodes on a 1280x800 frame: one fragment pass over a
 /// texture, one merged compute pass over a buffer, and one compute region per node.
-pub fn pixel_forms(backend: &WgpuBackend) {
+pub(crate) fn pixel_forms(backend: &WgpuBackend) {
     let pixels = (WIDTH * HEIGHT) as usize;
     for count in [4usize, 8] {
         let records = nodes(count);
@@ -180,7 +180,7 @@ pub fn busy(backend: &WgpuBackend) {
 }
 
 /// The host-cached buffer at 16 MiB: the host writes it and reads it back.
-pub fn host_cached(backend: &WgpuBackend) {
+pub(crate) fn host_cached(backend: &WgpuBackend) {
     let bytes = 16 * MIB as usize;
     let payload = vec![7u8; bytes];
     let mut out = vec![0u8; bytes];
@@ -205,7 +205,7 @@ pub fn host_cached(backend: &WgpuBackend) {
 /// memory with no device buffer on it, and the raw read again while the device buffer is alive.
 /// The order is part of the measurement: the device buffer may change what the host reads cost.
 #[cfg(target_os = "linux")]
-pub fn heap_read(backend: &WgpuBackend) {
+pub(crate) fn heap_read(backend: &WgpuBackend) {
     use daedalus_dma_sys::{Access, DmaHeap};
     let bytes = 16 * MIB as usize;
     let payload = vec![9u8; bytes];
@@ -302,7 +302,7 @@ pub fn heap_read(backend: &WgpuBackend) {
 /// zeroed Vec each run, which page-faults on first touch), the sync (once, or per 64 KiB chunk),
 /// and the storage's own read against the raw mapping's, with the same copy.
 #[cfg(target_os = "linux")]
-pub fn heap_probe(backend: &WgpuBackend) {
+pub(crate) fn heap_probe(backend: &WgpuBackend) {
     use daedalus_dma_sys::{Access, DmaHeap};
     let bytes = 16 * MIB as usize;
     let payload = vec![9u8; bytes];
@@ -376,7 +376,7 @@ pub fn heap_probe(backend: &WgpuBackend) {
 /// One variant alone in its process: the storage's read, or the raw mapping's read, each into its
 /// own reused Vec, with nothing else allocated. Run as separate processes, so no order effect.
 #[cfg(target_os = "linux")]
-pub fn heap_alone(backend: &WgpuBackend, which: &str) {
+pub(crate) fn heap_alone(backend: &WgpuBackend, which: &str) {
     use daedalus_dma_sys::{Access, DmaHeap};
     let bytes = 16 * MIB as usize;
     let payload = vec![9u8; bytes];

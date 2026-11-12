@@ -12,10 +12,10 @@ pub mod transfers;
 use std::time::{Duration, Instant};
 
 /// Runs before the timed ones, so pipelines, buffers and caches are built.
-pub const WARM: usize = 5;
+pub(crate) const WARM: usize = 5;
 /// Timed runs for each measurement, and the median is what is printed.
 pub const RUNS: usize = 50;
-pub const MIB: u64 = 1 << 20;
+pub(crate) const MIB: u64 = 1 << 20;
 
 /// The median of `runs` timed calls of `body`, after `warm` untimed calls.
 pub fn median(warm: usize, runs: usize, mut body: impl FnMut()) -> Duration {
@@ -60,12 +60,12 @@ pub fn pattern(len: usize, seed: u32) -> Vec<u8> {
 }
 
 /// A buffer size that the device takes: a whole word, and never empty.
-pub fn word_size(len: u64) -> u64 {
+pub(crate) fn word_size(len: u64) -> u64 {
     len.next_multiple_of(4).max(4)
 }
 
 /// The median of `runs` timed calls of `body`, each given what `setup` made untimed just before.
-pub fn median_with_setup<T>(
+pub(crate) fn median_with_setup<T>(
     warm: usize,
     runs: usize,
     mut setup: impl FnMut() -> T,
