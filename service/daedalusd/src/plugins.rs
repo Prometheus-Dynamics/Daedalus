@@ -18,7 +18,7 @@ use daedalus_wire::service::PluginInfo;
 use crate::logging::{debug, info, warning};
 
 /// The generations opened so far, for checking at shutdown that each one was retired.
-pub type Probes = Arc<Mutex<Vec<(String, Weak<Generation>)>>>;
+pub(crate) type Probes = Arc<Mutex<Vec<(String, Weak<Generation>)>>>;
 
 /// Loads plugins for the host.
 pub struct Plugins {
@@ -102,7 +102,7 @@ pub fn scan(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Loads every library in `paths` once. The ones that failed are returned, to be tried again.
-pub fn load_all(host: &ServiceHost, paths: Vec<PathBuf>) -> Vec<PathBuf> {
+pub(crate) fn load_all(host: &ServiceHost, paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut failed = Vec::new();
     for path in paths {
         match host.load_plugin(&path.to_string_lossy()) {
@@ -129,7 +129,7 @@ const RETRY_POLL: Duration = Duration::from_millis(50);
 /// Keeps trying the libraries that failed to load. Each has its own backoff, capped at 8 s. A
 /// library is given up on only when its file is removed, which is how an operator stops the
 /// retries by hand, or when the daemon stops.
-pub fn retry_in_background(
+pub(crate) fn retry_in_background(
     host: Arc<ServiceHost>,
     failed: Vec<PathBuf>,
     stop: Arc<AtomicBool>,

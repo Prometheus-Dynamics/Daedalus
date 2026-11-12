@@ -27,7 +27,7 @@ pub fn type_name(ty: &WireType) -> String {
     }
 }
 
-pub const SCALAR_NAMES: [(&str, Scalar); 16] = [
+pub(crate) const SCALAR_NAMES: [(&str, Scalar); 16] = [
     ("unit", Scalar::Unit),
     ("bool", Scalar::Bool),
     ("i8", Scalar::I8),
@@ -59,7 +59,7 @@ pub fn hex(bytes: &[u8]) -> String {
 
 /// A wire value as JSON. Bytes are hex text, a struct is an object by field name, an enum is
 /// its variant's name with its payload, and a map is a list of pairs.
-pub fn value_json(ty: &WireType, value: &WireValue) -> Value {
+pub(crate) fn value_json(ty: &WireType, value: &WireValue) -> Value {
     match (ty, value) {
         (_, WireValue::Unit) => Value::Null,
         (_, WireValue::Bool(v)) => json!(v),
@@ -312,7 +312,7 @@ pub fn event(event: &Event) -> Value {
     }
 }
 
-pub fn service_error(error: &ServiceError) -> Value {
+pub(crate) fn service_error(error: &ServiceError) -> Value {
     json!({
         "kind": "daemon",
         "code": error.code.name(),

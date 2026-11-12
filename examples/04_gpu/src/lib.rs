@@ -151,7 +151,7 @@ pub fn when_ready<T>(
 }
 
 /// [`when_ready`] for a value of the examples' own type.
-pub fn take_when_ready(host: &mut Host<'static>, name: &str) -> Result<Words, String> {
+pub(crate) fn take_when_ready(host: &mut Host<'static>, name: &str) -> Result<Words, String> {
     when_ready(host, name, |host, name| {
         host.take::<Words>(name).map_err(|error| error.to_string())
     })

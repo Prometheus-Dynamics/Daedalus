@@ -15,7 +15,7 @@ pub const DEFAULT_SOCKET: &str = "/run/daedalusd/daedalusd.sock";
 /// The config file read when `--config` is not given, if it exists.
 pub const DEFAULT_CONFIG: &str = "/etc/daedalusd/daedalusd.toml";
 /// The socket's file name inside a runtime directory.
-pub const SOCKET_NAME: &str = "daedalusd.sock";
+pub(crate) const SOCKET_NAME: &str = "daedalusd.sock";
 
 /// The file as written.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -35,7 +35,7 @@ pub struct Config {
 
 /// One place to listen.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Listen {
+pub(crate) enum Listen {
     Unix(PathBuf),
     Tcp(SocketAddr),
 }
@@ -51,7 +51,7 @@ impl fmt::Display for Listen {
 
 /// Why a config was refused. The message names the key.
 #[derive(Debug, PartialEq, Eq)]
-pub struct ConfigError(pub String);
+pub(crate) struct ConfigError(pub String);
 
 impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
