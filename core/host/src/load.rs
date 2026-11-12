@@ -28,6 +28,7 @@ use daedalus_value::{Overflow, Pressure};
 use crate::fault::FaultRing;
 use crate::intern::{intern, intern_key, intern_keys, intern_names, intern_ports, intern_wake};
 use crate::patch::ConstTable;
+use crate::recovery::step_recovery;
 use crate::tick_overhead::{TickOverheadReport, TickOverheadWindow};
 use crate::unmerged::Planner;
 use crate::{Dir, Host, PortSpec, Ports, StateStore};
@@ -68,6 +69,8 @@ pub enum LoadError {
     Ports(crate::PortsError),
     /// The runner refused the plan.
     Run(daedalus_runner::LoadError),
+    /// A node's recovery metadata is malformed, or merged nodes ask for different recoveries.
+    Recovery { node: String, reason: String },
 }
 
 impl fmt::Display for LoadError {
@@ -78,6 +81,7 @@ impl fmt::Display for LoadError {
             LoadError::DuplicatePort { name } => write!(f, "two host ports are named `{name}`"),
             LoadError::Ports(error) => write!(f, "the port table is malformed: {error:?}"),
             LoadError::Run(error) => write!(f, "the runner refused the plan: {error:?}"),
+            LoadError::Recovery { node, reason } => write!(f, "node `{node}` {reason}"),
         }
     }
 }
@@ -188,6 +192,7 @@ struct Draft {
     required: Vec<u32>,
     reuse: bool,
     always: bool,
+    recovery: Recovery,
 }
 
 fn span(table: &mut Vec<u32>, values: &[u32]) -> Span {
@@ -230,6 +235,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                 step_covers.push(covers.clone());
                 same_as.push(Some(same_step(planned, &entries, covers, &info)));
                 transfers.push(None);
+                let recovery = step_recovery(planned, covers)?;
                 let connected = connected_reads(planned, &info, reads);
                 let (fire, required) = join_for(planned, covers, &connected);
                 for (slot, edge) in &connected {
@@ -247,6 +253,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                         && writes.iter().filter(|slot| **slot != NO_SLOT).all(|slot| {
                             host_spaces.contains(&stitched.slots[*slot as usize].space)
                         }),
+                    recovery,
                 });
             }
             Item::Move {
@@ -273,6 +280,7 @@ fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadErr
                     required: Vec::new(),
                     reuse: false,
                     always: false,
+                    recovery: Recovery::Fail,
                 });
             }
             // A step that returned `Pending` already holds its consumers back until its fence
@@ -440,7 +448,7 @@ fn wire(drafts: &[Draft]) -> (Vec<StepMeta>, Vec<u32>) {
                 outputs: span(&mut table, &draft.writes),
                 always: draft.always,
                 may_pend: draft.may_pend,
-                recovery: Recovery::Fail,
+                recovery: draft.recovery,
                 fire: draft.fire,
                 required: span(&mut table, &draft.required),
                 reuse: draft.reuse,
