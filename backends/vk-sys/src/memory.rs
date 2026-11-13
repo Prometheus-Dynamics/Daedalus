@@ -395,6 +395,13 @@ pub fn dma_buf_size_that_fits(device: &wgpu::Device, have: u64) -> Result<u64, E
     }
 }
 
+/// Which file an fd of this process names: its device and inode. `None` when the fd isn't open.
+fn file_of(fd: std::os::fd::RawFd) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let named = std::fs::metadata(format!("/proc/self/fd/{fd}")).ok()?;
+    Some((named.dev(), named.ino()))
+}
+
 /// A storage buffer whose memory is the dma-buf behind `fd`, with no copy. `size` is a non-zero
 /// multiple of 4, and `have` is the dma-buf's own length, which has to cover what
 /// [`dma_buf_bytes_needed`] says for `size`. The buffer owns the fd from here.
@@ -439,6 +446,8 @@ pub fn import_dma_buf(
         }
     };
     let raw_fd = fd.into_raw_fd();
+    // Which file the fd names, to know it again if the import is refused.
+    let before = file_of(raw_fd);
     let mut import = vk::ImportMemoryFdInfoKHR::default()
         .handle_type(handle)
         .fd(raw_fd);
@@ -450,10 +459,18 @@ pub fn import_dma_buf(
     let memory = match unsafe { vk_device.allocate_memory(&allocate, None) } {
         Ok(memory) => memory,
         Err(error) => {
-            // SAFETY: the import failed, so the fd is still this call's to close, and the buffer
-            // was made above.
+            // Vulkan says a failed import leaves the fd with the caller. A driver may close it
+            // anyway, and NVIDIA's does for some refusals and not for others, so the driver's
+            // name doesn't settle it. The fd is closed here only if it is still open and still
+            // names the file it was given for: one the driver closed is never closed again,
+            // even when its number has since been given to another file.
+            if before.is_some() && file_of(raw_fd) == before {
+                // SAFETY: the import failed and the fd is still open on the same file, so the
+                // driver left it and it is this call's to close.
+                drop(unsafe { <OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(raw_fd) });
+            }
+            // SAFETY: the buffer was made above, and nothing else has it.
             unsafe {
-                drop(<OwnedFd as std::os::fd::FromRawFd>::from_raw_fd(raw_fd));
                 vk_device.destroy_buffer(buffer, None);
             }
             return Err(match error {
