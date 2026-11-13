@@ -50,6 +50,8 @@ struct State {
     off: bool,
     /// The device was handed in, so there is nothing to reopen it from.
     adopted: bool,
+    /// The host's lease, set on each device this opens.
+    lease: Option<Arc<dyn crate::GpuLease>>,
 }
 
 impl Link {
@@ -149,6 +151,10 @@ impl Link {
                 state.retry.worked();
                 if self.named.is_none() {
                     Context::note_latest(&opened);
+                }
+                // A device several backends share keeps the lease it has unless this one has its own.
+                if state.lease.is_some() {
+                    opened.lease.set(state.lease.clone());
                 }
                 state.context = Some(Arc::clone(&opened));
                 Ok(opened)
@@ -284,6 +290,19 @@ impl WgpuBackend {
 
     pub(crate) fn context(&self) -> Result<Arc<Context>, OpenError> {
         self.link.context()
+    }
+
+    /// Sets the host's lease on the GPU, or takes it away with `None`. From then on the backend
+    /// asks for the lease before it gives the device work and gives it back when the last of
+    /// that work has finished: see [`GpuLease`](crate::GpuLease). It applies to the device this
+    /// backend has open and to any it opens later, and opens nothing itself. Backends that share
+    /// one device share its lease: the last one set is the one asked.
+    pub fn set_lease(&self, lease: Option<Arc<dyn crate::GpuLease>>) {
+        let mut state = self.link.state();
+        if let Some(context) = &state.context {
+            context.lease.set(lease.clone());
+        }
+        state.lease = lease;
     }
 
     pub(crate) fn link(&self) -> &Arc<Link> {

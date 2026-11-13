@@ -162,4 +162,4 @@ Runtime features on top of the landed host, runner and planner, from the 2026-11
 - [x] [J4](docs/prs/J4.md) Group expansion keeps node metadata (wave 21; needs A6, B1)
 - [x] [J5](docs/prs/J5.md) Progress readable during parallel runs (wave 21; needs C7, C11)
 - [x] [J6](docs/prs/J6.md) A location-only dma-buf memory space, and the planner honours a port's declared memory (wave 21; needs A7, B9, E3)
-- [ ] J7 An optional GPU-lease hook on the wgpu backend
+- [x] [J7](docs/prs/J7.md) An optional GPU-lease hook on the wgpu backend (wave 21; needs E5)

@@ -56,6 +56,8 @@ pub(crate) struct Context {
     lost: Arc<AtomicBool>,
     wait_timeout: std::time::Duration,
     inflight: Mutex<InFlight>,
+    /// The host's turn on the GPU, when it set one.
+    pub(crate) lease: Arc<crate::lease::LeaseState>,
     submits: AtomicU64,
     passes: AtomicU64,
     dispatches: AtomicU64,
@@ -173,6 +175,7 @@ impl Context {
             lost,
             wait_timeout: options.wait_timeout,
             inflight: Mutex::new(InFlight::new(options.max_in_flight)),
+            lease: Arc::default(),
             submits: AtomicU64::new(0),
             passes: AtomicU64::new(0),
             dispatches: AtomicU64::new(0),
@@ -202,6 +205,22 @@ impl Context {
 
     pub(crate) fn shaders(&self) -> MutexGuard<'_, crate::shader::ShaderCache> {
         self.shaders.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// This submission's part of the host's lease, asked for before the device is given the
+    /// work. `None` when the host set no lease, which costs one load.
+    #[inline]
+    pub(crate) fn leased(&self) -> Option<crate::lease::LeaseUse> {
+        self.lease.begin()
+    }
+
+    /// Gives `lease` back once the device has finished everything it has been given so far.
+    /// Called right after the submit the lease was asked for.
+    #[inline]
+    pub(crate) fn until_done(&self, lease: Option<crate::lease::LeaseUse>) {
+        if let Some(lease) = lease {
+            self.queue.on_submitted_work_done(move || drop(lease));
+        }
     }
 
     pub(crate) fn count_submit(&self) {
@@ -250,8 +269,10 @@ impl Context {
     pub(crate) fn flush_writes(&self) {
         if self.unsent.swap(false, Ordering::AcqRel) {
             self.unsent_bytes.store(0, Ordering::Release);
+            let lease = self.leased();
             let _held = self.submit.lock();
             self.queue.submit([]);
+            self.until_done(lease);
         }
     }
 

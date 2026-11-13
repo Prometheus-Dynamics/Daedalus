@@ -109,3 +109,23 @@ backend opens the device again and the region runs again: it is not turned off.
 
 The counted budgets are checked on Mesa's software Vulkan in the `GPU` workflow
 (`scripts/gpu-lavapipe.sh`). Timings are board runs.
+
+## Sharing the GPU with other processes
+
+Several processes can share one GPU, and a host may have to take turns on it. The backend takes an
+optional lease for that: `backend.set_lease(Some(lease))`, where `lease` implements `GpuLease`
+(`acquire` and `release`).
+
+- `acquire` is called before the device is given work, when none is in flight from this process.
+  `release` is called when the last of that work has finished. However many submissions ran in
+  between, the calls come in pairs.
+- Everything the backend gives the device counts: a region's submit, a chain recorded with Vulkan
+  itself, an upload, a readback and a clear.
+- The backend doesn't know who else wants the GPU or how the turn is decided. That is the host's,
+  and what the hook does is the host's too. An `acquire` that waits holds up the submit that asked,
+  so a hook that must wait should bound it.
+- `set_lease(None)` takes the lease away. Work still in flight is released first, so the calls
+  stay paired.
+- With no lease set, a submit pays one load of a flag and nothing else.
+- Backends that share one device share its lease.
+
