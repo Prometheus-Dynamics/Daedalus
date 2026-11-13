@@ -98,7 +98,7 @@ fn a_read_only_dma_buf_is_read_by_the_host_and_imported_by_each_device() {
             .expect("a second fd, for the host's reads");
 
         // The device imports it, where it imports dma-bufs at all, and reads the same bytes.
-        let imported = crate::dmabuf_value::import_bytes(&context, only_read, BYTES as u64);
+        let imported = crate::dmabuf_value::import_bytes(&context, only_read, 0, BYTES as u64);
         match imported {
             Ok(storage) => {
                 assert!(

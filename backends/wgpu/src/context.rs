@@ -65,6 +65,9 @@ pub(crate) struct Context {
     pub(crate) errors: Arc<PendingErrors>,
     lost: Arc<AtomicBool>,
     wait_timeout: std::time::Duration,
+    /// The imports an import step of this device keeps.
+    #[cfg(target_os = "linux")]
+    pub(crate) kept_imports: usize,
     inflight: Mutex<InFlight>,
     /// The host's turn on the GPU, when it set one.
     pub(crate) lease: Arc<crate::lease::LeaseState>,
@@ -189,6 +192,8 @@ impl Context {
             errors,
             lost,
             wait_timeout: options.wait_timeout,
+            #[cfg(target_os = "linux")]
+            kept_imports: options.kept_imports,
             inflight: Mutex::new(InFlight::new(options.max_in_flight)),
             lease: Arc::default(),
             submits: AtomicU64::new(0),

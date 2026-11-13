@@ -19,6 +19,9 @@ pub enum Error {
     Fd,
     /// The dma-buf is smaller than the memory the device needs for the buffer.
     TooSmall { have: u64, need: u64 },
+    /// The bytes start at an offset in the dma-buf that the device can't bind a buffer at: it
+    /// wants a multiple of `alignment`.
+    Offset { offset: u64, alignment: u64 },
     /// Something this crate doesn't do, such as a shader that binds a texture where only
     /// buffers are bound.
     Unsupported,
@@ -40,6 +43,10 @@ impl fmt::Display for Error {
             Error::TooSmall { have, need } => write!(
                 f,
                 "the dma-buf is {have} bytes, and the device needs {need} for the buffer"
+            ),
+            Error::Offset { offset, alignment } => write!(
+                f,
+                "the bytes start {offset} into the dma-buf, and the device binds a buffer only at a multiple of {alignment}"
             ),
             Error::Unsupported => f.write_str("not supported here"),
             Error::Lent => {
