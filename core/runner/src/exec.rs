@@ -13,9 +13,10 @@ use crate::join::join_ready;
 use crate::owned::{self, InlineCell};
 use crate::policy::Recovery;
 use crate::reuse::{ReuseParts, forget, replay, stamp_versions, store};
-use crate::step::{Queue, SlotKind, SlotStamp, StepMeta};
+use crate::step::{Queue, SlotStamp, StepMeta};
 use crate::telemetry::Counters;
 use crate::tick::TickReport;
+use crate::values::LENT;
 use crate::{Pending, Runner, spanned};
 
 /// A step's entry point.
@@ -141,12 +142,18 @@ impl SlotParts {
         queue.unconsumed = 0;
     }
 
-    /// Removes the consumed head. Unless the step moved it out, it is released here, once.
+    /// Removes the consumed head. Unless the step moved it out, it is released here, once. A
+    /// queue that keeps its value removes nothing: its cells are lent, so a step that took from
+    /// one got a reference of its own, never the queue's.
     ///
     /// # Safety
     /// The caller has exclusive access to this queue's storage range.
     pub(crate) unsafe fn commit(self, queue: &mut Queue, moved: bool) {
-        if queue.kind == Some(SlotKind::Fifo) && queue.len > 0 && !moved {
+        debug_assert!(
+            !(moved && queue.keeps()),
+            "a cell of a slot that keeps its value was marked moved"
+        );
+        if !queue.keeps() && queue.len > 0 && !moved {
             // SAFETY: the queue owns its head entry and forgets it on the commit below.
             unsafe { owned::release(&*self.storage.add(queue.head_index())) };
         }
@@ -237,7 +244,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
     let (run, data) = env.step_fn(index);
     let mut attempt = 0;
     let end = loop {
-        load_cells(env, meta);
+        load_cells(env, meta, attempt != 0);
         let flags = env.health(index).call_flags();
         let probe = env.probe();
         let progress = env.progress(index);
@@ -340,15 +347,33 @@ pub(crate) fn output_at(meta: StepMeta, at: usize) -> usize {
 }
 
 /// Fills the frame's inputs from their queues and clears its outputs, before a call.
-pub(crate) fn load_cells<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
+///
+/// A queue that pops gives its head to the step that reads it: the body may take the reference,
+/// and the cell says so by being `Moved`. A queue that keeps its value, for several readers,
+/// can't give its own reference away, so the cell is marked [`LENT`]: taking from it gives the
+/// body another reference and leaves the cell as it is. A body that only looks pays nothing.
+///
+/// With `retry`, this is another call after a fault. An input the failed call took out of a queue
+/// that pops is gone, so its cell stays `Moved`: the queue's entry is no longer the queue's to
+/// hand out.
+pub(crate) fn load_cells<'t, E: Env<'t>>(env: &mut E, meta: StepMeta, retry: bool) {
     for (at, &slot) in spanned(env.table(), meta.inputs).iter().enumerate() {
-        let head = if slot == NO_SLOT {
-            Slot::EMPTY
-        } else {
-            // SAFETY: `with_queue` holds what protects this queue, and only this step's slot range
-            // is read.
-            env.with_queue(slot as usize, |queue, parts| unsafe { parts.head(queue) })
-        };
+        if slot == NO_SLOT {
+            env.parts().0[at] = Slot::EMPTY;
+            continue;
+        }
+        if retry && env.parts().0[at].state == SlotState::Moved as u32 {
+            continue;
+        }
+        let head = env.with_queue(slot as usize, |queue, parts| {
+            // SAFETY: `with_queue` holds what protects this queue, and only this step's slot
+            // range is read.
+            let mut head = unsafe { parts.head(queue) };
+            if queue.keeps() {
+                head.reserved |= LENT;
+            }
+            head
+        });
         env.parts().0[at] = head;
     }
     for at in 0..meta.outputs.len as usize {
@@ -369,7 +394,7 @@ fn drop_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
     }
 }
 
-/// Removes what the step consumed. A moved entry's reference went to an output, so it is only
+/// Removes what the step consumed. A moved entry's reference went with the body, so it is only
 /// forgotten.
 pub(crate) fn commit_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
     for (at, &slot) in spanned(env.table(), meta.inputs).iter().enumerate() {
@@ -403,6 +428,9 @@ fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta, hide: bool) -> Result<u3
             continue;
         }
         let slot = slot as usize;
+        // A body that passed a lent input on as it was wrote the mark too. A stored value is
+        // the queue's own.
+        cell.reserved &= !LENT;
         if let Some(stamp) = env.stamp(slot) {
             cell.type_index = stamp.ty.0;
             cell.space = u32::from(stamp.space.0);

@@ -104,13 +104,12 @@ fn a_value_is_handed_on_as_it_is() {
         assert!(matches!(end, StepEnd::Done), "{id}: {reason}");
         assert_eq!(
             cells[0].state,
-            SlotState::Full as u32,
-            "{id}: the input keeps its own reference, for its other readers"
+            SlotState::Moved as u32,
+            "{id}: the input's reference moved to the output"
         );
         let out = typed_view::<Block>(&cells[1]).expect("a block");
         assert!(std::ptr::eq(out, same), "{id}: the same value, not a copy");
         daedalus_runner::drop_owned(cells[1]);
-        daedalus_runner::drop_owned(cells[0]);
     }
 }
 

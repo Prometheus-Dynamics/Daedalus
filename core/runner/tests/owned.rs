@@ -237,3 +237,132 @@ fn sharing_a_typed_cell_keeps_its_payload_alive_and_drops_it_once() {
     put_inline(&mut bytes, TY, SP, &[1, 2, 3]).expect("fits");
     assert!(share_typed(&bytes).is_none());
 }
+
+/// Takes its input and lets go of it. Faults on the calls numbered in `faults`, after taking.
+struct Taker {
+    calls: u32,
+    faults: u32,
+    /// How many calls found a value to take.
+    took: Arc<Mutex<u32>>,
+}
+
+impl OwnedStep for Taker {
+    fn run(&mut self, slots: &mut Slots, _: &mut StepCx) -> StepEnd {
+        if daedalus_runner::take_typed::<Counted>(cell(slots, 0)).is_some() {
+            *self.took.lock().unwrap() += 1;
+        }
+        self.calls += 1;
+        if self.calls <= self.faults {
+            return StepEnd::Fault;
+        }
+        StepEnd::Done
+    }
+}
+
+/// How many references [`pin`] leaves behind.
+const PINS: usize = 8;
+
+/// Leaves references to `value` that are never released, more than any path releases by mistake.
+/// A release too many then shows in the count and frees nothing, so a test that finds one fails
+/// on its assertion with the memory still valid.
+fn pin(value: &Arc<Counted>) {
+    for _ in 0..PINS {
+        std::mem::forget(Arc::clone(value));
+    }
+}
+
+fn taker(kind: SlotKind, faults: u32, took: &Arc<Mutex<u32>>) -> Fixture {
+    let mut wiring = Wiring::default();
+    wiring.step(&[], &[0], &[]);
+    wiring.set_recovery(0, daedalus_runner::Recovery::Retry { max: 2 });
+    let step = Step::boxed(Taker {
+        calls: 0,
+        faults,
+        took: took.clone(),
+    });
+    Fixture::new(vec![step], wiring, vec![SlotSpec { cap: 1, kind }])
+}
+
+/// A slot several steps read keeps its value after each of them has run. A reader that takes its
+/// input gets a reference of its own, and the slot's stays for the others.
+#[test]
+fn a_reader_that_takes_from_a_slot_others_read_leaves_the_slots_reference() {
+    for kind in [SlotKind::Held, SlotKind::Latest] {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let took = Arc::new(Mutex::new(0));
+        let mut fixture = taker(kind, 0, &took);
+        let value = counted(3, &log);
+        pin(&value);
+        let here = 1 + PINS;
+        {
+            let mut runner = fixture.load().unwrap();
+            runner.feed_typed(0, TY, SP, Arc::clone(&value)).unwrap();
+            for _ in 0..2 {
+                runner.wake(0);
+                runner.tick().unwrap();
+                assert_eq!(runner.queue(0).unwrap().len, 1, "the slot keeps its value");
+                assert_eq!(
+                    Arc::strong_count(&value),
+                    here + 1,
+                    "the slot still holds its reference after a reader took one"
+                );
+            }
+        }
+        assert_eq!(*took.lock().unwrap(), 2, "each reader got the value");
+        assert_eq!(Arc::strong_count(&value), here, "released once at shutdown");
+        assert!(log.lock().unwrap().is_empty());
+    }
+}
+
+/// A reader that only looks leaves the count where it was.
+#[test]
+fn a_reader_that_only_looks_takes_no_reference() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut wiring = Wiring::default();
+    wiring.step(&[], &[0], &[]);
+    let step = Step::boxed(Writer {
+        input: 0,
+        output: 1,
+        mode: Mode::Read,
+        log: log.clone(),
+    });
+    let held = SlotSpec {
+        cap: 1,
+        kind: SlotKind::Held,
+    };
+    let mut fixture = Fixture::new(vec![step], wiring, vec![held]);
+    let value = counted(4, &log);
+    let mut runner = fixture.load().unwrap();
+    runner.feed_typed(0, TY, SP, Arc::clone(&value)).unwrap();
+    runner.wake(0);
+    runner.tick().unwrap();
+    assert_eq!(Arc::strong_count(&value), 2);
+    drop(runner);
+    assert_eq!(Arc::strong_count(&value), 1);
+}
+
+/// A call that took its input and then faulted has the value: the queue's entry isn't handed to
+/// the retry as if it were still the queue's. On a slot that keeps its value the retry gets a
+/// reference of its own again.
+#[test]
+fn a_retry_after_a_call_that_took_its_input_does_not_get_the_same_reference_again() {
+    for (kind, takes, left) in [(SlotKind::Fifo, 1, 0), (SlotKind::Held, 2, 1)] {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let took = Arc::new(Mutex::new(0));
+        let mut fixture = taker(kind, 1, &took);
+        let value = counted(6, &log);
+        pin(&value);
+        let here = 1 + PINS;
+        {
+            let mut runner = fixture.load().unwrap();
+            runner.feed_typed(0, TY, SP, Arc::clone(&value)).unwrap();
+            runner.wake(0);
+            runner.tick().unwrap();
+            assert_eq!(*took.lock().unwrap(), takes);
+            assert_eq!(runner.queue(0).unwrap().len, left);
+            assert_eq!(Arc::strong_count(&value), here + left as usize);
+        }
+        assert_eq!(Arc::strong_count(&value), here);
+        assert!(log.lock().unwrap().is_empty());
+    }
+}

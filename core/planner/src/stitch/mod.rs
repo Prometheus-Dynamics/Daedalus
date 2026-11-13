@@ -42,7 +42,9 @@ pub struct SlotInfo {
     pub space: u32,
     /// `None` when the port's type isn't in the table.
     pub ty: Option<u32>,
-    /// How many items read it. One means ownership moves with no reference count.
+    /// How many items read it. One means ownership moves with no reference count: the reader may
+    /// take the slot's own reference. With more, the slot keeps its value for all of them, and a
+    /// reader that takes gets a reference of its own.
     pub consumers: u32,
 }
 

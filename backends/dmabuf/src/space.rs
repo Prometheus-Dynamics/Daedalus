@@ -10,7 +10,7 @@ use daedalus_backend::{
     Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, SpaceKind,
     Transfer, TransferCost,
 };
-use daedalus_runner::{UNSTAMPED, put_typed, share_typed, typed_view};
+use daedalus_runner::{UNSTAMPED, put_typed, take_typed, typed_view};
 use daedalus_types::Typed;
 
 use crate::{HOST_SPACE, SPACE};
@@ -46,7 +46,7 @@ pub fn from_host_id<T: Typed>() -> &'static str {
 }
 
 /// Hands a `T` on from one space to the other. The value is the same in both: nothing is copied,
-/// and the output is another reference to it.
+/// and the input's reference moves to the output.
 struct Hand<T> {
     /// Whether the value must have a dma-buf to be handed on: true on the way into the space.
     needs_dmabuf: bool,
@@ -72,10 +72,10 @@ impl<T: DmaBufBacked> OwnedStep for Hand<T> {
                 "a value with no dma-buf can't be moved into dma-buf memory",
             );
         }
-        // Another reference to the same value. The cell keeps its own, which the runner lets go
-        // of: a value with other readers is still theirs to read.
-        let Some(value) = share_typed(input).and_then(|shared| shared.downcast::<T>().ok()) else {
-            return fault(cx, "a dma-buf move couldn't share its value");
+        // The cell's reference moves to the output. Where the slot has other readers the cell
+        // is lent, and taking gives another reference: the slot's stays for them.
+        let Some(value) = take_typed::<T>(input) else {
+            return fault(cx, "a dma-buf move couldn't take its value");
         };
         let Some(out) = slots.cell(1) else {
             return fault(cx, "a dma-buf move has no output");

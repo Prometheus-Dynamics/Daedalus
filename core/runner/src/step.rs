@@ -152,6 +152,12 @@ impl Queue {
         value
     }
 
+    /// Whether a value stays in the queue after a step has read it, for the slot's other readers
+    /// or for the next tick. Only a queue that pops gives its own reference to its reader.
+    pub(crate) fn keeps(&self) -> bool {
+        self.kind != Some(SlotKind::Fifo)
+    }
+
     /// Removes the oldest value, as a commit does, according to how this slot is read.
     pub(crate) fn commit(&mut self) {
         match self.kind {

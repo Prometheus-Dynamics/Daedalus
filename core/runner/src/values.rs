@@ -100,6 +100,12 @@ impl Runner<'_> {
     }
 }
 
+/// Set in `reserved` of an input cell whose slot keeps its value, for its other readers or for
+/// the next tick. The reference is the slot's, so it is not the step's to move: [`take_handed`]
+/// and `take_typed` give the step another one and leave the cell full. A step that moves a value
+/// by hand, by copying the cell and marking it `Moved`, must not do so to a lent cell.
+pub const LENT: u32 = 1 << 1;
+
 /// Writes an owned payload into an output cell, releasing what the cell owned before. The cell
 /// must be one the step is writing: the view of an input owns nothing and must not be overwritten
 /// this way.
@@ -200,9 +206,13 @@ pub fn put_inline(cell: &mut Slot, ty: TypeIndex, space: SpaceIndex, bytes: &[u8
 
 /// Takes the count a full handed cell holds, and leaves the cell moved, so the runner doesn't
 /// release it again. The count moves into the returned handle, with no copy and no allocation.
+/// From a [`LENT`] cell the handle gets a count of its own, and the cell stays as it is.
 pub fn take_handed(slot: &mut Slot) -> Option<daedalus_abi::SharedBytes> {
     if slot.state != SlotState::Full as u32 || slot.owner != daedalus_abi::OWNER_HANDED {
         return None;
+    }
+    if slot.reserved & LENT != 0 {
+        return share_handed(slot);
     }
     let record = core::ptr::NonNull::new(core::ptr::with_exposed_provenance_mut::<
         daedalus_abi::HandedRecord,
