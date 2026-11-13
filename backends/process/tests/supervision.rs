@@ -9,7 +9,9 @@ use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
 use daedalus_backend::{
     Backend, BodyIndex, CompileCx, Compiled, NO_METADATA, NodeBody, PortRef, RateId, Region,
 };
-use daedalus_backend_process::{ProcessBackend, ProcessError, WorkerSpec};
+#[cfg(unix)]
+use daedalus_backend_process::WorkerSpec;
+use daedalus_backend_process::{ProcessBackend, ProcessError};
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
 use daedalus_worker_conformance::runner::registry;
 use support::spec;
