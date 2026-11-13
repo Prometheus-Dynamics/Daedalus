@@ -38,6 +38,8 @@ LAYOUT_HASH = _layout_hash(_LAYOUT)
 KIND_RUN, KIND_CANCEL, KIND_STATE_EXPORT, KIND_STATE_IMPORT, KIND_PING, KIND_SHUTDOWN = 1, 2, 3, 4, 5, 6
 KIND_HELLO, KIND_OUTPUTS, KIND_PROGRESS, KIND_LOG, KIND_FAULT, KIND_STATE_VALUE, KIND_PONG = (
     0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46)
+# Added after the layout was fixed, and not part of its hash: a host ignores a kind it doesn't know.
+KIND_DETAIL = 0x47
 
 FAULT_CODES = {
     "node_error": 1, "node_panic": 2, "bad_input": 3, "unknown_node": 4,
@@ -656,6 +658,14 @@ def encode_log(level, text):
     out = Writer()
     out.u8(KIND_LOG)
     out.u8(LOG_LEVELS[level])
+    out.str(text)
+    return bytes(out.buf)
+
+
+def encode_detail(run, text):
+    out = Writer()
+    out.u8(KIND_DETAIL)
+    out.u64(run)
     out.str(text)
     return bytes(out.buf)
 

@@ -22,7 +22,7 @@ use daedalus_wire::{
     DEFAULT_CAP, Fault, FaultCode, HostMsg, LogLevel, Outputs, PacketError, Run, RunStatus, Schema,
     WireValue, WorkerMsg, read_packet, write_packet,
 };
-use daedalus_worker_conformance::{CUSTOM_KEY, hello};
+use daedalus_worker_conformance::{CUSTOM_KEY, DIAGNOSTIC_DETAIL, hello};
 
 enum Mode {
     Normal,
@@ -75,6 +75,18 @@ fn run(
         match nodes::execute(node, &run.inputs, state) {
             Ok(values) => outputs.extend(values),
             Err((code, reason)) => {
+                if node == "fixture.failure_diagnostic" {
+                    // More than the reason holds, in two pieces.
+                    let (first, rest) = DIAGNOSTIC_DETAIL
+                        .split_at(DIAGNOSTIC_DETAIL.find(", ").map_or(0, |at| at + 2));
+                    for text in [first, rest] {
+                        let piece = WorkerMsg::Detail {
+                            run: run.run,
+                            text: text.to_owned(),
+                        };
+                        send(out, &piece, schema)?;
+                    }
+                }
                 send(
                     out,
                     &WorkerMsg::Fault(Fault {

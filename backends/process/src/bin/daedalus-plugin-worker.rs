@@ -137,6 +137,7 @@ fn execute(
     served: &mut Served,
     node: &str,
     inputs: &[BoundaryValue],
+    kept: &'static daedalus_abi::KeptDetail,
 ) -> Result<Vec<BoundaryValue>, (FaultCode, String)> {
     // Input bytes live here for the call; the cells point into them.
     let mut bufs = Vec::new();
@@ -162,6 +163,8 @@ fn execute(
     cells.extend(std::iter::repeat_n(Slot::EMPTY, served.outputs.len()));
     let n_in = served.inputs.len();
     let mut cx = StepCx::new();
+    // What the node gives `detail` is kept here, and sent to the host if it fails.
+    kept.attach(&mut cx);
     let end = run_step(&mut served.step, &mut Slots::of(&mut cells), &mut cx);
     if !matches!(end, StepEnd::Done) {
         return Err((FaultCode::NodeError, cx.reason().to_owned()));
@@ -208,6 +211,7 @@ fn main() {
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let mut buf = Vec::new();
+    let kept = daedalus_abi::KeptDetail::forever();
     loop {
         if read_packet(&mut input, DEFAULT_CAP, &mut buf).is_err() {
             return;
@@ -241,9 +245,18 @@ fn main() {
                         status = RunStatus::Fault;
                         break;
                     };
-                    match execute(entry, node, &run.inputs) {
+                    let result = execute(entry, node, &run.inputs, kept);
+                    let detail = kept.take();
+                    match result {
                         Ok(values) => outputs.extend(values),
                         Err((code, reason)) => {
+                            if !detail.is_empty() {
+                                let more = WorkerMsg::Detail {
+                                    run: run.run,
+                                    text: detail,
+                                };
+                                let _ = send(&mut out, &more, &schema);
+                            }
                             let fault = WorkerMsg::Fault(Fault {
                                 run: run.run,
                                 node: Some(node.clone()),

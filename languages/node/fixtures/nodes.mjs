@@ -37,6 +37,8 @@ node("fixture.stateful_counter",
   });
 
 node("fixture.failure_diagnostic", { inputs: [["value", T.i64]], outputs: [["out", T.i64]] },
-  () => {
+  (_inputs, cx) => {
+    cx.detail("diagnostic detail: the value is rejected, ");
+    cx.detail("and this is the rest of it");
     throw new NodeError("node_error", "diagnostic: the value is rejected");
   });

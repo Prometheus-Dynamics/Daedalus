@@ -38,6 +38,15 @@ public final class Context {
         events.add(new Event("log", 0f, text, level));
     }
 
+    /**
+     * Gives the host more about a failure than the fault's reason holds. Call it any number of
+     * times before throwing, and the pieces are kept in order with the step's fault. What a node
+     * writes and then doesn't fail is dropped by the host.
+     */
+    public void detail(String text) {
+        events.add(new Event("detail", 0f, text, null));
+    }
+
     List<Event> events() {
         return events;
     }

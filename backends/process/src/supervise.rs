@@ -507,6 +507,9 @@ impl WorkerStep {
                     cx.progress(done, 1000);
                 }
             }
+            // A node's own account of its failure, a piece at a time. The host keeps it if the
+            // step faults.
+            Ok(WorkerMsg::Detail { run: of, text }) if of == run => cx.detail(&text),
             Ok(WorkerMsg::Log { level, text }) => {
                 shared.telemetry.bump(Count::Log);
                 if let Link::Up(worker) = &sup.link {

@@ -52,6 +52,8 @@ public final class Wire {
     public static final int RUN = 1, CANCEL = 2, STATE_EXPORT = 3, STATE_IMPORT = 4, PING = 5, SHUTDOWN = 6;
     public static final int HELLO = 0x40, OUTPUTS = 0x41, PROGRESS = 0x42, LOG = 0x43, FAULT = 0x44,
         STATE_VALUE = 0x45, PONG = 0x46;
+    /** Added after the layout was fixed, and not part of its hash: a host ignores a kind it doesn't know. */
+    public static final int DETAIL = 0x47;
 
     private static final BigInteger U64_MAX = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
 

@@ -12,6 +12,7 @@ use daedalus_wire::{LogLevel, WireValue};
 pub enum Event {
     Progress { fraction: f32, message: String },
     Log { level: LogLevel, text: String },
+    Detail { text: String },
 }
 
 /// The context of one node run.
@@ -58,6 +59,16 @@ impl Context {
     pub fn log(&self, level: LogLevel, text: &str) {
         self.events.borrow_mut().push(Event::Log {
             level,
+            text: text.to_owned(),
+        });
+    }
+
+    /// Gives the host more about a failure than the fault's reason holds: the lines a check
+    /// found, a tool's output. Call it any number of times before returning the error, and the
+    /// pieces are kept in order with the step's fault. What a node writes and then doesn't fail
+    /// is dropped by the host.
+    pub fn detail(&self, text: &str) {
+        self.events.borrow_mut().push(Event::Detail {
             text: text.to_owned(),
         });
     }

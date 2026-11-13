@@ -476,3 +476,17 @@ fn a_packet_round_trips_and_a_clean_end_is_closed() {
         Err(PacketError::Closed)
     ));
 }
+
+#[test]
+fn a_detail_round_trips_and_a_host_that_predates_it_would_only_ignore_it() {
+    let schema = Schema::new();
+    round_trip_worker(
+        WorkerMsg::Detail {
+            run: 9,
+            text: "line 1 is out of place\nline 2 is out of place\n".to_owned(),
+        },
+        &schema,
+    );
+    // The kind is past the ones the layout hash counts, so adding it moved no hash.
+    assert_eq!(daedalus_wire::kind::DETAIL, 0x47);
+}

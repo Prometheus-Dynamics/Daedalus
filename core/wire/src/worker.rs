@@ -27,6 +27,7 @@ pub mod kind {
     pub const FAULT: u8 = 0x44;
     pub const STATE_VALUE: u8 = 0x45;
     pub const PONG: u8 = 0x46;
+    pub const DETAIL: u8 = 0x47;
 }
 
 /// One boundary value: which node's port it is for, and the value.
@@ -211,10 +212,23 @@ pub enum WorkerMsg {
     Hello(Hello),
     Outputs(Outputs),
     Progress(Progress),
-    Log { level: LogLevel, text: String },
+    Log {
+        level: LogLevel,
+        text: String,
+    },
     Fault(Fault),
-    StateValue { node: String, value: WireValue },
+    StateValue {
+        node: String,
+        value: WireValue,
+    },
     Pong,
+    /// More about a failure than a fault's reason holds: text a node of run `run` wrote before
+    /// it failed, one piece of any number, in order. The host keeps the pieces as the detail of
+    /// the step's fault, and drops them when the run doesn't fail.
+    Detail {
+        run: u64,
+        text: String,
+    },
 }
 
 fn put_boundary(
@@ -376,6 +390,11 @@ impl WorkerMsg {
                 encode_value(schema.lookup(node, Dir::State, "")?, value, schema, out)?;
             }
             WorkerMsg::Pong => out.u8(kind::PONG),
+            WorkerMsg::Detail { run, text } => {
+                out.u8(kind::DETAIL);
+                out.u64(*run);
+                out.str(text)?;
+            }
         }
         Ok(())
     }
@@ -460,6 +479,10 @@ impl WorkerMsg {
                 WorkerMsg::StateValue { node, value }
             }
             kind::PONG => WorkerMsg::Pong,
+            kind::DETAIL => WorkerMsg::Detail {
+                run: input.u64()?,
+                text: input.str()?,
+            },
             other => return Err(WireError::UnknownKind(other)),
         };
         input.finish()?;

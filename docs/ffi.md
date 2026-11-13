@@ -81,7 +81,16 @@ mismatch is refused. `core/wire` is the Rust implementation, and each SDK has it
 A worker that exits, hangs or sends something unreadable is a fault of its region, with the
 tail of what it wrote to stderr in the report. A fault's reason holds 120 bytes, and a worker's
 own reason (up to 512 bytes on the wire) with its stderr tail is usually more: then the whole
-text is the fault's detail, which the host reads with `LoadedHost::fault_detail`. It is started again on a later run, after a
+text is the fault's detail, which the host reads with `LoadedHost::fault_detail`.
+
+A node in a worker gives the host more than its reason the same way a node in the host does:
+it writes a detail before it fails, in any number of pieces, and the host keeps them in order
+with the step's fault. Each SDK has the call on the node's context: `cx.detail(text)` in Rust,
+Python, JavaScript and Java, and `dd_detail(cx, text)` in C and C++. A Rust plugin served by
+`daedalus-plugin-worker` uses `ctx.detail` as it would in the host's process. On the wire it is
+a `Detail` message (kind `0x47`) carrying the run and the text, sent before the fault. The kind
+was added after the layout hash was fixed and isn't part of it: a host ignores a kind it
+doesn't know, so a worker that sends details still works with a host that predates them. It is started again on a later run, after a
 delay that doubles and never exceeds 8 s. It is never given up on, and a worker's crash never
 ends the host.
 
