@@ -215,12 +215,28 @@ fn a_malformed_or_oversize_packet_gets_a_typed_error() {
 
     // A request that does not decode is answered under its id, and the next one is served.
     let mut stream = raw(addr);
-    let mut bad = request(7, Op::Ping);
-    bad.push(0);
+    let mut bad = request(7, Op::Step { run: 1, count: 1 });
+    bad.truncate(bad.len() - 2);
     write_packet(&mut stream, &bad, DEFAULT_CAP).unwrap();
     write_packet(&mut stream, &request(8, Op::Ping), DEFAULT_CAP).unwrap();
     assert_eq!(response(&mut stream), (7, Err(ErrorCode::InvalidRequest)));
     assert!(matches!(response(&mut stream), (8, Ok(Reply::Pong { .. }))));
+    // A request from a newer client: fields this server doesn't know at the end of one it does
+    // are skipped, and an op it doesn't have is answered as unsupported, under its id.
+    let mut longer = request(9, Op::Ping);
+    longer.extend_from_slice(&[1, 2, 3]);
+    write_packet(&mut stream, &longer, DEFAULT_CAP).unwrap();
+    assert!(matches!(response(&mut stream), (9, Ok(Reply::Pong { .. }))));
+    let mut newer = request(10, Op::Ping);
+    let op = newer.len() - 1;
+    newer[op] = 200;
+    write_packet(&mut stream, &newer, DEFAULT_CAP).unwrap();
+    write_packet(&mut stream, &request(11, Op::Ping), DEFAULT_CAP).unwrap();
+    assert_eq!(response(&mut stream), (10, Err(ErrorCode::Unsupported)));
+    assert!(matches!(
+        response(&mut stream),
+        (11, Ok(Reply::Pong { .. }))
+    ));
     // A second hello is refused, and the session goes on.
     let hello = ClientMsg::Hello(ServiceHello::client())
         .encode(&Schema::new())

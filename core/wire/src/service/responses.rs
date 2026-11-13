@@ -17,15 +17,19 @@ pub struct Names {
 
 impl Names {
     fn encode(&self, out: &mut Writer) -> Result<(), WireError> {
-        put_strs(out, &self.names)?;
-        out.u32(self.total);
-        Ok(())
+        out.record(|out| {
+            put_strs(out, &self.names)?;
+            out.u32(self.total);
+            Ok(())
+        })
     }
 
     fn decode(input: &mut Reader<'_>) -> Result<Names, WireError> {
-        Ok(Names {
-            names: get_strs(input)?,
-            total: input.u32()?,
+        input.record(|input| {
+            Ok(Names {
+                names: get_strs(input)?,
+                total: input.u32()?,
+            })
         })
     }
 }
@@ -137,36 +141,44 @@ pub struct RunInfo {
 
 impl RunInfo {
     fn encode(&self, out: &mut Writer) -> Result<(), WireError> {
-        out.u64(self.run);
-        out.str(&self.session)?;
-        out.str(&self.graph)?;
-        out.u8(self.state as u8);
-        out.u64(self.tick);
-        out.u64(self.faults);
-        put_list(out, &self.ports, |out, port| {
-            out.str(&port.name)?;
-            out.bool(port.input);
-            out.str(&port.type_key)
-        })?;
-        put_strs(out, &self.nodes)
+        out.record(|out| {
+            out.u64(self.run);
+            out.str(&self.session)?;
+            out.str(&self.graph)?;
+            out.u8(self.state as u8);
+            out.u64(self.tick);
+            out.u64(self.faults);
+            put_list(out, &self.ports, |out, port| {
+                out.record(|out| {
+                    out.str(&port.name)?;
+                    out.bool(port.input);
+                    out.str(&port.type_key)
+                })
+            })?;
+            put_strs(out, &self.nodes)
+        })
     }
 
     fn decode(input: &mut Reader<'_>) -> Result<RunInfo, WireError> {
-        Ok(RunInfo {
-            run: input.u64()?,
-            session: input.str()?,
-            graph: input.str()?,
-            state: RunState::decode(input)?,
-            tick: input.u64()?,
-            faults: input.u64()?,
-            ports: get_list(input, |input| {
-                Ok(PortInfo {
-                    name: input.str()?,
-                    input: flag(input, "port direction")?,
-                    type_key: input.str()?,
-                })
-            })?,
-            nodes: get_strs(input)?,
+        input.record(|input| {
+            Ok(RunInfo {
+                run: input.u64()?,
+                session: input.str()?,
+                graph: input.str()?,
+                state: RunState::decode(input)?,
+                tick: input.u64()?,
+                faults: input.u64()?,
+                ports: get_list(input, |input| {
+                    input.record(|input| {
+                        Ok(PortInfo {
+                            name: input.str()?,
+                            input: flag(input, "port direction")?,
+                            type_key: input.str()?,
+                        })
+                    })
+                })?,
+                nodes: get_strs(input)?,
+            })
         })
     }
 }
@@ -262,14 +274,16 @@ impl Inspection {
                 out.u64(info.faults);
                 out.u64(info.skipped);
                 put_list(out, &info.rows, |out, row| {
-                    out.u32(row.step);
-                    put_strs(out, &row.nodes)?;
-                    out.u32(row.calls);
-                    out.u32(row.failures);
-                    out.bool(row.backing_off);
-                    out.bool(row.disabled);
-                    out.bool(row.auto_off);
-                    Ok(())
+                    out.record(|out| {
+                        out.u32(row.step);
+                        put_strs(out, &row.nodes)?;
+                        out.u32(row.calls);
+                        out.u32(row.failures);
+                        out.bool(row.backing_off);
+                        out.bool(row.disabled);
+                        out.bool(row.auto_off);
+                        Ok(())
+                    })
                 })?;
             }
             Inspection::Host(info) => {
@@ -277,11 +291,13 @@ impl Inspection {
                 put_strs(out, &info.sessions)?;
                 put_strs(out, &info.graphs)?;
                 put_list(out, &info.runs, |out, run| {
-                    out.u64(run.run);
-                    out.str(&run.session)?;
-                    out.str(&run.graph)?;
-                    out.u8(run.state as u8);
-                    Ok(())
+                    out.record(|out| {
+                        out.u64(run.run);
+                        out.str(&run.session)?;
+                        out.str(&run.graph)?;
+                        out.u8(run.state as u8);
+                        Ok(())
+                    })
                 })?;
                 put_strs(out, &info.plugins)?;
             }
@@ -309,14 +325,16 @@ impl Inspection {
                 faults: input.u64()?,
                 skipped: input.u64()?,
                 rows: get_list(input, |input| {
-                    Ok(TelemetryRow {
-                        step: input.u32()?,
-                        nodes: get_strs(input)?,
-                        calls: input.u32()?,
-                        failures: input.u32()?,
-                        backing_off: flag(input, "backing off")?,
-                        disabled: flag(input, "disabled")?,
-                        auto_off: flag(input, "auto off")?,
+                    input.record(|input| {
+                        Ok(TelemetryRow {
+                            step: input.u32()?,
+                            nodes: get_strs(input)?,
+                            calls: input.u32()?,
+                            failures: input.u32()?,
+                            backing_off: flag(input, "backing off")?,
+                            disabled: flag(input, "disabled")?,
+                            auto_off: flag(input, "auto off")?,
+                        })
                     })
                 })?,
             }),
@@ -324,11 +342,13 @@ impl Inspection {
                 sessions: get_strs(input)?,
                 graphs: get_strs(input)?,
                 runs: get_list(input, |input| {
-                    Ok(RunBrief {
-                        run: input.u64()?,
-                        session: input.str()?,
-                        graph: input.str()?,
-                        state: RunState::decode(input)?,
+                    input.record(|input| {
+                        Ok(RunBrief {
+                            run: input.u64()?,
+                            session: input.str()?,
+                            graph: input.str()?,
+                            state: RunState::decode(input)?,
+                        })
                     })
                 })?,
                 plugins: get_strs(input)?,
@@ -353,26 +373,31 @@ pub struct TraceEntry {
 
 impl TraceEntry {
     fn encode(&self, out: &mut Writer) -> Result<(), WireError> {
-        out.u64(self.seq);
-        out.u64(self.id);
-        out.str(&self.session)?;
-        out.u8(self.op as u8);
-        out.str(&self.target)?;
-        out.u16(self.error.map_or(0, ErrorCode::code));
-        Ok(())
+        out.record(|out| {
+            out.u64(self.seq);
+            out.u64(self.id);
+            out.str(&self.session)?;
+            out.u8(self.op as u8);
+            out.str(&self.target)?;
+            out.u16(self.error.map_or(0, ErrorCode::code));
+            Ok(())
+        })
     }
 
     fn decode(input: &mut Reader<'_>) -> Result<TraceEntry, WireError> {
-        Ok(TraceEntry {
-            seq: input.u64()?,
-            id: input.u64()?,
-            session: input.str()?,
-            op: OpKind::from_byte(input.u8()?)?,
-            target: input.str()?,
-            error: match input.u16()? {
-                0 => None,
-                code => Some(ErrorCode::from_code(code)?),
-            },
+        input.record(|input| {
+            Ok(TraceEntry {
+                seq: input.u64()?,
+                id: input.u64()?,
+                session: input.str()?,
+                // Another client's request may be for an op this side doesn't have.
+                op: OpKind::named(input.u8()?),
+                target: input.str()?,
+                error: match input.u16()? {
+                    0 => None,
+                    code => Some(ErrorCode::from_code(code)),
+                },
+            })
         })
     }
 }
@@ -661,6 +686,11 @@ pub enum EventBody {
         run: RunId,
         reason: EndReason,
     },
+    /// An event of a kind this side doesn't have: the server is newer. A watcher sees that
+    /// something happened and what kind it was, and nothing is taken to be something else.
+    Unknown {
+        kind: u8,
+    },
 }
 
 impl EventBody {
@@ -696,6 +726,7 @@ impl EventBody {
                 out.u64(*run);
                 out.u8(*reason as u8);
             }
+            EventBody::Unknown { kind } => out.u8(*kind),
         }
         Ok(())
     }
@@ -733,7 +764,7 @@ impl EventBody {
                     .ok_or(bad("end reason", u32::from(tag)))?;
                 EventBody::Ended { run, reason }
             }
-            tag => return Err(bad("event", u32::from(tag))),
+            kind => EventBody::Unknown { kind },
         })
     }
 }

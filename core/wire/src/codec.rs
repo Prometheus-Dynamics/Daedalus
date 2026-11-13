@@ -7,11 +7,41 @@ use crate::WireError;
 #[derive(Default)]
 pub struct Writer {
     pub buf: Vec<u8>,
+    /// Bytes of filler put at the end of every record, as fields from a later version would be.
+    /// Zero outside the tests that check a reader skips them.
+    pad: usize,
 }
 
 impl Writer {
     pub fn new() -> Writer {
         Writer::default()
+    }
+
+    /// A writer that ends every record with `pad` bytes a reader of this version doesn't know:
+    /// what a message from a later version looks like to it.
+    #[doc(hidden)]
+    pub fn padded(pad: usize) -> Writer {
+        Writer {
+            buf: Vec::new(),
+            pad,
+        }
+    }
+
+    /// Writes a record with its length first: the length, then what `body` writes. A reader takes the
+    /// fields it knows and skips the rest of the record, so a record can gain fields at its end
+    /// and still be read by a side built before them.
+    pub fn record(
+        &mut self,
+        body: impl FnOnce(&mut Writer) -> Result<(), WireError>,
+    ) -> Result<(), WireError> {
+        let at = self.buf.len();
+        self.u32(0);
+        body(self)?;
+        self.buf.extend(std::iter::repeat_n(0xA5, self.pad));
+        let len = self.buf.len() - at - 4;
+        let len32 = u32::try_from(len).map_err(|_| WireError::TooLong(len))?;
+        self.buf[at..at + 4].copy_from_slice(&len32.to_le_bytes());
+        Ok(())
     }
 
     pub fn u8(&mut self, value: u8) {
@@ -89,6 +119,23 @@ impl<'a> Reader<'a> {
 
     pub fn remaining(&self) -> usize {
         self.buf.len() - self.pos
+    }
+
+    /// Whether anything is left. A field added to the end of a record is read only when this is
+    /// true: a side built before the field didn't send it.
+    pub fn more(&self) -> bool {
+        self.remaining() > 0
+    }
+
+    /// Reads a record written with [`Writer::record`]: `body` reads the fields this version
+    /// knows, and whatever else the record holds is skipped.
+    pub fn record<T>(
+        &mut self,
+        body: impl FnOnce(&mut Reader<'a>) -> Result<T, WireError>,
+    ) -> Result<T, WireError> {
+        let len = self.count()?;
+        let mut inner = Reader::new(self.take(len)?);
+        body(&mut inner)
     }
 
     pub fn take(&mut self, count: usize) -> Result<&'a [u8], WireError> {

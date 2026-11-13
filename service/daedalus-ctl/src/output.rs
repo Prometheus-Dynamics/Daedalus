@@ -312,6 +312,13 @@ pub fn event(event: &Event) -> Value {
             "run": run,
             "reason": reason.name(),
         }),
+        // From a newer daemon. It is printed as what it is, so nothing is taken for another event.
+        EventBody::Unknown { kind } => json!({
+            "event": "unknown",
+            "sub": sub,
+            "run": null,
+            "kind": kind,
+        }),
     }
 }
 
