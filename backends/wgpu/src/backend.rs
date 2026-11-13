@@ -50,6 +50,9 @@ struct State {
     off: bool,
     /// The device was handed in, so there is nothing to reopen it from.
     adopted: bool,
+    /// What the host said of the device's dma-buf imports, for a writable fd and a read-only
+    /// one, set on each device this opens.
+    assumed: [Option<bool>; 2],
     /// The host's lease, set on each device this opens.
     lease: Option<Arc<dyn crate::GpuLease>>,
 }
@@ -89,14 +92,14 @@ impl Link {
         }
     }
 
-    /// The imports a device can run: every one, or without those of read-only fds.
+    /// The imports worth planning on a device: those of each kind of fd `may` says yes to.
     #[cfg(target_os = "linux")]
-    fn dma(&self, takes_read_only: bool) -> Vec<Transfer> {
+    fn dma(&self, may: impl Fn(bool) -> bool) -> Vec<Transfer> {
         self.dma
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .filter(|(_, read_only)| takes_read_only || !read_only)
+            .filter(|(_, read_only)| may(*read_only))
             .map(|(transfer, _)| transfer.clone())
             .collect()
     }
@@ -160,6 +163,11 @@ impl Link {
                 // A device several backends share keeps the lease it has unless this one has its own.
                 if state.lease.is_some() {
                     opened.lease.set(state.lease.clone());
+                }
+                for (read_only, said) in [false, true].into_iter().zip(state.assumed) {
+                    if let Some(imports) = said {
+                        opened.imports.set(read_only, imports);
+                    }
                 }
                 state.context = Some(Arc::clone(&opened));
                 Ok(opened)
@@ -297,6 +305,40 @@ impl WgpuBackend {
         self.link.context()
     }
 
+    /// Whether this backend's device imports a dma-buf whose fd is writable (`read_only` false)
+    /// or only allows reading. `None` while nothing has tried: no device is open, or its process
+    /// can't allocate from a dma-heap and hasn't been handed a dma-buf yet.
+    pub fn dmabuf_import(&self, read_only: bool) -> Option<bool> {
+        self.open_context()?.imports.get(read_only)
+    }
+
+    /// Says whether the device imports a dma-buf of this kind, for a host that knows: a process
+    /// that can't allocate from a dma-heap can't find out by itself until it is handed one. It
+    /// applies to the device this backend has open and to any it opens later. Said wrongly, an
+    /// import that is refused is still only copied, and the answer corrected.
+    pub fn assume_dmabuf_import(&self, read_only: bool, imports: bool) {
+        let mut state = self.link.state();
+        if let Some(context) = &state.context {
+            context.imports.set(read_only, imports);
+        }
+        state.assumed[usize::from(read_only)] = Some(imports);
+    }
+
+    /// Finds out with a dma-buf the caller supplies: its first bytes are imported once and let
+    /// go, and the answer is recorded for its kind of fd. For a producer that can hand over a
+    /// buffer before the first real value, so that one isn't the trial. Opens the device.
+    #[cfg(target_os = "linux")]
+    pub fn try_dmabuf_import(
+        &self,
+        fd: std::os::fd::OwnedFd,
+        read_only: bool,
+    ) -> Result<bool, OpenError> {
+        let context = self.context()?;
+        let imports = crate::dmabuf_value::trial(&context, fd);
+        context.imports.set(read_only, imports);
+        Ok(imports)
+    }
+
     /// Sets the host's lease on the GPU, or takes it away with `None`. From then on the backend
     /// asks for the lease before it gives the device work and gives it back when the last of
     /// that work has finished: see [`GpuLease`](crate::GpuLease). It applies to the device this
@@ -326,6 +368,10 @@ impl Backend for WgpuBackend {
         self.caps().map_or(0, |record| {
             let mut hasher = DefaultHasher::new();
             record.hash(&mut hasher);
+            // What has been learned since the device opened is part of what a plan rests on.
+            if let Some(context) = self.open_context() {
+                context.imports.stamp().hash(&mut hasher);
+            }
             hasher.finish() | 1
         })
     }
@@ -362,12 +408,12 @@ impl Backend for WgpuBackend {
             .open_context()
             .is_some_and(|context| context.record.dma_heap);
         let mut table = crate::handoff::transfers(self.link.named.as_ref(), heap);
+        // An import is planned where the device takes that kind of fd, and where nothing has
+        // tried yet: a process that can't allocate from a heap learns it from the first dma-buf
+        // it is handed, and the import's own step copies if that one is refused.
         #[cfg(target_os = "linux")]
-        if heap {
-            let takes_read_only = self
-                .open_context()
-                .is_some_and(|context| context.record.dma_read_only);
-            table.extend(self.link.dma(takes_read_only));
+        if let Some(context) = self.open_context() {
+            table.extend(self.link.dma(|read_only| context.imports.may(read_only)));
         }
         #[cfg(not(target_os = "linux"))]
         let _ = heap;

@@ -128,6 +128,11 @@ pub struct Options {
     /// import and no heap readback is offered, so a value is uploaded. The same planner and runner
     /// run either way; only the device's record says which route it can take.
     pub no_dma_heap: bool,
+    /// Plans this device as one whose process can't allocate from a dma-heap, whatever the
+    /// machine allows: nothing is tried when the device opens, so whether it imports a dma-buf is
+    /// unknown until one is handed to it or the host says. That is a consumer that isn't root on
+    /// a board whose heaps are root's.
+    pub no_heap_access: bool,
     /// What an earlier run learned about the adapter, so planning can use it before a device
     /// opens.
     pub known: Option<crate::CapsRecord>,
@@ -155,6 +160,7 @@ impl Default for Options {
             index: None,
             host_ports_on_device: false,
             no_dma_heap: false,
+            no_heap_access: false,
             known: None,
             hints: crate::MemoryHints::default(),
             staging: crate::StagingConfig::default(),
