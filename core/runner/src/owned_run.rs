@@ -85,7 +85,7 @@ pub struct RunBuffers {
     _reuse_inputs: Raw<InputVersion>,
     cancel: Arc<CancelWord>,
     _faults: Raw<StepFault>,
-    _progress: Raw<Progress>,
+    progress: Arc<[Progress]>,
     probe: Option<Raw<TickProbe<'static>>>,
 }
 
@@ -99,6 +99,12 @@ impl RunBuffers {
     /// cancels a tick that one of them is running. It may outlive the runner.
     pub fn cancel_handle(&self) -> CancelHandle {
         CancelHandle(Arc::clone(&self.cancel))
+    }
+
+    /// The progress cells as a handle another thread can keep and read while this runner ticks,
+    /// in parallel or not. It may outlive the runner, and then reads the last values.
+    pub fn progress_handle(&self) -> ProgressHandle {
+        ProgressHandle(Arc::clone(&self.progress))
     }
 
     /// The tick probe, when the runner was built with one.
@@ -120,6 +126,26 @@ impl Drop for RunBuffers {
                 unsafe { release(step.data) };
             }
         }
+    }
+}
+
+/// A runner's progress cells, shared: one `(done, total)` pair per step. Reading is two relaxed
+/// loads, with no lock and no allocation, and is safe while the steps run on other threads.
+#[derive(Clone)]
+pub struct ProgressHandle(Arc<[Progress]>);
+
+impl ProgressHandle {
+    /// The `(done, total)` the body of `step` last reported, or `None` past the last step. The
+    /// two are read one after the other, so a pair read while the body writes may hold the new
+    /// `done` with the old `total`.
+    pub fn get(&self, step: u32) -> Option<(u32, u32)> {
+        let cell = self.0.get(step as usize)?;
+        Some((cell.done.get(), cell.total.get()))
+    }
+
+    /// How many steps have cells.
+    pub fn steps(&self) -> usize {
+        self.0.len()
     }
 }
 
@@ -193,7 +219,7 @@ pub fn build(
         _reuse_inputs: Raw::new(vec![InputVersion::default(); nslots]),
         cancel: Arc::new(CancelWord::new()),
         _faults: Raw::new(vec![StepFault::EMPTY; count]),
-        _progress: Raw::new((0..count).map(|_| Progress::new()).collect()),
+        progress: (0..count).map(|_| Progress::new()).collect(),
         probe: clock.map(|clock| Raw::new(vec![TickProbe::sampled_by(clock, 1)])),
     };
     // SAFETY: each buffer is borrowed exactly once here, and `RunBuffers` keeps them alive until
@@ -224,8 +250,10 @@ pub fn build(
     let mut runner = Runner::load(plan, memory)?;
     // SAFETY: as above; this table is borrowed only here.
     runner.set_stamps(unsafe { buffers._stamps.borrow() })?;
-    // SAFETY: as above; the progress cells are borrowed only here, one per step.
-    runner.set_progress(unsafe { buffers._progress.borrow() })?;
+    // SAFETY: the cells are in an `Arc` that `buffers` holds for as long as the runner lives, as
+    // the function's documentation requires of the caller, and they are only ever shared.
+    let cells: &'static [Progress] = unsafe { &*Arc::as_ptr(&buffers.progress) };
+    runner.set_progress(cells)?;
     if stamps + stored > 0 {
         // SAFETY: as above; these five are borrowed only here.
         let table = unsafe {

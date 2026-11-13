@@ -50,6 +50,8 @@ let planned = plan(&graph, &registry, &[&workers, &CpuBackend], &Config::default
   reason "the run was cancelled".
 - A node's progress is read back by the host: `LoadedHost::node_progress(node)` gives the
   `(done, total)` the node's step last reported, out of 1000 for a node that reports a fraction.
+  `LoadedHost::progress_handle(node)` gives a `NodeProgress` another thread keeps and reads while
+  the host ticks, in parallel or not: a read is two atomic loads, with no lock.
 - The example `examples/08_ffi_rust_worker` runs a graph whose node is served by a Rust worker,
   with the host feeding it, reading its progress, and cancelling a run.
 
