@@ -2,8 +2,9 @@
 //!
 //! `--misbehave <mode>` makes it fail in one way, for the supervision tests:
 //! `exit` exits on each run, `exit-once:<marker>` exits once (the marker file records it),
-//! `hang` never answers a run, `oversize` writes a packet over the cap, and `stderr-flood`
-//! writes a megabyte to stderr before each run.
+//! `hang` never answers a run, `oversize` writes a packet over the cap, `stderr-flood`
+//! writes a megabyte to stderr before each run, `log` sends two log messages before each run's
+//! outputs, and `log-exit` sends one and exits.
 
 #![forbid(unsafe_code)]
 
@@ -17,7 +18,7 @@ use std::time::Duration;
 
 use daedalus_wire::codec::Writer;
 use daedalus_wire::{
-    DEFAULT_CAP, Fault, FaultCode, HostMsg, Outputs, PacketError, Run, RunStatus, Schema,
+    DEFAULT_CAP, Fault, FaultCode, HostMsg, LogLevel, Outputs, PacketError, Run, RunStatus, Schema,
     WireValue, WorkerMsg, read_packet, write_packet,
 };
 use daedalus_worker_conformance::{CUSTOM_KEY, hello};
@@ -29,6 +30,8 @@ enum Mode {
     Hang,
     Oversize,
     StderrFlood,
+    Log,
+    LogExit,
 }
 
 fn mode_from_args() -> Mode {
@@ -41,6 +44,8 @@ fn mode_from_args() -> Mode {
         Some("hang") => Mode::Hang,
         Some("oversize") => Mode::Oversize,
         Some("stderr-flood") => Mode::StderrFlood,
+        Some("log") => Mode::Log,
+        Some("log-exit") => Mode::LogExit,
         Some(other) if other.starts_with("exit-once:") => {
             Mode::ExitOnce(PathBuf::from(&other["exit-once:".len()..]))
         }
@@ -152,6 +157,27 @@ fn main() {
                     Mode::StderrFlood => {
                         let flood = vec![b'x'; 1 << 20];
                         let _ = io::stderr().write_all(&flood);
+                    }
+                    Mode::Log => {
+                        for (level, text) in [
+                            (LogLevel::Info, "starting the sum"),
+                            (LogLevel::Warn, "the sum is large"),
+                        ] {
+                            let line = WorkerMsg::Log {
+                                level,
+                                text: text.to_owned(),
+                            };
+                            let _ = send(&mut out, &line, &schema);
+                        }
+                    }
+                    Mode::LogExit => {
+                        let line = WorkerMsg::Log {
+                            level: LogLevel::Error,
+                            text: "the device went away".to_owned(),
+                        };
+                        let _ = send(&mut out, &line, &schema);
+                        let _ = out.flush();
+                        process::exit(3);
                     }
                     Mode::Normal => {}
                 }

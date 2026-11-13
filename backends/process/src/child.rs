@@ -166,6 +166,14 @@ impl Worker {
             .unwrap_or_default()
     }
 
+    /// Keeps a line the worker logged with its stderr, so a fault report has it.
+    pub(crate) fn heard(&self, level: daedalus_wire::LogLevel, text: &str) {
+        let line = format!("[{}] {text}\n", crate::log::name(level));
+        if let Ok(mut ring) = self.stderr.lock() {
+            ring.push(line.as_bytes());
+        }
+    }
+
     /// Asks the worker to exit, waits the grace period, then kills it.
     pub(crate) fn shutdown(&mut self) {
         let mut writer = Writer::new();

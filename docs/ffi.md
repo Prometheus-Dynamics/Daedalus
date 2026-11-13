@@ -83,6 +83,19 @@ tail of what it wrote to stderr in the report. It is started again on a later ru
 delay that doubles and never exceeds 8 s. It is never given up on, and a worker's crash never
 ends the host.
 
+## What a worker says
+
+A worker's stdout is the protocol, so it can't print there. It has two other ways to say
+something. What it writes to stderr is drained and its last 64 KiB kept. A `Log` message on the
+protocol carries a level and a line of text: the host counts it (`ProcessBackend::telemetry().logs`),
+keeps it with the stderr tail as `[level] text`, and hands it to the handler set with
+`ProcessBackend::on_log`, with the worker's program and pid. A fault report ends with the tail,
+so it has the worker's last lines either way.
+
+A worker's messages are read while one of its regions runs, so a line sent between runs reaches
+the handler with the next run. The handler runs on the thread that runs the region: it should
+take the line and return.
+
 ## A Rust plugin in a worker
 
 `daedalus-plugin-worker <library>` serves a dylib plugin's nodes as a worker, so a plugin that

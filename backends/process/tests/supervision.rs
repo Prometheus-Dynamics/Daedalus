@@ -416,3 +416,59 @@ fn a_worker_that_disagrees_with_a_node_already_registered_is_still_refused() {
         other => panic!("expected a declaration error, got {other:?}"),
     }
 }
+
+#[test]
+fn a_workers_log_lines_reach_the_hosts_handler_and_are_counted() {
+    use std::sync::{Arc, Mutex};
+    let mut backend = ProcessBackend::new();
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let into = Arc::clone(&heard);
+    backend.on_log(move |line| {
+        into.lock()
+            .expect("the list")
+            .push((line.level, line.text.to_owned(), line.pid));
+    });
+    backend
+        .add_worker(spec(&["--misbehave", "log"]), &registry())
+        .expect("registers");
+    let pid = backend.worker_pid("fixture.scalar_add").expect("a worker");
+    let mut step = scalar_add_step(&backend);
+    for _ in 0..2 {
+        let (end, _, value) = run_add(&mut step);
+        assert!(matches!(end, StepEnd::Done));
+        assert_eq!(value, Some(42));
+    }
+    use daedalus_backend_process::LogLevel;
+    let lines = heard.lock().expect("the list").clone();
+    let round = [
+        (LogLevel::Info, "starting the sum".to_owned(), pid),
+        (LogLevel::Warn, "the sum is large".to_owned(), pid),
+    ];
+    assert_eq!(lines, [round.clone(), round].concat());
+    assert_eq!(backend.telemetry().logs, 4);
+
+    // With the handler gone the lines are still counted.
+    backend.clear_on_log();
+    let (end, _, _) = run_add(&mut step);
+    assert!(matches!(end, StepEnd::Done));
+    assert_eq!(heard.lock().expect("the list").len(), 4);
+    assert_eq!(backend.telemetry().logs, 6);
+    release(step);
+}
+
+#[test]
+fn a_fault_report_ends_with_what_the_worker_logged_before_it_died() {
+    let mut backend = ProcessBackend::new();
+    backend
+        .add_worker(spec(&["--misbehave", "log-exit"]), &registry())
+        .expect("registers");
+    let mut step = scalar_add_step(&backend);
+    let (end, reason, _) = run_add(&mut step);
+    assert!(matches!(end, StepEnd::Fault));
+    assert!(
+        reason.contains("[error] the device went away"),
+        "the report has the worker's last line: {reason}"
+    );
+    assert_eq!(backend.telemetry().logs, 1);
+    release(step);
+}
