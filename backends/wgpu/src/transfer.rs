@@ -57,6 +57,7 @@ impl Counters {
         self.download_bytes.fetch_add(bytes, Ordering::Relaxed);
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn import(&self) {
         self.imports.fetch_add(1, Ordering::Relaxed);
     }
