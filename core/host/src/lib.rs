@@ -42,6 +42,8 @@ mod load;
 mod patch;
 mod ports;
 #[cfg(feature = "std")]
+mod progress;
+#[cfg(feature = "std")]
 mod recovery;
 #[cfg(feature = "std")]
 mod reload;
@@ -87,6 +89,8 @@ pub use load::{LoadError, LoadOptions, LoadedHost, probe_clock};
 #[cfg(feature = "std")]
 pub use patch::{ConstTable, ConstValue, PatchError, PatchOutcome};
 pub use ports::{Dir, PortSpec, Ports, PortsError};
+#[cfg(feature = "std")]
+pub use progress::NodeProgress;
 #[cfg(feature = "std")]
 pub use recovery::{RECOVERY_KEY, RETRIES_KEY};
 #[cfg(feature = "std")]

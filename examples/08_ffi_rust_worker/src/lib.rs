@@ -82,7 +82,9 @@ pub fn run(worker: &Path) -> String {
         LoadedHost::load(planned(worker), LoadOptions::default()).expect("the plan loads");
     let mut out = String::new();
 
-    // A run that completes: the worker triples the input, and reports its progress.
+    // A run that completes: the worker triples the input, and reports its progress. The handle
+    // is taken before the tick, and could be read from another thread while the tick runs.
+    let progress = host.progress_handle("ffi.scale");
     host.host()
         .feed_inline("x", &2i64.to_le_bytes())
         .expect("a feed");
@@ -90,8 +92,15 @@ pub fn run(worker: &Path) -> String {
     let y = host.host().take_copy::<i64>("y").expect("a take");
     out.push_str(&format!(
         "host: 2 went to the worker and came back as {y:?}, its progress was {:?}\n",
-        host.node_progress("ffi.scale")
+        progress
+            .as_ref()
+            .map(daedalus::layers::host::NodeProgress::get)
     ));
+    assert_eq!(
+        progress.map(|handle| handle.get()),
+        host.node_progress("ffi.scale"),
+        "the handle and the host read the same cells"
+    );
 
     // A run that waits for a cancel: the host cancels it from another thread. The cancelled run is
     // reported as a fault of its step, and the step's reason is what the host reads back.
