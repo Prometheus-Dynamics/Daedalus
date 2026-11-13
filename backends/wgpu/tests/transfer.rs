@@ -230,7 +230,7 @@ fn integer_formats_round_trip_exactly() {
             height: 7,
         };
         let texture = Texture::new(&backend, desc).expect("a texture");
-        let row = 13 * format.bytes_per_pixel();
+        let row = 13 * format.bytes_per_texel();
         let floats = matches!(format, Format::R32F | Format::Rg32F);
         let bytes: Vec<u8> = if floats {
             // Finite floats, so nothing canonicalises them on the way.

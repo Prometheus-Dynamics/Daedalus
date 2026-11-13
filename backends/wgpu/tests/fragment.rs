@@ -25,7 +25,7 @@ fn texture(backend: &WgpuBackend, format: Format, width: u32, height: u32) -> Te
 
 fn read(texture: &Texture) -> Vec<u8> {
     let desc = texture.desc();
-    let mut out = vec![0; (desc.width * desc.height * desc.format.bytes_per_pixel()) as usize];
+    let mut out = vec![0; (desc.width * desc.height * desc.format.bytes_per_texel()) as usize];
     texture.read_into(&mut out).expect("a readback");
     out
 }
@@ -63,7 +63,7 @@ fn every_target_format_renders_and_reads_back() {
             .wait()
             .expect("finishes");
         let bytes = read(&target);
-        let texel = format.bytes_per_pixel() as usize;
+        let texel = format.bytes_per_texel() as usize;
         for (at, got) in bytes.chunks(texel).enumerate() {
             let (x, y) = ((at % 5) as u32, (at / 5) as u32);
             // The position of a texel is its centre.

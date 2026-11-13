@@ -33,6 +33,8 @@ pub struct TransferStats {
     /// Copies from device memory to memory the host reads.
     pub downloads: u64,
     pub download_bytes: u64,
+    /// Values whose memory was imported in place, with nothing copied.
+    pub imports: u64,
 }
 
 #[derive(Default)]
@@ -41,6 +43,7 @@ pub(crate) struct Counters {
     upload_bytes: AtomicU64,
     downloads: AtomicU64,
     download_bytes: AtomicU64,
+    imports: AtomicU64,
 }
 
 impl Counters {
@@ -54,12 +57,17 @@ impl Counters {
         self.download_bytes.fetch_add(bytes, Ordering::Relaxed);
     }
 
+    pub(crate) fn import(&self) {
+        self.imports.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(crate) fn stats(&self) -> TransferStats {
         TransferStats {
             uploads: self.uploads.load(Ordering::Relaxed),
             upload_bytes: self.upload_bytes.load(Ordering::Relaxed),
             downloads: self.downloads.load(Ordering::Relaxed),
             download_bytes: self.download_bytes.load(Ordering::Relaxed),
+            imports: self.imports.load(Ordering::Relaxed),
         }
     }
 }

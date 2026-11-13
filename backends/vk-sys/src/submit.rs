@@ -168,25 +168,6 @@ impl Submitter {
         unsafe { self.submit_waiting(record, semaphores, waits.len()) }
     }
 
-    /// As [`Submitter::submit`], waiting on at most one semaphore given by handle, for this
-    /// crate's own imports.
-    ///
-    /// # Safety
-    ///
-    /// As [`Submitter::submit`]. The semaphore, when there is one, must be live until the
-    /// submit has finished.
-    // SAFETY: the contract is in the doc comment above.
-    pub(crate) unsafe fn submit_raw(
-        &self,
-        record: impl FnOnce(&ash::Device, vk::CommandBuffer),
-        wait: Option<vk::Semaphore>,
-    ) -> Result<(), Error> {
-        let mut semaphores = [vk::Semaphore::null(); MAX_WAITS];
-        semaphores[0] = wait.unwrap_or(vk::Semaphore::null());
-        // SAFETY: the caller's contract, passed on.
-        unsafe { self.submit_waiting(record, semaphores, usize::from(wait.is_some())) }.map(drop)
-    }
-
     /// # Safety
     ///
     /// As [`Submitter::submit`], for the first `count` of `semaphores`.

@@ -99,11 +99,11 @@ attributes expand into their backend's authoring crate, which is `daedalus_cpu_a
 `backend =` names another. This crate does not depend on one, so those attributes are not compiled
 here. `backends/cpu/tests/transfer.rs` is a transfer that is compiled and run.
 
-An image in a dma-buf is imported by the wgpu backend, not by a `#[transfer]` you write. A type that
-implements `daedalus_wgpu::dmabuf::ImportExternal` describes itself as an `ExternalImage`, and
-`daedalus_wgpu::dmabuf::import_transfer::<T>(id, from)` makes the transfer that moves it into
-`wgpu.texture` at cost `Import`. `WgpuBackend::import_external(image)` imports an `ExternalImage`
-directly and returns `Result<Arc<Texture>, ImportError>`. Both are in `backends/wgpu/src/dmabuf/`.
+Bytes in a dma-buf are imported by the wgpu backend, not by a `#[transfer]` you write. A type that
+implements `daedalus_wgpu::DmaBufBacked` says which dma-buf holds its bytes and how many there are,
+and `WgpuBackend::with_dmabuf::<T>()` lists the transfer that imports them into a device buffer at
+cost `Import`, while the open device can import dma-bufs. The backend knows nothing else about the
+value: no format, no layout.
 
 `backends/dma-sys` is the binding to the dma-buf and dma-heap kernel interfaces (`DmaBuf`,
 `DmaHeap`). It declares no memory space and runs no nodes.

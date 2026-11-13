@@ -9,18 +9,14 @@ use wgpu::hal::vulkan as hal_vk;
 
 use crate::DriverHeld;
 
-/// Importing a dma-buf as an image needs all three. wgpu-hal enables the first two itself when
-/// the adapter has them.
-const DMA_BUF: [&CStr; 3] = [
+/// Importing a dma-buf as device memory needs both. wgpu-hal enables them itself when the adapter
+/// has them.
+const DMA_BUF: [&CStr; 2] = [
     khr::external_memory_fd::NAME,
     ext::external_memory_dma_buf::NAME,
-    ext::image_drm_format_modifier::NAME,
 ];
-/// Added with the three above when the adapter has them.
-const WITH_DMA_BUF: [&CStr; 2] = [
-    khr::external_semaphore_fd::NAME,
-    ext::queue_family_foreign::NAME,
-];
+/// Added with the two above when the adapter has it.
+const WITH_DMA_BUF: [&CStr; 1] = [khr::external_semaphore_fd::NAME];
 
 /// 8-bit storage a device was opened with.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

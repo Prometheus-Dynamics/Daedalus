@@ -94,11 +94,11 @@ impl HostBytes for Words {
 /// no GPU an error before anything is planned.
 pub fn gpu() -> Result<WgpuBackend, String> {
     let backend = WgpuBackend::open(Options::default()).with_bytes::<Words>();
-    // A frame in a dma-buf: imported in place where the device can, uploaded where it can't.
+    // A value in a dma-buf: imported in place where the device can, uploaded where it can't.
     #[cfg(target_os = "linux")]
     let backend = backend
-        .with_bytes::<dmabuf::Frame>()
-        .with_dmabuf::<dmabuf::Frame>();
+        .with_bytes::<dmabuf::HeapBytes>()
+        .with_dmabuf::<dmabuf::HeapBytes>();
     backend
         .start()
         .map_err(|error| format!("this example needs a GPU: {error}"))?;
