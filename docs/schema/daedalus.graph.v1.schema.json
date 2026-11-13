@@ -144,6 +144,15 @@
           },
           "type": "object"
         },
+        "metadata": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "$ref": "#/$defs/lit"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
         "outputs": {
           "additionalProperties": {
             "$ref": "#/$defs/stage_port"

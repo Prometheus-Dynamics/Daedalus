@@ -127,6 +127,7 @@ pub fn json_schema() -> Value {
                 "outputs": { "type": "object", "additionalProperties": stage },
                 "consts": { "type": "array", "items": object(
                     json!({ "at": stage, "value": lit }), &["at", "value"]) },
+                "metadata": { "type": "object", "additionalProperties": lits },
             }), &["id", "stages"]),
             "graph": object(json!({
                 "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },

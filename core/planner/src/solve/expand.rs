@@ -116,6 +116,16 @@ fn from_def(def: &GroupDef) -> GroupDoc {
                 value: lit_of(value),
             })
             .collect(),
+        metadata: {
+            let mut by_stage: BTreeMap<String, BTreeMap<String, Lit>> = BTreeMap::new();
+            for (stage, key, value) in def.metadata {
+                by_stage
+                    .entry(stage.to_string())
+                    .or_default()
+                    .insert(key.to_string(), lit_of(value));
+            }
+            by_stage
+        },
     }
 }
 
@@ -186,6 +196,15 @@ impl Expander<'_> {
         for (name, id) in &body.stages {
             let mut stage = NodeDoc::new(id.clone());
             stage.label = Some(format!("{label}::{name}"));
+            // A stage carries what the group's own node was given, so a setting on a group
+            // reaches every node inside it, and then its own, which wins. A stage that is a
+            // group passes the result on to its stages the same way.
+            stage.metadata = node.metadata.clone();
+            if let Some(own) = body.metadata.get(name) {
+                stage
+                    .metadata
+                    .extend(own.iter().map(|(key, value)| (key.clone(), value.clone())));
+            }
             for constant in body.consts.iter().filter(|c| c.at.stage == *name) {
                 stage
                     .consts

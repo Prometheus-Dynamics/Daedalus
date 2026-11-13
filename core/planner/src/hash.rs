@@ -226,6 +226,7 @@ impl Canon {
             inputs,
             outputs,
             consts,
+            metadata,
         } = group;
         self.text(id);
         self.len(stages.len());
@@ -260,6 +261,15 @@ impl Canon {
             self.text(&item.at.stage);
             self.text(&item.at.port);
             self.lit(&item.value);
+        }
+        self.len(metadata.len());
+        for (stage, keys) in metadata {
+            self.text(stage);
+            self.len(keys.len());
+            for (key, value) in keys {
+                self.text(key);
+                self.lit(value);
+            }
         }
     }
 

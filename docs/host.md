@@ -102,6 +102,10 @@ step fails: the tick is contained and the step backs off, as above.
   `RETRIES_KEY`.
 - Nodes merged into one step must agree. Two nodes in one step that ask for different recoveries
   are refused at load; set `daedalus.node.fusion` to `false` on one of them to keep them apart.
+- Metadata set on a group's node reaches every node inside the group, through nested groups too.
+  A group's definition can also give one stage metadata of its own, under `metadata` by stage
+  name (`"metadata": {"decode": {"daedalus.node.fusion": {"type": "bool", "value": false}}}`),
+  and a key set there wins over the one inherited from the group's node.
 - A graph-wide default is not read: set the key on each node.
 - Nothing is switched off automatically by these keys. Turn a failing node off by hand with
   `set_node_on(node, false)`; it is not called until it is turned on again. A merged step can't be

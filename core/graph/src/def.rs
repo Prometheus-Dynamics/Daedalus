@@ -98,6 +98,8 @@ pub struct GroupDef {
     pub inputs: &'static [(&'static str, &'static [StagePort])],
     pub outputs: &'static [(&'static str, StagePort)],
     pub consts: &'static [(StagePort, Literal)],
+    /// Metadata a stage's node carries: stage name, key and value.
+    pub metadata: &'static [(&'static str, &'static str, Literal)],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -149,5 +151,6 @@ const _: GraphDef<'static> = GraphDef {
             },
         )],
         consts: &[],
+        metadata: &[],
     }],
 };

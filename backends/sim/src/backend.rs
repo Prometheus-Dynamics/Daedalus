@@ -103,7 +103,30 @@ impl SimBackend {
 
     fn units(&self, region: &Region<'_>, cx: &CompileCx<'_>) -> Vec<UnitInfo> {
         let mut units: Vec<UnitInfo> = if self.config.merge && cx.merge_allowed {
-            vec![self.unit(region, region.nodes)]
+            // A node that opted out of merging is a unit alone, and it ends the run before it.
+            let merges = |node: &NodeIndex| {
+                cx.bodies
+                    .iter()
+                    .find(|body| body.node == *node)
+                    .is_none_or(|body| body.merges)
+            };
+            let mut units = Vec::new();
+            let mut run: Vec<NodeIndex> = Vec::new();
+            for node in region.nodes {
+                if merges(node) {
+                    run.push(*node);
+                    continue;
+                }
+                if !run.is_empty() {
+                    units.push(self.unit(region, &run));
+                    run.clear();
+                }
+                units.push(self.unit(region, &[*node]));
+            }
+            if !run.is_empty() {
+                units.push(self.unit(region, &run));
+            }
+            units
         } else {
             region
                 .nodes
