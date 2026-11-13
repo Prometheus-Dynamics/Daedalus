@@ -5,8 +5,9 @@ time through `daedalus-loader`. Nothing in the host is rebuilt.
 
 ## What a plugin exports
 
-One symbol, `daedalus_plugin_entry`. It gives the host a table of node declarations and a table
-of backends. The export macro writes it:
+Two symbols. `daedalus_plugin_shapes` describes the layout the plugin was built against, and
+`daedalus_plugin_describe` gives the host a table of node declarations and a table of backends.
+The export macro writes both:
 
 ```rust
 use daedalus_loader::export::{NodeDef, PluginDef, PortDef};
@@ -35,9 +36,41 @@ is a complete plugin.
 
 ## The check at load
 
-The first thing a host and a plugin compare is one number: the layout hash of the step
-interface. A plugin built against another layout is refused before the host reads anything else
-from it, and the error names both hashes. There are no version symbols and no negotiation.
+A host update must not strand the plugins built before it. So the first thing a host does with
+a plugin is read how the plugin lays out each shape that crosses the boundary, and check that
+against its own, a shape at a time. There are no version numbers to compare.
+
+A shape is one of two kinds (`core/abi/src/layout.rs` lists them):
+
+- **Frozen**: passed by value, or in an array the other side walks with its own stride. `Slot`,
+  `Slots`, `Step`, `Fence`, `Text`, `PortC`, `BoundaryPort`, `UnitOut`, `BytesC`,
+  `HandedRecord`, `DetailSink`, `Status`, `Handle`, the foreign-value handles, and the
+  descriptors themselves. A frozen shape has to be the same on both sides.
+- **Growable**: a single value passed by pointer, or a table read through the size its maker
+  declares. `StepCx`, `PluginEntry`, `RegionView`, and the plugin's `NodeC`, `BackendTable` and
+  `CodecC` tables. A growable shape gains fields only at its end, and a field added later
+  means "absent" when it is zero.
+
+A plugin fits when every frozen shape is the same and what it has of every growable shape is
+exactly the start of what the host has: the same fields, by name, offset and size. That is
+computed, not promised. A plugin built before a field was added is such a start, so it loads: it
+never touches the field, the host reads its tables at the plugin's own stride, and what the
+plugin doesn't have reads as absent. Adding a field to the end of a growable shape is therefore
+not a breaking change, and nothing is renumbered when one is added.
+
+What is refused, each with the shape named:
+
+- A plugin built against a newer Daedalus than the host: `plugin.so: this plugin needs a newer
+  host: StepCx has 11 fields here, 13 there`. It could reach for what the host doesn't have.
+- A plugin for which a frozen shape, or the shared start of a growable one, is laid out
+  differently: `this plugin was built for a different Daedalus: Slot is 48 bytes here, 56
+  there`.
+- A plugin from before plugins described their shapes, which has only the old entry symbol:
+  it is told to be built again, once.
+
+A test pins every frozen shape and the required start of every growable one
+(`core/abi/tests/abi.rs`), so a change that would break plugins already built is a visible edit
+to that table, with the shape's name on the line.
 
 ## What crosses the boundary
 

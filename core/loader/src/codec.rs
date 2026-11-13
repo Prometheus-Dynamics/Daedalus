@@ -202,27 +202,22 @@ pub(crate) unsafe fn read_codec(
 /// `entry` must come from a library `generation` holds, and stay loaded during the call.
 pub(crate) unsafe fn read_codecs(
     entry: &daedalus_abi::PluginEntry,
+    shapes: &[daedalus_abi::ShapeDesc],
     path: &Path,
     generation: &Arc<Generation>,
 ) -> Result<(Vec<Codec>, Vec<OwnedDecl>), LoadError> {
-    let mut codecs = Vec::with_capacity(entry.codec_count);
+    // SAFETY: the entry declares `codec_count` codecs at `codecs`, valid while the library is
+    // held, and `shapes` are that plugin's, as the caller says.
+    let declared = unsafe {
+        crate::open::read_table(entry.codecs, entry.codec_count, shapes, path, "codec list")?
+    };
+    let mut codecs = Vec::with_capacity(declared.len());
     let mut conversions = Vec::new();
-    if entry.codec_count > 0 {
-        if entry.codecs.is_null() {
-            return Err(LoadError::BadText {
-                path: path.to_path_buf(),
-                what: "codec list",
-            });
-        }
-        // SAFETY: the entry declares `codec_count` codecs at `codecs`, valid while the library is
-        // held.
-        let declared = unsafe { std::slice::from_raw_parts(entry.codecs, entry.codec_count) };
-        for codec in declared {
-            // SAFETY: each codec comes from the entry this function was given.
-            let (codec, decls) = unsafe { read_codec(codec, path, generation)? };
-            codecs.push(codec);
-            conversions.extend(decls);
-        }
+    for codec in &declared {
+        // SAFETY: each codec comes from the entry this function was given.
+        let (codec, decls) = unsafe { read_codec(codec, path, generation)? };
+        codecs.push(codec);
+        conversions.extend(decls);
     }
     Ok((codecs, conversions))
 }

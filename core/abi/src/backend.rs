@@ -2,9 +2,11 @@
 //! and [`crate::SHAPES`] covers each one, so a host and a plugin built apart refuse each other
 //! before they read a field they don't share.
 //!
-//! The entry point is `daedalus_plugin_entry(host_layout, out)`. It checks the host's layout hash
-//! first. On a mismatch it writes only its own hash, into the first field, and returns
-//! [`Status::VERSION_MISMATCH`], so the host never reads the rest of a struct it can't trust.
+//! A plugin exports two symbols. `daedalus_plugin_shapes(out)` writes its shape descriptors,
+//! which the host checks against its own with [`crate::fits`]. Only when they fit does the host
+//! call `daedalus_plugin_describe(out, room)`, which writes the plugin's entry. So the host
+//! never reads a struct it can't trust, and a plugin built against an older Daedalus, with
+//! fewer fields at the end of a growable shape, still loads.
 
 use core::ptr;
 
@@ -209,8 +211,6 @@ pub type ProduceBytesFn = unsafe extern "C" fn(index: u32, out: *mut BytesC) -> 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PluginEntry {
-    /// Must be first: a mismatch is reported through this field alone.
-    pub layout: u64,
     pub name: Text,
     pub nodes: *const NodeC,
     pub node_count: usize,
@@ -224,8 +224,36 @@ pub struct PluginEntry {
     pub release: Option<ReleaseEntryFn>,
 }
 
-/// The entry point's signature. `out` must point at a `PluginEntry` the caller owns.
-pub type EntryFn = unsafe extern "C" fn(host_layout: u64, out: *mut PluginEntry) -> Status;
+/// The entry point's signature. `out` points at `room` zeroed bytes the caller owns, at least a
+/// `PluginEntry` as the plugin has it: the host checked the plugin's shapes first. A plugin that
+/// is somehow given less room writes nothing and refuses.
+pub type EntryFn = unsafe extern "C" fn(out: *mut PluginEntry, room: usize) -> Status;
 
 /// The symbol a plugin exports its entry point under, NUL-terminated for `dlsym`.
-pub const ENTRY_SYMBOL: &[u8] = b"daedalus_plugin_entry\0";
+pub const ENTRY_SYMBOL: &[u8] = b"daedalus_plugin_describe\0";
+
+/// Writes the plugin's shape descriptors to `out`. The host calls it before anything else, and
+/// calls nothing else of a plugin whose shapes don't fit.
+pub type ShapesFn = unsafe extern "C" fn(out: *mut crate::AbiDesc) -> Status;
+
+/// The symbol a plugin exports [`ShapesFn`] under, NUL-terminated for `dlsym`.
+pub const SHAPES_SYMBOL: &[u8] = b"daedalus_plugin_shapes\0";
+
+/// The entry symbol of plugins built before plugins described their shapes. A library that has
+/// it and not [`SHAPES_SYMBOL`] has to be built again, once.
+pub const OLD_ENTRY_SYMBOL: &[u8] = b"daedalus_plugin_entry\0";
+
+// SAFETY: each is a growable shape whose fields are text, pointers, counts and functions that
+// every build has: none has been added since, so there is nothing to be zero yet. A field added
+// later has to be one that is valid, and means absent, as zeroes.
+unsafe impl crate::Grown for NodeC {
+    const ID: u32 = 17;
+}
+// SAFETY: as above.
+unsafe impl crate::Grown for BackendTable {
+    const ID: u32 = 21;
+}
+// SAFETY: as above.
+unsafe impl crate::Grown for CodecC {
+    const ID: u32 = 22;
+}

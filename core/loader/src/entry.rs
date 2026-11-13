@@ -17,7 +17,7 @@ use daedalus_types::{NodeIndex, PortIndex};
 
 use crate::codec::{Codec, read_codecs};
 use crate::generation::Generation;
-use crate::open::{LoadError, open_library};
+use crate::open::{LoadError, open_library, read_table};
 use crate::owned::Holder;
 use crate::records::{join, read_node};
 
@@ -60,8 +60,9 @@ impl Loader {
         TABLES_HELD.fetch_add(1, Ordering::Relaxed);
         // SAFETY: the entry's nodes and backends are read while the library is held by
         // `generation`, which the loop below keeps alive through every backend it hands out.
-        let read = unsafe { read_entry(&opened.entry, &path, &generation) };
-        let codec_read = unsafe { read_codecs(&opened.entry, &path, &generation) };
+        let read = unsafe { read_entry(&opened.entry, &opened.shapes, &path, &generation) };
+        // SAFETY: as above, for the entry's codecs.
+        let codec_read = unsafe { read_codecs(&opened.entry, &opened.shapes, &path, &generation) };
         // The host has copied what it needs, so the plugin takes its tables back now, whether or
         // not the read succeeded.
         release_tables(&opened.entry);
@@ -107,37 +108,31 @@ fn release_tables(entry: &PluginEntry) {
 /// `entry` must come from a library that `generation` holds.
 unsafe fn read_entry(
     entry: &daedalus_abi::PluginEntry,
+    shapes: &[daedalus_abi::ShapeDesc],
     path: &Path,
     generation: &Arc<Generation>,
 ) -> Result<(Vec<OwnedDecl>, Vec<Backend>), LoadError> {
-    let mut nodes = Vec::with_capacity(entry.node_count);
-    if entry.node_count > 0 {
-        if entry.nodes.is_null() {
-            return Err(LoadError::BadText {
-                path: path.to_path_buf(),
-                what: "node list",
-            });
-        }
-        // SAFETY: the entry declares `node_count` nodes at `nodes`, valid while the library is held.
-        let declared = unsafe { std::slice::from_raw_parts(entry.nodes, entry.node_count) };
-        for node in declared {
-            // SAFETY: each node comes from the entry this function was given.
-            nodes.push(unsafe { read_node(node, path)? });
-        }
+    // SAFETY: the entry declares `node_count` nodes at `nodes`, valid while the library is held,
+    // and `shapes` are that plugin's, as the caller says.
+    let declared = unsafe { read_table(entry.nodes, entry.node_count, shapes, path, "node list")? };
+    let mut nodes = Vec::with_capacity(declared.len());
+    for node in &declared {
+        // SAFETY: each node comes from the entry this function was given.
+        nodes.push(unsafe { read_node(node, path)? });
     }
-    let mut backends = Vec::with_capacity(entry.backend_count);
-    if entry.backend_count > 0 {
-        if entry.backends.is_null() {
-            return Err(LoadError::BadText {
-                path: path.to_path_buf(),
-                what: "backend list",
-            });
-        }
-        // SAFETY: the entry declares `backend_count` tables at `backends`, valid while held.
-        let tables = unsafe { std::slice::from_raw_parts(entry.backends, entry.backend_count) };
-        for table in tables {
-            backends.push(Backend::from_table(table, path, generation)?);
-        }
+    // SAFETY: as above, for the `backend_count` tables at `backends`.
+    let tables = unsafe {
+        read_table(
+            entry.backends,
+            entry.backend_count,
+            shapes,
+            path,
+            "backend list",
+        )?
+    };
+    let mut backends = Vec::with_capacity(tables.len());
+    for table in &tables {
+        backends.push(Backend::from_table(table, path, generation)?);
     }
     Ok((nodes, backends))
 }

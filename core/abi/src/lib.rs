@@ -1,7 +1,8 @@
 //! The types that cross a plugin boundary.
 //!
 //! Everything here is `repr(C)` or `repr(transparent)`, allocates nothing, and is covered by
-//! [`LAYOUT_HASH`], so a host and a plugin built apart can check they agree before any call.
+//! [`SHAPES`], so a host and a plugin built apart can check they fit before any call: see
+//! [`fits`].
 //! A step is the unit of work: a function pointer and its data.
 //!
 //! Backends are written without `unsafe`, so [`Step::of`] and, with the `alloc` feature,
@@ -21,26 +22,28 @@ mod foreign;
 mod guard;
 mod handed;
 mod handle;
+#[cfg(not(daedalus_abi_baseline))]
 mod kept;
 mod layout;
 mod message;
 mod out;
 mod plain;
+mod shape;
 mod slots;
 mod status;
 mod step;
 mod step_cx;
 #[cfg(feature = "test-run")]
 pub mod testing;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(daedalus_abi_baseline)))]
 pub use kept::{KeptDetail, keep_detail};
 mod version;
 mod word;
 
 pub use backend::{
     BackendTable, BoundaryPort, ByteCodecFn, BytesC, BytesReleaseFn, CanTakeFn, CodecC, CompileFn,
-    ENTRY_SYMBOL, EntryFn, NO_BYTES, NodeC, PluginEntry, PortC, ProduceBytesFn, RegionView,
-    ReleaseEntryFn, Text, UnitOut,
+    ENTRY_SYMBOL, EntryFn, NO_BYTES, NodeC, OLD_ENTRY_SYMBOL, PluginEntry, PortC, ProduceBytesFn,
+    RegionView, ReleaseEntryFn, SHAPES_SYMBOL, ShapesFn, Text, UnitOut,
 };
 pub use features::Features;
 pub use fence::{Fence, FencePoll, FenceWord};
@@ -55,10 +58,13 @@ pub use handed::{
     HANDOVER_PENDING, HandedRecord, OWNER_HANDED, SharedBytes, handed_release, handed_retain,
 };
 pub use handle::Handle;
-pub use layout::{LAYOUT_HASH, SHAPES, layout_hash};
+pub use layout::{DESCRIPTORS, FROZEN_HASH, SHAPES, abi_desc, layout_hash};
 pub use message::MessageSink;
 pub use out::{Written, write_out, write_text};
 pub use plain::PlainData;
+pub use shape::{
+    AbiDesc, FieldInfo, Grown, Mismatch, ShapeDesc, ShapeInfo, find, fits, read_grown,
+};
 pub use slots::{NO_SLOT, Slot, SlotState, Slots};
 pub use status::Status;
 pub use step::OwnedStep;

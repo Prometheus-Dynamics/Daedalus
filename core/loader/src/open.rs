@@ -4,7 +4,10 @@ use std::fmt;
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 
-use daedalus_abi::{ENTRY_SYMBOL, EntryFn, PluginEntry, Status};
+use daedalus_abi::{
+    AbiDesc, ENTRY_SYMBOL, EntryFn, Grown, Mismatch, OLD_ENTRY_SYMBOL, PluginEntry, SHAPES,
+    SHAPES_SYMBOL, ShapeDesc, ShapesFn, Status,
+};
 use libloading::Library;
 
 /// Why a plugin could not be loaded. Each variant names the file.
@@ -14,12 +17,11 @@ pub enum LoadError {
     Open { path: PathBuf, message: String },
     /// The library has no entry point.
     Symbol { path: PathBuf, message: String },
-    /// The plugin was built against another layout. Both hashes are named.
-    Layout {
-        path: PathBuf,
-        expected: u64,
-        found: u64,
-    },
+    /// The plugin's shapes don't fit this host's: it was built against a newer Daedalus, or
+    /// one where a shape was laid out differently. The shape is named.
+    Shapes { path: PathBuf, why: Mismatch },
+    /// The plugin was built before plugins described their shapes. It has to be built again.
+    Older { path: PathBuf },
     /// The entry point refused for another reason.
     Refused { path: PathBuf, status: Status },
     /// A string in the entry is not UTF-8, or a port type key is not valid.
@@ -46,13 +48,13 @@ impl fmt::Display for LoadError {
             LoadError::Symbol { path, message } => {
                 write!(f, "{}: no entry point: {message}", path.display())
             }
-            LoadError::Layout {
-                path,
-                expected,
-                found,
-            } => write!(
+            LoadError::Shapes { path, why } => {
+                write!(f, "{}: this plugin {why}", path.display())
+            }
+            LoadError::Older { path } => write!(
                 f,
-                "{}: built for layout {found:#018x}, this host has {expected:#018x}",
+                "{}: this plugin was built for an older Daedalus, before a plugin described \
+                 its layout to its host: build it again against this one",
                 path.display()
             ),
             LoadError::Refused { path, status } => {
@@ -87,49 +89,121 @@ impl std::error::Error for LoadError {}
 pub(crate) struct Opened {
     pub library: Library,
     pub entry: PluginEntry,
+    /// The plugin's shapes, which say how its tables are laid out.
+    pub shapes: Vec<ShapeDesc>,
 }
 
-/// Opens `path`, calls its entry with this host's layout hash, and checks the status.
+/// The most shapes a plugin may describe. This build has a few dozen.
+const MAX_SHAPES: u32 = 4096;
+
+/// Opens `path`, reads the plugin's shapes and checks they fit this host's, and only then calls
+/// its entry.
 ///
 /// # Safety
-/// Loading runs the library's initialisers, and the entry is trusted to have the signature
-/// [`EntryFn`]. The caller must name a trusted Daedalus plugin.
+/// Loading runs the library's initialisers, and its symbols are trusted to have the signatures
+/// [`ShapesFn`] and [`EntryFn`]. The caller must name a trusted Daedalus plugin.
 pub(crate) unsafe fn open_library(path: &Path) -> Result<Opened, LoadError> {
     // SAFETY: the caller names a trusted plugin, as this function's contract says.
     let library = unsafe { Library::new(path) }.map_err(|error| LoadError::Open {
         path: path.to_path_buf(),
         message: error.to_string(),
     })?;
-    let mut out = MaybeUninit::<PluginEntry>::uninit();
+    let shapes = {
+        // SAFETY: the symbol is looked up with the signature it is written to, and `library`
+        // stays loaded for as long as the returned symbol is used here.
+        let found: Result<libloading::Symbol<'_, ShapesFn>, _> =
+            unsafe { library.get(SHAPES_SYMBOL) };
+        let describe = match found {
+            Ok(describe) => describe,
+            Err(error) => {
+                // SAFETY: only whether the symbol is there is asked. It is never called.
+                let old: Result<libloading::Symbol<'_, unsafe extern "C" fn()>, _> =
+                    unsafe { library.get(OLD_ENTRY_SYMBOL) };
+                return Err(match old {
+                    Ok(_) => LoadError::Older {
+                        path: path.to_path_buf(),
+                    },
+                    Err(_) => LoadError::Symbol {
+                        path: path.to_path_buf(),
+                        message: error.to_string(),
+                    },
+                });
+            }
+        };
+        let mut desc = AbiDesc {
+            shapes: core::ptr::null(),
+            count: 0,
+            reserved: 0,
+        };
+        // SAFETY: `desc` is a writable `AbiDesc`, a shape that never changes.
+        let status = unsafe { (*describe)(&mut desc) };
+        if status != Status::OK || desc.shapes.is_null() || desc.count > MAX_SHAPES {
+            return Err(LoadError::Refused {
+                path: path.to_path_buf(),
+                status,
+            });
+        }
+        // SAFETY: the plugin says `count` descriptors are at `shapes`, in memory of the library
+        // that is held. A descriptor never changes shape, so they are read at this build's size.
+        unsafe { std::slice::from_raw_parts(desc.shapes, desc.count as usize) }.to_vec()
+    };
+    daedalus_abi::fits(SHAPES, &shapes).map_err(|why| LoadError::Shapes {
+        path: path.to_path_buf(),
+        why,
+    })?;
+    // Zeroed, so the fields a plugin built before them doesn't write read as absent.
+    let mut out = MaybeUninit::<PluginEntry>::zeroed();
     let status = {
-        // SAFETY: the symbol is looked up with the signature the entry point is written to, and
-        // `library` stays loaded for as long as the returned symbol is used here.
+        // SAFETY: as for the shapes symbol above.
         let entry: libloading::Symbol<'_, EntryFn> =
             unsafe { library.get(ENTRY_SYMBOL) }.map_err(|error| LoadError::Symbol {
                 path: path.to_path_buf(),
                 message: error.to_string(),
             })?;
-        // SAFETY: `out` is a writable `PluginEntry`. A plugin with another layout writes only its
-        // own hash into the first field, so the rest of `out` stays unread.
-        unsafe { (*entry)(daedalus_abi::LAYOUT_HASH, out.as_mut_ptr()) }
+        // SAFETY: `out` is a writable `PluginEntry` of this host's size, and the plugin's own is
+        // no larger: its shapes fit.
+        unsafe { (*entry)(out.as_mut_ptr(), size_of::<PluginEntry>()) }
     };
-    if status == Status::VERSION_MISMATCH {
-        // SAFETY: the plugin wrote its layout hash into the first field of `out`, which is the
-        // field at offset zero in both builds.
-        let found = unsafe { core::ptr::addr_of!((*out.as_ptr()).layout).read() };
-        return Err(LoadError::Layout {
-            path: path.to_path_buf(),
-            expected: daedalus_abi::LAYOUT_HASH,
-            found,
-        });
-    }
     if status != Status::OK {
         return Err(LoadError::Refused {
             path: path.to_path_buf(),
             status,
         });
     }
-    // SAFETY: the entry returned OK, which means it wrote every field of `out`.
+    // SAFETY: the entry returned OK, so it wrote every field it has, which are at least the ones
+    // every build has. The rest is zero, which is absent for each field added since.
     let entry = unsafe { out.assume_init() };
-    Ok(Opened { library, entry })
+    Ok(Opened {
+        library,
+        entry,
+        shapes,
+    })
+}
+
+/// A plugin's table of `count` `T`s at `table`, each read at the plugin's own stride.
+///
+/// # Safety
+/// `table` must be a table the plugin's entry declared, of `count` elements, in a library that is
+/// still loaded, and `shapes` the descriptors that plugin gave, which fit this host's.
+pub(crate) unsafe fn read_table<T: Grown>(
+    table: *const T,
+    count: usize,
+    shapes: &[ShapeDesc],
+    path: &Path,
+    what: &'static str,
+) -> Result<Vec<T>, LoadError> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let theirs = daedalus_abi::find(shapes, T::ID).filter(|_| !table.is_null());
+    let Some(theirs) = theirs else {
+        return Err(LoadError::BadText {
+            path: path.to_path_buf(),
+            what,
+        });
+    };
+    Ok((0..count)
+        // SAFETY: `index` is within the table, and `theirs` fits, as the caller says.
+        .map(|index| unsafe { daedalus_abi::read_grown(table, index, theirs) })
+        .collect())
 }

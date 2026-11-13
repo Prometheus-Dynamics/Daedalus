@@ -1,6 +1,6 @@
-//! Plugins as dynamic libraries. A plugin exports one symbol, `daedalus_plugin_entry`, which
-//! declares its nodes and backends. The loader checks the layout hash before it reads anything
-//! else, copies the plugin's strings into host storage, joins the nodes into a registry, and runs
+//! Plugins as dynamic libraries. A plugin exports its shapes and an entry that declares its
+//! nodes and backends. The loader checks that the plugin's shapes fit its own before it reads
+//! anything else, reads the plugin's tables at the plugin's own sizes, copies the plugin's strings into host storage, joins the nodes into a registry, and runs
 //! the plugin's steps. Each library is a generation: it stays loaded while any of its steps lives.
 
 pub use daedalus_abi as abi;

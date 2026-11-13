@@ -23,6 +23,8 @@ heap_free = true
 unsafe_op_in_unsafe_fn = "deny"
 unused_lifetimes = "deny"
 unused_attributes = "deny"
+# Set only by the build of a fixture that stands for a plugin made before the newest fields.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(daedalus_abi_baseline)'] }
 
 [lints.clippy]
 dbg_macro = "deny"

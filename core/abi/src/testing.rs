@@ -36,5 +36,5 @@ pub fn wait_fence(fence: &Fence, polls: u64) -> FencePoll {
     last
 }
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(daedalus_abi_baseline)))]
 pub use crate::kept::{KeptDetail, keep_detail};

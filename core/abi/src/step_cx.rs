@@ -111,8 +111,10 @@ pub struct StepCx {
     /// outputs reads `handover[k]`. The loader turns each into a record right after the step returns.
     pub handover: [crate::BytesC; 2],
     /// Where a longer account of a failure goes. Empty means nobody is keeping one.
+    #[cfg(not(daedalus_abi_baseline))]
     pub detail: DetailSink,
     /// Which step of the plan this call is, set by the runner. The detail is kept under it.
+    #[cfg(not(daedalus_abi_baseline))]
     pub step: u32,
 }
 
@@ -133,13 +135,16 @@ impl StepCx {
             code: 0,
             now_ns: 0,
             handover: [crate::NO_BYTES; 2],
+            #[cfg(not(daedalus_abi_baseline))]
             detail: DetailSink::NONE,
+            #[cfg(not(daedalus_abi_baseline))]
             step: 0,
         }
     }
 
     /// Whether anybody keeps what [`StepCx::detail`] is given. A body asks before it formats
     /// something long.
+    #[cfg(not(daedalus_abi_baseline))]
     #[inline]
     pub fn wants_detail(&self) -> bool {
         self.detail.write.is_some()
@@ -150,6 +155,7 @@ impl StepCx {
     /// before the step returns its fault, and the pieces are kept in order. It allocates nothing
     /// here, and does nothing when the host keeps no detail. What a step writes and then doesn't
     /// fault is dropped.
+    #[cfg(not(daedalus_abi_baseline))]
     pub fn detail(&self, text: &str) {
         if let Some(write) = self.detail.write {
             write(self.detail.context, self.step, text.as_ptr(), text.len());
@@ -158,6 +164,7 @@ impl StepCx {
 
     /// [`StepCx::detail`] for formatted text: `cx.detail_fmt(format_args!("{error:#}"))`. The
     /// pieces go straight to the host, so nothing is allocated for the whole.
+    #[cfg(not(daedalus_abi_baseline))]
     pub fn detail_fmt(&self, args: core::fmt::Arguments<'_>) {
         struct Pieces<'a>(&'a StepCx);
         impl core::fmt::Write for Pieces<'_> {
@@ -171,6 +178,20 @@ impl StepCx {
             let _ = core::fmt::write(&mut Pieces(self), args);
         }
     }
+
+    /// A build from before a step could give a detail: nobody keeps one.
+    #[cfg(daedalus_abi_baseline)]
+    pub fn wants_detail(&self) -> bool {
+        false
+    }
+
+    /// A build from before a step could give a detail: there is nowhere to write it.
+    #[cfg(daedalus_abi_baseline)]
+    pub fn detail(&self, _: &str) {}
+
+    /// A build from before a step could give a detail: there is nowhere to write it.
+    #[cfg(daedalus_abi_baseline)]
+    pub fn detail_fmt(&self, _: core::fmt::Arguments<'_>) {}
 
     /// Records a failure. `reason` is cut to [`REASON_CAPACITY`] bytes, on a char boundary, and
     /// [`StepCx::reason_cut`] says when it was: the reason is a headline, held in a fixed place

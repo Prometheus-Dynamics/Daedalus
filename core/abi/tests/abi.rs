@@ -72,17 +72,68 @@ fn abi_version_accepts_rules() {
     assert_eq!(host.accepts(&short), Status::VERSION_MISMATCH);
 }
 
+/// What can't change without breaking a build made before, a shape at a time: every frozen
+/// shape, and the fields of every growable shape that every build has. A line that changes here
+/// is a breaking change to that shape, and says so in the diff. A field added to the end of a
+/// growable shape changes nothing here.
+#[cfg(target_pointer_width = "64")]
+const PINNED: &[(&str, u64)] = &[
+    ("Status", 878450758530639632),
+    ("Handle", 3742926882159516831),
+    ("FencePoll", 16747952526431540454),
+    ("Fence", 15919636088983359678),
+    ("Slot", 1242622562187749460),
+    ("Slots", 14305358172392511137),
+    ("DetailSink", 12528339230287768560),
+    ("StepCx", 5369776580947826768),
+    ("StepEnd", 18445014617549159612),
+    ("Step", 2467323789546901247),
+    ("AbiVersion", 2760751401334524203),
+    ("ForeignInterfaceInfo", 16490866880039719409),
+    ("ForeignOwner", 7081520690724563922),
+    ("ForeignHandle", 18240404336579184831),
+    ("Text", 484671319292895083),
+    ("PortC", 4520694601396836666),
+    ("NodeC", 1165742644899226453),
+    ("BoundaryPort", 569452308779623841),
+    ("RegionView", 10616889418081526393),
+    ("UnitOut", 2673029358757628531),
+    ("BackendTable", 5143414052223629972),
+    ("CodecC", 10369263571959783176),
+    ("BytesC", 5624236956122646482),
+    ("HandedRecord", 1607830633409766744),
+    ("PluginEntry", 15898856098309440575),
+    ("ShapeDesc", 8567712297236987577),
+    ("AbiDesc", 7959716542126075825),
+];
+
 #[cfg(target_pointer_width = "64")]
 #[test]
-fn layout_pinned() {
+fn what_cant_change_is_pinned_a_shape_at_a_time() {
+    let now: Vec<(&str, u64)> = daedalus_abi::SHAPES
+        .iter()
+        .map(|shape| (shape.name, shape.hash_of(shape.required as usize)))
+        .collect();
+    let text: String = now
+        .iter()
+        .map(|(name, hash)| format!("    ({name:?}, {hash}),\n"))
+        .collect();
     assert_eq!(
-        LAYOUT_HASH, PINNED,
-        "a shape changed: update the constant in the same commit"
+        now, PINNED,
+        "a frozen shape, or a field every build has, changed. That breaks every plugin built \
+         before. If it is meant, the table is now:\n{text}"
     );
 }
 
-#[cfg(target_pointer_width = "64")]
-const PINNED: u64 = 2134913940172821309;
+#[test]
+fn ids_are_each_shapes_own() {
+    let mut ids: Vec<u32> = daedalus_abi::SHAPES.iter().map(|shape| shape.id).collect();
+    ids.sort_unstable();
+    let before = ids.len();
+    ids.dedup();
+    assert_eq!(ids.len(), before, "two shapes share an id");
+    assert!(!ids.contains(&0), "0 is no shape");
+}
 
 #[test]
 fn write_out_is_all_or_nothing() {
