@@ -32,6 +32,7 @@ function writeOut(packet) {
 function flushEvents(run, events) {
   for (const event of events) {
     if (event.kind === "progress") writeOut(wire.encodeProgress(run, 0, event.message, event.fraction));
+    else if (event.kind === "detail") writeOut(wire.encodeDetail(run, event.text));
     else writeOut(wire.encodeLog(event.level, event.text));
   }
 }
@@ -127,6 +128,9 @@ function runRun(msg, byId, schema) {
       setState(value) { cx.newState = value; },
       progress(fraction, message = "") { events.push({ kind: "progress", fraction, message }); },
       log(level, text) { events.push({ kind: "log", level, text }); },
+      // More about a failure than the fault's reason holds: any number of pieces before the
+      // throw, kept in order with the step's fault, and dropped by the host if the node succeeds.
+      detail(text) { events.push({ kind: "detail", text: String(text) }); },
     };
     let result;
     try {

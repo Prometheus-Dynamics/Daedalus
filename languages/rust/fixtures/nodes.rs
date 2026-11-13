@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use daedalus_lang_rust::{Fault, Pair, Wire};
+use daedalus_lang_rust::{Ctx, Fault, Pair, Wire};
 use daedalus_macros::node;
 use daedalus_registry::NodeRecord;
 use daedalus_types::{Field, Scalar, TypeExpr, TypeKey, Typed, Variant};
@@ -221,7 +221,9 @@ pub fn stateful_counter(delta: i64, state: &mut Count) -> i64 {
 
 /// Always fails with `node_error`, and says why.
 #[node(id = "fixture.failure_diagnostic", inputs(value), outputs(out), backend = daedalus_lang_rust)]
-pub fn failure_diagnostic(value: i64) -> Result<i64, Fault> {
+pub fn failure_diagnostic(value: i64, cx: &Ctx) -> Result<i64, Fault> {
+    cx.detail("diagnostic detail: the value is rejected, ");
+    cx.detail("and this is the rest of it");
     Err(Fault {
         code: FaultCode::NodeError,
         reason: format!("value {value} is refused"),

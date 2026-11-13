@@ -65,5 +65,7 @@ def stateful_counter(delta, cx):
 
 
 @node("fixture.failure_diagnostic", inputs=[("value", T.i64)], outputs=[("out", T.i64)])
-def failure_diagnostic(value):
+def failure_diagnostic(value, cx):
+    cx.detail("diagnostic detail: the value is rejected, ")
+    cx.detail("and this is the rest of it")
     raise NodeError("node_error", "diagnostic: the value is rejected")

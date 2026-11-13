@@ -183,3 +183,36 @@ fn an_aborting_node_faults_its_region_and_the_host_runs_on_after_the_backoff() {
     assert_eq!(out, Some(7u32.to_le_bytes().to_vec()));
     assert!(process.telemetry().restarts >= 1);
 }
+
+#[test]
+fn what_a_plugins_node_gives_as_detail_reaches_the_host_through_its_worker() {
+    let library = fixture_library();
+    let mut loader = Loader::new();
+    let plugin = loader.open(&library).expect("opens");
+    let mut registry = Registry::new();
+    plugin.join(&mut registry).expect("joins");
+    let mut process = ProcessBackend::new();
+    let spec = WorkerSpec::new(env!("CARGO_BIN_EXE_daedalus-plugin-worker"))
+        .arg(library.display().to_string());
+    process.add_worker(spec, &registry).expect("registers");
+
+    let mut boom = process_step(&process, "fixture.boom");
+    let mut input = 1u32.to_le_bytes();
+    let mut cells = [
+        Slot {
+            state: SlotState::Full as u32,
+            data: input.as_mut_ptr(),
+            len: 4,
+            cap: 4,
+            ..Slot::EMPTY
+        },
+        Slot::EMPTY,
+    ];
+    let mut cx = StepCx::new();
+    let kept = daedalus_abi::testing::keep_detail(&mut cx);
+    let end = run_step(&mut boom, &mut Slots::of(&mut cells), &mut cx);
+    assert!(matches!(end, StepEnd::Fault));
+    assert!(cx.reason().contains("panicked"), "{}", cx.reason());
+    assert_eq!(kept.text(), "boom: what led up to it, in 2 pieces");
+    release(boom);
+}

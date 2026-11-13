@@ -51,7 +51,10 @@ enum {
     KIND_LOG = 0x43,
     KIND_FAULT = 0x44,
     KIND_STATE_VALUE = 0x45,
-    KIND_PONG = 0x46
+    KIND_PONG = 0x46,
+    /* Added after the layout was fixed, and not part of its hash: a host ignores a kind it
+     * doesn't know. */
+    KIND_DETAIL = 0x47
 };
 
 /* ---- arena ---------------------------------------------------------------------------------- */
@@ -597,6 +600,15 @@ void dd_log(dd_ctx *cx, const char *level, const char *text) {
     }
     put_u8(&b, KIND_LOG);
     put_u8(&b, tag);
+    put_str(&b, text);
+    write_packet(cx->packets, &b);
+    buf_free(&b);
+}
+
+void dd_detail(dd_ctx *cx, const char *text) {
+    dd_buf b = {0};
+    put_u8(&b, KIND_DETAIL);
+    put_le(&b, cx->run, 8);
     put_str(&b, text);
     write_packet(cx->packets, &b);
     buf_free(&b);

@@ -21,6 +21,7 @@ mod foreign;
 mod guard;
 mod handed;
 mod handle;
+mod kept;
 mod layout;
 mod message;
 mod out;
@@ -31,6 +32,8 @@ mod step;
 mod step_cx;
 #[cfg(feature = "test-run")]
 pub mod testing;
+#[cfg(feature = "std")]
+pub use kept::{KeptDetail, keep_detail};
 mod version;
 mod word;
 

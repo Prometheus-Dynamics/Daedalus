@@ -21,6 +21,8 @@ export const SCALARS = [
 export const KIND = {
   RUN: 1, CANCEL: 2, STATE_EXPORT: 3, STATE_IMPORT: 4, PING: 5, SHUTDOWN: 6,
   HELLO: 0x40, OUTPUTS: 0x41, PROGRESS: 0x42, LOG: 0x43, FAULT: 0x44, STATE_VALUE: 0x45, PONG: 0x46,
+  // Added after the layout was fixed, and not part of its hash: a host ignores a kind it doesn't know.
+  DETAIL: 0x47,
 };
 
 export const FAULT_CODES = {
@@ -484,6 +486,14 @@ export function encodeLog(level, text) {
   const out = new Writer();
   out.u8(KIND.LOG);
   out.u8(LOG_LEVELS[level]);
+  out.str(text);
+  return out.finish();
+}
+
+export function encodeDetail(run, text) {
+  const out = new Writer();
+  out.u8(KIND.DETAIL);
+  out.u64(run);
   out.str(text);
   return out.finish();
 }

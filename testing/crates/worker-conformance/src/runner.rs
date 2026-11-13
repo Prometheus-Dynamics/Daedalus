@@ -161,6 +161,7 @@ fn run_round(backend: &ProcessBackend, fixture: &Fixture, round: usize) -> Resul
     }
     cells.extend(std::iter::repeat_n(Slot::EMPTY, fixture.outputs.len()));
     let mut cx_step = StepCx::new();
+    let kept = daedalus_abi::testing::keep_detail(&mut cx_step);
     let end = run_once(&mut step, &mut Slots::of(&mut cells), &mut cx_step);
     let n_in = fixture.inputs.len();
     let result = match &round_data.expect {
@@ -184,7 +185,11 @@ fn run_round(backend: &ProcessBackend, fixture: &Fixture, round: usize) -> Resul
                 result
             }
         }
-        Expect::Fault(code) => {
+        Expect::Fault(code) | Expect::FaultDetail(code, _) => {
+            let detail = match &round_data.expect {
+                Expect::FaultDetail(_, detail) => Some(*detail),
+                _ => None,
+            };
             if !matches!(end, StepEnd::Fault) {
                 Err(format!(
                     "expected a fault, the step ended {:?}",
@@ -192,6 +197,12 @@ fn run_round(backend: &ProcessBackend, fixture: &Fixture, round: usize) -> Resul
                 ))
             } else if !cx_step.reason().contains(code) {
                 Err(format!("expected a {code} fault, got {}", cx_step.reason()))
+            } else if detail.is_some_and(|detail| kept.text() != detail) {
+                Err(format!(
+                    "expected the detail {:?}, got {:?}",
+                    detail.unwrap_or_default(),
+                    kept.text()
+                ))
             } else {
                 Ok(())
             }

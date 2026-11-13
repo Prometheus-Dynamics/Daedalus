@@ -272,6 +272,10 @@ public final class Worker {
                 out.str(event.message());
                 out.u8(1);
                 out.f32(event.fraction());
+            } else if (event.kind().equals("detail")) {
+                out.u8(Wire.DETAIL);
+                out.u64(new java.math.BigInteger(Long.toString(run)));
+                out.str(event.message());
             } else {
                 out.u8(Wire.LOG);
                 out.u8(Wire.LOG_LEVELS.get(event.level()));

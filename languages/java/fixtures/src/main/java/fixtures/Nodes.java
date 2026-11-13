@@ -84,6 +84,8 @@ public final class Nodes {
 
     @Node(id = "fixture.failure_diagnostic", inputs = {"value:i64"}, outputs = {"out:i64"})
     public static Object failureDiagnostic(Map<String, Object> in, Context cx) {
+        cx.detail("diagnostic detail: the value is rejected, ");
+        cx.detail("and this is the rest of it");
         throw new NodeException("node_error", "diagnostic: the value is rejected");
     }
 }

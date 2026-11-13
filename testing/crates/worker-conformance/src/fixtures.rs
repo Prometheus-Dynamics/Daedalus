@@ -25,7 +25,14 @@ pub enum Expect {
     Outputs(Vec<(&'static str, Vec<u8>)>),
     /// A fault whose code and reason text contain this.
     Fault(&'static str),
+    /// A fault whose code and reason contain the first, with exactly the second as its detail.
+    FaultDetail(&'static str, &'static str),
 }
+
+/// What `fixture.failure_diagnostic` gives the host as its failure's detail, in two pieces:
+/// up to and including the comma and space, and the rest.
+pub const DIAGNOSTIC_DETAIL: &str =
+    "diagnostic detail: the value is rejected, and this is the rest of it";
 
 /// One run: its inputs, and what it must produce.
 #[derive(Clone, Debug)]
@@ -378,11 +385,11 @@ pub fn fixtures() -> Vec<Fixture> {
             rounds: [
                 Round {
                     inputs: vec![("value", i64_bytes(7))],
-                    expect: Expect::Fault("node_error"),
+                    expect: Expect::FaultDetail("node_error", DIAGNOSTIC_DETAIL),
                 },
                 Round {
                     inputs: vec![("value", i64_bytes(8))],
-                    expect: Expect::Fault("node_error"),
+                    expect: Expect::FaultDetail("node_error", DIAGNOSTIC_DETAIL),
                 },
             ],
         },

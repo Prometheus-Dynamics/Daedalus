@@ -50,6 +50,8 @@ const LAYOUT: &[u64] = &[
     0x44,
     0x45,
     0x46, // worker messages
+    // A worker message added since is not counted: a host ignores a kind it doesn't know, so a
+    // worker that sends one still works with a host that predates it, and the other way round.
     // The scalar count and the type tag count.
     16,
     8,

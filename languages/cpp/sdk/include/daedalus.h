@@ -103,6 +103,12 @@ void dd_progress(dd_ctx *cx, float fraction, const char *message);
 /* Logs a line at a level: "error", "warn", "info", "debug" or "trace". */
 void dd_log(dd_ctx *cx, const char *level, const char *text);
 
+/* Gives the host more about a failure than the fault's reason holds: the lines a check found, a
+ * tool's output. Call it any number of times before dd_fault and returning nonzero, and the
+ * pieces are kept in order with the step's fault. What a node writes and then doesn't fail is
+ * dropped by the host. */
+void dd_detail(dd_ctx *cx, const char *text);
+
 /* A node's state, kept in the worker between runs. Nodes with no state never touch it. */
 dd_value *dd_state(dd_ctx *cx);
 void dd_set_state(dd_ctx *cx, dd_value value);

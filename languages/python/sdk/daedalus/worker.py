@@ -33,6 +33,12 @@ class Context:
     def log(self, level, text):
         self.events.append(("log", level, text))
 
+    def detail(self, text):
+        """Gives the host more about a failure than the fault's reason holds. Call it any number
+        of times before raising, and the pieces are kept in order with the step's fault. What a
+        node writes and then doesn't fail is dropped by the host."""
+        self.events.append(("detail", str(text)))
+
 
 class Node:
     def __init__(self, id, inputs, outputs, fn, state=None):
@@ -215,6 +221,8 @@ def _flush_events(run, context, out):
     for event in context.events:
         if event[0] == "progress":
             wire.write_packet(out, wire.encode_progress(run, 0, event[2], event[1]))
+        elif event[0] == "detail":
+            wire.write_packet(out, wire.encode_detail(run, event[1]))
         else:
             wire.write_packet(out, wire.encode_log(event[1], event[2]))
     context.events = []

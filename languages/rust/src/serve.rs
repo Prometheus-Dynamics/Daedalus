@@ -362,6 +362,7 @@ fn run_node(
                 fraction: Some(fraction),
             }),
             Event::Log { level, text } => WorkerMsg::Log { level, text },
+            Event::Detail { text } => WorkerMsg::Detail { run: run.run, text },
         };
         send(out, &msg, schema).map_err(io::Error::other)?;
     }
