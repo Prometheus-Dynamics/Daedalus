@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::vec;
 use std::vec::Vec;
 
-use daedalus_abi::{NO_SLOT, Progress, Slot, Step, StepCx};
+use daedalus_abi::{NO_SLOT, Progress, Slot, Step, StepCx, Word};
 
 pub use pool::Pool;
 use ready::Ready;
@@ -39,6 +39,17 @@ use crate::{Pending, Runner, spanned};
 pub enum LaneError {
     /// There must be one priority per step, or none at all.
     Priorities { steps: u32, given: u32 },
+}
+
+/// What a tick writes into the cancel word when one of its steps stops the run. It differs from
+/// the host's own cancel, so the tick clears only what it raised.
+const STOPPED: u32 = 2;
+
+/// Whether the error `new` at its step replaces `old`: a fault outranks the `Cancelled` it caused
+/// in other steps, and among errors of one kind the lowest step wins.
+fn outranks(new: &(u32, RunError), old: &(u32, RunError)) -> bool {
+    let kind = |error: &RunError| u8::from(matches!(error, RunError::Cancelled { .. }));
+    (kind(&new.1), new.0) < (kind(&old.1), old.0)
 }
 
 const CLEAN: u8 = 0;
@@ -71,6 +82,8 @@ pub struct Lanes {
     pending_lock: Mutex<()>,
     ready: Ready,
     workers: Vec<UnsafeCell<Worker>>,
+    /// The cancel word the workers read when the host gave the runner none.
+    stop: Word,
 }
 
 // SAFETY: each `Worker` is touched only by the thread whose number it has, during one fan-out, and
@@ -130,6 +143,7 @@ impl Lanes {
             pending_lock: Mutex::new(()),
             ready: Ready::new(count),
             workers,
+            stop: Word::new(0),
         })
     }
 
@@ -195,6 +209,8 @@ fn dependencies(runner: &Runner<'_>) -> (Vec<u32>, Vec<u32>) {
 /// The runner's buffers for the length of one fan-out.
 struct View<'t> {
     lanes: &'t Lanes,
+    /// The cancel word every worker reads this tick.
+    stop: &'t Word,
     steps: *const Step,
     meta: &'t [StepMeta],
     table: &'t [u32],
@@ -326,10 +342,14 @@ fn work(view: &View<'_>, number: usize) {
         let dirty = lanes.marks[index].load(Ordering::Acquire) == DIRTY;
         if dirty && lane.worker.cx.cancelled() {
             // The step stays marked, so it goes back to dirty and runs on a later tick.
-            let step = index as u32;
-            match lane.worker.error {
-                Some((first, _)) if first < step => {}
-                _ => lane.worker.error = Some((step, RunError::Cancelled { step })),
+            let found = (index as u32, RunError::Cancelled { step: index as u32 });
+            if lane
+                .worker
+                .error
+                .as_ref()
+                .is_none_or(|old| outranks(&found, old))
+            {
+                lane.worker.error = Some(found);
             }
             next = lanes.ready.next(true, &[], true);
             continue;
@@ -338,10 +358,19 @@ fn work(view: &View<'_>, number: usize) {
             let mut report = lane.worker.report;
             if let Err(error) = step_once(&mut lane, index, &mut report) {
                 stop = true;
-                let step = index as u32;
-                match lane.worker.error {
-                    Some((first, _)) if first < step => {}
-                    _ => lane.worker.error = Some((step, error)),
+                // The steps running beside this one are told to stop. A cancel the host raised
+                // itself is left as it is.
+                if !matches!(error, RunError::Cancelled { .. }) {
+                    view.stop.replace_if(0, STOPPED);
+                }
+                let found = (index as u32, error);
+                if lane
+                    .worker
+                    .error
+                    .as_ref()
+                    .is_none_or(|old| outranks(&found, old))
+                {
+                    lane.worker.error = Some(found);
                 }
             }
             lane.worker.report = report;
@@ -357,8 +386,10 @@ fn work(view: &View<'_>, number: usize) {
 }
 
 impl Runner<'_> {
-    /// Runs one tick on the pool. The result is the serial tick's, except that a `fail_fast` stop
-    /// lets steps already running finish. Body panics are caught by the step wrappers and count
+    /// Runs one tick on the pool. The result is the serial tick's, except for a `fail_fast` stop:
+    /// the cancel word is raised for the rest of the tick, so a step already running that checks
+    /// [`StepCx::cancelled`] stops early, and one that never checks runs to its end. The tick
+    /// clears the word again if it raised it. Body panics are caught by the step wrappers and count
     /// as that step's `Fault`. Every `Step` must be safe to run on another thread.
     pub fn tick_parallel(&mut self, lanes: &mut Lanes) -> Result<TickReport, RunError> {
         self.tick = self.tick.wrapping_add(1);
@@ -393,7 +424,10 @@ impl Runner<'_> {
         }
         let remaining = self.seed_lanes(lanes);
         if remaining > 0 {
-            let (now, cancel) = (self.cx.now_ns, self.cx.cancel);
+            let now = self.cx.now_ns;
+            // SAFETY: the runner's cancel word is null or a `Word` that outlives the runner.
+            let stop: &Word = unsafe { self.cx.cancel.as_ref() }.unwrap_or(&lanes.stop);
+            let cancel: *const Word = stop;
             for worker in &mut lanes.workers {
                 let cx = &mut worker.get_mut().cx;
                 cx.now_ns = now;
@@ -401,6 +435,7 @@ impl Runner<'_> {
             }
             let view = View {
                 lanes: &*lanes,
+                stop,
                 steps: self.steps.as_ptr(),
                 meta: self.meta,
                 table: self.table,
@@ -426,6 +461,7 @@ impl Runner<'_> {
                 probe: self.probe,
             };
             lanes.pool.run(&|number| work(&view, number));
+            stop.replace_if(STOPPED, 0);
         }
         let error = self.collect_workers(lanes, report);
         match error {
@@ -497,10 +533,10 @@ impl Runner<'_> {
             self.counters.reuse_checks += counters.reuse_checks;
             self.counters.reuse_replays += counters.reuse_replays;
             self.counters.dropped += counters.dropped;
-            if let Some((step, failure)) = worker.error.take()
-                && error.is_none_or(|(first, _)| step < first)
+            if let Some(found) = worker.error.take()
+                && error.as_ref().is_none_or(|old| outranks(&found, old))
             {
-                error = Some((step, failure));
+                error = Some(found);
             }
         }
         for index in 0..self.steps.len() {
