@@ -12,6 +12,7 @@ mod backoff;
 mod child;
 mod declare;
 mod error;
+mod log;
 mod reader;
 mod region;
 mod spec;
@@ -19,8 +20,10 @@ mod supervise;
 mod telemetry;
 
 pub use backoff::{BASE_DELAY, MAX_DELAY, delay_after};
+pub use daedalus_wire::LogLevel;
 pub use declare::{owned_decl, type_expr};
 pub use error::ProcessError;
+pub use log::WorkerLog;
 pub use region::{BACKEND_ID, HOST, ProcessBackend};
 pub use spec::WorkerSpec;
 pub use telemetry::Snapshot;

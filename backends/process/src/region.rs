@@ -34,6 +34,7 @@ pub struct ProcessBackend {
     /// Node id to (worker index, node index inside that worker).
     served: BTreeMap<String, (usize, usize)>,
     telemetry: Arc<Telemetry>,
+    log: Arc<crate::log::LogSink>,
 }
 
 impl Default for ProcessBackend {
@@ -48,6 +49,7 @@ impl ProcessBackend {
             workers: Vec::new(),
             served: BTreeMap::new(),
             telemetry: Arc::new(Telemetry::default()),
+            log: Arc::default(),
         }
     }
 
@@ -125,6 +127,7 @@ impl ProcessBackend {
             schema: Schema::from_hello(hello, &[]),
             nodes,
             telemetry: self.telemetry.clone(),
+            log: self.log.clone(),
             state: Mutex::new(Supervisor {
                 link: Link::Up(worker),
                 failures: 0,
@@ -136,6 +139,21 @@ impl ProcessBackend {
         };
         self.workers.push(Arc::new(shared));
         Ok(())
+    }
+
+    /// Hands every log message a worker of this backend sends to `handler`, for workers added
+    /// before or after. A worker's messages are read while one of its regions runs, so a line
+    /// sent between runs arrives with the next run. The handler is called on the thread that
+    /// runs the region, with the worker held: it should take the line and return, and not call
+    /// this backend. With or without a handler a line is counted in [`Snapshot::logs`] and kept
+    /// with the worker's stderr, so a fault report ends with what the worker last said.
+    pub fn on_log(&self, handler: impl Fn(&crate::WorkerLog<'_>) + Send + Sync + 'static) {
+        self.log.set(Some(Arc::new(handler)));
+    }
+
+    /// Stops handing log messages to the handler [`ProcessBackend::on_log`] set.
+    pub fn clear_on_log(&self) {
+        self.log.set(None);
     }
 
     pub fn telemetry(&self) -> Snapshot {

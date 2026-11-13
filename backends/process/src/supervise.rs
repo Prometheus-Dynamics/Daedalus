@@ -55,6 +55,7 @@ pub(crate) struct Shared {
     pub schema: Schema,
     pub nodes: Vec<NodePorts>,
     pub telemetry: Arc<Telemetry>,
+    pub log: Arc<crate::log::LogSink>,
     pub state: Mutex<Supervisor>,
 }
 
@@ -486,7 +487,8 @@ impl WorkerStep {
     }
 
     /// Handles a packet other than outputs: a node's fault is recorded for the report, progress
-    /// is passed on. Anything else is ignored.
+    /// is passed on, and a log line is counted, kept with the worker's stderr and handed to the
+    /// host's handler. Anything else is ignored.
     fn note(&self, shared: &Shared, sup: &mut Supervisor, buf: &[u8], run: u64, cx: &mut StepCx) {
         match WorkerMsg::decode(buf, &shared.schema) {
             Ok(WorkerMsg::Fault(fault)) if fault.run == run => {
@@ -507,6 +509,18 @@ impl WorkerStep {
                 if let Some(fraction) = progress.fraction {
                     let done = (fraction.clamp(0.0, 1.0) * 1000.0) as u32;
                     cx.progress(done, 1000);
+                }
+            }
+            Ok(WorkerMsg::Log { level, text }) => {
+                shared.telemetry.bump(Count::Log);
+                if let Link::Up(worker) = &sup.link {
+                    worker.heard(level, &text);
+                    shared.log.emit(&crate::log::WorkerLog {
+                        program: &shared.spec.program,
+                        pid: worker.pid(),
+                        level,
+                        text: &text,
+                    });
                 }
             }
             _ => {}

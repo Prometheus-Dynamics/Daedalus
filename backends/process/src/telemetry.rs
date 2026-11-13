@@ -1,4 +1,5 @@
-//! Counts of what the backend did: starts, restarts, faults, runs, bytes, and stderr bytes.
+//! Counts of what the backend did: starts, restarts, faults, runs, bytes, stderr bytes, and log
+//! lines.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -11,6 +12,7 @@ pub struct Telemetry {
     bytes_in: AtomicU64,
     bytes_out: AtomicU64,
     stderr_bytes: AtomicU64,
+    logs: AtomicU64,
 }
 
 /// A copy of the counts at one time.
@@ -23,6 +25,8 @@ pub struct Snapshot {
     pub bytes_in: u64,
     pub bytes_out: u64,
     pub stderr_bytes: u64,
+    /// Log messages the workers sent.
+    pub logs: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -34,6 +38,7 @@ pub(crate) enum Count {
     BytesIn(u64),
     BytesOut(u64),
     Stderr(u64),
+    Log,
 }
 
 impl Telemetry {
@@ -46,6 +51,7 @@ impl Telemetry {
             Count::BytesIn(n) => (&self.bytes_in, n),
             Count::BytesOut(n) => (&self.bytes_out, n),
             Count::Stderr(n) => (&self.stderr_bytes, n),
+            Count::Log => (&self.logs, 1),
         };
         field.fetch_add(by, Ordering::Relaxed);
     }
@@ -59,6 +65,7 @@ impl Telemetry {
             bytes_in: self.bytes_in.load(Ordering::Relaxed),
             bytes_out: self.bytes_out.load(Ordering::Relaxed),
             stderr_bytes: self.stderr_bytes.load(Ordering::Relaxed),
+            logs: self.logs.load(Ordering::Relaxed),
         }
     }
 }
