@@ -309,3 +309,34 @@ fn message_sink_writes_in_pieces() {
     assert_eq!(total, 7);
     MessageSink::NONE.write("nothing happens");
 }
+
+#[test]
+fn a_reason_that_doesnt_fit_is_cut_and_the_fault_says_so() {
+    let mut cx = StepCx::new();
+    // One that fits is kept whole, and nothing says it was cut.
+    let fits = "x".repeat(daedalus_abi::REASON_CAPACITY);
+    cx.fault(Some(3), &fits);
+    assert_eq!(cx.reason(), fits);
+    assert!(!cx.reason_cut());
+    // An error a body returns has the same room as any other reason.
+    cx.fail(
+        3,
+        &daedalus_abi::Fault {
+            code: 9,
+            reason: "a reason of more than sixty four bytes and fewer than a hundred and twenty",
+        },
+    );
+    assert_eq!(
+        cx.reason(),
+        "a reason of more than sixty four bytes and fewer than a hundred and twenty"
+    );
+    assert!(!cx.reason_cut());
+    // One byte more than fits is cut, and the fault says so.
+    let long = "y".repeat(daedalus_abi::REASON_CAPACITY + 1);
+    cx.fault(None, &long);
+    assert_eq!(cx.reason().len(), daedalus_abi::REASON_CAPACITY);
+    assert!(cx.reason_cut());
+    // The next fault that fits clears it.
+    cx.fault(None, "short");
+    assert!(!cx.reason_cut());
+}

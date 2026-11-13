@@ -22,6 +22,8 @@ pub struct StepFault {
     pub until_ns: u64,
     reason_len: u32,
     reason: [u8; REASON_CAPACITY],
+    /// The reason the body gave was longer than fits, and `reason` is only its start.
+    pub reason_cut: bool,
 }
 
 impl StepFault {
@@ -33,6 +35,7 @@ impl StepFault {
         until_ns: 0,
         reason_len: 0,
         reason: [0; REASON_CAPACITY],
+        reason_cut: false,
     };
 
     /// The node the body named, if it named one.
@@ -72,6 +75,7 @@ impl FaultLog {
         cell.seq = cell.seq.wrapping_add(1);
         cell.tick = tick;
         cell.at = cx.at;
+        cell.reason_cut = cx.reason_cut();
         cell.consecutive = health.failures();
         cell.until_ns = if health.backing_off() {
             health.until_ns()

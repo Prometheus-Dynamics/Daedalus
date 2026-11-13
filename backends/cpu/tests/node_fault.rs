@@ -20,7 +20,9 @@ fn check(a: u32) -> Result<u32, Fault> {
 
 #[node(id = "t.long", outputs(out))]
 fn long() -> Result<u32, &'static str> {
-    Err("a reason that is well past the sixty four bytes an error may give the fault record")
+    Err(
+        "a reason that goes on well past the hundred and twenty bytes a fault keeps, so that what the host reads is only its start",
+    )
 }
 
 #[test]
@@ -58,5 +60,6 @@ fn a_long_reason_is_cut() {
         call(&mut step, &mut cells, &mut cx),
         StepEnd::Fault
     ));
-    assert_eq!(cx.reason().len(), daedalus_abi::ERROR_REASON_CAPACITY);
+    assert_eq!(cx.reason().len(), daedalus_abi::REASON_CAPACITY);
+    assert!(cx.reason_cut(), "and the fault says it was cut");
 }

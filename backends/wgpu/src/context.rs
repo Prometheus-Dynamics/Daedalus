@@ -18,6 +18,10 @@ use crate::wait::{PendingErrors, WaitError};
 pub enum OpenError {
     /// No adapter passed the options.
     NoAdapter,
+    /// No adapter was found at all, and this user can't open these GPU device nodes: the likely
+    /// reason. A GPU's driver may need its card nodes as well as its render node, and those
+    /// belong to a group (`video` on most systems) the process has to be in.
+    NoAccess(String),
     /// Adapters passed, and none gave a device. The text is the last one's reason.
     Device(String),
     /// The last attempt failed, and the next is due after this long.
@@ -30,6 +34,10 @@ impl fmt::Display for OpenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             OpenError::NoAdapter => f.write_str("no adapter matches"),
+            OpenError::NoAccess(nodes) => write!(
+                f,
+                "no adapter was found, and this user can't open {nodes}: a GPU's driver needs its card nodes as well as its render node, so the process has to be in the group that owns them"
+            ),
             OpenError::Device(reason) => write!(f, "no adapter gave a device: {reason}"),
             OpenError::Backoff(wait) => write!(f, "no device: trying again in {wait:?}"),
             OpenError::Off => f.write_str("the backend is turned off"),
@@ -394,7 +402,12 @@ impl Context {
         if adapters.is_empty() && wanted != wgpu::Backends::all() {
             adapters = instance.adapters(wgpu::Backends::all());
         }
-        let mut last = OpenError::NoAdapter;
+        // With no adapter at all, the usual reason on a board is that this user may not open the
+        // GPU's nodes. That is said by name, where a driver only prints it.
+        let mut last = match denied_nodes() {
+            Some(nodes) if adapters.is_empty() => OpenError::NoAccess(nodes),
+            _ => OpenError::NoAdapter,
+        };
         for adapter in choose(adapters, options) {
             let info = adapter.get_info();
             let kind = crate::adapter::AdapterInfo::from_wgpu(&info).kind;
@@ -412,6 +425,38 @@ impl Context {
         }
         Err(last)
     }
+}
+
+/// The GPU device nodes this user is refused, as `/dev/dri/card0, /dev/dri/card1`. `None` when
+/// there are none it is refused, or no such directory.
+fn denied_nodes() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut denied: Vec<String> = std::fs::read_dir("/dev/dri")
+            .ok()?
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
+                name.starts_with("card") || name.starts_with("renderD")
+            })
+            .filter(|path| {
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(path)
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+            })
+            .map(|path| path.display().to_string())
+            .collect();
+        denied.sort();
+        (!denied.is_empty()).then(|| denied.join(", "))
+    }
+    #[cfg(not(target_os = "linux"))]
+    None
 }
 
 /// Whether the device really imports a buffer from the system dma-heap: one small import is

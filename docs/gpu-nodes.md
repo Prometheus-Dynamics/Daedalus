@@ -42,6 +42,21 @@ let planned = plan(&graph, &registry, &[&gpu, &CpuBackend], &Config::default())?
 The core never sees a device. Planning opens nothing: the device is opened the first time
 something runs on it.
 
+### A process that isn't root
+
+On a board the GPU's programs usually don't run as root. Such a process needs to be able to open
+the GPU's device nodes, and for Vulkan that is more than the render node. V3D's driver on the
+CM5 opens `/dev/dri/card0` and `/dev/dri/card1` as well as `/dev/dri/renderD128`. The render node
+is open to everyone there and the card nodes belong to group `video`, so the process has to be in
+`video`: `render` alone, or nothing, leaves it with no adapter. When no adapter is found and the
+user is refused a node under `/dev/dri`, opening fails with `OpenError::NoAccess` naming the nodes.
+
+Give the process a home or a cache directory of its own too (`HOME` or `XDG_CACHE_HOME`): the
+driver keeps its shader cache there, and turns it off when it can't write.
+
+Such a process can't open a dma-heap either, where the heaps are root's. It still imports a
+dma-buf it is handed: see "Where the data is".
+
 ## A CPU body beside a GPU body
 
 Give a node both, with the same id and ports. The planner then picks, so the graph runs on a

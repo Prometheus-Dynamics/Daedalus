@@ -161,6 +161,7 @@ impl RunEntry {
                         .collect(),
                     consecutive: fault.consecutive,
                     reason: String::from(fault.reason()),
+                    reason_cut: fault.reason_cut,
                 })
                 .collect()
         };

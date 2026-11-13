@@ -35,6 +35,9 @@ pub struct FaultReport {
     pub tick: u32,
     reason_len: u32,
     reason: [u8; REASON_CAPACITY],
+    /// The reason the body gave was longer than 120 bytes, and [`FaultReport::reason`] is only
+    /// its start.
+    pub reason_cut: bool,
 }
 
 impl FaultReport {
@@ -52,10 +55,11 @@ impl FaultReport {
             tick: fault.tick,
             reason_len: text.len() as u32,
             reason,
+            reason_cut: fault.reason_cut,
         }
     }
 
-    /// The reason the body gave, cut to 120 bytes.
+    /// The reason the body gave, cut to 120 bytes. [`FaultReport::reason_cut`] says when it was.
     pub fn reason(&self) -> &str {
         core::str::from_utf8(&self.reason[..self.reason_len as usize]).unwrap_or("")
     }

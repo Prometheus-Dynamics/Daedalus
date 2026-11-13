@@ -66,3 +66,13 @@ fn shared_context_opens_one_device_per_process() {
             .is_some_and(|wait| wait <= daedalus_wgpu::RETRY_FIRST)
     );
 }
+
+/// When no adapter is found and the user is refused the GPU's nodes, the error names them: the
+/// group a process needs isn't left to a driver's stderr.
+#[test]
+fn a_refused_device_node_is_named_in_the_error() {
+    let error = daedalus_wgpu::OpenError::NoAccess("/dev/dri/card0, /dev/dri/card1".into());
+    let text = error.to_string();
+    assert!(text.contains("/dev/dri/card0, /dev/dri/card1"), "{text}");
+    assert!(text.contains("group"), "{text}");
+}
