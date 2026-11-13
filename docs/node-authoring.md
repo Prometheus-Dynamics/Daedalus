@@ -181,6 +181,11 @@ an edge's two types differ.
   the node is not called.
 - `shareable`: identical upstream nodes in several graphs of one host may be run once.
 
+A port is in its backend's own memory unless the node says otherwise: `memory(out = "dmabuf")`
+puts the port `out` in the memory space named `dmabuf`, and the planner moves the value from there
+to whoever reads it. The space has to be one a backend in the plan supplies. Almost nothing needs
+this. See [foreign-values.md](foreign-values.md).
+
 ## Graph documents
 
 A graph is JSON in the format [`schema/`](schema) describes: nodes by id, edges between ports,

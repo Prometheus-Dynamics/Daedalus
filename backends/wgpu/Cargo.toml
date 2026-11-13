@@ -12,6 +12,7 @@ daedalus-backend = { path = "../../core/backend" }
 daedalus-graph = { path = "../../core/graph" }
 daedalus-registry = { path = "../../core/registry" }
 daedalus-runner = { path = "../../core/runner" }
+daedalus-dmabuf = { path = "../dmabuf" }
 daedalus-types = { path = "../../core/types" }
 daedalus-vk-sys = { path = "../vk-sys" }
 pollster = { workspace = true }

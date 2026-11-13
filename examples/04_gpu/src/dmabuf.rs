@@ -75,6 +75,24 @@ fn make(count: u32) -> HeapBytes {
     HeapBytes::heap(&bytes).expect("a dma-heap value")
 }
 
+/// The same value, made where the node says it is: in the dma-buf space. The planner then moves
+/// it from there to whoever reads it.
+#[node(
+    id = "heap.make_placed",
+    inputs(count),
+    outputs(value),
+    memory(value = "dmabuf")
+)]
+fn make_placed(count: u32) -> HeapBytes {
+    make(count)
+}
+
+/// On the CPU: the sum of the value's bytes.
+#[node(id = "heap.sum", inputs(value), outputs(sum))]
+fn sum(value: &HeapBytes) -> u32 {
+    value.bytes.iter().map(|&byte| u32::from(byte)).sum()
+}
+
 /// On the GPU: each byte of the value, read as a word, plus one.
 #[node(id = "heap.plus_one", inputs(src), outputs(dst), backend = daedalus_wgpu_author(src: HeapBytes, dst: Words))]
 const PLUS_ONE: &str = "
@@ -103,6 +121,80 @@ const GRAPH: &str = r#"{
   }
 }"#;
 
+/// A value made in the dma-buf space, read by the shader and by a CPU node.
+const PLACED_GRAPH: &str = r#"{
+  "format": "daedalus.graph",
+  "schema_version": 1,
+  "graph": {
+    "nodes": [
+      {"id": "host", "kind": "host_bridge",
+       "port_types": {"count": "u32", "words": "gpu:words", "sum": "u32"}},
+      {"id": "heap.make_placed"},
+      {"id": "heap.plus_one"},
+      {"id": "heap.sum"}
+    ],
+    "edges": [
+      {"from": {"node": 0, "port": "count"}, "to": {"node": 1, "port": "count"}},
+      {"from": {"node": 1, "port": "value"}, "to": {"node": 2, "port": "src"}},
+      {"from": {"node": 1, "port": "value"}, "to": {"node": 3, "port": "value"}},
+      {"from": {"node": 2, "port": "dst"}, "to": {"node": 0, "port": "words"}},
+      {"from": {"node": 3, "port": "sum"}, "to": {"node": 0, "port": "sum"}}
+    ]
+  }
+}"#;
+
+const PLACED_NODES: [&daedalus_registry::NodeRecord; 3] =
+    [&MAKE_PLACED_NODE, &PLUS_ONE_NODE, &SUM_NODE];
+
+/// The sum of the bytes of a value of `count` bytes.
+pub fn sum_on_cpu(count: u32) -> u32 {
+    (0..count).map(|at| u32::from((at * 7 + 3) as u8)).sum()
+}
+
+/// What a value made in the dma-buf space gave: the shader's words, the CPU node's sum, and the
+/// transfers the value went through to each reader, sorted.
+pub struct Placed {
+    pub words: Vec<u32>,
+    pub sum: u32,
+    pub route: Vec<String>,
+}
+
+/// Makes a value of `count` bytes in the dma-buf space, and reads it on the GPU and on the CPU.
+pub fn from_the_dmabuf_space(
+    gpu: &daedalus_wgpu::WgpuBackend,
+    count: u32,
+) -> Result<Placed, String> {
+    let mut route = route_of(PLACED_GRAPH, &PLACED_NODES, gpu)?;
+    route.sort();
+    let mut loaded = load(PLACED_GRAPH, &PLACED_NODES, gpu)?;
+    let host = loaded.host();
+    host.feed_typed("count", Arc::new(count))
+        .map_err(|error| error.to_string())?;
+    let words = when_ready(host, "words", |host, name| {
+        host.take::<Words>(name).map_err(|error| error.to_string())
+    })?;
+    let sum = when_ready(host, "sum", |host, name| {
+        host.take_copy::<u32>(name)
+            .map_err(|error| error.to_string())
+    })?;
+    Ok(Placed {
+        words: words.to_vec(),
+        sum,
+        route,
+    })
+}
+
+/// Plans the same graph with no backend that supplies the dma-buf space, and gives the planner's
+/// refusal.
+pub fn planned_without_the_space(gpu: &daedalus_wgpu::WgpuBackend) -> Result<(), String> {
+    super::planned_on(
+        PLACED_GRAPH,
+        &PLACED_NODES,
+        &[gpu, &daedalus_cpu::CpuBackend],
+    )
+    .map(drop)
+}
+
 /// The words the shader gives for a value of `count` bytes: each four bytes of the value read as a
 /// word, plus one.
 pub fn on_cpu(count: u32) -> Vec<u32> {
@@ -118,7 +210,16 @@ pub fn on_cpu(count: u32) -> Vec<u32> {
 /// The route the planner chose for the value's way into the shader: the transfers on it, by id.
 /// The value's type key is in each id, so only that route is listed.
 pub fn heap_route(gpu: &daedalus_wgpu::WgpuBackend) -> Result<Vec<String>, String> {
-    let planned = super::planned(GRAPH, &[&MAKE_NODE, &PLUS_ONE_NODE], gpu)?;
+    route_of(GRAPH, &[&MAKE_NODE, &PLUS_ONE_NODE], gpu)
+}
+
+/// The transfers the value goes through in `graph`, by id.
+fn route_of(
+    graph: &str,
+    nodes: &[&'static daedalus_registry::NodeRecord],
+    gpu: &daedalus_wgpu::WgpuBackend,
+) -> Result<Vec<String>, String> {
+    let planned = super::planned(graph, nodes, gpu)?;
     let routing = &planned.regions.routing;
     let mut ids = Vec::new();
     for reader in routing.readers.values() {

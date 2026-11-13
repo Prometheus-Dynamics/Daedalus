@@ -6,15 +6,18 @@
 //! only while the open device imports dma-bufs, and the planner takes it over the byte copy the
 //! type's [`HostBytes`](crate::HostBytes) would give, which is what a device that can't import
 //! gets. Whoever hands a dma-buf over answers for its contents being readable by a device.
+//!
+//! The value comes from the host's memory, or from the dma-buf space of `daedalus-dmabuf`, which
+//! is where a node that declares its output a dma-buf puts it.
 
 use std::marker::PhantomData;
-use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::os::fd::{AsFd, OwnedFd};
 use std::sync::Arc;
 
 use daedalus_abi::{OwnedStep, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{CompileCx, Refusal, Transfer, TransferCost};
+pub use daedalus_dmabuf::DmaBufBacked;
 use daedalus_runner::{UNSTAMPED, put_typed, typed_view};
-use daedalus_types::Typed;
 
 use crate::backend::WgpuBackend;
 use crate::buffer::Storage;
@@ -22,14 +25,6 @@ use crate::context::Context;
 use crate::handoff::on_device;
 use crate::memory::SPACE_DEVICE;
 use crate::transfer::{HOST_SPACE, intern};
-
-/// A type whose values are a dma-buf. The dma-buf holds the value's bytes.
-pub trait DmaBufBacked: Typed + Send + Sync + 'static {
-    /// The dma-buf that holds the value, and the value's length in it. A dma-buf can be longer
-    /// than its value: a dma-heap allocation is at least a page. `None` when the value has none
-    /// (a device without a dma-heap makes values as bytes only): such a value is never imported.
-    fn dmabuf(&self) -> Option<(BorrowedFd<'_>, u64)>;
-}
 
 fn fault(cx: &mut StepCx, reason: &str) -> StepEnd {
     cx.fault(None, reason);
@@ -133,15 +128,21 @@ impl WgpuBackend {
             Some(device) => format!("wgpu.{device}.import"),
             None => "wgpu.import".to_string(),
         };
-        let transfer = Transfer {
-            id: intern(format!("{base}:{}", T::KEY.as_str())),
+        // From the host, where a CPU node's value is, and from the dma-buf space, where a node
+        // that says its output is a dma-buf puts it. Both import the same dma-buf in place.
+        let from = |tag: &str, space: &'static str| Transfer {
+            id: intern(format!("{base}{tag}:{}", T::KEY.as_str())),
             key: Some(T::KEY),
-            from: std::borrow::Cow::Borrowed(HOST_SPACE),
+            from: std::borrow::Cow::Borrowed(space),
             to: on_device(device, SPACE_DEVICE),
             cost: TransferCost::Import,
             make: make_import::<T>(slot),
         };
-        self.link().offer_dma([transfer]);
+        let transfers = [
+            from("", HOST_SPACE),
+            from(".dmabuf", daedalus_dmabuf::SPACE),
+        ];
+        self.link().offer_dma(transfers);
         self
     }
 }

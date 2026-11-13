@@ -1,0 +1,20 @@
+[package]
+name = "daedalus-dmabuf"
+description = "The dma-buf memory space: a place a value can be, and the moves between it and the host."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["std"] }
+daedalus-backend = { path = "../../core/backend" }
+daedalus-runner = { path = "../../core/runner", features = ["std"] }
+daedalus-types = { path = "../../core/types" }
+
+[dev-dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["test-run"] }
+daedalus-types = { path = "../../core/types" }
+
+[lints]
+workspace = true

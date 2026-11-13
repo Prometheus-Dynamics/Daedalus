@@ -111,6 +111,22 @@ pub fn planned(
     nodes: &[&'static NodeRecord],
     gpu: &WgpuBackend,
 ) -> Result<Planned, String> {
+    // The dma-buf space, with the example's type listed in it. It runs no nodes.
+    #[cfg(target_os = "linux")]
+    {
+        let dmabuf = daedalus_dmabuf::DmaBufMemory::new().with::<dmabuf::HeapBytes>();
+        planned_on(graph, nodes, &[gpu, &daedalus_cpu::CpuBackend, &dmabuf])
+    }
+    #[cfg(not(target_os = "linux"))]
+    planned_on(graph, nodes, &[gpu, &daedalus_cpu::CpuBackend])
+}
+
+/// Plans `graph` for `backends`.
+pub fn planned_on(
+    graph: &str,
+    nodes: &[&'static NodeRecord],
+    backends: &[&dyn daedalus_backend::Backend],
+) -> Result<Planned, String> {
     let mut registry = Registry::new();
     registry
         .register_all(nodes)
@@ -118,13 +134,7 @@ pub fn planned(
     let graph = GraphDoc::parse(graph)
         .map_err(|error| error.to_string())?
         .graph;
-    plan(
-        &graph,
-        &registry,
-        &[gpu, &daedalus_cpu::CpuBackend],
-        &Config::default(),
-    )
-    .map_err(|error| error.to_string())
+    plan(&graph, &registry, backends, &Config::default()).map_err(|error| error.to_string())
 }
 
 /// Plans `graph` for the GPU and the CPU, and loads it.

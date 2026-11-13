@@ -311,7 +311,7 @@ impl From<&StitchError> for Diagnostic {
     fn from(error: &StitchError) -> Diagnostic {
         let code = match error {
             StitchError::NoTransfer { .. } => Code::NoTransfer,
-            StitchError::NoMemory { .. } => Code::NoMemory,
+            StitchError::NoMemory { .. } | StitchError::UnknownSpace { .. } => Code::NoMemory,
         };
         Diagnostic::error(code, error)
     }
