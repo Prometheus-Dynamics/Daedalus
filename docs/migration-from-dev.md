@@ -40,7 +40,8 @@ has the same thing by capability, one row each, and is checked by the gate.
   (`/etc/daedalusd/daedalusd.toml`, or the file `--config` names). The environment still sets one
   thing: the socket's directory, from `RUNTIME_DIRECTORY` (set by systemd), then `XDG_RUNTIME_DIR`.
 - The Rust-ABI plugin path, plugin fingerprints, and every versioned plugin handshake. A plugin
-  and a host compare one layout hash.
+  describes its layout a shape at a time and the host checks it fits: see
+  [plugins.md](plugins.md#the-check-at-load).
 - JSON and base64 on the worker path, and the payload handles and leases that went with them.
 - The separate MCU macro and node types. A chip uses the same `#[node]`.
 

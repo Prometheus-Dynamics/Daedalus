@@ -1,12 +1,14 @@
 //! The handshake a host runs against a plugin before any other call.
 
-use crate::{LAYOUT_HASH, Status};
+use crate::{FROZEN_HASH, Status};
 
 /// The symbol a plugin exports, holding one static [`AbiVersion`].
 pub const ABI_SYMBOL: &str = "daedalus_abi";
 
-/// The ABI this build speaks. The major stays 0 until a release is called.
-pub const DAEDALUS_ABI: AbiVersion = AbiVersion::new(0, 1, LAYOUT_HASH);
+/// The ABI this build speaks. The major stays 0 until a release is called. Its layout is
+/// [`FROZEN_HASH`]: what can't change without breaking a build made before. A field added to the
+/// end of a growable shape doesn't move it, so a caller built before the field is still accepted.
+pub const DAEDALUS_ABI: AbiVersion = AbiVersion::new(0, 1, FROZEN_HASH);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

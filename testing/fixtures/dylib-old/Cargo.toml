@@ -1,0 +1,12 @@
+[package]
+name = "daedalus-dylib-old-fixture"
+description = "A library with only the entry symbol plugins had before they described their shapes."
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+# Builds on its own, outside the root workspace.
+[workspace]

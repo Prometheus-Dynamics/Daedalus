@@ -150,25 +150,186 @@ fn a_panicking_node_is_a_fault_and_the_host_keeps_running() {
     release(step);
 }
 
-#[test]
-fn a_layout_mismatch_is_refused_before_any_record_is_read() {
-    // The loader always passes its own hash, so this calls the entry directly with another.
-    use daedalus_abi::{ENTRY_SYMBOL, EntryFn, LAYOUT_HASH, PluginEntry};
-    use std::mem::MaybeUninit;
-
+/// What the plugin at `path` says its shapes are.
+fn shapes_of(path: &std::path::Path) -> Vec<daedalus_abi::ShapeDesc> {
+    use daedalus_abi::{AbiDesc, SHAPES_SYMBOL, ShapesFn};
     // SAFETY: the fixture is a Daedalus plugin built from this workspace, as the test requires.
-    let library = unsafe { libloading::Library::new(fixture_library()) }.expect("opens");
-    // SAFETY: the symbol is the entry point, whose signature is `EntryFn`.
-    let entry: libloading::Symbol<'_, EntryFn> =
-        unsafe { library.get(ENTRY_SYMBOL) }.expect("symbol");
-    let mut out = MaybeUninit::<PluginEntry>::uninit();
-    let wrong = LAYOUT_HASH ^ 1;
-    // SAFETY: `out` is writable, and a plugin with another layout writes only its layout into it.
-    let status = unsafe { (*entry)(wrong, out.as_mut_ptr()) };
-    assert_eq!(status, Status::VERSION_MISMATCH);
-    // SAFETY: the plugin wrote its layout hash into the first field, at offset zero.
-    let found = unsafe { std::ptr::addr_of!((*out.as_ptr()).layout).read() };
-    assert_eq!(found, LAYOUT_HASH, "the plugin names its own layout");
+    let library = unsafe { libloading::Library::new(path) }.expect("opens");
+    // SAFETY: the symbol is the plugin's description of its shapes, whose signature is `ShapesFn`.
+    let describe: libloading::Symbol<'_, ShapesFn> =
+        unsafe { library.get(SHAPES_SYMBOL) }.expect("symbol");
+    let mut desc = AbiDesc {
+        shapes: std::ptr::null(),
+        count: 0,
+        reserved: 0,
+    };
+    // SAFETY: `desc` is a writable `AbiDesc`.
+    assert_eq!(unsafe { (*describe)(&mut desc) }, Status::OK);
+    // SAFETY: the plugin says `count` descriptors are at `shapes`, and it is still loaded.
+    unsafe { std::slice::from_raw_parts(desc.shapes, desc.count as usize) }.to_vec()
+}
+
+#[test]
+fn a_plugin_describes_the_shapes_this_host_has() {
+    let theirs = shapes_of(&fixture_library());
+    assert_eq!(theirs, daedalus_abi::DESCRIPTORS);
+    assert_eq!(daedalus_abi::fits(daedalus_abi::SHAPES, &theirs), Ok(()));
+}
+
+#[test]
+fn a_plugin_built_before_the_newest_fields_loads_and_runs() {
+    let library = support::baseline_library();
+    // It was built with a `StepCx` that ends before `detail` and `step`.
+    let theirs = shapes_of(&library);
+    let ours = daedalus_abi::SHAPES
+        .iter()
+        .find(|shape| shape.name == "StepCx")
+        .expect("the shape");
+    let their = daedalus_abi::find(&theirs, ours.id).expect("it describes StepCx");
+    assert_eq!(
+        (their.fields, ours.fields.len() as u16),
+        (ours.required, ours.required + 2),
+        "two fields fewer than this host"
+    );
+    assert!(their.extent < ours.desc().extent);
+    assert_ne!(theirs, daedalus_abi::DESCRIPTORS);
+
+    let mut loader = Loader::new();
+    let plugin = loader.open(&library).expect("an older plugin opens");
+    assert_eq!(plugin.name(), "dylib-fixture");
+    let backend = plugin.backend("fixture.cpu").expect("backend");
+
+    // A node of it runs on this host's context, which is larger than the one it knows.
+    let (nodes, inputs, outputs) = region_of("fixture.pass");
+    let region = RegionIn {
+        nodes: &nodes,
+        inputs: &inputs,
+        outputs: &outputs,
+    };
+    let mut units = backend.compile(&region).expect("compiles");
+    let mut payload = *b"x";
+    let mut cells = [Slot::EMPTY, Slot::EMPTY];
+    cells[0] = Slot {
+        state: SlotState::Full as u32,
+        data: payload.as_mut_ptr(),
+        len: 1,
+        cap: 1,
+        ..Slot::EMPTY
+    };
+    let mut cx = StepCx::new();
+    let kept = daedalus_abi::testing::keep_detail(&mut cx);
+    cx.step = 7;
+    let mut step = units.pop().expect("unit").step;
+    let end = run_once(&mut step, &mut Slots::of(&mut cells), &mut cx);
+    assert!(matches!(end, StepEnd::Done));
+    assert_eq!(cells[1].bytes(), Some(&b"x"[..]));
+    release(step);
+
+    // One that fails gives its reason as ever. It has no way to give a detail, and it leaves the
+    // fields it doesn't know as the host set them.
+    let (nodes, inputs, outputs) = region_of("fixture.boom");
+    let region = RegionIn {
+        nodes: &nodes,
+        inputs: &inputs,
+        outputs: &outputs,
+    };
+    let mut units = backend.compile(&region).expect("compiles");
+    let mut cells = [Slot::EMPTY, Slot::EMPTY];
+    cells[0] = Slot {
+        state: SlotState::Full as u32,
+        data: payload.as_mut_ptr(),
+        len: 1,
+        cap: 1,
+        ..Slot::EMPTY
+    };
+    let mut step = units.pop().expect("unit").step;
+    let end = run_once(&mut step, &mut Slots::of(&mut cells), &mut cx);
+    assert!(matches!(end, StepEnd::Fault));
+    assert_eq!(cx.reason(), "panicked: boom: the node panicked on purpose");
+    assert_eq!(
+        kept.text(),
+        "",
+        "it was built before a step could give a detail"
+    );
+    assert_eq!(cx.step, 7);
+    assert!(cx.wants_detail(), "the host's sink is still set");
+    release(step);
+}
+
+#[test]
+fn a_plugin_from_before_plugins_described_their_shapes_is_refused_in_words() {
+    let library = support::old_library();
+    let mut loader = Loader::new();
+    let error = match loader.open(&library) {
+        Err(error) => error,
+        Ok(_) => panic!("a library with only the old entry point opened"),
+    };
+    assert!(matches!(error, LoadError::Older { .. }), "{error}");
+    let said = error.to_string();
+    assert!(
+        said.contains("built for an older Daedalus") && said.contains("build it again"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_plugin_whose_shapes_dont_fit_is_named_with_the_shape() {
+    use daedalus_abi::{Mismatch, SHAPES, fits};
+    let step_cx = SHAPES
+        .iter()
+        .find(|shape| shape.name == "StepCx")
+        .expect("the shape");
+    let at = |theirs: &[daedalus_abi::ShapeDesc]| {
+        theirs
+            .iter()
+            .position(|shape| shape.id == step_cx.id)
+            .expect("described")
+    };
+
+    // A plugin built against a Daedalus with two more fields in `StepCx` than this host has.
+    let mut theirs = shapes_of(&fixture_library());
+    let index = at(&theirs);
+    theirs[index].fields += 2;
+    theirs[index].extent += 16;
+    let here = step_cx.fields.len() as u16;
+    let why = fits(SHAPES, &theirs).expect_err("newer than the host");
+    assert_eq!(
+        why,
+        Mismatch::Newer {
+            shape: "StepCx",
+            here,
+            there: here + 2
+        }
+    );
+    let error = LoadError::Shapes {
+        path: "newer.so".into(),
+        why,
+    };
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "newer.so: this plugin needs a newer host: StepCx has {here} fields here, {} there",
+            here + 2
+        )
+    );
+
+    // One whose `StepCx` has the same fields, laid out another way.
+    let mut theirs = shapes_of(&fixture_library());
+    let index = at(&theirs);
+    theirs[index].hash ^= 1;
+    let why = fits(SHAPES, &theirs).expect_err("laid out differently");
+    assert_eq!(
+        why,
+        Mismatch::Moved {
+            shape: "StepCx",
+            fields: here
+        }
+    );
+    assert!(
+        why.to_string()
+            .contains(&format!("the first {here} fields of StepCx")),
+        "{why}"
+    );
 }
 
 #[test]

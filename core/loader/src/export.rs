@@ -3,10 +3,9 @@
 //! wrapped in a panic guard, so a panic in a node is a fault and never crosses the boundary.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::ptr;
 
 use daedalus_abi::{
-    BackendTable, ByteCodecFn, BytesC, CodecC, LAYOUT_HASH, NodeC, OwnedStep, PluginEntry, PortC,
+    BackendTable, ByteCodecFn, BytesC, CodecC, NodeC, OwnedStep, PluginEntry, PortC,
     ProduceBytesFn, RegionView, Slots, Status, Step, StepCx, StepEnd, Text, UnitOut, guard_or,
 };
 use daedalus_abi::{CanTakeFn, CompileFn, write_out};
@@ -103,14 +102,31 @@ impl OwnedStep for NodeStep {
     }
 }
 
-/// Writes the entry for plugin `P`. Called by the generated `daedalus_plugin_entry`.
+/// Writes this build's shape descriptors, which the host checks before it calls the entry.
+/// Called by the generated `daedalus_plugin_shapes`.
 ///
 /// # Safety
-/// `out` must point at a `PluginEntry` the caller owns and may write. The loader passes one.
-pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> Status {
-    if host_layout != LAYOUT_HASH {
-        // SAFETY: `out` is writable, and the layout is its first field at offset zero.
-        unsafe { ptr::addr_of_mut!((*out).layout).write(LAYOUT_HASH) };
+/// `out` must point at an `AbiDesc` the caller owns and may write. The loader passes one.
+pub unsafe fn shapes(out: *mut daedalus_abi::AbiDesc) -> Status {
+    if out.is_null() {
+        return Status::from_errno(22);
+    }
+    // SAFETY: `out` is writable, as this function's contract says.
+    unsafe { out.write(daedalus_abi::abi_desc()) };
+    Status::OK
+}
+
+/// Writes the entry for plugin `P`. Called by the generated `daedalus_plugin_describe`, after
+/// the host has checked this build's shapes against its own.
+///
+/// # Safety
+/// `out` must point at `room` bytes the caller owns and may write. The loader passes a
+/// `PluginEntry` of its own, which is at least this build's when the shapes fit.
+pub unsafe fn entry<P: PluginSpec>(out: *mut PluginEntry, room: usize) -> Status {
+    if out.is_null() {
+        return Status::from_errno(22);
+    }
+    if room < size_of::<PluginEntry>() {
         return Status::VERSION_MISMATCH;
     }
     let def = P::def();
@@ -154,7 +170,6 @@ pub unsafe fn entry<P: PluginSpec>(host_layout: u64, out: *mut PluginEntry) -> S
     let codec_ptr = hand_over(codecs);
     let produce = def.produce.map(|_| produce_at::<P> as ProduceBytesFn);
     let entry = PluginEntry {
-        layout: LAYOUT_HASH,
         name: Text::of(def.name),
         nodes: node_ptr.0,
         node_count: node_ptr.1,
@@ -497,7 +512,8 @@ unsafe extern "C" fn compile_at<P: PluginSpec, const I: usize>(
     })
 }
 
-/// Declares a plugin: writes `daedalus_plugin_entry`, which the loader calls.
+/// Declares a plugin: writes `daedalus_plugin_shapes` and `daedalus_plugin_describe`, which the
+/// loader calls in that order.
 ///
 /// ```ignore
 /// static NODES: [daedalus_loader::export::NodeDef; 1] = [/* ... */];
@@ -519,17 +535,30 @@ macro_rules! export_plugin {
             }
         }
 
-        /// The entry point the loader calls. It checks the layout hash before anything else.
+        /// Describes this build's shapes to the loader, which checks them before anything
+        /// else.
         ///
         /// # Safety
-        /// Called by the loader with a `PluginEntry` it owns.
+        /// Called by the loader with an `AbiDesc` it owns.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn daedalus_plugin_entry(
-            host_layout: u64,
+        pub unsafe extern "C" fn daedalus_plugin_shapes(
+            out: *mut $crate::abi::AbiDesc,
+        ) -> $crate::abi::Status {
+            // SAFETY: the loader passes an `AbiDesc` it owns, as `shapes` requires.
+            unsafe { $crate::export::shapes(out) }
+        }
+
+        /// The entry point the loader calls, once it has found this build's shapes to fit.
+        ///
+        /// # Safety
+        /// Called by the loader with `room` bytes of a `PluginEntry` it owns.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn daedalus_plugin_describe(
             out: *mut $crate::abi::PluginEntry,
+            room: usize,
         ) -> $crate::abi::Status {
             // SAFETY: the loader passes a `PluginEntry` it owns, as `entry` requires.
-            unsafe { $crate::export::entry::<__DaedalusPluginSpec>(host_layout, out) }
+            unsafe { $crate::export::entry::<__DaedalusPluginSpec>(out, room) }
         }
     };
 }
