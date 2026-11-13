@@ -92,7 +92,7 @@ pub(crate) unsafe fn read_node(node: &NodeC, path: &Path) -> Result<OwnedDecl, L
         source,
         inputs,
         outputs,
-        body: OwnedBody { backend, text },
+        body: OwnedBody::text(backend, text),
         conversion: None,
     })
 }

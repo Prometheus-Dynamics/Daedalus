@@ -253,6 +253,7 @@ fn conversion(
         body: OwnedBody {
             backend: backend.to_owned(),
             text: text.to_owned(),
+            code: None,
         },
         conversion: Some(meta),
     })

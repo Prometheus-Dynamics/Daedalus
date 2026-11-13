@@ -70,6 +70,14 @@ impl Worker {
         telemetry: &Arc<Telemetry>,
     ) -> Result<Worker, ProcessError> {
         let mut command = Command::new(&spec.program);
+        // What the worker doesn't inherit is taken away first, so a variable the spec also sets
+        // is set.
+        if spec.env_clear {
+            command.env_clear();
+        }
+        for key in &spec.env_remove {
+            command.env_remove(key);
+        }
         command
             .args(&spec.args)
             .envs(spec.env.iter().map(|(key, value)| (key, value)))

@@ -41,9 +41,23 @@ let planned = plan(&graph, &registry, &[&workers, &CpuBackend], &Config::default
 - A worker says what it serves in its hello: each node's id, ports and types. Each is checked
   against the registry's declaration of that node, and a worker that disagrees with it is
   refused, naming the program and the node.
+- A host that has never met a worker doesn't have to write its nodes out first:
+  `workers.add_worker_declaring(spec, &mut registry)` registers the nodes the worker declares that
+  the registry doesn't have, with the process backend as their body, and returns their ids. A node
+  the registry already has is still checked, and a worker that disagrees is still refused.
+  `daedalus_backend_process::owned_decl` and `type_expr` are the same translation, for a host that
+  reads a hello itself.
 - Nodes with equal specs share one worker process.
 - A run has an optional deadline. When it passes, the worker is sent a cancel, given a grace
   period, and then killed. Only the process the backend itself started is ever killed.
+- A worker that fails (it exits, or its channel breaks) is started again after a wait that
+  doubles from 100 ms to 8 s. The failure is one fault. Until the next start is due, a run for that
+  worker is skipped with the reason "backing off", which is not another fault and never sleeps on
+  the tick. A worker the host stopped itself, at a deadline or a cancel it didn't answer, is
+  started again by the next run with no wait.
+- A worker inherits the host's environment. `WorkerSpec::env(key, value)` sets a variable,
+  `env_remove(key)` keeps one of the host's from it, and `env_clear()` starts it with only what
+  the spec sets. `cwd(path)` says where it starts.
 - A host's cancel of a tick is sent to the worker as well: the backend checks the step's cancel
   word every few milliseconds while it waits for the worker's outputs. The worker's node sees it
   through `cancelled()` and ends its run cancelled, and the step is reported as a fault with the

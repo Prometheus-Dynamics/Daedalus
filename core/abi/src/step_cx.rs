@@ -122,6 +122,21 @@ impl StepCx {
         self.reason_len = end as u32;
     }
 
+    /// Records a panic: the reason is `panicked: ` and then what the panic said, cut to
+    /// [`REASON_CAPACITY`] bytes on a char boundary. The node a body named before it panicked
+    /// is kept.
+    pub fn fault_panic(&mut self, message: &str) {
+        const PREFIX: &str = "panicked: ";
+        let room = REASON_CAPACITY - PREFIX.len();
+        let mut end = message.len().min(room);
+        while !message.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.reason[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
+        self.reason[PREFIX.len()..PREFIX.len() + end].copy_from_slice(&message.as_bytes()[..end]);
+        self.reason_len = (PREFIX.len() + end) as u32;
+    }
+
     /// Records a body's error: its code, and at most [`ERROR_REASON_CAPACITY`] bytes of its reason.
     pub fn fail(&mut self, at: u32, error: &impl FixedError) {
         let reason = error.reason();

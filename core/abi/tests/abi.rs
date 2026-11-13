@@ -167,6 +167,59 @@ fn step_of_carries_its_word_and_turns_a_panic_into_a_fault() {
         call(&Step::of::<AddWord>(99), &mut slots, &mut cx),
         StepEnd::Fault
     ));
+    assert_eq!(
+        cx.reason(),
+        "panicked: a body panicked",
+        "what the panic said"
+    );
+}
+
+struct Says(&'static str);
+impl OwnedStep for Says {
+    fn run(&mut self, _: &mut Slots, cx: &mut StepCx) -> StepEnd {
+        // A body that names its node before it fails keeps that name.
+        cx.at = 7;
+        match self.0 {
+            "formatted" => panic!("value {} is out of range", 300),
+            "payload" => std::panic::panic_any(42_u32),
+            long => panic!("{}", long.repeat(200)),
+        }
+    }
+}
+
+#[test]
+fn a_panics_message_is_the_faults_reason() {
+    let reason_of = |what: &'static str| {
+        let mut cx = StepCx::new();
+        let step = Step::boxed(Says(what));
+        assert!(matches!(
+            call(&step, &mut no_slots(), &mut cx),
+            StepEnd::Fault
+        ));
+        step.discard();
+        (cx.at, cx.reason().to_string())
+    };
+    assert_eq!(
+        reason_of("formatted"),
+        (7, "panicked: value 300 is out of range".into())
+    );
+    assert_eq!(
+        reason_of("payload"),
+        (7, "panicked: a panic with no message".into())
+    );
+    // A long message is cut to the room there is, on a char boundary.
+    let (_, long) = reason_of("é");
+    assert!(long.starts_with("panicked: ééé"), "{long}");
+    assert!(
+        long.len() <= daedalus_abi::REASON_CAPACITY,
+        "{}",
+        long.len()
+    );
+    assert!(
+        long.len() >= daedalus_abi::REASON_CAPACITY - 1,
+        "cut, not dropped: {}",
+        long.len()
+    );
 }
 
 struct Owned(u32, std::sync::Arc<AtomicUsize>);

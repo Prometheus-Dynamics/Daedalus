@@ -10,6 +10,7 @@
 
 mod backoff;
 mod child;
+mod declare;
 mod error;
 mod reader;
 mod region;
@@ -18,6 +19,7 @@ mod supervise;
 mod telemetry;
 
 pub use backoff::{BASE_DELAY, MAX_DELAY, delay_after};
+pub use declare::{owned_decl, type_expr};
 pub use error::ProcessError;
 pub use region::{BACKEND_ID, HOST, ProcessBackend};
 pub use spec::WorkerSpec;

@@ -124,7 +124,11 @@ fn a_panicking_node_is_a_fault_and_the_host_keeps_running() {
     let end = run_once(&mut step, &mut Slots::of(&mut cells), &mut cx);
     assert!(matches!(end, StepEnd::Fault));
     assert_eq!(cx.at, 0, "the fault names the node");
-    assert_eq!(cx.reason(), "node panicked");
+    assert_eq!(
+        cx.reason(),
+        "panicked: boom: the node panicked on purpose",
+        "the reason is what the panic said"
+    );
     release(step);
 
     // The same backend still runs a passing node afterwards.

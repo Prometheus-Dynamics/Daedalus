@@ -155,6 +155,10 @@ node is tried again. After three failures in a row it backs off, with a delay th
 never exceeds its cap. Nothing turns a node off by itself. An operator can turn one off by hand,
 and automatic turning-off exists only as a policy a host opts into.
 
+A node that panics is a fault like any other, and the fault's reason is `panicked: ` and then
+what the panic said, cut to 120 bytes. It is the same for a node in the host's own process, in a
+plugin library and in a Rust worker, whose reason reads `node panicked: ...`.
+
 ## One node, several backends
 
 The id is the node. Two `#[node]` items with the same id and the same ports, each naming another
@@ -185,6 +189,21 @@ A port is in its backend's own memory unless the node says otherwise: `memory(ou
 puts the port `out` in the memory space named `dmabuf`, and the planner moves the value from there
 to whoever reads it. The space has to be one a backend in the plan supplies. Almost nothing needs
 this. See [foreign-values.md](foreign-values.md).
+## A node made at run time
+
+`#[node]` declares a node when the program is built. A host that only knows a node while it runs
+declares it with `Registry::register_owned`, giving an `OwnedDecl`: the id, the ports with their
+types, and one body.
+
+- A body that is only text is `OwnedBody::text(backend, text)`. That is what a worker's node has.
+- A body with code in this process is `OwnedBody::code(backend, text, code)`, where `code` is
+  whatever the named backend reads as a body's code. The registry never looks inside it.
+- For the CPU backend that code is a `daedalus_cpu::steps::CpuStepBody`: a closure that builds
+  the node's step, and can hold whatever the host knew when it made the node. Such a node runs as
+  a step in this process. It can't be merged with its neighbours' code or written out as a blob
+  or as source, since it has no function to name.
+- A declaration is kept for the life of the process, as every record is. The same declaration
+  registered again reuses its record, and one with other code is another declaration.
 
 ## Graph documents
 

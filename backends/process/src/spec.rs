@@ -11,7 +11,12 @@ use daedalus_wire::DEFAULT_CAP;
 pub struct WorkerSpec {
     pub program: PathBuf,
     pub args: Vec<String>,
+    /// Variables set for the worker, over what it inherits.
     pub env: Vec<(String, String)>,
+    /// Start the worker with none of the host's environment: only `env` is set.
+    pub env_clear: bool,
+    /// Variables of the host's that the worker doesn't inherit.
+    pub env_remove: Vec<String>,
     pub cwd: Option<PathBuf>,
     /// The longest a region may run. `None` means no deadline.
     pub deadline: Option<Duration>,
@@ -31,6 +36,8 @@ impl WorkerSpec {
             program: program.into(),
             args: Vec::new(),
             env: Vec::new(),
+            env_clear: false,
+            env_remove: Vec::new(),
             cwd: None,
             deadline: None,
             startup: Duration::from_secs(5),
@@ -50,6 +57,26 @@ impl WorkerSpec {
         self
     }
 
+    /// Starts the worker with none of the host's environment. What [`WorkerSpec::env`] sets is
+    /// still set, whichever is called first.
+    pub fn env_clear(mut self) -> WorkerSpec {
+        self.env_clear = true;
+        self
+    }
+
+    /// Keeps one of the host's variables from the worker. A variable [`WorkerSpec::env`] also
+    /// sets is set.
+    pub fn env_remove(mut self, key: impl Into<String>) -> WorkerSpec {
+        self.env_remove.push(key.into());
+        self
+    }
+
+    /// Where the worker starts. By default it is where the host is.
+    pub fn cwd(mut self, cwd: impl Into<PathBuf>) -> WorkerSpec {
+        self.cwd = Some(cwd.into());
+        self
+    }
+
     pub fn deadline(mut self, deadline: Duration) -> WorkerSpec {
         self.deadline = Some(deadline);
         self
@@ -65,6 +92,8 @@ impl WorkerSpec {
         self.program == other.program
             && self.args == other.args
             && self.env == other.env
+            && self.env_clear == other.env_clear
+            && self.env_remove == other.env_remove
             && self.cwd == other.cwd
             && self.deadline == other.deadline
             && self.startup == other.startup

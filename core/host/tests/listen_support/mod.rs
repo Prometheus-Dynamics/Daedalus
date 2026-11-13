@@ -270,6 +270,7 @@ pub fn registry() -> Registry {
                 body: OwnedBody {
                     backend: "t".to_string(),
                     text: id.to_string(),
+                    code: None,
                 },
                 conversion: None,
             })

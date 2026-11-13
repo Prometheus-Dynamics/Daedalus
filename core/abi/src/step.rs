@@ -1,6 +1,6 @@
 //! One unit of work: a function pointer and its data.
 
-use crate::{Fence, Slots, StepCx, guard_or};
+use crate::{Fence, Slots, StepCx, guard_step};
 
 /// How a step ended.
 #[repr(C, u32)]
@@ -42,7 +42,7 @@ unsafe extern "C" fn run_word<F: StepWord>(
 ) -> StepEnd {
     // SAFETY: the runner passes valid pointers it holds exclusively for this call.
     let (slots, cx) = unsafe { (&mut *slots, &mut *cx) };
-    guard_or(StepEnd::Fault, || F::run(data.addr(), slots, cx))
+    guard_step(cx, |cx| F::run(data.addr(), slots, cx))
 }
 
 impl Step {
@@ -71,7 +71,7 @@ unsafe extern "C" fn run_owned<D: OwnedStep>(
     // SAFETY: `data` came from `Box::into_raw` in `Step::boxed` and isn't released until the plan
     // is dropped. The runner passes valid pointers it holds exclusively for this call.
     let (body, slots, cx) = unsafe { (&mut *data.cast::<D>(), &mut *slots, &mut *cx) };
-    guard_or(StepEnd::Fault, || body.run(slots, cx))
+    guard_step(cx, |cx| body.run(slots, cx))
 }
 
 impl Step {

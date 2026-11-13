@@ -38,7 +38,16 @@ pub(crate) fn step_of(
     body: &NodeBody<'_>,
     cx: &CompileCx<'_>,
 ) -> Result<Step, Refusal> {
-    let Some(cpu) = body.code.downcast_ref::<CpuBody>() else {
+    // A body is a `#[node]` function, or a closure a host made at run time.
+    enum Make<'b> {
+        Function(&'b CpuBody),
+        Closure(&'b crate::body::CpuStepBody),
+    }
+    let make = if let Some(cpu) = body.code.downcast_ref::<CpuBody>() {
+        Make::Function(cpu)
+    } else if let Some(made) = body.code.downcast_ref::<crate::body::CpuStepBody>() {
+        Make::Closure(made)
+    } else {
         return Err(Refusal::new(vec![node], "this body isn't a CPU function"));
     };
     let keep: Vec<Keep> = (0..body.outputs)
@@ -58,7 +67,11 @@ pub(crate) fn step_of(
         consts: cx.consts,
         keep: &keep,
     };
-    (cpu.make)(&setup).map_err(|reason| Refusal::new(vec![node], &reason))
+    match make {
+        Make::Function(cpu) => (cpu.make)(&setup),
+        Make::Closure(made) => (made.make)(&setup),
+    }
+    .map_err(|reason| Refusal::new(vec![node], &reason))
 }
 
 /// What the planner says an output keeps between ticks.
