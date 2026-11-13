@@ -306,6 +306,10 @@ pub struct GroupDoc {
     pub outputs: BTreeMap<String, StagePortDoc>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub consts: Vec<StageConstDoc>,
+    /// Metadata a stage's node carries, by stage name. It is laid over what the stage inherits
+    /// from the group's own node, so a key set here wins.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, BTreeMap<String, Lit>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
