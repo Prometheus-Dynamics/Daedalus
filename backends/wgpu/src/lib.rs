@@ -18,6 +18,7 @@ mod fence_tests;
 pub mod fragment;
 pub mod handoff;
 mod host_bytes;
+mod import_state;
 mod inflight;
 mod lease;
 mod loss;

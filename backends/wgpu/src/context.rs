@@ -45,6 +45,8 @@ pub(crate) struct Context {
     /// Held around every call that can submit on `queue`.
     pub(crate) submit: daedalus_vk_sys::SubmitLock,
     pub(crate) record: CapsRecord,
+    /// Whether the device imports a dma-buf, as far as anything has tried.
+    pub(crate) imports: crate::import_state::ImportState,
     pub(crate) limits: wgpu::Limits,
     /// Unique to this device in this process.
     pub(crate) key: u64,
@@ -156,6 +158,11 @@ impl Context {
         options: &Options,
     ) -> Context {
         let limits = device.limits();
+        let (caps, imports) = with_heap(
+            CapsRecord::new(info, &limits, device.features()),
+            &device,
+            options,
+        );
         let errors = Arc::new(PendingErrors::default());
         let record = Arc::clone(&errors);
         device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
@@ -180,11 +187,8 @@ impl Context {
             passes: AtomicU64::new(0),
             dispatches: AtomicU64::new(0),
             moved: crate::transfer::Counters::default(),
-            record: with_heap(
-                CapsRecord::new(info, &limits, device.features()),
-                &device,
-                options.no_dma_heap,
-            ),
+            record: caps,
+            imports,
             limits,
             device,
             queue,
@@ -439,24 +443,43 @@ fn imports_heap_buffers(device: &wgpu::Device, read_only: bool) -> bool {
     import_dma_buf(device, buf.into_fd(), TRIAL, have, None).is_ok()
 }
 
-/// The record with `dma_heap` set: the system heap opens and the device imports a buffer from
-/// it, which is tried once here.
-fn with_heap(record: CapsRecord, device: &wgpu::Device, no_dma_heap: bool) -> CapsRecord {
+/// What is known of the device's dma-buf imports when it opens, and the record with what that
+/// means for placing outputs: `dma_heap` is set when the system heap opens and the device
+/// imports a buffer from it, which is tried once here. A process that can't open the heap tries
+/// nothing, and its answers are unknown.
+fn with_heap(
+    record: CapsRecord,
+    device: &wgpu::Device,
+    options: &Options,
+) -> (CapsRecord, crate::import_state::ImportState) {
+    use crate::import_state::ImportState;
     #[cfg(target_os = "linux")]
-    let dma_heap = !no_dma_heap && imports_heap_buffers(device, false);
-    // An fd that only allows reading is a second question: a driver may map what it imports.
-    #[cfg(target_os = "linux")]
-    let dma_read_only = dma_heap && imports_heap_buffers(device, true);
-    #[cfg(not(target_os = "linux"))]
-    let dma_read_only = false;
-    #[cfg(not(target_os = "linux"))]
-    let dma_heap = {
-        let _ = (device, no_dma_heap);
-        false
+    let (writable, read_only) = {
+        let can = daedalus_vk_sys::memory::imports_dma_buf(device);
+        let heap = !options.no_heap_access && daedalus_dma_sys::DmaHeap::open("system").is_ok();
+        if options.no_dma_heap || !can {
+            (Some(false), Some(false))
+        } else if !heap {
+            (None, None)
+        } else {
+            let writable = imports_heap_buffers(device, false);
+            // An fd that only allows reading is a second question: a driver may map what it
+            // imports.
+            (
+                Some(writable),
+                Some(writable && imports_heap_buffers(device, true)),
+            )
+        }
     };
-    CapsRecord {
-        dma_heap,
-        dma_read_only,
+    #[cfg(not(target_os = "linux"))]
+    let (writable, read_only) = {
+        let _ = (device, options);
+        (Some(false), Some(false))
+    };
+    let record = CapsRecord {
+        dma_heap: writable == Some(true),
+        dma_read_only: read_only == Some(true),
         ..record
-    }
+    };
+    (record, ImportState::new(writable, read_only))
 }
