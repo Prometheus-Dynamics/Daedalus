@@ -38,7 +38,7 @@ pub(crate) struct Link {
     /// Moves that import a value's dma-buf, added by `with_dmabuf`. Listed only while the open
     /// device imports dma-bufs, so a plan made without one never asks for an import.
     #[cfg(target_os = "linux")]
-    dma: Mutex<Vec<Transfer>>,
+    dma: Mutex<Vec<(Transfer, bool)>>,
     state: Mutex<State>,
 }
 
@@ -79,21 +79,26 @@ impl Link {
 
     /// Adds moves that import a dma-buf. One already listed, by id, is left as it is.
     #[cfg(target_os = "linux")]
-    pub(crate) fn offer_dma(&self, more: impl IntoIterator<Item = Transfer>) {
+    /// `read_only` says the type's fds only allow reading, which not every device imports.
+    pub(crate) fn offer_dma(&self, more: impl IntoIterator<Item = Transfer>, read_only: bool) {
         let mut dma = self.dma.lock().unwrap_or_else(PoisonError::into_inner);
         for transfer in more {
-            if dma.iter().all(|have| have.id != transfer.id) {
-                dma.push(transfer);
+            if dma.iter().all(|(have, _)| have.id != transfer.id) {
+                dma.push((transfer, read_only));
             }
         }
     }
 
+    /// The imports a device can run: every one, or without those of read-only fds.
     #[cfg(target_os = "linux")]
-    fn dma(&self) -> Vec<Transfer> {
+    fn dma(&self, takes_read_only: bool) -> Vec<Transfer> {
         self.dma
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+            .iter()
+            .filter(|(_, read_only)| takes_read_only || !read_only)
+            .map(|(transfer, _)| transfer.clone())
+            .collect()
     }
 
     pub(crate) fn named_as(&self) -> Option<&crate::devices::Named> {
@@ -359,7 +364,10 @@ impl Backend for WgpuBackend {
         let mut table = crate::handoff::transfers(self.link.named.as_ref(), heap);
         #[cfg(target_os = "linux")]
         if heap {
-            table.extend(self.link.dma());
+            let takes_read_only = self
+                .open_context()
+                .is_some_and(|context| context.record.dma_read_only);
+            table.extend(self.link.dma(takes_read_only));
         }
         #[cfg(not(target_os = "linux"))]
         let _ = heap;

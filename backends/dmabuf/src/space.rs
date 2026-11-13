@@ -17,6 +17,12 @@ use crate::{HOST_SPACE, SPACE};
 
 /// A type whose values are a dma-buf. The dma-buf holds the value's bytes.
 pub trait DmaBufBacked: Typed + Send + Sync + 'static {
+    /// Whether the type's dma-bufs only allow reading: fds a producer hands out so that a reader
+    /// can't map the buffer and write it. Not every device takes one (a software renderer maps
+    /// the buffer for writing), so a backend lists its import of such a type only where its
+    /// device does, and the planner copies the value elsewhere.
+    const READ_ONLY: bool = false;
+
     /// The dma-buf that holds the value, and the value's length in it. A dma-buf can be longer
     /// than its value: a dma-heap allocation is at least a page. `None` when this value has none,
     /// as on a machine with no dma-heap: such a value stays on the host.

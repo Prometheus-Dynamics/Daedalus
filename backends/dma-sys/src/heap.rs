@@ -31,12 +31,24 @@ impl DmaHeap {
 
     /// A new dma-buf of at least `len` bytes. The kernel rounds up to whole pages.
     pub fn allocate(&self, len: u64) -> Result<DmaBuf, Error> {
+        self.allocate_with(len, libc::O_RDWR)
+    }
+
+    /// As [`DmaHeap::allocate`], with an fd that only allows reading: it can't be mapped for
+    /// writing. The buffer starts zeroed, and only something that imports it can write it. For
+    /// checking what a reader of such an fd can do. The kernel has no call that makes a second,
+    /// read-only fd of a buffer from a writable one: only the buffer's exporter can.
+    pub fn allocate_read_only(&self, len: u64) -> Result<DmaBuf, Error> {
+        self.allocate_with(len, libc::O_RDONLY)
+    }
+
+    fn allocate_with(&self, len: u64, access: libc::c_int) -> Result<DmaBuf, Error> {
         if len == 0 {
             return Err(Error::Range);
         }
         let mut request = HeapAllocation {
             len,
-            fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
+            fd_flags: (access | libc::O_CLOEXEC) as u32,
             ..HeapAllocation::default()
         };
         // SAFETY: the argument is the struct this ioctl reads and writes, alive for the call.
