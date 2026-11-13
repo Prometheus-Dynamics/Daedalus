@@ -1,6 +1,5 @@
 //! The timings the board records asked for that had no section: a region of small shader nodes
-//! against the same nodes submitted one at a time, a fragment pass with a box filter at 3x3 and
-//! 5x5, the record and submit of one dispatch, the time source a timed pass reports, and a 1 MiB
+//! against the same nodes submitted one at a time, one fragment pass, the record and submit of one dispatch, the time source a timed pass reports, and a 1 MiB
 //! dma-heap buffer's allocate, map, read and fence. Each is the median of the timed runs after
 //! warm-up, as the record's procedure asks.
 
@@ -11,7 +10,9 @@ use daedalus_wgpu::shader::{BindingKind, BindingSpec, Bound, Dispatch, Run, Shad
 use daedalus_wgpu::{Format, Storage, Texture, TextureDesc, TimeSource, WgpuBackend};
 use daedalus_wgpu_conformance::{COPY, In, Net, Op, filled, port, run};
 
-use super::{MIB, RUNS, WARM, median, median_of, ms, pattern, us};
+#[cfg(target_os = "linux")]
+use super::{MIB, pattern};
+use super::{RUNS, WARM, median, median_of, ms, us};
 
 /// Elements of the small ops, as the region test uses them.
 const ELEMENTS: u64 = 1000;
@@ -96,62 +97,39 @@ pub fn region8(backend: &WgpuBackend) {
     );
 }
 
-/// A box filter over the input's texels, as WGSL: the mean of the `radius`-neighbourhood, clamped at
-/// the edges, in one red channel. Nothing in the crate names a box filter; the record needs one.
-fn box_wgsl(radius: i32, width: u32, height: u32) -> String {
-    format!(
-        "@group(0) @binding(0) var src: texture_2d<f32>;
-         @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {{
-             let p = vec2<i32>(pos.xy);
-             var sum = 0.0;
-             for (var dy = -{radius}; dy <= {radius}; dy++) {{
-                 for (var dx = -{radius}; dx <= {radius}; dx++) {{
-                     let q = clamp(p + vec2<i32>(dx, dy), vec2<i32>(0), vec2<i32>({w}, {h}));
-                     sum += textureLoad(src, q, 0).r;
-                 }}
-             }}
-             let n = f32(({side}) * ({side}));
-             return vec4<f32>(sum / n, 0.0, 0.0, 1.0);
-         }}",
-        w = width - 1,
-        h = height - 1,
-        side = 2 * radius + 1,
-    )
-}
-
-/// A box filter on an R8 target of 1280x800, 3x3 and 5x5: submit to done, median of 200 after 20
-/// warm-up runs.
-pub fn fragment_box(backend: &WgpuBackend) {
-    let (width, height) = (1280u32, 800u32);
+/// One fragment pass over a 1280x800 one-channel target: each texel is computed from the input's
+/// texel at the same place and no other. Submit to done, median of 200 after 20 warm-up runs.
+pub fn fragment_pass(backend: &WgpuBackend) {
+    const WGSL: &str = "@group(0) @binding(0) var src: texture_2d<f32>;
+         @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+             let v = textureLoad(src, vec2<i32>(pos.xy), 0).r;
+             return vec4<f32>(v * 0.5 + 0.25, 0.0, 0.0, 1.0);
+         }";
     let desc = TextureDesc {
         format: Format::R8,
-        width,
-        height,
+        width: 1280,
+        height: 800,
     };
     let src = Texture::new(backend, desc).expect("a texture");
     let dst = Texture::new(backend, desc).expect("a texture");
-    for radius in [1, 2] {
-        let label = if radius == 1 { "3x3" } else { "5x5" };
-        let pass = match FragmentPass::new(backend, &box_wgsl(radius, width, height), &[Format::R8])
-        {
-            Ok(pass) => pass,
-            Err(error) => {
-                println!("box {label}: refused: {error}");
-                continue;
-            }
-        };
-        let binding = pass.bind(&[&src], &[]).expect("binds");
-        let time = median(20, 200, || {
-            pass.run_bound(&binding, &[&dst])
-                .expect("draws")
-                .wait()
-                .expect("finishes");
-        });
-        println!(
-            "box {label} fragment pass, r8 1280x800: {:.3} ms (median of 200 after 20)",
-            ms(time)
-        );
-    }
+    let pass = match FragmentPass::new(backend, WGSL, &[Format::R8]) {
+        Ok(pass) => pass,
+        Err(error) => {
+            println!("fragment pass: refused: {error}");
+            return;
+        }
+    };
+    let binding = pass.bind(&[&src], &[]).expect("binds");
+    let time = median(20, 200, || {
+        pass.run_bound(&binding, &[&dst])
+            .expect("draws")
+            .wait()
+            .expect("finishes");
+    });
+    println!(
+        "fragment pass, r8 1280x800: {:.3} ms (median of 200 after 20)",
+        ms(time)
+    );
 }
 
 /// The record and submit of one dispatch, with no wait, against the wait for it: the floor a
