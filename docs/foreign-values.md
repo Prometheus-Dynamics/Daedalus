@@ -121,6 +121,8 @@ and never what they mean. Movers don't know what they move.
   into the space.
 - A backend that can take a dma-buf in place lists its own move out of the space. The wgpu
   backend's `with_dmabuf::<T>()` imports into a device buffer from `dmabuf` and from the host.
+- A type whose fds only allow reading says so with `const READ_ONLY: bool = true`. A backend
+  lists its import of such a type only on a device that takes a read-only fd.
 - Whoever makes a value answers for its contents being readable by whatever is given it.
 
 `backends/dma-sys` is the binding to the dma-buf and dma-heap kernel interfaces (`DmaBuf`,

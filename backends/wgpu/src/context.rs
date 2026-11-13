@@ -414,7 +414,7 @@ impl Context {
 /// tried. Having the extensions isn't enough. A driver can list them and still refuse every
 /// dma-buf it didn't make itself, and a plan must not count on an import that will be refused.
 #[cfg(target_os = "linux")]
-fn imports_heap_buffers(device: &wgpu::Device) -> bool {
+fn imports_heap_buffers(device: &wgpu::Device, read_only: bool) -> bool {
     use daedalus_vk_sys::memory::{dma_buf_bytes_needed, import_dma_buf, imports_dma_buf};
     const TRIAL: u64 = 4096;
     if !imports_dma_buf(device) {
@@ -426,7 +426,11 @@ fn imports_heap_buffers(device: &wgpu::Device) -> bool {
     let Ok(need) = dma_buf_bytes_needed(device, TRIAL) else {
         return false;
     };
-    let Ok(buf) = heap.allocate(need.max(TRIAL)) else {
+    let made = match read_only {
+        true => heap.allocate_read_only(need.max(TRIAL)),
+        false => heap.allocate(need.max(TRIAL)),
+    };
+    let Ok(buf) = made else {
         return false;
     };
     let Ok(have) = buf.as_ref().len() else {
@@ -439,11 +443,20 @@ fn imports_heap_buffers(device: &wgpu::Device) -> bool {
 /// it, which is tried once here.
 fn with_heap(record: CapsRecord, device: &wgpu::Device, no_dma_heap: bool) -> CapsRecord {
     #[cfg(target_os = "linux")]
-    let dma_heap = !no_dma_heap && imports_heap_buffers(device);
+    let dma_heap = !no_dma_heap && imports_heap_buffers(device, false);
+    // An fd that only allows reading is a second question: a driver may map what it imports.
+    #[cfg(target_os = "linux")]
+    let dma_read_only = dma_heap && imports_heap_buffers(device, true);
+    #[cfg(not(target_os = "linux"))]
+    let dma_read_only = false;
     #[cfg(not(target_os = "linux"))]
     let dma_heap = {
         let _ = (device, no_dma_heap);
         false
     };
-    CapsRecord { dma_heap, ..record }
+    CapsRecord {
+        dma_heap,
+        dma_read_only,
+        ..record
+    }
 }

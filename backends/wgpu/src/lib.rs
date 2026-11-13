@@ -29,6 +29,8 @@ mod profile;
 #[cfg(target_os = "linux")]
 mod raw;
 mod readback;
+#[cfg(all(test, target_os = "linux"))]
+mod readonly_tests;
 pub mod record;
 mod region;
 pub mod shader;

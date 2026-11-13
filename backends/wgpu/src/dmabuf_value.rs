@@ -71,7 +71,11 @@ impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
 /// The first `want` bytes of the dma-buf `fd` as a device buffer, with nothing copied. Refused when
 /// the device can't import a dma-buf, or needs more memory behind a buffer of `want` bytes than the
 /// dma-buf has.
-fn import_bytes(context: &Arc<Context>, fd: OwnedFd, want: u64) -> Result<Arc<Storage>, String> {
+pub(crate) fn import_bytes(
+    context: &Arc<Context>,
+    fd: OwnedFd,
+    want: u64,
+) -> Result<Arc<Storage>, String> {
     use daedalus_vk_sys::Error;
     use daedalus_vk_sys::memory::{dma_buf_bytes_needed, import_dma_buf};
     let refused = |error: Error| match error {
@@ -142,7 +146,7 @@ impl WgpuBackend {
             from("", HOST_SPACE),
             from(".dmabuf", daedalus_dmabuf::SPACE),
         ];
-        self.link().offer_dma(transfers);
+        self.link().offer_dma(transfers, T::READ_ONLY);
         self
     }
 }
