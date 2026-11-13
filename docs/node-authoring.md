@@ -155,6 +155,12 @@ node is tried again. After three failures in a row it backs off, with a delay th
 never exceeds its cap. Nothing turns a node off by itself. An operator can turn one off by hand,
 and automatic turning-off exists only as a policy a host opts into.
 
+A fault's reason is a headline. It is kept in a fixed 120 bytes, so that reporting a failure
+allocates nothing, on a chip or anywhere else. A longer one is cut on a character boundary, and
+the fault says so: `reason_cut` on what the host reads back (`FaultReport`, and a fault event over
+the service). A node with more to say than fits puts it somewhere of its own, a log or a file,
+and names that in the reason.
+
 A node that panics is a fault like any other, and the fault's reason is `panicked: ` and then
 what the panic said, cut to 120 bytes. It is the same for a node in the host's own process, in a
 plugin library and in a Rust worker, whose reason reads `node panicked: ...`.

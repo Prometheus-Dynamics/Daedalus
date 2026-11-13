@@ -8,6 +8,8 @@ pub const NO_NODE: u32 = u32::MAX;
 pub const REASON_CAPACITY: usize = 120;
 /// In [`StepCx::flags`]: the body should reset its own state before running.
 pub const RESTART: u32 = 1;
+/// In [`StepCx::flags`], set by a step that faults: the reason it gave didn't fit, and was cut.
+pub const REASON_CUT: u32 = 2;
 
 /// A step's `(done, total)` pair, in cells the host sized when it loaded the graph.
 #[repr(C)]
@@ -30,9 +32,6 @@ impl Default for Progress {
         Progress::new()
     }
 }
-
-/// Longest reason a [`FixedError`] may give, in bytes. A longer one is cut.
-pub const ERROR_REASON_CAPACITY: usize = 64;
 
 /// A body's error: a code and a short reason, with nothing formatted or allocated.
 pub trait FixedError {
@@ -111,13 +110,17 @@ impl StepCx {
         }
     }
 
-    /// Records a failure. `reason` is cut to [`REASON_CAPACITY`] bytes, on a char boundary.
+    /// Records a failure. `reason` is cut to [`REASON_CAPACITY`] bytes, on a char boundary, and
+    /// [`StepCx::reason_cut`] says when it was: the reason is a headline, held in a fixed place
+    /// so that reporting a failure allocates nothing. A body with more to say than fits puts it
+    /// somewhere of its own and names that in the reason.
     pub fn fault(&mut self, at: Option<u32>, reason: &str) {
         self.at = at.unwrap_or(NO_NODE);
         let mut end = reason.len().min(REASON_CAPACITY);
         while !reason.is_char_boundary(end) {
             end -= 1;
         }
+        self.note_cut(end < reason.len());
         self.reason[..end].copy_from_slice(&reason.as_bytes()[..end]);
         self.reason_len = end as u32;
     }
@@ -132,20 +135,30 @@ impl StepCx {
         while !message.is_char_boundary(end) {
             end -= 1;
         }
+        self.note_cut(end < message.len());
         self.reason[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
         self.reason[PREFIX.len()..PREFIX.len() + end].copy_from_slice(&message.as_bytes()[..end]);
         self.reason_len = (PREFIX.len() + end) as u32;
     }
 
-    /// Records a body's error: its code, and at most [`ERROR_REASON_CAPACITY`] bytes of its reason.
+    /// Records a body's error: its code, and its reason as [`StepCx::fault`] keeps it.
     pub fn fail(&mut self, at: u32, error: &impl FixedError) {
-        let reason = error.reason();
-        let mut end = reason.len().min(ERROR_REASON_CAPACITY);
-        while !reason.is_char_boundary(end) {
-            end -= 1;
-        }
-        self.fault(Some(at), &reason[..end]);
+        self.fault(Some(at), error.reason());
         self.code = error.code();
+    }
+
+    fn note_cut(&mut self, cut: bool) {
+        if cut {
+            self.flags |= REASON_CUT;
+        } else {
+            self.flags &= !REASON_CUT;
+        }
+    }
+
+    /// Whether the reason the step gave was longer than fits, so that [`StepCx::reason`] is only
+    /// its start.
+    pub fn reason_cut(&self) -> bool {
+        self.flags & REASON_CUT != 0
     }
 
     pub fn reason(&self) -> &str {

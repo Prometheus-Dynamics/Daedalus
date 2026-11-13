@@ -562,7 +562,7 @@ documents the patch and refresh JSON.
 - A CPU value at most 16 bytes long and `Copy` travels inline, in a buffer the step owns until it's
   published. Anything else is put behind an `Arc`, and the producer keeps that `Arc` (or the cell it
   moves through) for the next tick, as the planner's sharing says. A body's error is a `FixedError`
-  (a code and at most 64 bytes of reason), which is why a `String` error doesn't compile on this path.
+  (a code and a reason, of which a fault keeps 120 bytes and says when it cut one), which is why a `String` error doesn't compile on this path.
 - A config's text and lists become `'static` once per plan, because `Literal` holds them that way.
   Replanning a graph with string constants keeps that memory.
 - A slot number is reused only when no region is in the steps form. In the steps form a slot is a

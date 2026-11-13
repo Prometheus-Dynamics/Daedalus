@@ -627,6 +627,8 @@ pub struct FaultEvent {
     /// Failures in a row.
     pub consecutive: u32,
     pub reason: String,
+    /// The body's reason was longer than a fault keeps, and `reason` is only its start.
+    pub reason_cut: bool,
 }
 
 /// What one batch of ticks did.
@@ -668,6 +670,7 @@ impl EventBody {
                 put_strs(out, &fault.covers)?;
                 out.u32(fault.consecutive);
                 out.str(&fault.reason)?;
+                out.bool(fault.reason_cut);
             }
             EventBody::Telemetry(event) => {
                 out.u8(1);
@@ -700,6 +703,7 @@ impl EventBody {
                 covers: get_strs(input)?,
                 consecutive: input.u32()?,
                 reason: input.str()?,
+                reason_cut: flag(input, "reason cut")?,
             }),
             1 => EventBody::Telemetry(TelemetryEvent {
                 run: input.u64()?,

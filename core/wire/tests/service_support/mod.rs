@@ -268,6 +268,7 @@ pub fn events() -> Vec<EventBody> {
             covers: vec!["demo.pass".to_owned(), "demo.boom".to_owned()],
             consecutive: 2,
             reason: "boom".to_owned(),
+            reason_cut: true,
         }),
         EventBody::Telemetry(TelemetryEvent {
             run: 7,
