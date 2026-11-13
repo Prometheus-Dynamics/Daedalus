@@ -19,6 +19,7 @@ pub mod fragment;
 pub mod handoff;
 mod host_bytes;
 mod inflight;
+mod lease;
 mod loss;
 mod mapped;
 mod memory;
@@ -49,6 +50,7 @@ pub use dmabuf_value::{DmaBufBacked, dma_heap_fd};
 pub use driver::{DriverGuard, devices_created, driver_lock, with_driver_lock};
 pub use fence::Ticket;
 pub use host_bytes::HostBytes;
+pub use lease::GpuLease;
 pub use loss::{RETRY_CAP, RETRY_FIRST, retry_delay};
 pub use mapped::MappedBytes;
 pub use memory::{

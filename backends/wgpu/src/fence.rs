@@ -186,6 +186,8 @@ struct ChainEntry {
     /// Counts the chains that have had this place, so a fence of an earlier one is told apart.
     generation: usize,
     live: Option<(Weak<Chain>, Weak<Context>)>,
+    /// The last run's part of the host's lease, until its fence is seen ready.
+    lease: Option<crate::lease::LeaseUse>,
 }
 
 /// The places a word has room to name.
@@ -208,6 +210,7 @@ impl ChainPlace {
                 chains.push(ChainEntry {
                     generation: 0,
                     live: None,
+                    lease: None,
                 });
                 chains.len() - 1
             }
@@ -220,6 +223,20 @@ impl ChainPlace {
         })
     }
 
+    /// Keeps `lease` for the run just submitted, until its fence is seen ready, the chain runs
+    /// again or the place is dropped. The one kept for the run before is given back.
+    pub(crate) fn hold(&self, lease: Option<crate::lease::LeaseUse>) {
+        let before = {
+            let mut chains = CHAINS.lock().unwrap_or_else(PoisonError::into_inner);
+            match chains.get_mut(self.slot) {
+                Some(entry) => core::mem::replace(&mut entry.lease, lease),
+                None => lease,
+            }
+        };
+        // Given back outside the table's lock: the host's hook runs here.
+        drop(before);
+    }
+
     /// The fence for the chain's last run. A region runs again only once its fence is ready,
     /// so the last run is the one the fence is for.
     pub(crate) fn fence(&self) -> Fence {
@@ -230,12 +247,16 @@ impl ChainPlace {
 #[cfg(target_os = "linux")]
 impl Drop for ChainPlace {
     fn drop(&mut self) {
-        let mut chains = CHAINS.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(entry) = chains.get_mut(self.slot) {
-            entry.live = None;
-            // Wraps where a word has no more room, long after a fence that old is gone.
-            entry.generation = (entry.generation + 1) & (usize::MAX >> 16);
-        }
+        let lease = {
+            let mut chains = CHAINS.lock().unwrap_or_else(PoisonError::into_inner);
+            chains.get_mut(self.slot).and_then(|entry| {
+                entry.live = None;
+                // Wraps where a word has no more room, long after a fence that old is gone.
+                entry.generation = (entry.generation + 1) & (usize::MAX >> 16);
+                entry.lease.take()
+            })
+        };
+        drop(lease);
     }
 }
 
@@ -245,7 +266,28 @@ struct ChainPolled;
 #[cfg(target_os = "linux")]
 impl FenceWord for ChainPolled {
     fn poll(word: usize) -> FencePoll {
-        let chains = CHAINS.lock().unwrap_or_else(PoisonError::into_inner);
+        let (poll, lease) = {
+            let mut chains = CHAINS.lock().unwrap_or_else(PoisonError::into_inner);
+            let poll = ChainPolled::state(&chains, word);
+            // The work is over, however it ended: its part of the host's lease is given back.
+            let lease = match poll {
+                FencePoll::Pending => None,
+                _ => chains
+                    .get_mut(word % PLACES)
+                    .filter(|entry| entry.generation == word >> 16)
+                    .and_then(|entry| entry.lease.take()),
+            };
+            (poll, lease)
+        };
+        // Outside the table's lock: the host's hook runs here.
+        drop(lease);
+        poll
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ChainPolled {
+    fn state(chains: &[ChainEntry], word: usize) -> FencePoll {
         let entry = chains
             .get(word % PLACES)
             .filter(|entry| entry.generation == word >> 16);

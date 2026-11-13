@@ -341,8 +341,10 @@ impl Storage {
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             encoder.clear_buffer(&self.raw, 0, None);
+            let lease = context.leased();
             let _held = context.submit.lock();
             context.queue.submit([encoder.finish()]);
+            context.until_done(lease);
             *filled = true;
         }
         fresh.seen.store(true, Ordering::Release);
@@ -653,8 +655,10 @@ impl Storage {
         let mapped = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&mapped);
         {
+            let lease = context.leased();
             let _held = context.submit.lock();
             context.queue.submit([encoder.finish()]);
+            context.until_done(lease);
         }
         {
             // Mapping flushes pending writes, which is a submit.

@@ -141,3 +141,56 @@ fn a_port_in_a_space_nobody_supplies_fails_to_plan() {
     assert!(refused.contains("heap.make_placed.value"), "{refused}");
     assert!(refused.contains("`dmabuf`"), "{refused}");
 }
+
+/// A host's lease on the GPU, counting its calls. They must come in pairs.
+#[derive(Default)]
+struct Counted {
+    acquired: std::sync::atomic::AtomicUsize,
+    released: std::sync::atomic::AtomicUsize,
+}
+
+impl daedalus_wgpu::GpuLease for Counted {
+    fn acquire(&self) {
+        use std::sync::atomic::Ordering;
+        let acquired = self.acquired.fetch_add(1, Ordering::AcqRel) + 1;
+        assert_eq!(
+            acquired,
+            self.released.load(Ordering::Acquire) + 1,
+            "acquired while already held"
+        );
+    }
+    fn release(&self) {
+        use std::sync::atomic::Ordering;
+        let released = self.released.fetch_add(1, Ordering::AcqRel) + 1;
+        assert_eq!(
+            released,
+            self.acquired.load(Ordering::Acquire),
+            "released while not held"
+        );
+    }
+}
+
+/// A graph run asks the host's lease for the device's work, the planner's moves and the region
+/// alike, and has given it back by the time the graph is done.
+#[test]
+fn a_graph_run_holds_the_hosts_lease_and_gives_it_back() {
+    use std::sync::atomic::Ordering;
+    let Some(_turn) = has_gpu() else { return };
+    let device = gpu().expect("a device");
+    let lease = std::sync::Arc::new(Counted::default());
+    device.set_lease(Some(lease.clone()));
+    let ran = dmabuf::through_the_graph_on(&device, 4096);
+    let (acquired, released) = (
+        lease.acquired.load(Ordering::Acquire),
+        lease.released.load(Ordering::Acquire),
+    );
+    // The device is shared with the other tests: it goes back to having no lease.
+    device.set_lease(None);
+    let (words, _) = ran.expect("runs");
+    assert_eq!(words, dmabuf::on_cpu(4096));
+    assert!(acquired > 0, "the graph's work asked for the lease");
+    assert_eq!(
+        acquired, released,
+        "and it was given back when the graph was done"
+    );
+}

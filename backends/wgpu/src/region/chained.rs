@@ -115,6 +115,7 @@ impl RegionStep {
                 self.context.count_dispatch();
             }
             // What an upload gave the queue to write has to be on the device first.
+            let lease = self.context.leased();
             self.context.flush_writes();
             if let Err(error) = chain.submit() {
                 {
@@ -125,6 +126,7 @@ impl RegionStep {
                     return Err((at, format!("the region's submit failed: {error}")));
                 }
             }
+            chained.place.hold(lease);
         }
         self.context.count_submit();
         self.context.count_pass();

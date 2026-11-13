@@ -360,8 +360,10 @@ impl FragmentPass {
         let state = TicketState::new();
         let finished = Arc::clone(&state);
         {
+            let lease = context.leased();
             let _held = context.submit.lock();
             context.queue.submit([encoder.finish()]);
+            context.until_done(lease);
             context.count_submit();
             context
                 .queue

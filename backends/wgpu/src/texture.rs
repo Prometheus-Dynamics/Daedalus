@@ -298,8 +298,10 @@ impl Texture {
         let mapped = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = Arc::clone(&mapped);
         {
+            let lease = context.leased();
             let _held = context.submit.lock();
             context.queue.submit([encoder.finish()]);
+            context.until_done(lease);
         }
         {
             let _held = context.submit.lock();
