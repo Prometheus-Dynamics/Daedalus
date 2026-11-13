@@ -629,6 +629,11 @@ pub struct FaultEvent {
     pub reason: String,
     /// The body's reason was longer than a fault keeps, and `reason` is only its start.
     pub reason_cut: bool,
+    /// What the step gave the host beyond its reason, before it failed. Empty when it gave
+    /// nothing, or the host keeps no detail.
+    pub detail: String,
+    /// The step wrote more detail than the host keeps, and `detail` is only its start.
+    pub detail_cut: bool,
 }
 
 /// What one batch of ticks did.
@@ -671,6 +676,8 @@ impl EventBody {
                 out.u32(fault.consecutive);
                 out.str(&fault.reason)?;
                 out.bool(fault.reason_cut);
+                out.str(&fault.detail)?;
+                out.bool(fault.detail_cut);
             }
             EventBody::Telemetry(event) => {
                 out.u8(1);
@@ -704,6 +711,8 @@ impl EventBody {
                 consecutive: input.u32()?,
                 reason: input.str()?,
                 reason_cut: flag(input, "reason cut")?,
+                detail: input.str()?,
+                detail_cut: flag(input, "detail cut")?,
             }),
             1 => EventBody::Telemetry(TelemetryEvent {
                 run: input.u64()?,

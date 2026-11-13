@@ -146,22 +146,38 @@ impl RunEntry {
             Vec::new()
         } else {
             let id = self.id;
-            run.host
+            let failed: Vec<crate::FaultReport> = run
+                .host
                 .fault_reports()
                 .filter(|fault| fault.tick == report.tick)
-                .map(|fault| FaultEvent {
-                    run: id,
-                    tick: fault.tick,
-                    step: fault.step,
-                    node: fault.node().map(String::from),
-                    covers: fault
-                        .covers
-                        .iter()
-                        .map(|name| String::from(*name))
-                        .collect(),
-                    consecutive: fault.consecutive,
-                    reason: String::from(fault.reason()),
-                    reason_cut: fault.reason_cut,
+                .copied()
+                .collect();
+            failed
+                .iter()
+                .map(|fault| {
+                    // The detail is the step's last failure's, which is this one.
+                    let (detail, detail_cut) = match run.host.fault_detail(fault.step) {
+                        Some(detail) if fault.detail && detail.tick == fault.tick => {
+                            (String::from(detail.text), detail.cut)
+                        }
+                        _ => (String::new(), false),
+                    };
+                    FaultEvent {
+                        run: id,
+                        tick: fault.tick,
+                        step: fault.step,
+                        node: fault.node().map(String::from),
+                        covers: fault
+                            .covers
+                            .iter()
+                            .map(|name| String::from(*name))
+                            .collect(),
+                        consecutive: fault.consecutive,
+                        reason: String::from(fault.reason()),
+                        reason_cut: fault.reason_cut,
+                        detail,
+                        detail_cut,
+                    }
                 })
                 .collect()
         };

@@ -82,6 +82,8 @@ Nothing is turned off automatically.
   fails again, up to `LoadOptions::fault_detail_bytes` for each step (16 KiB unless set, and
   `cut` says when it was more). Zero keeps none, and then a body's `detail` calls do nothing.
   Only a step that writes one costs anything: a failure with no detail allocates nothing.
+  Over the service a fault event carries it as `detail` and `detail_cut`, and `daedalus-ctl`
+  prints both.
 - `loaded.fault_reports()`: the most recent failures, each with the step, every node it covers,
   the node at fault when known, the reason, and how many times in a row. A failing transfer has the
   transfer's id in `transfer` and covers no node.

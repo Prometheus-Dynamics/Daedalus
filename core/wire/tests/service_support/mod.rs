@@ -269,6 +269,8 @@ pub fn events() -> Vec<EventBody> {
             consecutive: 2,
             reason: "boom".to_owned(),
             reason_cut: true,
+            detail: "boom, and the three lines that led to it".to_owned(),
+            detail_cut: false,
         }),
         EventBody::Telemetry(TelemetryEvent {
             run: 7,

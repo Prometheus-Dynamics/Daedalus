@@ -70,6 +70,8 @@ const LAYOUT: &[u64] = &[
     14,
     5,
     4,
+    // The fields of a fault event.
+    10,
 ];
 
 /// The hash of the service layout. It covers the worker layout too, since values use that codec.
