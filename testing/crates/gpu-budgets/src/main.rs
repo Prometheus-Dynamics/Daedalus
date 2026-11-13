@@ -36,7 +36,7 @@ const SECTIONS: [&str; 20] = [
     "heap-probe",
     "heap-alone",
     "region8",
-    "fragment-box",
+    "fragment-pass",
     "raw-submit",
     "timer-source",
     "dma-1mib",
@@ -187,7 +187,7 @@ fn main() -> std::process::ExitCode {
             "chains" => sections::chains::run(&backend),
             "fences" => sections::fences::run(&backend),
             "region8" => sections::timings::region8(&backend),
-            "fragment-box" => sections::timings::fragment_box(&backend),
+            "fragment-pass" => sections::timings::fragment_pass(&backend),
             "raw-submit" => sections::timings::raw_submit(&backend),
             "timer-source" => sections::timings::timer_source(&backend),
             #[cfg(target_os = "linux")]
