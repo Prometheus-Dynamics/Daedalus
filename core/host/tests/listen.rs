@@ -213,6 +213,11 @@ fn a_fault_reaches_every_watcher_and_a_cancel_stops_a_tick_in_progress() {
                 assert_eq!(fault.node.as_deref(), Some("work"));
                 assert_eq!(fault.covers, ["work"]);
                 assert_eq!(fault.reason, "boom: the node failed on purpose");
+                assert_eq!(
+                    fault.detail,
+                    "boom: the input was 1, and that is all it takes"
+                );
+                assert!(!fault.detail_cut);
                 assert_eq!(fault.consecutive, 1);
             }
             other => panic!("expected a fault, got {other:?}"),
