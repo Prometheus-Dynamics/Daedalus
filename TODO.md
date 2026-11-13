@@ -156,8 +156,8 @@ A third-party backend that proves the interface, the budget harness, examples, d
 
 Runtime features on top of the landed host, runner and planner, from the 2026-11-11 agreement. Each is its own PR, in order.
 
-- [ ] [J1](docs/prs/J1.md) Retry and skip per step, read from the graph (wave 21; needs C5, C12)
-- [ ] [J2](docs/prs/J2.md) Fail-fast cancels the steps running beside a failed one (wave 21; needs C6, C7)
+- [x] [J1](docs/prs/J1.md) Retry and skip per step, read from the graph (wave 21; needs C5, C12)
+- [x] [J2](docs/prs/J2.md) Fail-fast cancels the steps running beside a failed one (wave 21; needs C6, C7)
 - [x] [J3](docs/prs/J3.md) Lists and structs as graph constants (wave 21; needs D1, A4)
 - [ ] [J4](docs/prs/J4.md) Group expansion keeps node metadata (wave 21; needs A6, B1)
 - [ ] [J5](docs/prs/J5.md) Progress readable during parallel runs (wave 21; needs C7, C11)

@@ -21,6 +21,14 @@ mod imp {
         pub fn set(&self, value: u32) {
             self.0.store(value, Ordering::Relaxed);
         }
+
+        /// Sets the word to `new` if it holds `current`, and says whether it did.
+        #[inline]
+        pub fn replace_if(&self, current: u32, new: u32) -> bool {
+            self.0
+                .compare_exchange(current, new, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        }
     }
 }
 
@@ -51,6 +59,16 @@ mod imp {
         pub fn set(&self, value: u32) {
             // SAFETY: the pointer comes from a live `&self`, is aligned, and is valid for writes.
             unsafe { self.0.get().write_volatile(value) }
+        }
+
+        /// Sets the word to `new` if it holds `current`, and says whether it did.
+        #[inline]
+        pub fn replace_if(&self, current: u32, new: u32) -> bool {
+            let held = self.get() == current;
+            if held {
+                self.set(new);
+            }
+            held
         }
     }
 }
