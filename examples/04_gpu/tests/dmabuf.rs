@@ -194,3 +194,34 @@ fn a_graph_run_holds_the_hosts_lease_and_gives_it_back() {
         "and it was given back when the graph was done"
     );
 }
+
+/// The plan says how each reader gets the value made in the dma-buf space. The CPU node beside
+/// its maker reads it where it is, and the plan says so: an edge with no transfer is a read in
+/// place, not a move that was missed.
+#[test]
+fn the_plan_says_a_value_is_read_in_place_or_how_it_is_moved() {
+    let Some(_turn) = has_gpu() else { return };
+    let device = gpu().expect("a device");
+    let edges = dmabuf::placed_edges(&device).expect("plans");
+    let to = |id: &str| {
+        edges
+            .iter()
+            .find(|edge| edge.reader == id)
+            .expect("an edge")
+    };
+
+    let beside = to("heap.sum");
+    assert!(beside.transfer.is_empty(), "{:?}", beside.transfer);
+    assert_eq!(beside.written_in.as_deref(), Some("dmabuf"));
+    assert_eq!(beside.read_in.as_deref(), Some("dmabuf"));
+    assert!(beside.in_place, "read where it was written");
+
+    let shader = to("heap.plus_one");
+    assert!(
+        !shader.transfer.is_empty(),
+        "the value is moved to the device"
+    );
+    assert_eq!(shader.written_in.as_deref(), Some("dmabuf"));
+    assert_eq!(shader.read_in.as_deref(), Some("wgpu.buffer"));
+    assert!(!shader.in_place);
+}

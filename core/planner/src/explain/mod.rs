@@ -39,6 +39,15 @@ pub struct EdgeExplain {
     pub to_port: String,
     pub conversion: Vec<String>,
     pub transfer: Vec<String>,
+    /// The memory space the producer writes the value in. `None` when the planner gave the edge
+    /// no value of its own, as inside a region a backend merged into one step.
+    pub written_in: Option<String>,
+    /// The memory space the consumer reads it from.
+    pub read_in: Option<String>,
+    /// The consumer reads the value where the producer wrote it: nothing moves it and nothing
+    /// copies it. With an empty `transfer`, this is what tells a read in place from an edge the
+    /// planner knows nothing about.
+    pub in_place: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +103,26 @@ fn input_ref(graph: &Graph, edge: &EdgeDoc) -> Option<PortRef> {
     })
 }
 
+/// Where the value on `edge` is written and where its consumer reads it, as space names.
+fn spaces_of(planned: &Planned, edge: &EdgeDoc) -> Option<(String, String)> {
+    let routing = &planned.regions.routing;
+    let reader = input_ref(&planned.graph, edge)
+        .and_then(|at| routing.readers.get(&at))
+        // A host bridge's input is what the host takes.
+        .or_else(|| {
+            routing
+                .host_outputs
+                .iter()
+                .find(|out| out.node == edge.to.node && out.port == edge.to.port)
+                .map(|out| &out.reader)
+        })?;
+    let written = routing.values.get(reader.value as usize)?.home;
+    Some((
+        routing.spaces.get(written)?.clone(),
+        routing.spaces.get(reader.space)?.clone(),
+    ))
+}
+
 fn transfers_of(planned: &Planned, edge: &EdgeDoc, out: &mut Vec<String>) {
     let routing = &planned.regions.routing;
     let Some(reader) = input_ref(&planned.graph, edge).and_then(|at| routing.readers.get(&at))
@@ -123,6 +152,10 @@ fn edge_explain(planned: &Planned, first: &EdgeDoc) -> EdgeExplain {
         edge = next;
         transfers_of(planned, edge, &mut transfer);
     }
+    // Where the first edge's value is written, and where the last edge's consumer reads.
+    let written_in = spaces_of(planned, first).map(|(written, _)| written);
+    let read_in = spaces_of(planned, edge).map(|(_, read)| read);
+    let in_place = transfer.is_empty() && written_in.is_some() && written_in == read_in;
     EdgeExplain {
         from_node: first.from.node,
         from_port: first.from.port.clone(),
@@ -130,6 +163,9 @@ fn edge_explain(planned: &Planned, first: &EdgeDoc) -> EdgeExplain {
         to_port: edge.to.port.clone(),
         conversion,
         transfer,
+        written_in,
+        read_in,
+        in_place,
     }
 }
 

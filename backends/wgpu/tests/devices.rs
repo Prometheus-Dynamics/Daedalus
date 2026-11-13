@@ -179,7 +179,7 @@ fn a_value_crosses_devices_only_by_the_host_and_fails_to_plan_where_it_cant() {
     let other = WgpuBackend::open_named("plan", Options::default()).expect("a free name");
     let (main, other) = (told(&main), told(&other));
     let mut registry = Registry::new();
-    for (id, backend) in [("t.a", "wgpu"), ("t.b", "wgpu.plan"), ("t.cam", "cam")] {
+    for (id, backend) in [("t.a", "wgpu"), ("t.b", "wgpu.plan"), ("t.src", "other")] {
         decl(id)
             .optional("x", u8_ty())
             .output("out", u8_ty())
@@ -193,11 +193,11 @@ fn a_value_crosses_devices_only_by_the_host_and_fails_to_plan_where_it_cant() {
     };
     // A producer whose images import as textures on the default device, and go nowhere else.
     let producer = Mem {
-        id: "cam",
-        spaces: vec![("cam.frames", SpaceKind::Shared, true)],
+        id: "other",
+        spaces: vec![("other.memory", SpaceKind::Shared, true)],
         moves: vec![(
-            "cam.import",
-            "cam.frames",
+            "other.import",
+            "other.memory",
             "wgpu.texture",
             TransferCost::Import,
         )],
@@ -222,12 +222,12 @@ fn a_value_crosses_devices_only_by_the_host_and_fails_to_plan_where_it_cant() {
     );
 
     // An image from a producer reaches the default device, where its import is listed.
-    let (nodes, edges) = line("t.cam", "t.a");
+    let (nodes, edges) = line("t.src", "t.a");
     let (_, plan) = stitched(&registry, nodes, edges, &backends).expect("plans");
-    assert_eq!(moves(&plan), ["cam.import"]);
+    assert_eq!(moves(&plan), ["other.import"]);
     // Nothing takes it to the other device, or from a texture to anywhere: planning fails and
     // names the port and both spaces.
-    let (nodes, edges) = line("t.cam", "t.b");
+    let (nodes, edges) = line("t.src", "t.b");
     let error = stitched(&registry, nodes, edges, &backends)
         .map(|_| ())
         .unwrap_err();
@@ -235,7 +235,8 @@ fn a_value_crosses_devices_only_by_the_host_and_fails_to_plan_where_it_cant() {
         error,
         RegionError::Stitch(StitchError::NoTransfer {
             port: "t.b.x".into(),
-            from_space: "cam.frames".into(),
+            from_port: "t.src.out".into(),
+            from_space: "other.memory".into(),
             to_space: "wgpu.plan.buffer".into(),
         })
     );
