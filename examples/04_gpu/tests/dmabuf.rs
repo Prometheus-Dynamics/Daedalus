@@ -31,6 +31,10 @@ fn has_gpu() -> Option<std::sync::MutexGuard<'static, ()>> {
 fn a_heap_value_reaches_the_shader_by_the_route_the_device_can_run() {
     let Some(_turn) = has_gpu() else { return };
     let device = gpu().expect("a device");
+    // The import is planned where the device takes a dma-buf, and where nothing has tried: a
+    // machine whose heap doesn't open has nothing to try with. The value has a dma-buf only where
+    // the heap opens, and one with none is copied by the import's own step.
+    let planned = device.dmabuf_import(false) != Some(false);
     let imports = device.caps().expect("open").dma_heap;
     for count in [4u32, 64, 4096, 65_536] {
         let imported_before = device.transfer_stats().map_or(0, |stats| stats.imports);
@@ -39,19 +43,23 @@ fn a_heap_value_reaches_the_shader_by_the_route_the_device_can_run() {
         assert_eq!(words, dmabuf::on_cpu(count), "{count} bytes");
         let imported = device.transfer_stats().map_or(0, |stats| stats.imports) - imported_before;
         let uploads = device.transfer_stats().map_or(0, |stats| stats.uploads) - uploads_before;
+        let expected = if planned {
+            "wgpu.import:gpu:heap_bytes"
+        } else {
+            "wgpu.upload:gpu:heap_bytes"
+        };
+        assert_eq!(route, [expected], "{count} bytes");
         if imports {
-            assert_eq!(route, ["wgpu.import:gpu:heap_bytes"], "{count} bytes");
             assert_eq!(
                 (imported, uploads),
                 (1, 0),
                 "{count} bytes: one import, no upload"
             );
         } else {
-            assert_eq!(route, ["wgpu.upload:gpu:heap_bytes"], "{count} bytes");
             assert_eq!(
                 (imported, uploads),
                 (0, 1),
-                "{count} bytes: one upload, no import"
+                "{count} bytes: one copy, no import"
             );
         }
     }
@@ -117,6 +125,10 @@ fn a_value_made_in_the_dmabuf_space_is_imported_from_there() {
     let device = gpu().expect("a device");
     if device.caps().expect("open").dma_heap {
         placed_case(&device, &["wgpu.import.dmabuf:gpu:heap_bytes"], (1, 0));
+    } else if device.dmabuf_import(false) != Some(false) {
+        // Nothing has tried, so the import is planned, and a value with no dma-buf is copied
+        // by its step.
+        placed_case(&device, &["wgpu.import.dmabuf:gpu:heap_bytes"], (0, 1));
     } else {
         placed_case(&device, &TO_HOST_THEN_UPLOAD, (0, 1));
     }

@@ -27,6 +27,13 @@ pub trait DmaBufBacked: Typed + Send + Sync + 'static {
     /// than its value: a dma-heap allocation is at least a page. `None` when this value has none,
     /// as on a machine with no dma-heap: such a value stays on the host.
     fn dmabuf(&self) -> Option<(BorrowedFd<'_>, u64)>;
+
+    /// The value's bytes, when it also has them on the host. A value with no dma-buf that
+    /// reaches a move planned as an import is copied from these, since there is nothing to
+    /// import. `None`, the default, for a type that is only ever a dma-buf.
+    fn bytes(&self) -> Option<&[u8]> {
+        None
+    }
 }
 
 /// A string kept for the life of the process, once for each distinct text.

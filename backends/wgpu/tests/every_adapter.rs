@@ -122,16 +122,20 @@ fn an_import_is_listed_only_for_the_kind_of_fd_the_device_takes() {
                 .iter()
                 .any(|transfer| transfer.id.contains("import") && transfer.id.ends_with(key))
         };
-        assert_eq!(
-            listed("t:writable"),
-            caps.dma_heap,
-            "{name}: a writable type"
-        );
-        assert_eq!(
-            listed("t:only_read"),
-            caps.dma_read_only,
-            "{name}: a read-only type"
-        );
+        // Listed where the device takes that kind of fd, and where nothing has tried: on a
+        // machine whose heap doesn't open, the first dma-buf it is handed is the trial.
+        let may = |read_only: bool| backend.dmabuf_import(read_only) != Some(false);
+        assert_eq!(listed("t:writable"), may(false), "{name}: a writable type");
+        assert_eq!(listed("t:only_read"), may(true), "{name}: a read-only type");
+        // Where the heap opens, the answers are known when the device opens.
+        if caps.dma_heap {
+            assert_eq!(backend.dmabuf_import(false), Some(true), "{name}");
+            assert_eq!(
+                backend.dmabuf_import(true),
+                Some(caps.dma_read_only),
+                "{name}"
+            );
+        }
         assert!(
             caps.dma_heap || !caps.dma_read_only,
             "{name}: read-only import without any import"
