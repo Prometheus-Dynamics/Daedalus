@@ -425,6 +425,7 @@ impl Runner<'_> {
         let remaining = self.seed_lanes(lanes);
         if remaining > 0 {
             let now = self.cx.now_ns;
+            let detail = self.cx.detail;
             // SAFETY: the runner's cancel word is null or a `Word` that outlives the runner.
             let stop: &Word = unsafe { self.cx.cancel.as_ref() }.unwrap_or(&lanes.stop);
             let cancel: *const Word = stop;
@@ -432,6 +433,7 @@ impl Runner<'_> {
                 let cx = &mut worker.get_mut().cx;
                 cx.now_ns = now;
                 cx.cancel = cancel;
+                cx.detail = detail;
             }
             let view = View {
                 lanes: &*lanes,

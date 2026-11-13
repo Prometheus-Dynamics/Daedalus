@@ -22,6 +22,8 @@ mod bits;
 mod cancel;
 #[cfg(feature = "alloc")]
 mod carried;
+#[cfg(feature = "alloc")]
+mod detail;
 mod error;
 #[cfg(all(feature = "std", target_os = "linux"))]
 pub mod event_fd;
@@ -73,6 +75,8 @@ pub use backpressure::BackpressureStrategy;
 pub use cancel::{CANCEL_REASON, CancelWord, skip_cancelled};
 #[cfg(feature = "alloc")]
 pub use carried::Carried;
+#[cfg(feature = "alloc")]
+pub use detail::DetailStore;
 pub use error::{LoadError, MaskError, RunError};
 pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
 #[cfg(feature = "alloc")]
@@ -190,6 +194,9 @@ pub struct Runner<'a> {
     /// One `(done, total)` pair per step, once a host attaches them.
     progress: &'a [Progress],
     fault_log: fault_log::FaultLog,
+    /// Where the steps write their details, when a host keeps them.
+    #[cfg(feature = "alloc")]
+    details: Option<alloc::sync::Arc<detail::DetailStore>>,
     any_blocking: bool,
     /// The reuse table, for a plan with a reusable step.
     reuse: Option<reuse::Table<'a>>,
@@ -316,6 +323,8 @@ impl<'a> Runner<'a> {
             inline,
             masked: false,
             cx: StepCx::new(),
+            #[cfg(feature = "alloc")]
+            details: None,
             tick: 0,
             progress: &[],
             fault_log: fault_log::FaultLog::NONE,

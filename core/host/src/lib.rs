@@ -16,6 +16,8 @@ mod config_cache;
 #[cfg(feature = "std")]
 mod control;
 #[cfg(feature = "std")]
+mod detail;
+#[cfg(feature = "std")]
 mod diagnostics;
 #[cfg(feature = "std")]
 pub mod domain;
@@ -73,6 +75,8 @@ pub use daedalus_runner::TickReport;
 pub use config_cache::ConfigCache;
 #[cfg(feature = "std")]
 pub use control::ControlError;
+#[cfg(feature = "std")]
+pub use detail::FaultDetail;
 #[cfg(feature = "std")]
 pub use diagnostics::{PlanReport, StepReport, render_error};
 #[cfg(feature = "std")]

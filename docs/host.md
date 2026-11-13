@@ -76,6 +76,12 @@ untouched.
 A step that fails is contained: the tick goes on, and the step backs off and is tried again.
 Nothing is turned off automatically.
 
+- `loaded.fault_detail(step)`: what the step's body gave `detail` before its most recent failure,
+  for a failure that says more than a reason holds. A report's `detail` flag says there is one.
+  It is everything the step wrote in the tick it failed in, across retries, kept until the step
+  fails again, up to `LoadOptions::fault_detail_bytes` for each step (16 KiB unless set, and
+  `cut` says when it was more). Zero keeps none, and then a body's `detail` calls do nothing.
+  Only a step that writes one costs anything: a failure with no detail allocates nothing.
 - `loaded.fault_reports()`: the most recent failures, each with the step, every node it covers,
   the node at fault when known, the reason, and how many times in a row. A failing transfer has the
   transfer's id in `transfer` and covers no node.

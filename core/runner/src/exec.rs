@@ -251,6 +251,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         let (cells, cx) = env.parts();
         cx.flags = flags;
         cx.progress = progress;
+        cx.step = index as u32;
         // A body that fails without saying why mustn't inherit the last one's reason.
         cx.reason_len = 0;
         cx.at = NO_NODE;

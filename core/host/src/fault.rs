@@ -38,6 +38,9 @@ pub struct FaultReport {
     /// The reason the body gave was longer than 120 bytes, and [`FaultReport::reason`] is only
     /// its start.
     pub reason_cut: bool,
+    /// The step gave more than a reason: [`LoadedHost::fault_detail`] has it, until the step
+    /// fails again.
+    pub detail: bool,
 }
 
 impl FaultReport {
@@ -56,6 +59,7 @@ impl FaultReport {
             reason_len: text.len() as u32,
             reason,
             reason_cut: fault.reason_cut,
+            detail: false,
         }
     }
 
@@ -112,14 +116,15 @@ impl FaultRing {
 impl LoadedHost {
     /// Moves new failures from the runner's table into the ring. Runs after every tick.
     pub(crate) fn collect_faults(&mut self) {
-        for (step, seen) in self.fault_seen.iter_mut().enumerate() {
+        let written = self.details_written();
+        for step in 0..self.fault_seen.len() {
             let Some(fault) = self.host.runner.step_fault(step as u32) else {
                 continue;
             };
-            if fault.seq == *seen {
+            if fault.seq == self.fault_seen[step] {
                 continue;
             }
-            *seen = fault.seq;
+            self.fault_seen[step] = fault.seq;
             let at = fault
                 .at()
                 .and_then(|node| self.node_names.get(node as usize).copied());
@@ -128,8 +133,12 @@ impl LoadedHost {
                 at,
                 transfer: self.moves[step],
             };
-            self.faults
-                .push(FaultReport::new(step as u32, site, &fault));
+            let mut report = FaultReport::new(step as u32, site, &fault);
+            report.detail = self.keep_detail(step, fault.tick, written);
+            self.faults.push(report);
+        }
+        if written {
+            self.drop_details();
         }
     }
 

@@ -61,7 +61,7 @@ pub use status::Status;
 pub use step::OwnedStep;
 pub use step::{Step, StepEnd, StepWord};
 pub use step_cx::{
-    Fault, FixedError, NO_NODE, Progress, REASON_CAPACITY, REASON_CUT, RESTART, StepCx,
+    DetailSink, Fault, FixedError, NO_NODE, Progress, REASON_CAPACITY, REASON_CUT, RESTART, StepCx,
 };
 pub use version::{ABI_SYMBOL, AbiVersion, DAEDALUS_ABI};
 pub use word::Word;

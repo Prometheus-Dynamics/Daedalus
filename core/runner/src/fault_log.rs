@@ -3,7 +3,7 @@
 
 use core::ptr;
 
-use daedalus_abi::{NO_NODE, REASON_CAPACITY, StepCx};
+use daedalus_abi::{DetailSink, NO_NODE, REASON_CAPACITY, StepCx};
 
 use crate::Runner;
 use crate::error::LoadError;
@@ -98,6 +98,16 @@ impl<'a> Runner<'a> {
             cells: cells.as_mut_ptr(),
         };
         Ok(())
+    }
+
+    /// Sets where a step's [`StepCx::detail`] goes: every step this runner calls, on any of its
+    /// threads, is handed `sink`. [`DetailSink::NONE`] takes it away again.
+    ///
+    /// # Safety
+    /// `sink.context` must stay valid for `sink.write` until the runner is dropped or another
+    /// sink is set, and `sink.write` must be safe to call from several threads at once.
+    pub unsafe fn set_detail(&mut self, sink: DetailSink) {
+        self.cx.detail = sink;
     }
 
     /// The last failure of `step`, when the table is attached and it has failed.
