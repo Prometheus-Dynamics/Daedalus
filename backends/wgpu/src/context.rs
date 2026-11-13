@@ -410,12 +410,36 @@ impl Context {
     }
 }
 
-/// The record with `dma_heap` set: the device imports dma-bufs and the system heap opens.
+/// Whether the device really imports a buffer from the system dma-heap: one small import is
+/// tried. Having the extensions isn't enough. A driver can list them and still refuse every
+/// dma-buf it didn't make itself, and a plan must not count on an import that will be refused.
+#[cfg(target_os = "linux")]
+fn imports_heap_buffers(device: &wgpu::Device) -> bool {
+    use daedalus_vk_sys::memory::{dma_buf_bytes_needed, import_dma_buf, imports_dma_buf};
+    const TRIAL: u64 = 4096;
+    if !imports_dma_buf(device) {
+        return false;
+    }
+    let Ok(heap) = daedalus_dma_sys::DmaHeap::open("system") else {
+        return false;
+    };
+    let Ok(need) = dma_buf_bytes_needed(device, TRIAL) else {
+        return false;
+    };
+    let Ok(buf) = heap.allocate(need.max(TRIAL)) else {
+        return false;
+    };
+    let Ok(have) = buf.as_ref().len() else {
+        return false;
+    };
+    import_dma_buf(device, buf.into_fd(), TRIAL, have, None).is_ok()
+}
+
+/// The record with `dma_heap` set: the system heap opens and the device imports a buffer from
+/// it, which is tried once here.
 fn with_heap(record: CapsRecord, device: &wgpu::Device, no_dma_heap: bool) -> CapsRecord {
     #[cfg(target_os = "linux")]
-    let dma_heap = !no_dma_heap
-        && daedalus_vk_sys::memory::imports_dma_buf(device)
-        && daedalus_dma_sys::DmaHeap::open("system").is_ok();
+    let dma_heap = !no_dma_heap && imports_heap_buffers(device);
     #[cfg(not(target_os = "linux"))]
     let dma_heap = {
         let _ = (device, no_dma_heap);

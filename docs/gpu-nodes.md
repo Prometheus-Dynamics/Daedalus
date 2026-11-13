@@ -58,6 +58,8 @@ registered for that type does the import.
 
 Daedalus does not judge who made a dma-buf: one it is given is imported in place when the device can take it, and whoever hands it over answers for its contents being readable by a device. A dma-buf with less memory behind it than the device needs for the buffer is refused with both sizes, and is not copied.
 
+Whether a device imports dma-bufs is found by trying: when the device opens, one small buffer from the system dma-heap is imported. A driver can list the extensions and still refuse every dma-buf it didn't make itself, as NVIDIA's does, and such a device is planned as one that can't import: its values are uploaded. A refused import is an error and never more. Vulkan leaves a refused fd with the caller, but a driver may close it anyway, and not every time, so the backend closes a refused fd only if it is still open on the same file.
+
 A type whose values are dma-buffers says so once: it implements `DmaBufBacked` and the backend is given `with_dmabuf::<T>()`. While the open device imports dma-bufs the planner takes that import over the upload of the type's bytes (its `HostBytes`), which is the route a device that can't import gets.
 
 A node can also say its output is in the dma-buf space (`memory(out = "dmabuf")`, with the `daedalus-dmabuf` backend in the plan). The same `with_dmabuf::<T>()` imports from there, and a device that can't import gets the value handed to the host and uploaded. See [foreign-values.md](foreign-values.md).
