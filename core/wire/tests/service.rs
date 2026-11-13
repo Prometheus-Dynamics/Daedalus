@@ -37,7 +37,7 @@ fn every_response_error_code_and_event_round_trips() {
     let schema = Schema::new();
     let messages = server_messages();
     for code in ErrorCode::ALL {
-        assert_eq!(ErrorCode::from_code(code.code()), Ok(code));
+        assert_eq!(ErrorCode::from_code(code.code()), code);
         assert!(messages.iter().any(|message| matches!(
             message,
             ServerMsg::Response(Response { result: Err(error), .. }) if error.code == code
@@ -359,20 +359,12 @@ fn a_corpus_of_malformed_requests_gives_typed_errors() {
         (
             "an op that does not exist",
             request_body(&[0]),
-            WireError::BadTag { what: "op", tag: 0 },
+            WireError::UnknownOp(0),
         ),
         (
             "an op past the last",
             request_body(&[18]),
-            WireError::BadTag {
-                what: "op",
-                tag: 18,
-            },
-        ),
-        (
-            "ping with a trailing byte",
-            request_body(&[17, 0]),
-            WireError::TrailingBytes(1),
+            WireError::UnknownOp(18),
         ),
         (
             "a session over the bound",

@@ -29,6 +29,8 @@ pub enum ErrorCode {
     FrameTooLarge,
     /// Something this server does not do, or a value whose type has no wire codec.
     Unsupported,
+    /// A code a newer side has and this one doesn't. The error's message says what happened.
+    Other,
 }
 
 impl ErrorCode {
@@ -61,17 +63,17 @@ impl ErrorCode {
             ErrorCode::Stopped => 10,
             ErrorCode::FrameTooLarge => 11,
             ErrorCode::Unsupported => 12,
+            ErrorCode::Other => u16::MAX,
         }
     }
 
-    pub fn from_code(code: u16) -> Result<ErrorCode, WireError> {
+    /// The code a number names. One this side doesn't have is [`ErrorCode::Other`]: it is still
+    /// an error, and its message still says which.
+    pub fn from_code(code: u16) -> ErrorCode {
         ErrorCode::ALL
             .into_iter()
             .find(|known| known.code() == code)
-            .ok_or(WireError::BadTag {
-                what: "error code",
-                tag: u32::from(code),
-            })
+            .unwrap_or(ErrorCode::Other)
     }
 
     /// The name a log or a command line shows.
@@ -89,6 +91,7 @@ impl ErrorCode {
             ErrorCode::Stopped => "stopped",
             ErrorCode::FrameTooLarge => "frame_too_large",
             ErrorCode::Unsupported => "unsupported",
+            ErrorCode::Other => "other",
         }
     }
 }
@@ -119,17 +122,23 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     pub(crate) fn encode(&self, out: &mut Writer) -> Result<(), WireError> {
-        out.u8(match self.severity {
-            Severity::Error => 0,
-            Severity::Warning => 1,
-        });
-        out.str(&self.code)?;
-        out.str(&self.message)?;
-        put_opt_str(out, &self.node)?;
-        put_opt_str(out, &self.port)
+        out.record(|out| {
+            out.u8(match self.severity {
+                Severity::Error => 0,
+                Severity::Warning => 1,
+            });
+            out.str(&self.code)?;
+            out.str(&self.message)?;
+            put_opt_str(out, &self.node)?;
+            put_opt_str(out, &self.port)
+        })
     }
 
     pub(crate) fn decode(input: &mut Reader<'_>) -> Result<Diagnostic, WireError> {
+        input.record(Diagnostic::fields)
+    }
+
+    fn fields(input: &mut Reader<'_>) -> Result<Diagnostic, WireError> {
         let severity = match input.u8()? {
             0 => Severity::Error,
             1 => Severity::Warning,
@@ -181,7 +190,10 @@ impl ServiceError {
     pub fn from_wire(error: &WireError) -> ServiceError {
         let code = match error {
             WireError::NoCodec(_) => ErrorCode::Unsupported,
-            WireError::Protocol { .. } | WireError::Layout { .. } => ErrorCode::Unsupported,
+            WireError::Protocol { .. }
+            | WireError::Layout { .. }
+            | WireError::UnknownOp(_)
+            | WireError::Needs { .. } => ErrorCode::Unsupported,
             WireError::ValueShape { .. } => ErrorCode::ValueType,
             _ => ErrorCode::InvalidRequest,
         };
@@ -205,7 +217,7 @@ impl ServiceError {
 
     pub(crate) fn decode(input: &mut Reader<'_>) -> Result<ServiceError, WireError> {
         Ok(ServiceError {
-            code: ErrorCode::from_code(input.u16()?)?,
+            code: ErrorCode::from_code(input.u16()?),
             message: input.str()?,
             diagnostics: get_list(input, Diagnostic::decode)?,
         })

@@ -50,16 +50,20 @@ pub struct PlanOptions {
 
 impl PlanOptions {
     fn encode(&self, out: &mut Writer) -> Result<(), WireError> {
-        out.u8(self.form as u8);
-        out.bool(self.inspect);
-        put_strs(out, &self.priority)
+        out.record(|out| {
+            out.u8(self.form as u8);
+            out.bool(self.inspect);
+            put_strs(out, &self.priority)
+        })
     }
 
     fn decode(input: &mut Reader<'_>) -> Result<PlanOptions, WireError> {
-        Ok(PlanOptions {
-            form: PlanForm::decode(input)?,
-            inspect: flag(input, "inspect flag")?,
-            priority: get_strs(input)?,
+        input.record(|input| {
+            Ok(PlanOptions {
+                form: PlanForm::decode(input)?,
+                inspect: flag(input, "inspect flag")?,
+                priority: get_strs(input)?,
+            })
         })
     }
 }
@@ -116,20 +120,24 @@ pub struct StartConfig {
 
 impl StartConfig {
     fn encode(&self, out: &mut Writer) -> Result<(), WireError> {
-        out.u32(self.fifo_capacity);
-        out.u32(self.fault_reports);
-        out.u8(self.telemetry as u8);
-        out.bool(self.unmerged);
-        put_strs(out, &self.priority)
+        out.record(|out| {
+            out.u32(self.fifo_capacity);
+            out.u32(self.fault_reports);
+            out.u8(self.telemetry as u8);
+            out.bool(self.unmerged);
+            put_strs(out, &self.priority)
+        })
     }
 
     fn decode(input: &mut Reader<'_>) -> Result<StartConfig, WireError> {
-        Ok(StartConfig {
-            fifo_capacity: input.u32()?,
-            fault_reports: input.u32()?,
-            telemetry: TelemetryLevel::decode(input)?,
-            unmerged: flag(input, "unmerged flag")?,
-            priority: get_strs(input)?,
+        input.record(|input| {
+            Ok(StartConfig {
+                fifo_capacity: input.u32()?,
+                fault_reports: input.u32()?,
+                telemetry: TelemetryLevel::decode(input)?,
+                unmerged: flag(input, "unmerged flag")?,
+                priority: get_strs(input)?,
+            })
         })
     }
 }
@@ -277,6 +285,9 @@ pub enum OpKind {
     Cache = 15,
     Trace = 16,
     Ping = 17,
+    /// An op a newer side has and this one doesn't, where one is only named: in what a server
+    /// says it serves, and in a trace. It is never sent, and a request for it is refused.
+    Other = 255,
 }
 
 impl OpKind {
@@ -319,14 +330,26 @@ impl OpKind {
             OpKind::Cache => "cache",
             OpKind::Trace => "trace",
             OpKind::Ping => "ping",
+            OpKind::Other => "other",
         }
     }
 
+    /// The op a request names. One this side doesn't have is refused as that, so a server
+    /// answers "unsupported" and names it.
     pub fn from_byte(byte: u8) -> Result<OpKind, WireError> {
         OpKind::ALL
             .into_iter()
             .find(|kind| *kind as u8 == byte)
-            .ok_or(bad("op", u32::from(byte)))
+            .ok_or(WireError::UnknownOp(byte))
+    }
+
+    /// The op a list names, where one this side doesn't have is still an entry:
+    /// [`OpKind::Other`].
+    pub fn named(byte: u8) -> OpKind {
+        OpKind::ALL
+            .into_iter()
+            .find(|kind| *kind as u8 == byte)
+            .unwrap_or(OpKind::Other)
     }
 
     /// True when sending the op twice does what sending it once does, so a client may resend it
@@ -548,6 +571,8 @@ impl Op {
                 limit: input.u32()?,
             },
             OpKind::Ping => Op::Ping,
+            // `from_byte` gives only the ops in `ALL`.
+            OpKind::Other => return Err(WireError::UnknownOp(OpKind::Other as u8)),
         })
     }
 }

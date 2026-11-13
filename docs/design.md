@@ -589,6 +589,18 @@ documents the patch and refresh JSON.
   kind bytes are `0x80` and up, and its layout hash covers the worker's. A value carries its own
   type tree, since a service client has no port declarations to type it by. The server's hello
   lists the type keys it has codecs for.
+- A client and a server built at different times keep working together, and neither takes a
+  message to mean something it doesn't. A record gains fields only at its end: every record
+  nested in a message has its length before it, and a reader skips what it doesn't know. That is for a field the other side may ignore. Something whose absence would change a
+  message's meaning has a name: a side that relies on it lists the name in its hello's `needs`,
+  and a peer that doesn't know it refuses the connection, naming it. `knows` says what a side
+  has, so the other can ask before it sends. A server answers an op it doesn't have with
+  `unsupported`, under the request's id. An event kind or an error code from a newer server
+  arrives as `Unknown` or `Other`, with its message, and never as something else. Anything
+  beyond that is a breaking change: it moves the layout hash, and the two refuse each other at
+  the hello, naming both hashes. `core/wire/tests/service_additive.rs` holds this: every sample
+  message still decodes with unknown bytes at the end of every record, and the bytes this
+  version sends are kept in the tree and must be read as the same messages by every later one.
 - A `LoadedHost` is one graph, so what sessions share is a `ServiceHost`: the registry, the
   backends, stored graphs by session name, the runs, the plan cache, the watches and the trace.
   Runs and watches are numbers the host gives out. A run is stepped by `step` requests, one tick

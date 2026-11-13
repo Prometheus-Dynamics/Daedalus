@@ -5,6 +5,25 @@
 //! id, and may send the next before the last is answered. Every response carries the id of its
 //! request. Events arrive between responses, each with the id of the watch it belongs to.
 //!
+//! # What may be added, and what may not
+//!
+//! A side built before something was added has to keep working with a side built after, and it
+//! must never take a message to mean something it doesn't.
+//!
+//! - A record gains fields only at its end. Every record nested in a message has its length
+//!   before it, and a message is the rest of its packet: a reader takes the fields it knows and
+//!   skips what follows. A reader of a newer version reads an added field only when
+//!   there are bytes left ([`Reader::more`]), and has a default for when there are not.
+//! - That is only for a field the other side may ignore. Something whose absence changes what a
+//!   message means gets a name. A side that relies on it puts the name in its hello's `needs`,
+//!   and a peer that doesn't know the name refuses the connection, naming it. A side says what
+//!   it knows in `knows`, so the other can ask before it sends.
+//! - A new op, event kind or error code is its own number. A server answers an op it doesn't
+//!   have with `unsupported`. A client gets an event kind it doesn't have as
+//!   [`EventBody::Unknown`] and an error code as [`ErrorCode::Other`], with the message.
+//! - Anything else is a breaking change: it moves [`SERVICE_LAYOUT_HASH`], and the two sides
+//!   refuse each other at the hello, naming both hashes. Nothing is found out mid-session.
+//!
 //! Graph documents are JSON text in one packet: they are configuration, not the hot path. Values
 //! are binary, each with its type, and a value whose type has no codec on both sides is refused.
 
@@ -52,27 +71,26 @@ pub mod kind {
     pub const EVENT: u8 = 0xc2;
 }
 
-/// What the service layout is made of. Changing any of it changes [`SERVICE_LAYOUT_HASH`].
+/// What every version of the service layout shares: the version, the value codec's layout, the
+/// packet kinds, and that a record has its length before it. Changing any of it changes
+/// [`SERVICE_LAYOUT_HASH`], and is a breaking change. What can be added without one (a field at
+/// the end of a record, an op, an event kind, an error code) is not counted here.
 const LAYOUT: &[u64] = &[
     SERVICE_VERSION as u64,
     crate::LAYOUT_HASH,
     SESSION_CAP as u64,
-    WATCH_QUEUE as u64,
-    TRACE_RING as u64,
     kind::CLIENT_HELLO as u64,
     kind::REQUEST as u64,
     kind::SERVER_HELLO as u64,
     kind::RESPONSE as u64,
     kind::EVENT as u64,
-    // The op, error code, reply, inspection and event counts.
-    OpKind::ALL.len() as u64,
-    ErrorCode::ALL.len() as u64,
-    14,
-    5,
-    4,
-    // The fields of a fault event.
-    10,
+    // A record has its length before it.
+    0xF2A3,
 ];
+
+/// What this build knows of the things a peer may rely on. A name is added here with the thing
+/// it names, and is never taken away.
+pub const KNOWN: &[&str] = &[];
 
 /// The hash of the service layout. It covers the worker layout too, since values use that codec.
 pub const SERVICE_LAYOUT_HASH: u64 = daedalus_abi::layout_hash(LAYOUT);
@@ -111,6 +129,10 @@ pub struct ServiceHello {
     /// The largest packet this side reads. Each side sends nothing larger than the other's cap.
     pub packet_cap: u32,
     pub capabilities: Capabilities,
+    /// What this side knows, of the things a peer may rely on: see [`KNOWN`].
+    pub knows: Vec<String>,
+    /// What this side relies on its peer knowing. A peer that doesn't know one refuses.
+    pub needs: Vec<String>,
 }
 
 impl ServiceHello {
@@ -121,6 +143,8 @@ impl ServiceHello {
             layout: SERVICE_LAYOUT_HASH,
             packet_cap: DEFAULT_CAP,
             capabilities: Capabilities::default(),
+            knows: KNOWN.iter().map(|name| (*name).to_owned()).collect(),
+            needs: Vec::new(),
         }
     }
 
@@ -132,7 +156,14 @@ impl ServiceHello {
         }
     }
 
-    /// Refuses a peer with another protocol version or layout. The error names both values.
+    /// Whether the peer that sent this hello knows `name`. A side asks before it sends something
+    /// that an older peer would misread.
+    pub fn knows(&self, name: &str) -> bool {
+        self.knows.iter().any(|known| known == name)
+    }
+
+    /// Refuses a peer with another protocol version or layout, naming both values, and one that
+    /// relies on something this side doesn't know, naming it.
     pub fn check(&self) -> Result<(), WireError> {
         if self.version != SERVICE_VERSION {
             return Err(WireError::Protocol {
@@ -145,6 +176,13 @@ impl ServiceHello {
                 expected: SERVICE_LAYOUT_HASH,
                 found: self.layout,
             });
+        }
+        if let Some(name) = self
+            .needs
+            .iter()
+            .find(|name| !KNOWN.contains(&name.as_str()))
+        {
+            return Err(WireError::Needs { name: name.clone() });
         }
         Ok(())
     }
@@ -168,7 +206,8 @@ impl ServiceHello {
         }
         put_strs(out, &self.capabilities.codecs)?;
         out.u32(self.capabilities.max_runs);
-        Ok(())
+        put_strs(out, &self.knows)?;
+        put_strs(out, &self.needs)
     }
 
     fn decode(input: &mut Reader<'_>) -> Result<ServiceHello, WireError> {
@@ -178,7 +217,12 @@ impl ServiceHello {
         let count = input.count()?;
         let mut ops = Vec::with_capacity(count);
         for _ in 0..count {
-            ops.push(OpKind::from_byte(input.u8()?)?);
+            // A newer server serves ops this side doesn't have. They are no use to it, and no
+            // reason to refuse.
+            let op = OpKind::named(input.u8()?);
+            if op != OpKind::Other {
+                ops.push(op);
+            }
         }
         Ok(ServiceHello {
             version,
@@ -189,6 +233,8 @@ impl ServiceHello {
                 codecs: get_strs(input)?,
                 max_runs: input.u32()?,
             },
+            knows: get_strs(input)?,
+            needs: get_strs(input)?,
         })
     }
 }
@@ -222,7 +268,12 @@ pub enum ClientMsg {
 
 impl ClientMsg {
     pub fn encode(&self, codecs: &Schema) -> Result<Vec<u8>, WireError> {
-        let mut out = Writer::new();
+        self.encode_into(Writer::new(), codecs)
+    }
+
+    /// [`ClientMsg::encode`] into a writer of the caller's, which a test pads.
+    #[doc(hidden)]
+    pub fn encode_into(&self, mut out: Writer, codecs: &Schema) -> Result<Vec<u8>, WireError> {
         match self {
             ClientMsg::Hello(hello) => {
                 out.u8(kind::CLIENT_HELLO);
@@ -259,7 +310,7 @@ impl ClientMsg {
             }
             other => return Err(WireError::UnknownKind(other)),
         };
-        input.finish()?;
+        // What is left is fields from a later version, at the end of the message.
         Ok(message)
     }
 
@@ -299,7 +350,12 @@ pub enum ServerMsg {
 
 impl ServerMsg {
     pub fn encode(&self, codecs: &Schema) -> Result<Vec<u8>, WireError> {
-        let mut out = Writer::new();
+        self.encode_into(Writer::new(), codecs)
+    }
+
+    /// [`ServerMsg::encode`] into a writer of the caller's, which a test pads.
+    #[doc(hidden)]
+    pub fn encode_into(&self, mut out: Writer, codecs: &Schema) -> Result<Vec<u8>, WireError> {
         match self {
             ServerMsg::Hello(hello) => {
                 out.u8(kind::SERVER_HELLO);
@@ -346,7 +402,7 @@ impl ServerMsg {
             }),
             other => return Err(WireError::UnknownKind(other)),
         };
-        input.finish()?;
+        // What is left is fields from a later version, at the end of the message.
         Ok(message)
     }
 }

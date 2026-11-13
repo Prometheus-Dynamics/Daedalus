@@ -34,6 +34,10 @@ pub enum WireError {
     Protocol { expected: u32, found: u32 },
     /// The hello names another layout hash.
     Layout { expected: u64, found: u64 },
+    /// A request for an op this side doesn't have: the other side is newer.
+    UnknownOp(u8),
+    /// The other side relies on something this side doesn't know, named in its hello.
+    Needs { name: String },
 }
 
 impl fmt::Display for WireError {
@@ -67,9 +71,20 @@ impl fmt::Display for WireError {
             WireError::Layout { expected, found } => {
                 write!(
                     f,
-                    "layout hash {found:#018x}, this side has {expected:#018x}"
+                    "the other side was built for another wire layout: its layout hash is \
+                     {found:#018x}, this side has {expected:#018x}. One of the two has to be \
+                     updated"
                 )
             }
+            WireError::UnknownOp(op) => write!(
+                f,
+                "op {op} is not one this side has: the other side is newer"
+            ),
+            WireError::Needs { name } => write!(
+                f,
+                "the other side needs `{name}`, which this side doesn't have: this side has to \
+                 be updated"
+            ),
         }
     }
 }
