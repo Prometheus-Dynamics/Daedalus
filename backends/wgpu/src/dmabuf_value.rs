@@ -47,14 +47,30 @@ impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
         let Some(value) = typed_view::<T>(input) else {
             return fault(cx, "an import was given a value that is not a dma-buf");
         };
+        let Ok(context) = crate::devices::context(self.slot) else {
+            return fault(cx, "an import has no device to go to");
+        };
         let Some((dmabuf, want)) = value.dmabuf() else {
-            return fault(cx, "an import was given a value with no dma-buf");
+            // Nothing to import: a value made where no dma-heap opens is bytes only. It is
+            // copied from them, as the upload planned for a device that can't import would.
+            let Some(bytes) = value.bytes() else {
+                return fault(
+                    cx,
+                    "an import was given a value with no dma-buf and no bytes",
+                );
+            };
+            let storage = match upload_bytes(&context, bytes) {
+                Ok(storage) => storage,
+                Err(error) => return fault(cx, &format!("a value couldn't be copied: {error}")),
+            };
+            let Some(out) = slots.cell(1) else {
+                return fault(cx, "an import has no output");
+            };
+            put_typed(out, UNSTAMPED.0, UNSTAMPED.1, storage);
+            return StepEnd::Done;
         };
         let Ok(fd) = dmabuf.try_clone_to_owned() else {
             return fault(cx, "an import couldn't take the value's dma-buf");
-        };
-        let Ok(context) = crate::devices::context(self.slot) else {
-            return fault(cx, "an import has no device to go to");
         };
         // In place where the device takes this kind of fd, or where nothing has tried yet:
         // then this value is the trial. A value the device refuses is copied, not faulted, and
@@ -157,11 +173,26 @@ fn copy_bytes(
     view.end_cpu_access(Access::Read)
         .map_err(|error| error.to_string())?;
     read.map_err(|error| error.to_string())?;
-    let storage = Storage::zeroed(Arc::clone(context), want).map_err(|error| error.to_string())?;
+    upload_bytes(context, &bytes)
+}
+
+/// `bytes` in a new device buffer, counted as the upload it is. A buffer is a whole number of
+/// words, so a length that isn't is padded with zeroes.
+fn upload_bytes(context: &Arc<Context>, bytes: &[u8]) -> Result<Arc<Storage>, String> {
+    let size = (bytes.len() as u64).next_multiple_of(4).max(4);
+    let storage = Storage::zeroed(Arc::clone(context), size).map_err(|error| error.to_string())?;
+    let whole = bytes.len() - bytes.len() % 4;
     storage
-        .write(0, &bytes)
+        .write(0, &bytes[..whole])
         .map_err(|error| error.to_string())?;
-    context.moved.upload(want);
+    if whole < bytes.len() {
+        let mut last = [0; 4];
+        last[..bytes.len() - whole].copy_from_slice(&bytes[whole..]);
+        storage
+            .write(whole as u64, &last)
+            .map_err(|error| error.to_string())?;
+    }
+    context.moved.upload(bytes.len() as u64);
     Ok(Arc::new(storage))
 }
 

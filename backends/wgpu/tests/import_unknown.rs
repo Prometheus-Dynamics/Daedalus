@@ -106,7 +106,7 @@ fn through_the_import<T: DmaBufBacked>(backend: &WgpuBackend, value: T) -> Vec<u
         context.reason()
     );
     let storage = take_typed::<Storage>(&mut cells[1]).expect("a device buffer");
-    let mut bytes = vec![1; BYTES];
+    let mut bytes = vec![1; storage.size() as usize];
     storage.read_into(0, &mut bytes).expect("a readback");
     drop_owned(cells[0]);
     release(step);
@@ -231,4 +231,85 @@ fn a_host_can_say_or_try_before_the_first_value() {
             assert_eq!(bytes, pattern());
         }
     }
+}
+
+/// A value with no dma-buf, as one made where no heap opens: only its bytes.
+struct NoFd(Option<Vec<u8>>);
+
+impl Typed for NoFd {
+    const KEY: TypeKey = TypeKey::new("t:unknown_no_fd");
+    const EXPR: TypeExpr = TypeExpr::Opaque(TypeKey::new("t:unknown_no_fd"));
+}
+impl DmaBufBacked for NoFd {
+    fn dmabuf(&self) -> Option<(BorrowedFd<'_>, u64)> {
+        None
+    }
+    fn bytes(&self) -> Option<&[u8]> {
+        self.0.as_deref()
+    }
+}
+
+/// While nothing has tried, the import is planned, and a value can reach it that has no dma-buf
+/// at all: made on a machine whose heap doesn't open. It is copied from its bytes, and says
+/// nothing about what the device imports.
+#[test]
+fn a_value_with_no_dma_buf_is_copied_from_its_bytes() {
+    let backend = WgpuBackend::open(Options {
+        index: Some(0),
+        no_heap_access: true,
+        ..Options::default()
+    })
+    .with_dmabuf::<NoFd>();
+    if backend.start().is_err() {
+        assert!(
+            std::env::var_os("DAEDALUS_GPU_REQUIRED").is_none(),
+            "this lane needs an adapter"
+        );
+        return;
+    }
+    if backend.dmabuf_import(false) == Some(false) {
+        // No dma-buf import on this device at all: nothing is planned, and the value is uploaded.
+        return;
+    }
+    let before = backend.transfer_stats().expect("open");
+    // A length that isn't a whole number of words is padded.
+    for len in [BYTES, 10] {
+        let bytes = pattern()[..len].to_vec();
+        let got = through_the_import(&backend, NoFd(Some(bytes.clone())));
+        assert_eq!(got[..len], bytes[..], "{len} bytes");
+    }
+    let after = backend.transfer_stats().expect("open");
+    assert_eq!(after.uploads - before.uploads, 2, "each was a copy");
+    assert_eq!(after.imports, before.imports, "nothing was imported");
+    assert_eq!(
+        backend.dmabuf_import(false),
+        None,
+        "and nothing was learned"
+    );
+
+    // With neither a dma-buf nor bytes there is nothing to give the device: a fault that says so.
+    let id = format!("wgpu.import:{}", NoFd::KEY.as_str());
+    let transfers = backend.transfers();
+    let transfer = transfers.iter().find(|one| one.id == id).expect("planned");
+    let mut step = (transfer.make)(&cx()).expect("a step");
+    let mut cells = [Slot::EMPTY, Slot::EMPTY];
+    put_typed(
+        &mut cells[0],
+        TypeIndex(0),
+        SpaceIndex(0),
+        Arc::new(NoFd(None)),
+    );
+    let mut context = StepCx::new();
+    let end = {
+        let mut slots = Slots::of(&mut cells);
+        run_once(&mut step, &mut slots, &mut context)
+    };
+    assert!(matches!(end, StepEnd::Fault));
+    assert!(
+        context.reason().contains("no dma-buf and no bytes"),
+        "{}",
+        context.reason()
+    );
+    drop_owned(cells[0]);
+    release(step);
 }

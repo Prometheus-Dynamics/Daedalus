@@ -66,6 +66,11 @@ impl DmaBufBacked for HeapBytes {
             .as_ref()
             .map(|fd| (fd.as_fd(), self.bytes.len() as u64))
     }
+
+    /// The bytes too: a value made where no dma-heap opens has only these.
+    fn bytes(&self) -> Option<&[u8]> {
+        Some(&self.bytes)
+    }
 }
 
 /// On the CPU: a value of `count` bytes, numbered from 3 in steps of 7.
