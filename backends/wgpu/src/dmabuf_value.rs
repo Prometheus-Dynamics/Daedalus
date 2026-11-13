@@ -26,6 +26,9 @@ use crate::handoff::on_device;
 use crate::memory::SPACE_DEVICE;
 use crate::transfer::{HOST_SPACE, intern};
 
+/// One import: the dma-buf, where the bytes start in it, how many there are, and the buffer.
+type Kept = (daedalus_dma_sys::Identity, u64, u64, Arc<Storage>);
+
 fn fault(cx: &mut StepCx, reason: &str) -> StepEnd {
     cx.fault(None, reason);
     StepEnd::Fault
@@ -36,6 +39,15 @@ fn fault(cx: &mut StepCx, reason: &str) -> StepEnd {
 struct ImportStep<T> {
     /// The device, by its slot: 0 for the default, or a named device's place.
     slot: usize,
+    /// The buffers this step has imported, by which dma-buf they are and where in it. A producer
+    /// cycles through a few buffers, so the next time one comes round it is found here and
+    /// nothing is imported again: the device buffer is the same memory, with whatever the
+    /// producer has written since. Past the device's
+    /// [`kept_imports`](crate::Options::kept_imports) the one imported longest ago is let go:
+    /// whoever still holds its buffer keeps it, and its value is imported again when it next
+    /// comes, beside the first import. A device counts the imports of one dma-buf, so two of
+    /// the same memory are sound.
+    kept: Vec<Kept>,
     of: PhantomData<fn() -> T>,
 }
 
@@ -76,10 +88,32 @@ impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
         // then this value is the trial. A value the device refuses is copied, not faulted, and
         // a refusal that is the device's is remembered, so the next plan takes the copy.
         let mut storage = None;
-        if context.imports.may(T::READ_ONLY) {
-            match import_bytes(&context, fd, want) {
+        let offset = value.offset();
+        // A buffer this step imported before is the same memory now: nothing to do again. One
+        // from a device that has since been lost is no use, and is forgotten.
+        let which = daedalus_dma_sys::DmaBufRef::from_fd(dmabuf).identity().ok();
+        self.kept
+            .retain(|(_, _, _, held)| Arc::ptr_eq(&held.context, &context));
+        if let Some(which) = which
+            && let Some((_, _, _, held)) = self
+                .kept
+                .iter()
+                .find(|(id, at, len, _)| (*id, *at, *len) == (which, offset, want))
+        {
+            storage = Some(Arc::clone(held));
+        }
+        if storage.is_none() && context.imports.may(T::READ_ONLY) {
+            match import_bytes(&context, fd, offset, want) {
                 Ok(imported) => {
                     context.imports.set(T::READ_ONLY, true);
+                    if let Some(which) = which
+                        && context.kept_imports > 0
+                    {
+                        while self.kept.len() >= context.kept_imports {
+                            self.kept.remove(0);
+                        }
+                        self.kept.push((which, offset, want, Arc::clone(&imported)));
+                    }
                     storage = Some(imported);
                 }
                 Err(Refused::Value(_)) => {}
@@ -88,7 +122,7 @@ impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
         }
         let storage = match storage {
             Some(storage) => storage,
-            None => match copy_bytes(&context, dmabuf, want) {
+            None => match copy_bytes(&context, dmabuf, offset, want) {
                 Ok(copied) => copied,
                 Err(error) => return fault(cx, &format!("a dma-buf couldn't be copied: {error}")),
             },
@@ -107,28 +141,32 @@ impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
 pub(crate) fn import_bytes(
     context: &Arc<Context>,
     fd: OwnedFd,
+    offset: u64,
     want: u64,
 ) -> Result<Arc<Storage>, Refused> {
     use daedalus_vk_sys::Error;
-    use daedalus_vk_sys::memory::{dma_buf_bytes_needed, import_dma_buf};
+    use daedalus_vk_sys::memory::{dma_buf_bytes_needed, import_dma_buf_at};
     let device = |error: Error| match error {
         Error::NoDmaBufImport | Error::NotVulkan => {
             Refused::Device("this device can't import a dma-buf".to_string())
         }
         // The size asked for is the value's, not the device's fault.
-        Error::Range | Error::TooSmall { .. } => Refused::Value(error.to_string()),
+        Error::Range | Error::TooSmall { .. } | Error::Offset { .. } => {
+            Refused::Value(error.to_string())
+        }
         other => Refused::Device(other.to_string()),
     };
     let len = daedalus_dma_sys::DmaBufRef::from_fd(fd.as_fd())
         .len()
         .map_err(|error| Refused::Value(format!("the dma-buf's size: {error}")))?;
-    let need = dma_buf_bytes_needed(&context.device, want).map_err(device)?;
+    let need = offset.saturating_add(dma_buf_bytes_needed(&context.device, want).map_err(device)?);
     if need > len {
         return Err(Refused::Value(
             Error::TooSmall { have: len, need }.to_string(),
         ));
     }
-    let imported = import_dma_buf(&context.device, fd, want, len, None).map_err(device)?;
+    let imported =
+        import_dma_buf_at(&context.device, fd, offset, want, len, None).map_err(device)?;
     context.moved.import();
     Ok(Arc::new(Storage::imported(
         Arc::clone(context),
@@ -161,6 +199,7 @@ impl std::fmt::Display for Refused {
 fn copy_bytes(
     context: &Arc<Context>,
     fd: BorrowedFd<'_>,
+    offset: u64,
     want: u64,
 ) -> Result<Arc<Storage>, String> {
     use daedalus_dma_sys::{Access, DmaBufRef};
@@ -169,7 +208,7 @@ fn copy_bytes(
     let mut bytes = vec![0; usize::try_from(want).map_err(|_| "too long".to_string())?];
     view.begin_cpu_access(Access::Read)
         .map_err(|error| error.to_string())?;
-    let read = map.read(0, &mut bytes);
+    let read = map.read(offset, &mut bytes);
     view.end_cpu_access(Access::Read)
         .map_err(|error| error.to_string())?;
     read.map_err(|error| error.to_string())?;
@@ -214,6 +253,7 @@ type Make = fn(&CompileCx<'_>) -> Result<Step, Refusal>;
 fn import<T: DmaBufBacked, const SLOT: usize>(_: &CompileCx<'_>) -> Result<Step, Refusal> {
     Ok(Step::boxed(ImportStep::<T> {
         slot: SLOT,
+        kept: Vec::new(),
         of: PhantomData,
     }))
 }

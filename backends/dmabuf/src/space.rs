@@ -28,6 +28,14 @@ pub trait DmaBufBacked: Typed + Send + Sync + 'static {
     /// as on a machine with no dma-heap: such a value stays on the host.
     fn dmabuf(&self) -> Option<(BorrowedFd<'_>, u64)>;
 
+    /// Where the value starts in its dma-buf, in bytes. Zero, the default, for a value that has a
+    /// dma-buf to itself. A buffer can hold several values, as planes and pooled allocations do:
+    /// each says where it is, and a device that can bind there imports it in place. One it can't
+    /// bind at, since a device has an alignment of its own, is copied.
+    fn offset(&self) -> u64 {
+        0
+    }
+
     /// The value's bytes, when it also has them on the host. A value with no dma-buf that
     /// reaches a move planned as an import is copied from these, since there is nothing to
     /// import. `None`, the default, for a type that is only ever a dma-buf.

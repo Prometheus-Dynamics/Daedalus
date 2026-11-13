@@ -270,7 +270,7 @@ pub fn storage_buffer(
             }
         }
     }
-    let buffer = wrap(device, buffer, memory, needs.size, size, label);
+    let buffer = wrap(device, buffer, memory, 0, needs.size, size, label);
     let mapping = mapped.map(|ptr| HostMapping {
         ptr,
         len: size as usize,
@@ -286,14 +286,15 @@ fn wrap(
     device: &wgpu::Device,
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
+    offset: u64,
     allocated: u64,
     size: u64,
     label: Option<&str>,
 ) -> wgpu::Buffer {
-    // SAFETY: the buffer is bound to `memory` at offset 0, both belong to this device, and from
+    // SAFETY: the buffer is bound to `memory` at `offset`, both belong to this device, and from
     // here wgpu owns them. The descriptor's size and usage match how the buffer was created.
     unsafe {
-        let hal_buffer = hal_vk::Buffer::from_raw_managed(buffer, memory, 0, allocated);
+        let hal_buffer = hal_vk::Buffer::from_raw_managed(buffer, memory, offset, allocated);
         device.create_buffer_from_hal::<Vulkan>(hal_buffer, &descriptor(size, label))
     }
 }
@@ -412,6 +413,22 @@ pub fn import_dma_buf(
     have: u64,
     label: Option<&str>,
 ) -> Result<wgpu::Buffer, Error> {
+    import_dma_buf_at(device, fd, 0, size, have, label)
+}
+
+/// As [`import_dma_buf`], for bytes that start `offset` into the dma-buf: one buffer of several
+/// in it, as planes and pooled buffers are. The memory is the whole dma-buf's, and the buffer is
+/// bound `offset` into it, so nothing is copied. `offset` has to suit the device
+/// ([`Error::Offset`] says what it wants), and the dma-buf has to reach as far as the device
+/// needs past it.
+pub fn import_dma_buf_at(
+    device: &wgpu::Device,
+    fd: OwnedFd,
+    offset: u64,
+    size: u64,
+    have: u64,
+    label: Option<&str>,
+) -> Result<wgpu::Buffer, Error> {
     if size == 0 || !size.is_multiple_of(4) {
         return Err(Error::Range);
     }
@@ -430,12 +447,17 @@ pub fn import_dma_buf(
     let needs = unsafe { vk_device.get_buffer_memory_requirements(buffer) };
     // Checked before the driver is asked about the fd: it would refuse a short one without
     // saying why.
-    let allowed = match needs.size > have {
-        true => Err(Error::TooSmall {
-            have,
-            need: needs.size,
-        }),
-        false => dma_buf_memory_types(device, std::os::fd::AsFd::as_fd(&fd)),
+    // The memory imported is the dma-buf from its start to the end of what this buffer needs.
+    let reach = offset.saturating_add(needs.size);
+    let allowed = if !offset.is_multiple_of(needs.alignment.max(1)) {
+        Err(Error::Offset {
+            offset,
+            alignment: needs.alignment,
+        })
+    } else if reach > have {
+        Err(Error::TooSmall { have, need: reach })
+    } else {
+        dma_buf_memory_types(device, std::os::fd::AsFd::as_fd(&fd))
     };
     let both = match allowed {
         Ok(allowed) if needs.memory_type_bits & allowed != 0 => needs.memory_type_bits & allowed,
@@ -452,7 +474,7 @@ pub fn import_dma_buf(
         .handle_type(handle)
         .fd(raw_fd);
     let allocate = vk::MemoryAllocateInfo::default()
-        .allocation_size(needs.size)
+        .allocation_size(reach)
         .memory_type_index(both.trailing_zeros())
         .push_next(&mut import);
     // SAFETY: an import of an fd this call owns. On success Vulkan owns the fd.
@@ -480,7 +502,7 @@ pub fn import_dma_buf(
         }
     };
     // SAFETY: the memory was imported for this buffer and is bound once.
-    if let Err(error) = unsafe { vk_device.bind_buffer_memory(buffer, memory, 0) } {
+    if let Err(error) = unsafe { vk_device.bind_buffer_memory(buffer, memory, offset) } {
         // SAFETY: both were made above, and nothing else has them.
         unsafe {
             vk_device.destroy_buffer(buffer, None);
@@ -488,7 +510,9 @@ pub fn import_dma_buf(
         }
         return Err(error.into());
     }
-    Ok(wrap(device, buffer, memory, needs.size, size, label))
+    Ok(wrap(
+        device, buffer, memory, offset, needs.size, size, label,
+    ))
 }
 
 /// The Vulkan buffer behind a wgpu one, for commands recorded through

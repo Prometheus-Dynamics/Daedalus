@@ -106,6 +106,10 @@ impl AdapterInfo {
     }
 }
 
+/// The imports an import step keeps unless [`Options::kept_imports`] says otherwise: four pools
+/// of eight buffers of two planes.
+pub const DEFAULT_KEPT_IMPORTS: usize = 64;
+
 /// How [`WgpuBackend::open`](crate::WgpuBackend::open) picks its adapter.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Options {
@@ -133,6 +137,12 @@ pub struct Options {
     /// unknown until one is handed to it or the host says. That is a consumer that isn't root on
     /// a board whose heaps are root's.
     pub no_heap_access: bool,
+    /// How many dma-buf imports each import step keeps, to find a buffer again when its producer
+    /// hands it round once more. One import is one value: a dma-buf, an offset and a length, so
+    /// a pool of eight buffers of two planes is sixteen. Past the bound the import made longest
+    /// ago is let go, and its value is imported again when it next comes. With 0 nothing is
+    /// kept, and every value is imported as it comes.
+    pub kept_imports: usize,
     /// What an earlier run learned about the adapter, so planning can use it before a device
     /// opens.
     pub known: Option<crate::CapsRecord>,
@@ -161,6 +171,7 @@ impl Default for Options {
             host_ports_on_device: false,
             no_dma_heap: false,
             no_heap_access: false,
+            kept_imports: DEFAULT_KEPT_IMPORTS,
             known: None,
             hints: crate::MemoryHints::default(),
             staging: crate::StagingConfig::default(),

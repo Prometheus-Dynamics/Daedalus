@@ -43,7 +43,9 @@ mod transfer;
 mod upload;
 mod wait;
 
-pub use adapter::{AdapterInfo, Api, Apis, Candidate, DeviceKind, Options, is_software, rank};
+pub use adapter::{
+    AdapterInfo, Api, Apis, Candidate, DEFAULT_KEPT_IMPORTS, DeviceKind, Options, is_software, rank,
+};
 pub use backend::{Handle, WgpuBackend};
 pub use buffer::{Storage, StorageError};
 pub use caps::{CapsRecord, ComputeCaps, ComputeFeatures, Need};
