@@ -498,11 +498,7 @@ impl WorkerStep {
                         .position(|region| shared.nodes[*region as usize].id == *node)
                 });
                 let text = format!("{}: {}", fault.code.name(), fault.reason);
-                if let Some(position) = at {
-                    cx.fault(Some(position as u32), &text);
-                } else {
-                    cx.fault(None, &text);
-                }
+                say(cx, at.map(|position| position as u32), &text);
                 sup.fault = Some(text);
             }
             Ok(WorkerMsg::Progress(progress)) if progress.run == run => {
@@ -556,8 +552,17 @@ impl WorkerStep {
                 worker.kill();
             }
         }
-        cx.fault(None, &text);
+        say(cx, None, &text);
         StepEnd::Fault
+    }
+}
+
+/// Records a fault. A worker's reason, and the tail of its stderr, are often longer than a
+/// fault's reason holds: then the whole text goes to the host's detail as well.
+fn say(cx: &mut StepCx, at: Option<u32>, text: &str) {
+    cx.fault(at, text);
+    if cx.reason_cut() {
+        cx.detail(text);
     }
 }
 

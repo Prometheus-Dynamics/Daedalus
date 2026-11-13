@@ -158,8 +158,34 @@ and automatic turning-off exists only as a policy a host opts into.
 A fault's reason is a headline. It is kept in a fixed 120 bytes, so that reporting a failure
 allocates nothing, on a chip or anywhere else. A longer one is cut on a character boundary, and
 the fault says so: `reason_cut` on what the host reads back (`FaultReport`, and a fault event over
-the service). A node with more to say than fits puts it somewhere of its own, a log or a file,
-and names that in the reason.
+the service). A node with more to say than fits gives the rest to the host as the fault's
+detail, below.
+
+The detail is everything else: the lines a check found, a tool's output, a whole error chain. A
+body with a `&Ctx` parameter writes it before it returns its error, in as many pieces as it
+likes:
+
+```rust
+#[node(id = "check.odd", inputs(a), outputs(out))]
+fn odd(a: u32, ctx: &Ctx) -> Result<u32, Fault> {
+    let mut found = false;
+    for n in (1..=a).step_by(2) {
+        ctx.detail_fmt(format_args!("{n} is odd\n"));
+        found = true;
+    }
+    if found {
+        return Err(Fault { code: 3, reason: "there are odd numbers" });
+    }
+    Ok(a)
+}
+```
+
+`ctx.detail(text)` takes a piece of text and `ctx.detail_fmt(format_args!(..))` formats straight
+into the host's memory, so the node allocates nothing for it. `ctx.wants_detail()` says whether
+anybody keeps it, for a body that would otherwise gather something costly: on a chip, or with a
+host that set the bound to zero, nobody does and the calls do nothing. The host keeps what the
+step wrote with its failure, up to a bound it sets, and drops what a step wrote and then didn't
+fail. It is the same call in the host's own process and in a plugin library.
 
 A node that panics is a fault like any other, and the fault's reason is `panicked: ` and then
 what the panic said, cut to 120 bytes. It is the same for a node in the host's own process, in a

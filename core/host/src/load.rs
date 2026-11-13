@@ -42,6 +42,8 @@ pub struct LoadOptions {
     pub fault_reports: usize,
     /// How many ticks of overhead to keep. Zero leaves the probe off.
     pub overhead_window: usize,
+    /// The bytes of detail kept for a step's failure. Zero keeps none.
+    pub fault_detail_bytes: usize,
 }
 
 impl Default for LoadOptions {
@@ -50,6 +52,7 @@ impl Default for LoadOptions {
             fifo_capacity: 64,
             fault_reports: 32,
             overhead_window: 0,
+            fault_detail_bytes: 16 << 10,
         }
     }
 }
@@ -574,6 +577,7 @@ pub struct LoadedHost {
     pub(crate) node_names: Vec<&'static str>,
     pub(crate) fault_seen: Vec<u32>,
     pub(crate) faults: FaultRing,
+    pub(crate) detail: crate::detail::Details,
     pub(crate) planner: Option<Planner>,
     pub(crate) unmerged: bool,
     pub(crate) consts: ConstTable,
@@ -676,7 +680,8 @@ impl LoadedHost {
     ) -> Result<LoadedHost, LoadError> {
         let parts = build_host(&mut planned, options)?;
         consts.seed(&planned);
-        Ok(LoadedHost {
+        let mut loaded = LoadedHost {
+            detail: Default::default(),
             state: StateStore::new(),
             fault_seen: vec![0; parts.covers.len()],
             faults: FaultRing::new(options.fault_reports),
@@ -694,7 +699,9 @@ impl LoadedHost {
             bridges: parts.bridges,
             covers: parts.covers,
             node_names: parts.node_names,
-        })
+        };
+        loaded.attach_detail();
+        Ok(loaded)
     }
 
     /// Runs one tick and records what failed in it.

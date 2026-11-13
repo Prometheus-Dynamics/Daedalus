@@ -119,10 +119,13 @@ fn a_panicking_node_is_a_fault_and_the_host_keeps_running() {
         cap: 1,
         ..Slot::EMPTY
     };
+    // What the node gives `detail` crosses the library boundary to the host's sink.
     let mut cx = StepCx::new();
+    let kept = daedalus_abi::testing::keep_detail(&mut cx);
     let mut step = units.pop().expect("unit").step;
     let end = run_once(&mut step, &mut Slots::of(&mut cells), &mut cx);
     assert!(matches!(end, StepEnd::Fault));
+    assert_eq!(kept.text(), "boom: what led up to it, in 2 pieces");
     assert_eq!(cx.at, 0, "the fault names the node");
     assert_eq!(
         cx.reason(),

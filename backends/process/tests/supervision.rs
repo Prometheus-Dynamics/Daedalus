@@ -76,6 +76,11 @@ fn scalar_add_step(backend: &ProcessBackend) -> daedalus_abi::Step {
 
 /// Runs a scalar_add step once with 2 + 40, returning how it ended and its fault text.
 fn run_add(step: &mut daedalus_abi::Step) -> (StepEnd, String, Option<i64>) {
+    run_add_with(step, &mut StepCx::new())
+}
+
+/// [`run_add`] with the caller's context.
+fn run_add_with(step: &mut daedalus_abi::Step, cx: &mut StepCx) -> (StepEnd, String, Option<i64>) {
     let mut a = 2i64.to_le_bytes();
     let mut b = 40i64.to_le_bytes();
     let mut cells = [
@@ -97,8 +102,7 @@ fn run_add(step: &mut daedalus_abi::Step) -> (StepEnd, String, Option<i64>) {
         },
         Slot::EMPTY,
     ];
-    let mut cx = StepCx::new();
-    let end = run_once(step, &mut Slots::of(&mut cells), &mut cx);
+    let end = run_once(step, &mut Slots::of(&mut cells), cx);
     let value = cells[2]
         .bytes()
         .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
@@ -470,5 +474,28 @@ fn a_fault_report_ends_with_what_the_worker_logged_before_it_died() {
         "the report has the worker's last line: {reason}"
     );
     assert_eq!(backend.telemetry().logs, 1);
+    release(step);
+}
+
+#[test]
+fn a_workers_reason_that_doesnt_fit_goes_whole_to_the_hosts_detail() {
+    let mut backend = ProcessBackend::new();
+    backend
+        .add_worker(spec(&["--misbehave", "long-fault"]), &registry())
+        .expect("registers");
+    let mut step = scalar_add_step(&backend);
+    let mut cx = StepCx::new();
+    let kept = daedalus_abi::testing::keep_detail(&mut cx);
+    let (end, reason, _) = run_add_with(&mut step, &mut cx);
+    assert!(matches!(end, StepEnd::Fault));
+    assert!(cx.reason_cut(), "eight lines don't fit a reason: {reason}");
+    let detail = kept.text();
+    assert!(detail.starts_with(&reason), "the reason is its start");
+    for line in 0..8 {
+        assert!(
+            detail.contains(&format!("the check found line {line} out of place")),
+            "line {line} is in the detail: {detail}"
+        );
+    }
     release(step);
 }

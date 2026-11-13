@@ -63,7 +63,10 @@ fn pass(slots: &mut Slots, _cx: &mut StepCx) -> StepEnd {
     }
 }
 
-fn boom(_slots: &mut Slots, _cx: &mut StepCx) -> StepEnd {
+fn boom(_slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
+    // More than the reason holds goes to the host's detail, when it keeps one.
+    cx.detail("boom: what led up to it, ");
+    cx.detail_fmt(format_args!("in {} pieces", 2));
     panic!("boom: the node panicked on purpose");
 }
 

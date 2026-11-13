@@ -8,7 +8,26 @@ use crate::counters::{bump_node, bump_transfer};
 const FAULT: usize = 1 << (usize::BITS - 1);
 const REASON: &str = "sim fault";
 
+/// How many lines of detail a failing node writes. Zero, the default, writes none.
+static DETAIL_LINES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Has every sim node say that it ran with [`StepCx::detail`], and a failing one follow that with
+/// `lines` lines of what it found. For tests of what a host keeps. Zero turns it off again.
+pub fn write_details(lines: usize) {
+    DETAIL_LINES.store(lines, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn ran(node: u32, cx: &StepCx) {
+    let lines = DETAIL_LINES.load(core::sync::atomic::Ordering::Relaxed);
+    if lines != 0 {
+        cx.detail_fmt(format_args!("node {node} ran\n"));
+    }
+}
+
 fn fail(node: u32, cx: &mut StepCx) -> StepEnd {
+    for line in 0..DETAIL_LINES.load(core::sync::atomic::Ordering::Relaxed) {
+        cx.detail_fmt(format_args!("node {node} found line {line}\n"));
+    }
     cx.fault(Some(node), REASON);
     StepEnd::Fault
 }
@@ -19,6 +38,7 @@ impl StepWord for NodeStep {
     fn run(word: usize, _: &mut Slots, cx: &mut StepCx) -> StepEnd {
         let node = (word & !FAULT) as u32;
         bump_node(node);
+        ran(node, cx);
         if word & FAULT != 0 {
             fail(node, cx)
         } else {
@@ -36,6 +56,7 @@ impl OwnedStep for MergedStep {
     fn run(&mut self, _: &mut Slots, cx: &mut StepCx) -> StepEnd {
         for &node in &self.nodes {
             bump_node(node);
+            ran(node, cx);
             if self.faults.contains(&node) {
                 return fail(node, cx);
             }

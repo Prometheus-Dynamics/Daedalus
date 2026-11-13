@@ -79,7 +79,9 @@ mismatch is refused. `core/wire` is the Rust implementation, and each SDK has it
 ## Failure
 
 A worker that exits, hangs or sends something unreadable is a fault of its region, with the
-tail of what it wrote to stderr in the report. It is started again on a later run, after a
+tail of what it wrote to stderr in the report. A fault's reason holds 120 bytes, and a worker's
+own reason (up to 512 bytes on the wire) with its stderr tail is usually more: then the whole
+text is the fault's detail, which the host reads with `LoadedHost::fault_detail`. It is started again on a later run, after a
 delay that doubles and never exceeds 8 s. It is never given up on, and a worker's crash never
 ends the host.
 

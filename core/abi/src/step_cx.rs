@@ -1,5 +1,7 @@
 //! What a running step can see and report, with no allocation anywhere.
 
+use core::ffi::c_void;
+
 use crate::Word;
 
 /// `at` when the failing node isn't known.
@@ -72,6 +74,25 @@ impl core::fmt::Display for Fault {
     }
 }
 
+/// Where a step's longer account of a failure goes: the host's, when it set one. A fault's
+/// reason is a headline in a fixed place. What doesn't fit there is written here, in as many
+/// pieces as the step likes, and the host keeps it with the step's fault.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct DetailSink {
+    pub context: *mut c_void,
+    /// Takes one more piece of text from the step `step`. Called on whatever thread runs the
+    /// step, so `context` is something every thread may use at once.
+    pub write: Option<extern "C" fn(context: *mut c_void, step: u32, text: *const u8, len: usize)>,
+}
+
+impl DetailSink {
+    pub const NONE: DetailSink = DetailSink {
+        context: core::ptr::null_mut(),
+        write: None,
+    };
+}
+
 #[repr(C)]
 pub struct StepCx {
     pub at: u32,
@@ -89,10 +110,15 @@ pub struct StepCx {
     /// The bytes a step hands over, for output cells marked `HANDOVER_PENDING`: cell `k` of the
     /// outputs reads `handover[k]`. The loader turns each into a record right after the step returns.
     pub handover: [crate::BytesC; 2],
+    /// Where a longer account of a failure goes. Empty means nobody is keeping one.
+    pub detail: DetailSink,
+    /// Which step of the plan this call is, set by the runner. The detail is kept under it.
+    pub step: u32,
 }
 
 // SAFETY: `cancel` and `progress` point at `Word`s, which are `Sync`, and are only ever read
-// through shared references. The rest of the struct is plain data.
+// through shared references. `detail` is a function and a context every thread may use at once,
+// which is what setting one promises. The rest of the struct is plain data.
 unsafe impl Send for StepCx {}
 
 impl StepCx {
@@ -107,13 +133,49 @@ impl StepCx {
             code: 0,
             now_ns: 0,
             handover: [crate::NO_BYTES; 2],
+            detail: DetailSink::NONE,
+            step: 0,
+        }
+    }
+
+    /// Whether anybody keeps what [`StepCx::detail`] is given. A body asks before it formats
+    /// something long.
+    #[inline]
+    pub fn wants_detail(&self) -> bool {
+        self.detail.write.is_some()
+    }
+
+    /// Gives the host more to keep with this step's failure than the reason holds: the lines a
+    /// check found, a tool's output, a whole error chain. It may be called any number of times
+    /// before the step returns its fault, and the pieces are kept in order. It allocates nothing
+    /// here, and does nothing when the host keeps no detail. What a step writes and then doesn't
+    /// fault is dropped.
+    pub fn detail(&self, text: &str) {
+        if let Some(write) = self.detail.write {
+            write(self.detail.context, self.step, text.as_ptr(), text.len());
+        }
+    }
+
+    /// [`StepCx::detail`] for formatted text: `cx.detail_fmt(format_args!("{error:#}"))`. The
+    /// pieces go straight to the host, so nothing is allocated for the whole.
+    pub fn detail_fmt(&self, args: core::fmt::Arguments<'_>) {
+        struct Pieces<'a>(&'a StepCx);
+        impl core::fmt::Write for Pieces<'_> {
+            fn write_str(&mut self, text: &str) -> core::fmt::Result {
+                self.0.detail(text);
+                Ok(())
+            }
+        }
+        if self.wants_detail() {
+            // The writer never fails, so neither does this.
+            let _ = core::fmt::write(&mut Pieces(self), args);
         }
     }
 
     /// Records a failure. `reason` is cut to [`REASON_CAPACITY`] bytes, on a char boundary, and
     /// [`StepCx::reason_cut`] says when it was: the reason is a headline, held in a fixed place
-    /// so that reporting a failure allocates nothing. A body with more to say than fits puts it
-    /// somewhere of its own and names that in the reason.
+    /// so that reporting a failure allocates nothing. A body with more to say than fits gives
+    /// the rest to [`StepCx::detail`].
     pub fn fault(&mut self, at: Option<u32>, reason: &str) {
         self.at = at.unwrap_or(NO_NODE);
         let mut end = reason.len().min(REASON_CAPACITY);

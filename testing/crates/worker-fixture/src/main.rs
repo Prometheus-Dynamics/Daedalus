@@ -4,7 +4,8 @@
 //! `exit` exits on each run, `exit-once:<marker>` exits once (the marker file records it),
 //! `hang` never answers a run, `oversize` writes a packet over the cap, `stderr-flood`
 //! writes a megabyte to stderr before each run, `log` sends two log messages before each run's
-//! outputs, and `log-exit` sends one and exits.
+//! outputs, `log-exit` sends one and exits, and `long-fault` fails each run with a reason of
+//! several lines.
 
 #![forbid(unsafe_code)]
 
@@ -32,6 +33,7 @@ enum Mode {
     StderrFlood,
     Log,
     LogExit,
+    LongFault,
 }
 
 fn mode_from_args() -> Mode {
@@ -46,6 +48,7 @@ fn mode_from_args() -> Mode {
         Some("stderr-flood") => Mode::StderrFlood,
         Some("log") => Mode::Log,
         Some("log-exit") => Mode::LogExit,
+        Some("long-fault") => Mode::LongFault,
         Some(other) if other.starts_with("exit-once:") => {
             Mode::ExitOnce(PathBuf::from(&other["exit-once:".len()..]))
         }
@@ -178,6 +181,28 @@ fn main() {
                         let _ = send(&mut out, &line, &schema);
                         let _ = out.flush();
                         process::exit(3);
+                    }
+                    Mode::LongFault => {
+                        let reason: String = (0..8)
+                            .map(|line| format!("the check found line {line} out of place\n"))
+                            .collect();
+                        let fault = WorkerMsg::Fault(Fault {
+                            run: run_msg.run,
+                            node: run_msg.nodes.first().cloned(),
+                            code: FaultCode::NodeError,
+                            reason,
+                        });
+                        let done = WorkerMsg::Outputs(Outputs {
+                            run: run_msg.run,
+                            status: RunStatus::Fault,
+                            outputs: Vec::new(),
+                        });
+                        if send(&mut out, &fault, &schema).is_err()
+                            || send(&mut out, &done, &schema).is_err()
+                        {
+                            return;
+                        }
+                        continue;
                     }
                     Mode::Normal => {}
                 }

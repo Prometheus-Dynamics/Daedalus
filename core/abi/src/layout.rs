@@ -5,9 +5,9 @@ use core::mem::{align_of, offset_of, size_of};
 use crate::foreign::{ForeignHandle, ForeignInterfaceInfo, ForeignOwner};
 
 use crate::{
-    AbiVersion, BackendTable, BoundaryPort, BytesC, CodecC, Fence, FencePoll, HandedRecord, Handle,
-    NodeC, PluginEntry, PortC, RegionView, Slot, Slots, Status, Step, StepCx, StepEnd, Text,
-    UnitOut,
+    AbiVersion, BackendTable, BoundaryPort, BytesC, CodecC, DetailSink, Fence, FencePoll,
+    HandedRecord, Handle, NodeC, PluginEntry, PortC, RegionView, Slot, Slots, Status, Step, StepCx,
+    StepEnd, Text, UnitOut,
 };
 
 /// FNV-1a over the words, each as little-endian bytes.
@@ -45,7 +45,8 @@ pub const SHAPES: &[u64] = &shape! {
     Fence { poll, data }
     Slot { state, space, type_index, owner, version, reserved, data, len, cap }
     Slots { cells, len, reserved }
-    StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns, handover }
+    DetailSink { context, write }
+    StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns, handover, detail, step }
     StepEnd { }
     Step { run, data, release }
     AbiVersion { struct_size, major, minor, layout }
