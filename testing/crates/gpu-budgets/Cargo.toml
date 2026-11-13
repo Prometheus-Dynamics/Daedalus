@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
+# `cargo run -p daedalus-gpu-budgets` is the timing tool. The other program is run by name.
+default-run = "daedalus-gpu-budgets"
 
 [dependencies]
 daedalus-abi = { path = "../../../core/abi", features = ["count-alloc", "test-run"] }
