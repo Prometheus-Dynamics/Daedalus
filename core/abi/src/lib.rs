@@ -45,7 +45,9 @@ pub use foreign::{
     ForeignHandle, ForeignInterface, ForeignInterfaceInfo, ForeignInterfaceMismatch, ForeignOwner,
     ForeignRef, ProvideForeign, foreign_layout_hash,
 };
-pub use guard::{guard, guard_or};
+#[cfg(feature = "std")]
+pub use guard::panic_message;
+pub use guard::{guard, guard_or, guard_step};
 pub use handed::{
     HANDOVER_PENDING, HandedRecord, OWNER_HANDED, SharedBytes, handed_release, handed_retain,
 };

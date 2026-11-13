@@ -297,6 +297,7 @@ fn an_owned_declaration_joins_like_a_record() {
         body: OwnedBody {
             backend: backend.into(),
             text: String::new(),
+            code: None,
         },
         conversion: None,
     };

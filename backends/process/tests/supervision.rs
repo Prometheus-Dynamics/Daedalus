@@ -9,7 +9,7 @@ use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
 use daedalus_backend::{
     Backend, BodyIndex, CompileCx, Compiled, NO_METADATA, NodeBody, PortRef, RateId, Region,
 };
-use daedalus_backend_process::{ProcessBackend, ProcessError};
+use daedalus_backend_process::{ProcessBackend, ProcessError, WorkerSpec};
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
 use daedalus_worker_conformance::runner::registry;
 use support::spec;
@@ -127,10 +127,20 @@ fn a_worker_that_exits_mid_run_faults_then_respawns_after_the_backoff() {
     assert!(matches!(end, StepEnd::Fault), "the first run faults");
     assert!(reason.contains("exited mid-run"), "{reason}");
 
-    // Straight after the fault the link is down: the run faults at once, saying it is backing off.
+    // Straight after the fault the link is down. The run is skipped at once, saying the worker is
+    // backing off: the failure was the fault above, and this is not another.
+    let faults = backend.telemetry().faults;
     let (end, reason, _) = run_add(&mut step);
-    assert!(matches!(end, StepEnd::Fault));
+    assert!(
+        matches!(end, StepEnd::Skipped),
+        "skipped, not a second fault"
+    );
     assert!(reason.contains("backing off"), "{reason}");
+    assert_eq!(
+        backend.telemetry().faults,
+        faults,
+        "the wait counts no fault"
+    );
 
     std::thread::sleep(Duration::from_millis(400));
     let (end, _, value) = run_add(&mut step);
@@ -165,6 +175,20 @@ fn a_worker_that_never_answers_is_cancelled_then_killed_with_its_own_pid() {
         vec![spawned],
         "the killed pid is the spawned one"
     );
+
+    // The host stopped that worker itself, so the next run doesn't wait: a new worker is
+    // started at once. This one hangs too, and is killed in its turn.
+    let (end, reason, _) = run_add(&mut step);
+    assert!(matches!(end, StepEnd::Fault));
+    assert!(!reason.contains("backing off"), "{reason}");
+    assert!(reason.contains("killed"), "{reason}");
+    let killed = backend.killed_pids("fixture.scalar_add");
+    assert_eq!(
+        killed.len(),
+        2,
+        "a second worker ran and was killed: {killed:?}"
+    );
+    assert_ne!(killed[0], killed[1]);
     release(step);
 }
 
@@ -212,8 +236,14 @@ fn a_run_keeps_trying_after_three_consecutive_faults() {
     let mut step = scalar_add_step(&backend);
     let mut spawns_before = backend.telemetry().spawns;
     for round in 0..4 {
-        let (end, _, _) = run_add(&mut step);
-        assert!(matches!(end, StepEnd::Fault), "round {round} faults");
+        let (end, reason, _) = run_add(&mut step);
+        if round == 0 {
+            assert!(matches!(end, StepEnd::Fault), "the first run faults");
+        } else {
+            // The round before left the worker backing off: this run is skipped, not faulted.
+            assert!(matches!(end, StepEnd::Skipped), "round {round}: {reason}");
+            assert!(reason.contains("backing off"), "{reason}");
+        }
         // A respawn happens on the first run after the backoff, so the next run starts one.
         std::thread::sleep(Duration::from_millis(900));
         let (end, _, _) = run_add(&mut step);
@@ -238,6 +268,148 @@ fn a_worker_whose_node_the_registry_lacks_is_refused_by_name() {
         Err(error @ ProcessError::Declaration { .. }) => {
             let text = error.to_string();
             assert!(text.contains("the registry has no such node"), "{text}");
+        }
+        other => panic!("expected a declaration error, got {other:?}"),
+    }
+}
+
+/// What a worker started from `spec` finds in its environment. The program is a shell that writes
+/// its environment to a file and exits, so it never says hello and is refused: the file is what
+/// this is for.
+#[cfg(unix)]
+fn environment_of(name: &str, shape: impl FnOnce(WorkerSpec) -> WorkerSpec) -> String {
+    let out = unique(name);
+    let spec = WorkerSpec::new("/bin/sh")
+        .arg("-c")
+        .arg(format!("env > '{}'", out.display()));
+    let mut backend = ProcessBackend::new();
+    assert!(
+        backend.add_worker(shape(spec), &registry()).is_err(),
+        "a shell is no worker"
+    );
+    // The shell may still be writing when it is refused.
+    for _ in 0..200 {
+        if let Ok(text) = std::fs::read_to_string(&out)
+            && !text.is_empty()
+        {
+            return text;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("the shell wrote no environment to {}", out.display());
+}
+
+#[cfg(unix)]
+fn has(environment: &str, key: &str) -> bool {
+    environment
+        .lines()
+        .any(|line| line.starts_with(&format!("{key}=")))
+}
+
+#[cfg(unix)]
+#[test]
+fn a_worker_inherits_the_hosts_environment_unless_the_spec_takes_it_away() {
+    // The test's own environment has these, or the comparison below says nothing.
+    let inherited: Vec<&str> = ["PATH", "HOME"]
+        .into_iter()
+        .filter(|key| std::env::var_os(key).is_some())
+        .collect();
+    assert!(!inherited.is_empty(), "the test needs PATH or HOME set");
+
+    let plain = environment_of("env-plain", |spec| spec.env("DAEDALUS_TEST_SET", "1"));
+    assert!(has(&plain, "DAEDALUS_TEST_SET"));
+    for key in &inherited {
+        assert!(has(&plain, key), "{key} is inherited by default");
+    }
+
+    let cleared = environment_of("env-clear", |spec| {
+        spec.env("DAEDALUS_TEST_SET", "1").env_clear()
+    });
+    assert!(
+        has(&cleared, "DAEDALUS_TEST_SET"),
+        "what the spec sets is set"
+    );
+    for key in &inherited {
+        assert!(!has(&cleared, key), "{key} was cleared: {cleared}");
+    }
+
+    let first = inherited[0];
+    let removed = environment_of("env-remove", |spec| {
+        spec.env_remove(first)
+            .env_remove("DAEDALUS_TEST_BOTH")
+            .env("DAEDALUS_TEST_BOTH", "set")
+    });
+    assert!(!has(&removed, first), "{first} was removed");
+    assert!(has(&removed, "DAEDALUS_TEST_BOTH"), "set wins over removed");
+    for key in &inherited[1..] {
+        assert!(has(&removed, key), "{key} is still inherited");
+    }
+}
+
+#[test]
+fn a_worker_registers_the_nodes_it_declares_and_then_serves_them() {
+    use daedalus_registry::Registry;
+    let mut backend = ProcessBackend::new();
+    let mut found = Registry::new();
+    let added = backend
+        .add_worker_declaring(spec(&[]), &mut found)
+        .expect("the worker says what it serves");
+    // Everything the worker declared is registered, exactly as a registry written by hand has it.
+    let by_hand = registry();
+    let expected: Vec<String> = daedalus_worker_conformance::fixtures::declarations()
+        .into_iter()
+        .map(|decl| decl.id)
+        .collect();
+    assert_eq!(added, expected);
+    for id in &added {
+        let (got, want) = (
+            found.entry(id).expect("registered"),
+            by_hand.entry(id).expect("known"),
+        );
+        assert_eq!(got.decl.inputs, want.decl.inputs, "{id}");
+        assert_eq!(got.decl.outputs, want.decl.outputs, "{id}");
+        assert_eq!(got.bodies[0].backend, "process", "{id}");
+    }
+    // And the worker runs them.
+    let mut step = scalar_add_step(&backend);
+    let (end, reason, value) = run_add(&mut step);
+    assert!(matches!(end, StepEnd::Done), "{reason}");
+    assert_eq!(value, Some(42));
+    release(step);
+
+    // The same spec again shares the worker and registers nothing.
+    let again = backend
+        .add_worker_declaring(spec(&[]), &mut found)
+        .expect("shared");
+    assert!(again.is_empty());
+}
+
+#[test]
+fn a_worker_that_disagrees_with_a_node_already_registered_is_still_refused() {
+    use daedalus_registry::{OwnedBody, OwnedDecl, OwnedPort, Registry, TypeRef};
+    use daedalus_types::{Scalar, TypeExpr};
+    // The registry has the worker's `fixture.scalar_add` with one input where the worker has two.
+    let mut registry = Registry::new();
+    registry
+        .register_owned(OwnedDecl {
+            id: "fixture.scalar_add".into(),
+            source: "by hand".into(),
+            inputs: vec![OwnedPort {
+                name: "a".into(),
+                ty: TypeRef::Expr(TypeExpr::Scalar(Scalar::Int)),
+                optional: false,
+            }],
+            outputs: Vec::new(),
+            body: OwnedBody::text("process", "fixture.scalar_add"),
+            conversion: None,
+        })
+        .expect("registers");
+    let mut backend = ProcessBackend::new();
+    match backend.add_worker_declaring(spec(&[]), &mut registry) {
+        Err(error @ ProcessError::Declaration { .. }) => {
+            let text = error.to_string();
+            assert!(text.contains("fixture.scalar_add"), "{text}");
+            assert!(text.contains("the worker declares"), "{text}");
         }
         other => panic!("expected a declaration error, got {other:?}"),
     }

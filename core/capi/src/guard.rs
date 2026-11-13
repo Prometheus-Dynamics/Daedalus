@@ -22,11 +22,7 @@ pub(crate) fn guard(body: impl FnOnce() -> Status) -> Status {
     match catch_unwind(AssertUnwindSafe(body)) {
         Ok(status) => status,
         Err(payload) => {
-            let text = payload
-                .downcast_ref::<&str>()
-                .map(|text| (*text).to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "a panic with no message".to_string());
+            let text = daedalus_abi::panic_message(&*payload);
             fail(Status::PANIC, format!("the call panicked: {text}"))
         }
     }

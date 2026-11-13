@@ -61,7 +61,32 @@ impl ProcessBackend {
         if self.workers.iter().any(|shared| shared.spec.same_as(&spec)) {
             return Ok(());
         }
-        let worker = Worker::spawn(&spec, &self.telemetry)?;
+        let (worker, hello) = self.greet(&spec)?;
+        self.attach(spec, worker, &hello, registry)
+    }
+
+    /// Starts a worker and reads its hello, as [`ProcessBackend::add_worker`] does, and registers
+    /// the nodes it declares that `registry` doesn't have yet: a host needn't know a worker's
+    /// nodes before it has met the worker. A node the registry already has is checked against it,
+    /// and a worker that disagrees is refused. Returns the ids of the nodes this registered.
+    /// A spec equal to one already started shares that worker, and registers nothing.
+    pub fn add_worker_declaring(
+        &mut self,
+        spec: WorkerSpec,
+        registry: &mut Registry,
+    ) -> Result<Vec<String>, ProcessError> {
+        if self.workers.iter().any(|shared| shared.spec.same_as(&spec)) {
+            return Ok(Vec::new());
+        }
+        let (worker, hello) = self.greet(&spec)?;
+        let added = crate::declare::register_new(&spec.program, &hello, registry)?;
+        self.attach(spec, worker, &hello, registry)?;
+        Ok(added)
+    }
+
+    /// Starts the worker of `spec` and reads its hello.
+    fn greet(&self, spec: &WorkerSpec) -> Result<(Worker, Hello), ProcessError> {
+        let worker = Worker::spawn(spec, &self.telemetry)?;
         let hello = read_hello(&worker, spec.startup).map_err(|reason| ProcessError::Startup {
             program: spec.program.clone(),
             reason,
@@ -70,7 +95,18 @@ impl ProcessBackend {
             program: spec.program.clone(),
             error,
         })?;
-        let nodes = check_declarations(&spec.program, &hello, registry)?;
+        Ok((worker, hello))
+    }
+
+    /// Checks a started worker's nodes against the registry, and takes it on.
+    fn attach(
+        &mut self,
+        spec: WorkerSpec,
+        worker: Worker,
+        hello: &Hello,
+        registry: &Registry,
+    ) -> Result<(), ProcessError> {
+        let nodes = check_declarations(&spec.program, hello, registry)?;
         for node in &nodes {
             if self.served.contains_key(&node.id) {
                 return Err(ProcessError::Declaration {
@@ -86,7 +122,7 @@ impl ProcessBackend {
         }
         let shared = Shared {
             spec,
-            schema: Schema::from_hello(&hello, &[]),
+            schema: Schema::from_hello(hello, &[]),
             nodes,
             telemetry: self.telemetry.clone(),
             state: Mutex::new(Supervisor {

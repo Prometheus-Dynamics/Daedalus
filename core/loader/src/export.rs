@@ -94,8 +94,9 @@ impl OwnedStep for NodeStep {
         let run = self.run;
         match catch_unwind(AssertUnwindSafe(|| run(slots, cx))) {
             Ok(end) => end,
-            Err(_) => {
-                cx.fault(Some(self.node), "node panicked");
+            Err(payload) => {
+                cx.at = self.node;
+                cx.fault_panic(daedalus_abi::panic_message(&*payload));
                 StepEnd::Fault
             }
         }

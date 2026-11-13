@@ -75,6 +75,8 @@ pub const fn total(counts: &[usize]) -> usize {
 }
 
 pub use crate::body::CpuBody;
+#[cfg(feature = "alloc")]
+pub use crate::body::CpuStepBody;
 pub use crate::shape::{BodyShape, OutputShape, ParamShape, Role};
 pub use daedalus_runner::{ArenaBody, Fresh};
 

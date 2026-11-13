@@ -189,7 +189,10 @@ fn run<H: StreamHost>(mut host: H, shared: &Shared, config: StreamWorkerConfig) 
                 None
             }
             Ok(Err(error)) => Some(error.to_string()),
-            Err(_) => Some(String::from("a body panicked")),
+            Err(payload) => Some(std::format!(
+                "the tick panicked: {}",
+                daedalus_abi::panic_message(&*payload)
+            )),
         };
         let failed = failure.is_some();
         if failure.is_some() {

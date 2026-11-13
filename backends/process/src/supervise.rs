@@ -92,19 +92,39 @@ pub(crate) enum RunStatus {
     Fault,
 }
 
+/// Why a link is not up.
+pub(crate) enum NotUp {
+    /// The worker failed a moment ago and its next start isn't due. Not a new failure.
+    BackingOff(String),
+    /// The worker was started and didn't come up.
+    Start(String),
+}
+
+/// What a fault does to the worker's link.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Blame {
+    /// The worker is fine: the fault was in the run's own data, or the worker reported it.
+    Nobody,
+    /// The worker failed. It is killed, and its next start waits out the backoff.
+    Worker,
+    /// The host stopped the worker itself, at a deadline or a cancel it didn't answer. It is
+    /// started again on the next run, with no wait: nothing here says the next start would fail.
+    Host,
+}
+
 /// Brings the link up. A down link waits for its backoff, then starts the worker again.
-pub(crate) fn ensure_up(shared: &Shared, sup: &mut Supervisor) -> Result<(), String> {
+pub(crate) fn ensure_up(shared: &Shared, sup: &mut Supervisor) -> Result<(), NotUp> {
     let until = match &sup.link {
         Link::Up(_) => return Ok(()),
         Link::Down { until } => *until,
     };
     let now = Instant::now();
     if now < until {
-        return Err(format!(
+        return Err(NotUp::BackingOff(format!(
             "worker {} is backing off for {:?}",
             shared.spec.program.display(),
             until - now
-        ));
+        )));
     }
     match start(shared) {
         Ok(worker) => {
@@ -117,7 +137,7 @@ pub(crate) fn ensure_up(shared: &Shared, sup: &mut Supervisor) -> Result<(), Str
             sup.link = Link::Down {
                 until: Instant::now() + delay_after(sup.failures),
             };
-            Err(reason)
+            Err(NotUp::Start(reason))
         }
     }
 }
@@ -289,8 +309,18 @@ impl OwnedStep for WorkerStep {
         let shared = self.shared.clone();
         let mut guard = shared.lock();
         let sup: &mut Supervisor = &mut guard;
-        if let Err(reason) = ensure_up(&shared, sup) {
-            return self.fail(&shared, sup, cx, &reason, false);
+        match ensure_up(&shared, sup) {
+            Ok(()) => {}
+            // The failure that started the backoff was reported when it happened. Until the next
+            // start is due the run is skipped, with the reason: not another fault, so a host that
+            // stops on faults isn't stopped by the wait, and nothing sleeps on the tick.
+            Err(NotUp::BackingOff(reason)) => {
+                cx.fault(None, &reason);
+                return StepEnd::Skipped;
+            }
+            Err(NotUp::Start(reason)) => {
+                return self.fail(&shared, sup, cx, &reason, Blame::Nobody);
+            }
         }
         let cells = slots.as_mut_slice();
         sup.run = sup.run.wrapping_add(1);
@@ -298,14 +328,14 @@ impl OwnedStep for WorkerStep {
         sup.writer.buf.clear();
         let sent = match self.encode_run(run, cells, &mut sup.writer) {
             Ok(sent) => sent,
-            Err(reason) => return self.fail(&shared, sup, cx, &reason, false),
+            Err(reason) => return self.fail(&shared, sup, cx, &reason, Blame::Nobody),
         };
         shared.telemetry.bump(Count::BytesIn(sent as u64));
         shared.telemetry.bump(Count::Run);
         sup.fault = None;
 
         let Link::Up(worker) = &mut sup.link else {
-            return self.fail(&shared, sup, cx, "worker is not running", true);
+            return self.fail(&shared, sup, cx, "worker is not running", Blame::Worker);
         };
         if let Err(error) = worker.send(&sup.writer.buf) {
             return self.fail(
@@ -313,7 +343,7 @@ impl OwnedStep for WorkerStep {
                 sup,
                 cx,
                 &format!("could not send the run: {error}"),
-                true,
+                Blame::Worker,
             );
         }
         let outcome = self.wait(&shared, sup, run, cx);
@@ -347,14 +377,14 @@ impl OwnedStep for WorkerStep {
             }
             Outcome::Gone(reason) => {
                 let text = format!("worker exited mid-run: {reason}");
-                self.fail(&shared, sup, cx, &text, true)
+                self.fail(&shared, sup, cx, &text, Blame::Worker)
             }
             Outcome::Killed(pid) => {
                 sup.killed.push(pid);
                 let text = format!(
                     "deadline passed; the worker did not answer the cancel, and was killed (pid {pid})"
                 );
-                self.fail(&shared, sup, cx, &text, true)
+                self.fail(&shared, sup, cx, &text, Blame::Host)
             }
         }
     }
@@ -483,20 +513,26 @@ impl WorkerStep {
         }
     }
 
-    /// Ends the step as a fault. A worker that failed is killed and its link goes down.
+    /// Ends the step as a fault. A worker that failed, or that the host stopped, is killed and its
+    /// link goes down: after a failure until the backoff has passed, after a stop until the next
+    /// run.
     fn fail(
         &mut self,
         shared: &Shared,
         sup: &mut Supervisor,
         cx: &mut StepCx,
         reason: &str,
-        worker_failed: bool,
+        blame: Blame,
     ) -> StepEnd {
         shared.telemetry.bump(Count::Fault);
         let mut text = reason.to_owned();
-        if worker_failed {
-            sup.failures = sup.failures.saturating_add(1);
-            let until = Instant::now() + delay_after(sup.failures);
+        if blame != Blame::Nobody {
+            let until = if blame == Blame::Worker {
+                sup.failures = sup.failures.saturating_add(1);
+                Instant::now() + delay_after(sup.failures)
+            } else {
+                Instant::now()
+            };
             if let Link::Up(mut worker) = std::mem::replace(&mut sup.link, Link::Down { until }) {
                 let tail = worker.stderr_tail(STDERR_REPORT);
                 if !tail.is_empty() {

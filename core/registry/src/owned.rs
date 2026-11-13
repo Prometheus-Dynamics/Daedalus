@@ -4,8 +4,10 @@
 
 #![cfg(feature = "std")]
 
+use std::any::Any;
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::fmt;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::{
     BodyRecord, Conversion, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, RegError, Registry,
@@ -19,10 +21,56 @@ pub struct OwnedPort {
     pub optional: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OwnedBody {
     pub backend: String,
     pub text: String,
+    /// The backend's own payload, for a body whose code is in this process: what the backend
+    /// named in `backend` reads as a body's code. `None` for a body that is only text, as a
+    /// worker's is. The registry never looks inside it.
+    pub code: Option<Arc<dyn Any + Send + Sync>>,
+}
+
+impl OwnedBody {
+    /// A body that is only text: what a declaration that arrived as data has.
+    pub fn text(backend: impl Into<String>, text: impl Into<String>) -> OwnedBody {
+        OwnedBody {
+            backend: backend.into(),
+            text: text.into(),
+            code: None,
+        }
+    }
+
+    /// A body with a backend's payload, made in this process.
+    pub fn code(
+        backend: impl Into<String>,
+        text: impl Into<String>,
+        code: Arc<dyn Any + Send + Sync>,
+    ) -> OwnedBody {
+        OwnedBody {
+            backend: backend.into(),
+            text: text.into(),
+            code: Some(code),
+        }
+    }
+}
+
+// The payload is named by where it is: two declarations with the same text and different code
+// are different declarations.
+impl fmt::Debug for OwnedBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OwnedBody")
+            .field("backend", &self.backend)
+            .field("text", &self.text)
+            .field(
+                "code",
+                &self
+                    .code
+                    .as_ref()
+                    .map(|code| Arc::as_ptr(code).cast::<()>()),
+            )
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -95,7 +143,11 @@ fn promote(decl: OwnedDecl) -> &'static NodeRecord {
             state: None,
             ports: &[],
             memory: &[],
-            code: &NoCode,
+            // The record lives for the whole process, so its payload does too.
+            code: match decl.body.code {
+                Some(code) => &**Box::leak(Box::new(code)),
+                None => &NoCode,
+            },
             text: leak(decl.body.text),
         },
     }))

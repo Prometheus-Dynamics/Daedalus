@@ -163,3 +163,7 @@ Runtime features on top of the landed host, runner and planner, from the 2026-11
 - [x] [J5](docs/prs/J5.md) Progress readable during parallel runs (wave 21; needs C7, C11)
 - [x] [J6](docs/prs/J6.md) A location-only dma-buf memory space, and the planner honours a port's declared memory (wave 21; needs A7, B9, E3)
 - [x] [J7](docs/prs/J7.md) An optional GPU-lease hook on the wgpu backend (wave 21; needs E5)
+- [x] [J8](docs/prs/J8.md) A worker's backoff is not a second fault, and its environment can be cut down (wave 22; needs G3)
+- [x] [J9](docs/prs/J9.md) A panic's message is the fault's reason (wave 22; needs A3, G2, G9)
+- [x] [J10](docs/prs/J10.md) A worker registers the nodes it declares (wave 22; needs G3, A8)
+- [x] [J11](docs/prs/J11.md) A node declared at run time can carry code (wave 22; needs A8, D1)

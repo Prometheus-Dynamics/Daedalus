@@ -104,6 +104,10 @@ fn a_panicking_node_is_a_fault_and_the_worker_keeps_serving() {
         WorkerMsg::Fault(fault) => {
             assert_eq!(fault.code, FaultCode::NodePanic);
             assert_eq!(fault.run, 1);
+            assert_eq!(
+                fault.reason, "node panicked: the node panicked on purpose",
+                "the reason is what the panic said"
+            );
         }
         other => panic!("expected a fault, got {other:?}"),
     }

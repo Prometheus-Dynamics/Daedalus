@@ -366,8 +366,19 @@ fn run_node(
         send(out, &msg, schema).map_err(io::Error::other)?;
     }
     let values = match result {
-        Err(_) => {
-            return Ok(Err(NodeError::new(FaultCode::NodePanic, "node panicked")));
+        Err(payload) => {
+            // What the panic said travels with the fault: the host reads it as the reason.
+            let said = if let Some(text) = payload.downcast_ref::<&str>() {
+                text
+            } else if let Some(text) = payload.downcast_ref::<String>() {
+                text
+            } else {
+                "a panic with no message"
+            };
+            return Ok(Err(NodeError::new(
+                FaultCode::NodePanic,
+                format!("node panicked: {said}"),
+            )));
         }
         Ok(Err(error)) => return Ok(Err(error)),
         Ok(Ok(values)) => values,

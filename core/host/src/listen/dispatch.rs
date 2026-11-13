@@ -148,11 +148,7 @@ impl ServiceHost {
     pub(crate) fn dispatch(&self, session: &Arc<Session>, request: Request) -> Response {
         let served = catch_unwind(AssertUnwindSafe(|| self.serve(session, &request)));
         let result = served.unwrap_or_else(|panic| {
-            let what = panic
-                .downcast_ref::<&str>()
-                .map(|text| String::from(*text))
-                .or_else(|| panic.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| String::from("no message"));
+            let what = daedalus_abi::panic_message(&*panic);
             Err(refuse(
                 ErrorCode::InvalidRequest,
                 std::format!("{} panicked in the host: {what}", request.op.kind().name()),
