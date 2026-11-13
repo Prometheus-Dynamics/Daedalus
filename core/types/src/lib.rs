@@ -26,6 +26,6 @@ pub use id::{
     TypeIndex,
 };
 pub use key::TypeKey;
-pub use literal::{FromLiteral, Literal};
+pub use literal::{FromLiteral, Literal, literal_field};
 pub use scalar::Scalar;
 pub use typed::{STRUCTURAL_KEY, Typed};

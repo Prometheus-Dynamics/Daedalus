@@ -614,6 +614,7 @@ dependencies = [
  "daedalus-abi",
  "daedalus-backend",
  "daedalus-cpu-author",
+ "daedalus-derive",
  "daedalus-graph",
  "daedalus-host",
  "daedalus-macros",

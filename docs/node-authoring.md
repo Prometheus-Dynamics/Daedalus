@@ -89,6 +89,22 @@ An input that no edge feeds can be set by the graph as a constant:
 {"id": "demo.scale", "consts": {"factor": {"type": "float", "value": 3.0}}}
 ```
 
+A constant can be a number, a bool, text, bytes, a list or a struct. A list fills a `Vec<T>`, a
+slice parameter or an array of exactly its length, and lists nest. A struct fills a type that
+derives `FromLiteral`: its fields are read by name, every field must be given, and the constant
+may name no other.
+
+```rust
+#[derive(Type, FromLiteral)]
+struct Gains { low: u32, high: u32, taps: Vec<f32> }
+
+#[node(id = "demo.shape", inputs(gains), outputs(out))]
+fn shape(gains: &Gains) -> u32 { .. }
+```
+
+A constant that doesn't fit its port fails planning, or the node's setup, and names the port. It is
+decoded once when the graph is planned, so running the graph allocates nothing for it.
+
 Several settings with defaults and limits are a config struct:
 
 ```rust

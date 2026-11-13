@@ -1,9 +1,10 @@
-//! `#[derive(NodeConfig)]` and `#[derive(Type)]`. A proc-macro crate exports only macros, and the
+//! `#[derive(NodeConfig)]`, `#[derive(Type)]` and `#[derive(FromLiteral)]`. A proc-macro crate exports only macros, and the
 //! attribute macro has its own crate, so these live here.
 
 #![forbid(unsafe_code)]
 
 mod config;
+mod literal;
 mod plain;
 mod ty;
 
@@ -26,6 +27,15 @@ pub fn derive_node_config(input: TokenStream) -> TokenStream {
 pub fn derive_type(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     ty::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Generates `FromLiteral` for a struct with named fields, so a graph can give it as a constant.
+#[proc_macro_derive(FromLiteral)]
+pub fn derive_from_literal(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    literal::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
