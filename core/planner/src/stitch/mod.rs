@@ -83,6 +83,8 @@ pub enum StitchError {
     },
     /// A backend with nodes on it declares no memory.
     NoMemory { backend: String },
+    /// A node's body puts a port in a memory space no backend in the plan declares.
+    UnknownSpace { port: String, space: String },
 }
 
 impl fmt::Display for StitchError {
@@ -100,6 +102,12 @@ impl fmt::Display for StitchError {
             }
             StitchError::NoMemory { backend } => {
                 write!(f, "backend `{backend}` runs nodes but declares no memory")
+            }
+            StitchError::UnknownSpace { port, space } => {
+                write!(
+                    f,
+                    "`{port}` is declared in memory `{space}`, which no backend in the plan supplies"
+                )
             }
         }
     }

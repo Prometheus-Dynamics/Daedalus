@@ -15,6 +15,8 @@ daedalus-cpu-author = { path = "../../backends/cpu-author" }
 # The GPU backend runs the shaders. Its authoring crate is what `#[node]` on one expands to,
 # and that names the registry and the types crate.
 daedalus-wgpu = { path = "../../backends/wgpu" }
+daedalus-dmabuf = { path = "../../backends/dmabuf" }
+daedalus-backend = { path = "../../core/backend" }
 daedalus-wgpu-author = { path = "../../backends/wgpu-author" }
 daedalus-registry = { path = "../../core/registry" }
 daedalus-types = { path = "../../core/types" }

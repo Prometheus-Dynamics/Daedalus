@@ -60,6 +60,8 @@ Daedalus does not judge who made a dma-buf: one it is given is imported in place
 
 A type whose values are dma-buffers says so once: it implements `DmaBufBacked` and the backend is given `with_dmabuf::<T>()`. While the open device imports dma-bufs the planner takes that import over the upload of the type's bytes (its `HostBytes`), which is the route a device that can't import gets.
 
+A node can also say its output is in the dma-buf space (`memory(out = "dmabuf")`, with the `daedalus-dmabuf` backend in the plan). The same `with_dmabuf::<T>()` imports from there, and a device that can't import gets the value handed to the host and uploaded. See [foreign-values.md](foreign-values.md).
+
 A value the host or a CPU node reads is written by its shader straight into memory the host
 maps, so no readback copy is planned at all. The backend offers two such places: dma-heap memory,
 which the host reads through its cache, and host-mapped memory, which it reads uncached. The

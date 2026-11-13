@@ -689,6 +689,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-dmabuf"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-abi",
+ "daedalus-backend",
+ "daedalus-runner",
+ "daedalus-types",
+]
+
+[[package]]
 name = "daedalus-example-basics"
 version = "3.0.1-dev"
 dependencies = [
@@ -704,8 +714,10 @@ name = "daedalus-example-gpu"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus",
+ "daedalus-backend",
  "daedalus-cpu",
  "daedalus-cpu-author",
+ "daedalus-dmabuf",
  "daedalus-registry",
  "daedalus-types",
  "daedalus-wgpu",
@@ -1086,6 +1098,7 @@ dependencies = [
  "daedalus-abi",
  "daedalus-backend",
  "daedalus-dma-sys",
+ "daedalus-dmabuf",
  "daedalus-graph",
  "daedalus-planner",
  "daedalus-planner-tests",

@@ -100,10 +100,28 @@ attributes expand into their backend's authoring crate, which is `daedalus_cpu_a
 here. `backends/cpu/tests/transfer.rs` is a transfer that is compiled and run.
 
 Bytes in a dma-buf are imported by the wgpu backend, not by a `#[transfer]` you write. A type that
-implements `daedalus_wgpu::DmaBufBacked` says which dma-buf holds its bytes and how many there are,
+implements `DmaBufBacked` (from `daedalus-dmabuf`, re-exported by `daedalus_wgpu`) says which dma-buf holds its bytes and how many there are,
 and `WgpuBackend::with_dmabuf::<T>()` lists the transfer that imports them into a device buffer at
 cost `Import`, while the open device can import dma-bufs. The backend knows nothing else about the
 value: no format, no layout.
+
+### The dma-buf space
+
+`backends/dmabuf` (`daedalus-dmabuf`) supplies a memory space named `dmabuf`. It is a location and
+nothing else: the crate knows a value there is bytes in a dma-buf, where they are and how many,
+and never what they mean. Movers don't know what they move.
+
+- A type's owner implements `DmaBufBacked` (the dma-buf's fd and the value's length in it) and
+  lists the type with `DmaBufMemory::new().with::<T>()`. That backend goes in the plan beside the
+  others. It runs no nodes.
+- A node puts a port there with `memory(port = "dmabuf")` on `#[node]`. A port declared in a space
+  no backend in the plan supplies fails planning, naming the port and the space.
+- Listing a type gives two moves between `dmabuf` and the host's memory. Both hand the same value
+  on: nothing is copied and the bytes aren't touched. A value with no dma-buf faults on the way
+  into the space.
+- A backend that can take a dma-buf in place lists its own move out of the space. The wgpu
+  backend's `with_dmabuf::<T>()` imports into a device buffer from `dmabuf` and from the host.
+- Whoever makes a value answers for its contents being readable by whatever is given it.
 
 `backends/dma-sys` is the binding to the dma-buf and dma-heap kernel interfaces (`DmaBuf`,
 `DmaHeap`). It declares no memory space and runs no nodes.

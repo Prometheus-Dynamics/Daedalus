@@ -314,6 +314,7 @@ impl BackendSpaces {
 
 struct Router<'a> {
     graph: &'a Graph,
+    registry: &'a Registry,
     formed: &'a [Formed],
     backends: Vec<BackendSpaces>,
     names: Vec<String>,
@@ -365,10 +366,46 @@ impl Router<'_> {
         Ok(home)
     }
 
+    /// The space the body of `node` says its port `port` is in (`memory(port = "space")` on the
+    /// node), or `None` when it says nothing and the backend's own spaces apply.
+    fn declared(&self, node: u32, port: &str) -> Result<Option<usize>, StitchError> {
+        let Some(region) = self.region_of[node as usize] else {
+            return Ok(None);
+        };
+        let backend = &self.names[self.formed[region].backend.0 as usize];
+        let id = &self.graph.nodes[node as usize].doc.id;
+        let space = self.registry.entry(id).and_then(|entry| {
+            let body = entry.bodies.iter().find(|body| body.backend == *backend)?;
+            let (_, space) = body.memory.iter().find(|(name, _)| *name == port)?;
+            Some(*space)
+        });
+        let Some(space) = space else {
+            return Ok(None);
+        };
+        // A space a transfer only names is not enough: some backend has to supply it.
+        let supplied = self
+            .backends
+            .iter()
+            .flat_map(|backend| &backend.list)
+            .find(|(known, _)| known.id == space)
+            .map(|(_, at)| *at);
+        match supplied {
+            Some(at) => Ok(Some(at)),
+            None => Err(StitchError::UnknownSpace {
+                port: format!("{id}.{port}"),
+                space: space.to_string(),
+            }),
+        }
+    }
+
     fn choose_home(&self, node: u32, port: u16) -> Result<Option<usize>, StitchError> {
         let Some(region) = self.region_of[node as usize] else {
             return Ok(None);
         };
+        let name = &self.graph.nodes[node as usize].outputs[port as usize].name;
+        if let Some(declared) = self.declared(node, name)? {
+            return Ok(Some(declared));
+        }
         let memory = self.memory_of(region)?;
         let candidates = memory.writable();
         if candidates.len() < 2 {
@@ -388,7 +425,10 @@ impl Router<'_> {
             if consumer.doc.kind == NodeKindDoc::HostBridge {
                 readers.extend(memory.host_kind().map(|host| vec![host]));
             } else if let Some(other) = self.region_of[edge.to.node as usize] {
-                readers.push(self.memory_of(other)?.readable());
+                readers.push(match self.declared(edge.to.node, &edge.to.port)? {
+                    Some(declared) => vec![declared],
+                    None => self.memory_of(other)?.readable(),
+                });
             }
         }
         let cost = |home: usize| -> Option<(Option<TransferCost>, usize)> {
@@ -500,7 +540,10 @@ impl Router<'_> {
         };
         let produced = &producer.outputs[out as usize];
         let consumer = self.memory_of(region)?;
-        let targets = consumer.readable();
+        let targets = match self.declared(input.node.0, &port.name)? {
+            Some(declared) => vec![declared],
+            None => consumer.readable(),
+        };
         let (source, home) = if producer.doc.kind == NodeKindDoc::HostBridge {
             let home = consumer
                 .host_kind()
@@ -609,6 +652,7 @@ pub fn route(
     }
     let mut router = Router {
         graph,
+        registry,
         formed,
         backends: memory,
         names: backends.iter().map(|b| b.id().to_string()).collect(),

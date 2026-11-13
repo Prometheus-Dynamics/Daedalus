@@ -82,3 +82,62 @@ fn a_heap_value_is_uploaded_on_a_device_planned_without_a_dma_heap() {
         );
     }
 }
+
+/// One run of the graph whose value is made in the dma-buf space: both readers get the CPU's
+/// numbers, and the route and the device's counts are what `expected` says.
+fn placed_case(device: &daedalus_wgpu::WgpuBackend, route: &[&str], moved: (u64, u64)) {
+    for count in [4u32, 4096, 65_536] {
+        let before = device.transfer_stats().expect("open");
+        let placed = dmabuf::from_the_dmabuf_space(device, count).expect("runs");
+        let after = device.transfer_stats().expect("open");
+        assert_eq!(placed.words, dmabuf::on_cpu(count), "{count} bytes");
+        assert_eq!(placed.sum, dmabuf::sum_on_cpu(count), "{count} bytes");
+        assert_eq!(placed.route, route, "{count} bytes");
+        assert_eq!(
+            (
+                after.imports - before.imports,
+                after.uploads - before.uploads
+            ),
+            moved,
+            "{count} bytes: imports and uploads"
+        );
+    }
+}
+
+const TO_HOST_THEN_UPLOAD: [&str; 2] = [
+    "dmabuf.to_host:gpu:heap_bytes",
+    "wgpu.upload:gpu:heap_bytes",
+];
+
+/// A value a node makes in the dma-buf space reaches the shader by an import from that space,
+/// where the device imports dma-bufs. The CPU node beside its maker reads it with no move.
+#[test]
+fn a_value_made_in_the_dmabuf_space_is_imported_from_there() {
+    let Some(_turn) = has_gpu() else { return };
+    let device = gpu().expect("a device");
+    if device.caps().expect("open").dma_heap {
+        placed_case(&device, &["wgpu.import.dmabuf:gpu:heap_bytes"], (1, 0));
+    } else {
+        placed_case(&device, &TO_HOST_THEN_UPLOAD, (0, 1));
+    }
+}
+
+/// On a device planned without dma-buf import, the same value is handed from the dma-buf space to
+/// the host, with no copy, and uploaded from there.
+#[test]
+fn a_value_made_in_the_dmabuf_space_is_handed_to_the_host_and_uploaded() {
+    let Some(_turn) = has_gpu() else { return };
+    let device = dmabuf::gpu_without_dma_heap().expect("a device");
+    placed_case(&device, &TO_HOST_THEN_UPLOAD, (0, 1));
+}
+
+/// A node that puts its output in a space no backend supplies doesn't plan, and the error names
+/// the port and the space.
+#[test]
+fn a_port_in_a_space_nobody_supplies_fails_to_plan() {
+    let Some(_turn) = has_gpu() else { return };
+    let device = gpu().expect("a device");
+    let refused = dmabuf::planned_without_the_space(&device).unwrap_err();
+    assert!(refused.contains("heap.make_placed.value"), "{refused}");
+    assert!(refused.contains("`dmabuf`"), "{refused}");
+}
