@@ -1,7 +1,8 @@
 //! What the macros' generated code names.
 
 pub use daedalus_types::{
-    Error, Field, FromLiteral, Literal, Scalar, TypeExpr, TypeKey, Typed, Variant,
+    Code, Error, Field, FromLiteral, Literal, Scalar, TypeExpr, TypeKey, Typed, Variant,
+    literal_field,
 };
 pub use daedalus_value::Access;
 

@@ -101,3 +101,71 @@ impl FromLiteral for &'static [u8] {
         }
     }
 }
+
+/// `Unit` is `None`, and anything else is the value.
+impl<T: FromLiteral> FromLiteral for Option<T> {
+    fn from_literal(value: &Literal) -> Result<Self, Error> {
+        match value {
+            Literal::Unit => Ok(None),
+            value => T::from_literal(value).map(Some),
+        }
+    }
+}
+
+/// A list, each item decoded in turn. The first item that doesn't fit is the error.
+#[cfg(feature = "alloc")]
+impl<T: FromLiteral> FromLiteral for alloc::vec::Vec<T> {
+    fn from_literal(value: &Literal) -> Result<Self, Error> {
+        let Literal::List(items) = value else {
+            return Err(wrong_kind("expected a list"));
+        };
+        items.iter().map(T::from_literal).collect()
+    }
+}
+
+/// A list of exactly `N` items.
+impl<T: FromLiteral, const N: usize> FromLiteral for [T; N] {
+    fn from_literal(value: &Literal) -> Result<Self, Error> {
+        let Literal::List(items) = value else {
+            return Err(wrong_kind("expected a list"));
+        };
+        if items.len() != N {
+            return Err(Error::new(
+                Code::OutOfRange,
+                "the list is not the array's length",
+            ));
+        }
+        let mut refused = None;
+        let decoded: [Option<T>; N] =
+            core::array::from_fn(|at| match items.get(at).map(T::from_literal) {
+                Some(Ok(item)) => Some(item),
+                Some(Err(error)) => {
+                    refused.get_or_insert(error);
+                    None
+                }
+                None => None,
+            });
+        if let Some(error) = refused {
+            return Err(error);
+        }
+        Ok(decoded.map(|item| match item {
+            Some(item) => item,
+            None => unreachable!("every item decoded, or the error above was returned"),
+        }))
+    }
+}
+
+/// The field `name` of a struct constant, for `#[derive(FromLiteral)]`.
+#[doc(hidden)]
+pub fn literal_field<T: FromLiteral>(
+    fields: &[(&'static str, Literal)],
+    name: &str,
+) -> Result<T, Error> {
+    match fields.iter().find(|(have, _)| *have == name) {
+        Some((_, value)) => T::from_literal(value),
+        None => Err(Error::new(
+            Code::InvalidLiteral,
+            "the struct constant is missing a field",
+        )),
+    }
+}
