@@ -77,7 +77,10 @@ pub struct Stitched {
 #[non_exhaustive]
 pub enum StitchError {
     NoTransfer {
+        /// The input that can't be reached.
         port: String,
+        /// The output the value comes from.
+        from_port: String,
         from_space: String,
         to_space: String,
     },
@@ -92,12 +95,13 @@ impl fmt::Display for StitchError {
         match self {
             StitchError::NoTransfer {
                 port,
+                from_port,
                 from_space,
                 to_space,
             } => {
                 write!(
                     f,
-                    "`{port}`: nothing moves a value from `{from_space}` to `{to_space}`"
+                    "`{from_port}` to `{port}`: nothing moves a value from `{from_space}` to `{to_space}`"
                 )
             }
             StitchError::NoMemory { backend } => {

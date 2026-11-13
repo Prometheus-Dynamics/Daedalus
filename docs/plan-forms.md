@@ -47,6 +47,11 @@ backend and a plugin's backend give steps only.
 
 - `daedalus_planner::explain::explain_plan(&planned)` says why each node went where it did:
   forced, the only candidate, or chosen for fewer crossings.
+- Each edge in the explanation says where its value is written (`written_in`), where its consumer
+  reads it (`read_in`), and the transfers between the two (`transfer`). `in_place` is set when the
+  consumer reads the value where it was written: nothing moves it and nothing copies it. That is
+  what tells a read in place from an edge with a transfer missing. An edge inside a region a
+  backend merged into one step has no value of its own, and both spaces are absent.
 - `Config { lints: true, .. }` fills `planned.warnings`.
 - `PlanCache` keeps plans by a key made of the graph, the settings, and each backend's id and
   version. A plan is only reused under the same key.

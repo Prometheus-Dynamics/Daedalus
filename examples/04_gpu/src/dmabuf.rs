@@ -184,6 +184,35 @@ pub fn from_the_dmabuf_space(
     })
 }
 
+/// How the plan explains one edge that carries the value made in the dma-buf space.
+pub struct PlacedEdge {
+    /// The id of the node that reads the value.
+    pub reader: String,
+    /// The transfers on the way, by id.
+    pub transfer: Vec<String>,
+    pub written_in: Option<String>,
+    pub read_in: Option<String>,
+    pub in_place: bool,
+}
+
+/// The plan's explanation of each edge that carries the value made in the dma-buf space.
+pub fn placed_edges(gpu: &daedalus_wgpu::WgpuBackend) -> Result<Vec<PlacedEdge>, String> {
+    let planned = super::planned(PLACED_GRAPH, &PLACED_NODES, gpu)?;
+    let explained = daedalus::layers::planner::explain::explain_plan(&planned);
+    Ok(explained
+        .edges
+        .into_iter()
+        .filter(|edge| edge.from_port == "value")
+        .map(|edge| PlacedEdge {
+            reader: explained.nodes[edge.to_node as usize].id.clone(),
+            transfer: edge.transfer,
+            written_in: edge.written_in,
+            read_in: edge.read_in,
+            in_place: edge.in_place,
+        })
+        .collect())
+}
+
 /// Plans the same graph with no backend that supplies the dma-buf space, and gives the planner's
 /// refusal.
 pub fn planned_without_the_space(gpu: &daedalus_wgpu::WgpuBackend) -> Result<(), String> {

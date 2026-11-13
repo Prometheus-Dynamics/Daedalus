@@ -119,6 +119,7 @@ fn no_path_names_port_and_spaces() {
         error,
         RegionError::Stitch(StitchError::NoTransfer {
             port: "t.b.x".into(),
+            from_port: "t.a.out".into(),
             from_space: "m.a".into(),
             to_space: "m.b".into(),
         })

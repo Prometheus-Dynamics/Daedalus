@@ -167,3 +167,4 @@ Runtime features on top of the landed host, runner and planner, from the 2026-11
 - [x] [J9](docs/prs/J9.md) A panic's message is the fault's reason (wave 22; needs A3, G2, G9)
 - [x] [J10](docs/prs/J10.md) A worker registers the nodes it declares (wave 22; needs G3, A8)
 - [x] [J11](docs/prs/J11.md) A node declared at run time can carry code (wave 22; needs A8, D1)
+- [x] [J12](docs/prs/J12.md) The plan says a value is read in place, and a refusal names both ports (wave 23; needs B9, B11, J6)

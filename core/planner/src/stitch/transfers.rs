@@ -460,6 +460,15 @@ impl Router<'_> {
             Some((space, path)) => Ok(Reader { value, space, path }),
             None => Err(StitchError::NoTransfer {
                 port: port.to_string(),
+                from_port: match &info.source {
+                    Source::Node { node, port } => {
+                        let from = &self.graph.nodes[*node as usize];
+                        format!("{}.{}", from.doc.id, from.outputs[*port as usize].name)
+                    }
+                    Source::Host { node, port } => {
+                        format!("{}.{port}", self.graph.nodes[*node as usize].doc.id)
+                    }
+                },
                 from_space: self.routing.spaces[info.home].clone(),
                 to_space: targets
                     .first()
