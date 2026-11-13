@@ -164,7 +164,7 @@ pub(crate) fn replay<'t, E: Env<'t>>(
     if !entry.armed {
         return Ok(false);
     }
-    load_cells(env, meta);
+    load_cells(env, meta, false);
     let table = env.table();
     for (at, &slot) in spanned(table, meta.inputs).iter().enumerate() {
         if slot == daedalus_abi::NO_SLOT {

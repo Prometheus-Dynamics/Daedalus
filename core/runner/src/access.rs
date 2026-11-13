@@ -13,8 +13,12 @@ use daedalus_value::OwnerKind;
 
 use crate::nested::drop_owned;
 use crate::owned::{INLINE_BYTES, InlineCell, typed_ops};
+use crate::values::LENT;
 
 /// Moves the reference out of a typed cell, which is left `Moved` so nothing releases it again.
+/// A step may take any input. The cell of a slot with one reader holds the slot's reference, and
+/// that one moves. The cell of a slot that keeps its value for several is [`LENT`]: the step gets
+/// another reference, and the cell stays as it is.
 pub fn take_typed<T: 'static>(slot: &mut Slot) -> Option<Arc<T>> {
     if slot.state != SlotState::Full as u32 || slot.owner != OwnerKind::Typed as u32 {
         return None;
@@ -24,10 +28,17 @@ pub fn take_typed<T: 'static>(slot: &mut Slot) -> Option<Arc<T>> {
     if (ops.type_id)() != TypeId::of::<T>() {
         return None;
     }
-    slot.state = SlotState::Moved as u32;
-    // SAFETY: the table says `data` came from `Arc::<T>::into_raw`. The cell gave up its one
-    // reference on the line above.
-    Some(unsafe { Arc::from_raw(slot.data.cast::<T>().cast_const()) })
+    let data = slot.data.cast::<T>().cast_const();
+    if slot.reserved & LENT != 0 {
+        // SAFETY: the table says `data` came from `Arc::<T>::into_raw`, and the slot the cell
+        // was lent from holds a reference for as long as the step runs.
+        unsafe { Arc::increment_strong_count(data) };
+    } else {
+        slot.state = SlotState::Moved as u32;
+    }
+    // SAFETY: the table says `data` came from `Arc::<T>::into_raw`. The reference is the one the
+    // cell gave up, or the one taken for a lent cell on the line above.
+    Some(unsafe { Arc::from_raw(data) })
 }
 
 /// A value that lives outside any queue: a constant, fixed while planning and read every tick.
