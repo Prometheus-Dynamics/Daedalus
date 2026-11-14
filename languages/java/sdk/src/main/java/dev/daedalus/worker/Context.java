@@ -47,6 +47,15 @@ public final class Context {
         events.add(new Event("detail", 0f, text, null));
     }
 
+    /**
+     * Gives this failure a number of the node's own, for a host that acts on which failure it
+     * was without reading the words. Call it before throwing. The number means what this node's
+     * author says: the host passes it through untouched, with the node's id.
+     */
+    public void faultCode(long code) {
+        events.add(new Event("fault_code", 0f, Long.toString(code & 0xffffffffL), null));
+    }
+
     List<Event> events() {
         return events;
     }

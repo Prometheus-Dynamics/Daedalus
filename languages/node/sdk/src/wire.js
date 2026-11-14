@@ -23,6 +23,7 @@ export const KIND = {
   HELLO: 0x40, OUTPUTS: 0x41, PROGRESS: 0x42, LOG: 0x43, FAULT: 0x44, STATE_VALUE: 0x45, PONG: 0x46,
   // Added after the layout was fixed, and not part of its hash: a host ignores a kind it doesn't know.
   DETAIL: 0x47,
+  NODE_CODE: 0x48,
 };
 
 export const FAULT_CODES = {
@@ -495,6 +496,14 @@ export function encodeDetail(run, text) {
   out.u8(KIND.DETAIL);
   out.u64(run);
   out.str(text);
+  return out.finish();
+}
+
+export function encodeNodeCode(run, code) {
+  const out = new Writer();
+  out.u8(KIND.NODE_CODE);
+  out.u64(run);
+  out.u32(code);
   return out.finish();
 }
 

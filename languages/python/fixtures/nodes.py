@@ -68,4 +68,5 @@ def stateful_counter(delta, cx):
 def failure_diagnostic(value, cx):
     cx.detail("diagnostic detail: the value is rejected, ")
     cx.detail("and this is the rest of it")
+    cx.fault_code(77)
     raise NodeError("node_error", "diagnostic: the value is rejected")

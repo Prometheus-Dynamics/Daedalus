@@ -90,7 +90,15 @@ Python, JavaScript and Java, and `dd_detail(cx, text)` in C and C++. A Rust plug
 `daedalus-plugin-worker` uses `ctx.detail` as it would in the host's process. On the wire it is
 a `Detail` message (kind `0x47`) carrying the run and the text, sent before the fault. The kind
 was added after the layout hash was fixed and isn't part of it: a host ignores a kind it
-doesn't know, so a worker that sends details still works with a host that predates them. It is started again on a later run, after a
+doesn't know, so a worker that sends details still works with a host that predates them.
+
+A node in a worker also gives its failure a number of its own, as a node in the host does with
+`Fault { code, .. }`: `cx.fault_code(n)` in Rust and Python, `cx.faultCode(n)` in JavaScript and
+Java, `dd_fault_code(cx, n)` in C and C++, called before the error is returned. The host carries
+it as the fault's code, untouched, with the node's id. It is a `NodeCode` message (kind `0x48`),
+added the same way. A node that panics in a Rust worker is reported with the host's own code
+for a panic, as it is in the host's process: see
+[node-authoring.md](node-authoring.md#failure). It is started again on a later run, after a
 delay that doubles and never exceeds 8 s. It is never given up on, and a worker's crash never
 ends the host.
 

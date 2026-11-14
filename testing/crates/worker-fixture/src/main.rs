@@ -22,7 +22,7 @@ use daedalus_wire::{
     DEFAULT_CAP, Fault, FaultCode, HostMsg, LogLevel, Outputs, PacketError, Run, RunStatus, Schema,
     WireValue, WorkerMsg, read_packet, write_packet,
 };
-use daedalus_worker_conformance::{CUSTOM_KEY, DIAGNOSTIC_DETAIL, hello};
+use daedalus_worker_conformance::{CUSTOM_KEY, DIAGNOSTIC_CODE, DIAGNOSTIC_DETAIL, hello};
 
 enum Mode {
     Normal,
@@ -86,6 +86,11 @@ fn run(
                         };
                         send(out, &piece, schema)?;
                     }
+                    let number = WorkerMsg::NodeCode {
+                        run: run.run,
+                        code: DIAGNOSTIC_CODE,
+                    };
+                    send(out, &number, schema)?;
                 }
                 send(
                     out,

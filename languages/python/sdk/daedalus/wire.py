@@ -40,6 +40,7 @@ KIND_HELLO, KIND_OUTPUTS, KIND_PROGRESS, KIND_LOG, KIND_FAULT, KIND_STATE_VALUE,
     0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46)
 # Added after the layout was fixed, and not part of its hash: a host ignores a kind it doesn't know.
 KIND_DETAIL = 0x47
+KIND_NODE_CODE = 0x48
 
 FAULT_CODES = {
     "node_error": 1, "node_panic": 2, "bad_input": 3, "unknown_node": 4,
@@ -667,6 +668,14 @@ def encode_detail(run, text):
     out.u8(KIND_DETAIL)
     out.u64(run)
     out.str(text)
+    return bytes(out.buf)
+
+
+def encode_node_code(run, code):
+    out = Writer()
+    out.u8(KIND_NODE_CODE)
+    out.u64(run)
+    out.u32(code)
     return bytes(out.buf)
 
 

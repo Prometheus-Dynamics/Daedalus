@@ -185,10 +185,10 @@ fn run_round(backend: &ProcessBackend, fixture: &Fixture, round: usize) -> Resul
                 result
             }
         }
-        Expect::Fault(code) | Expect::FaultDetail(code, _) => {
-            let detail = match &round_data.expect {
-                Expect::FaultDetail(_, detail) => Some(*detail),
-                _ => None,
+        Expect::Fault(code) | Expect::FaultDetail(code, _, _) => {
+            let (detail, number) = match &round_data.expect {
+                Expect::FaultDetail(_, detail, number) => (Some(*detail), Some(*number)),
+                _ => (None, None),
             };
             if !matches!(end, StepEnd::Fault) {
                 Err(format!(
@@ -202,6 +202,15 @@ fn run_round(backend: &ProcessBackend, fixture: &Fixture, round: usize) -> Resul
                     "expected the detail {:?}, got {:?}",
                     detail.unwrap_or_default(),
                     kept.text()
+                ))
+            } else if number
+                .is_some_and(|number| (cx_step.code, cx_step.code_is_own()) != (number, false))
+            {
+                Err(format!(
+                    "expected the node's own code {}, got {} (own: {})",
+                    number.unwrap_or_default(),
+                    cx_step.code,
+                    cx_step.code_is_own()
                 ))
             } else {
                 Ok(())

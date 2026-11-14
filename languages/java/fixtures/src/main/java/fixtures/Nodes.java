@@ -86,6 +86,7 @@ public final class Nodes {
     public static Object failureDiagnostic(Map<String, Object> in, Context cx) {
         cx.detail("diagnostic detail: the value is rejected, ");
         cx.detail("and this is the rest of it");
+        cx.faultCode(77);
         throw new NodeException("node_error", "diagnostic: the value is rejected");
     }
 }

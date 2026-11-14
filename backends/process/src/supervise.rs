@@ -47,6 +47,10 @@ pub(crate) struct Supervisor {
     pub writer: Writer,
     pub killed: Vec<u32>,
     pub fault: Option<String>,
+    /// The code the failing node gave for this run, when it gave one.
+    pub code: Option<u32>,
+    /// The worker said the node panicked.
+    pub panicked: bool,
 }
 
 /// A worker, its declarations and its state. Shared by every step that runs in it.
@@ -334,6 +338,8 @@ impl OwnedStep for WorkerStep {
         shared.telemetry.bump(Count::BytesIn(sent as u64));
         shared.telemetry.bump(Count::Run);
         sup.fault = None;
+        sup.code = None;
+        sup.panicked = false;
 
         let Link::Up(worker) = &mut sup.link else {
             return self.fail(&shared, sup, cx, "worker is not running", Blame::Worker);
@@ -372,9 +378,18 @@ impl OwnedStep for WorkerStep {
                 StepEnd::Fault
             }
             Outcome::Replied(RunStatus::Fault) => {
-                let reason = sup.fault.clone().unwrap_or_else(|| "a node faulted".into());
                 shared.telemetry.bump(Count::Fault);
-                cx.fault(None, &reason);
+                // The fault message already recorded the node, the reason and the detail. A
+                // worker that sent none still failed.
+                if sup.fault.is_none() {
+                    cx.fault(None, "a node faulted");
+                }
+                // The code is the node's own, as it gave it. A panic is the host's to name.
+                if sup.panicked {
+                    cx.own_code(daedalus_abi::own::PANIC);
+                } else if let Some(code) = sup.code {
+                    cx.code = code;
+                }
                 StepEnd::Fault
             }
             Outcome::Gone(reason) => {
@@ -501,7 +516,10 @@ impl WorkerStep {
                 let text = format!("{}: {}", fault.code.name(), fault.reason);
                 say(cx, at.map(|position| position as u32), &text);
                 sup.fault = Some(text);
+                sup.panicked = fault.code == daedalus_wire::FaultCode::NodePanic;
             }
+            // The node's own number for its failure, which the fault carries as it is.
+            Ok(WorkerMsg::NodeCode { run: of, code }) if of == run => sup.code = Some(code),
             Ok(WorkerMsg::Progress(progress)) if progress.run == run => {
                 if let Some(fraction) = progress.fraction {
                     let done = (fraction.clamp(0.0, 1.0) * 1000.0) as u32;

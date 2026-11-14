@@ -490,3 +490,15 @@ fn a_detail_round_trips_and_a_host_that_predates_it_would_only_ignore_it() {
     // The kind is past the ones the layout hash counts, so adding it moved no hash.
     assert_eq!(daedalus_wire::kind::DETAIL, 0x47);
 }
+
+#[test]
+fn a_nodes_own_code_round_trips() {
+    round_trip_worker(
+        WorkerMsg::NodeCode {
+            run: 9,
+            code: u32::MAX,
+        },
+        &Schema::new(),
+    );
+    assert_eq!(daedalus_wire::kind::NODE_CODE, 0x48);
+}

@@ -54,6 +54,8 @@ public final class Wire {
         STATE_VALUE = 0x45, PONG = 0x46;
     /** Added after the layout was fixed, and not part of its hash: a host ignores a kind it doesn't know. */
     public static final int DETAIL = 0x47;
+    /** The node's own code for a failure. Added as `DETAIL` was. */
+    public static final int NODE_CODE = 0x48;
 
     private static final BigInteger U64_MAX = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
 

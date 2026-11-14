@@ -13,6 +13,7 @@ pub enum Event {
     Progress { fraction: f32, message: String },
     Log { level: LogLevel, text: String },
     Detail { text: String },
+    FaultCode { code: u32 },
 }
 
 /// The context of one node run.
@@ -71,6 +72,13 @@ impl Context {
         self.events.borrow_mut().push(Event::Detail {
             text: text.to_owned(),
         });
+    }
+
+    /// Gives this failure a number of the node's own, for a host that acts on which failure it
+    /// was without reading the words. Call it before returning the error. The number means
+    /// what this node's author says: the host passes it through untouched, with the node's id.
+    pub fn fault_code(&self, code: u32) {
+        self.events.borrow_mut().push(Event::FaultCode { code });
     }
 
     pub(crate) fn take(self) -> (Option<WireValue>, Vec<Event>) {

@@ -363,6 +363,7 @@ fn run_node(
             }),
             Event::Log { level, text } => WorkerMsg::Log { level, text },
             Event::Detail { text } => WorkerMsg::Detail { run: run.run, text },
+            Event::FaultCode { code } => WorkerMsg::NodeCode { run: run.run, code },
         };
         send(out, &msg, schema).map_err(io::Error::other)?;
     }
