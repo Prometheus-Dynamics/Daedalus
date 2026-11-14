@@ -11,6 +11,7 @@
 pub mod codec;
 mod error;
 mod hello;
+pub mod layout;
 mod packet;
 mod schema;
 pub mod service;
@@ -21,9 +22,13 @@ pub use worker::kind;
 
 pub use error::{PacketError, WireError};
 pub use hello::{Declaration, Hello, PortSpec};
+pub use layout::Layout;
 pub use packet::{DEFAULT_CAP, read_packet, write_packet};
 pub use schema::{Dir, Schema};
-pub use value::{MAX_DEPTH, WireType, WireValue, decode_value, encode_value};
+pub use value::{
+    MAX_DEPTH, WireType, WireValue, decode_bare, decode_placed, decode_value, encode_bare,
+    encode_value,
+};
 pub use worker::{
     BoundaryValue, Fault, FaultCode, HostMsg, LogLevel, Outputs, Progress, REASON_CAP, Run,
     RunStatus, WorkerMsg, truncate_reason,

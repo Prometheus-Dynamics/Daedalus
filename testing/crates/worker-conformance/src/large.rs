@@ -1,5 +1,5 @@
 //! Large values through a worker: `fixture.raw_io` with a value well past the shared-memory
-//! threshold, run several times, each answer checked. What the host's counters say about how the
+//! threshold, and `fixture.list_reverse` with a long list, run several times, each answer checked. What the host's counters say about how the
 //! values travelled is given back, so each language's worker can show it takes values by
 //! reference: inputs as places, outputs held where the worker wrote them.
 
@@ -20,11 +20,55 @@ pub struct Large {
     pub telemetry: Snapshot,
     /// How many outputs the host's cell held in the worker's value buffer, not as its own copy.
     pub held: usize,
+    /// How many outputs had their items on a 64-byte boundary where the host's cell holds them.
+    pub aligned: usize,
 }
 
 /// Runs `fixture.raw_io` `runs` times with `len` bytes through a worker started from `spec`, and
 /// checks each answer is the value reversed. Each output cell is let go before the next run.
 pub fn large_values(spec: WorkerSpec, len: usize, runs: usize) -> Result<Large, String> {
+    let payload: Vec<u8> = (0..len).map(|at| (at * 31 + 7) as u8).collect();
+    through(spec, "fixture.raw_io", payload, 0, runs, |sent, back| {
+        back.len() == sent.len() && back.iter().rev().eq(sent.iter())
+    })
+}
+
+/// Runs `fixture.list_reverse` `runs` times with a `list<u32>` of `items` items, and checks each
+/// answer is the list reversed. A list is placed like any value of its size, with its items, after
+/// the four-byte count, aligned.
+pub fn large_list(spec: WorkerSpec, items: u32, runs: usize) -> Result<Large, String> {
+    let mut payload = items.to_le_bytes().to_vec();
+    for item in 0..items {
+        payload.extend_from_slice(&item.wrapping_mul(2_654_435_761).to_le_bytes());
+    }
+    through(
+        spec,
+        "fixture.list_reverse",
+        payload,
+        4,
+        runs,
+        |sent, back| {
+            let (sent_items, _) = sent[4..].as_chunks::<4>();
+            back.len() == sent.len()
+                && back[..4] == sent[..4]
+                && back[4..]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .eq(sent_items.iter().rev())
+        },
+    )
+}
+
+fn through(
+    spec: WorkerSpec,
+    id: &'static str,
+    mut payload: Vec<u8>,
+    items_at: usize,
+    runs: usize,
+    reversed: fn(&[u8], &[u8]) -> bool,
+) -> Result<Large, String> {
+    let len = payload.len();
     let mut backend = ProcessBackend::new();
     backend
         .add_worker(spec, &registry())
@@ -45,7 +89,7 @@ pub fn large_values(spec: WorkerSpec, len: usize, runs: usize) -> Result<Large, 
     };
     let bodies = [NodeBody {
         node: NodeIndex(0),
-        id: "fixture.raw_io",
+        id,
         body: BodyIndex(0),
         inputs: 1,
         outputs: 1,
@@ -54,7 +98,7 @@ pub fn large_values(spec: WorkerSpec, len: usize, runs: usize) -> Result<Large, 
         label: None,
         metadata: &NO_METADATA,
         code: &(),
-        text: "fixture.raw_io",
+        text: id,
     }];
     let cx = CompileCx {
         types: &[],
@@ -74,8 +118,8 @@ pub fn large_values(spec: WorkerSpec, len: usize, runs: usize) -> Result<Large, 
         Ok(_) => return Err("the backend gave a form other than steps".into()),
         Err(refusal) => return Err(format!("refused: {}", refusal.reason)),
     };
-    let mut payload: Vec<u8> = (0..len).map(|at| (at * 31 + 7) as u8).collect();
     let mut held = 0;
+    let mut aligned = 0;
     let mut result = Ok(());
     for run in 0..runs {
         let mut cells = [
@@ -94,13 +138,11 @@ pub fn large_values(spec: WorkerSpec, len: usize, runs: usize) -> Result<Large, 
         let out = std::mem::replace(&mut cells[1], Slot::EMPTY);
         if !matches!(end, StepEnd::Done) {
             result = Err(format!("run {run} did not finish: {}", cx.reason()));
-        } else if !out
-            .bytes()
-            .is_some_and(|back| back.len() == len && back.iter().rev().eq(payload.iter()))
-        {
+        } else if !out.bytes().is_some_and(|back| reversed(&payload, back)) {
             result = Err(format!("run {run} did not give the value reversed"));
         }
         held += usize::from(out.owner == OWNER_HANDED);
+        aligned += usize::from((out.data as usize + items_at).is_multiple_of(64));
         daedalus_runner::drop_owned(out);
         if result.is_err() {
             break;
@@ -110,5 +152,6 @@ pub fn large_values(spec: WorkerSpec, len: usize, runs: usize) -> Result<Large, 
     result.map(|()| Large {
         telemetry: backend.telemetry(),
         held,
+        aligned,
     })
 }

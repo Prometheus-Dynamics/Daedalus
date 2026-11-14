@@ -87,6 +87,9 @@ pub struct Lender {
     size: usize,
     /// The value buffers and who holds them, when the worker agreed values by reference.
     held: Option<Held>,
+    /// The features agreed with the worker: none until [`Lender::agree`].
+    features: u32,
+    threshold: usize,
     /// Where the next value by reference goes in the host's buffer, during a run.
     cursor: usize,
     fds: FdCache,
@@ -122,6 +125,8 @@ impl Lender {
             view,
             size,
             held,
+            features: 0,
+            threshold: THRESHOLD,
             cursor: 0,
             fds: FdCache::new(),
             note: Writer::new(),
@@ -133,20 +138,39 @@ impl Lender {
         self.held.is_some()
     }
 
-    /// Sends the agreement that follows the grant, naming the value buffers.
-    pub fn agree(&self, socket: BorrowedFd<'_>) -> Result<(), ShmError> {
+    /// The same, with `threshold` the smallest packet or value that goes through these buffers,
+    /// in place of [`THRESHOLD`]. Set before the grant, which tells the worker.
+    pub fn with_threshold(mut self, threshold: usize) -> Lender {
+        self.threshold = threshold;
+        self
+    }
+
+    /// The smallest packet or value that goes through these buffers, in bytes.
+    pub fn threshold(&self) -> usize {
+        self.threshold
+    }
+
+    /// The features agreed with the worker.
+    pub fn features(&self) -> u32 {
+        self.features
+    }
+
+    /// Sends the agreement that follows the grant: `features`, which include values by
+    /// reference, and the value buffers.
+    pub fn agree(&mut self, socket: BorrowedFd<'_>, features: u32) -> Result<(), ShmError> {
         let Some(held) = &self.held else {
             return Err(ShmError("this pool has no value buffers".into()));
         };
+        let values = held.buffers().collect();
+        let features = features | BY_REFERENCE;
         let mut out = Writer::new();
-        Shared::Agree {
-            features: BY_REFERENCE,
-            values: held.buffers().collect(),
-        }
-        .encode(true, &mut out)
-        .map_err(|e| fail("the agreement", e))?;
+        Shared::Agree { features, values }
+            .encode(true, &mut out)
+            .map_err(|e| fail("the agreement", e))?;
         shm_fdpass::send(socket, &[&out.buf], &[], false)
-            .map_err(|e| fail("sending the agreement", e))
+            .map_err(|e| fail("sending the agreement", e))?;
+        self.features = features;
+        Ok(())
     }
 
     /// Starts a run: values by reference go in the host's buffer from its start again, and the
@@ -157,8 +181,8 @@ impl Lender {
     }
 
     /// Room for `len` bytes in the host's buffer after this run's other values, if they fit.
-    fn room(&mut self, len: usize) -> Option<(usize, &mut [u8])> {
-        let start = self.cursor.next_multiple_of(ALIGN);
+    fn room(&mut self, len: usize, items_at: usize) -> Option<(usize, &mut [u8])> {
+        let start = aligned(self.cursor, items_at);
         let end = start.checked_add(len)?;
         let room = self
             .view
@@ -169,10 +193,12 @@ impl Lender {
         Some((start, room))
     }
 
-    /// Writes a value's bytes into the host's buffer, and gives its place. None when this run's
-    /// values don't leave room for it: then it travels in the packet.
-    pub fn place(&mut self, bytes: &[u8]) -> Option<Place> {
-        let (start, room) = self.room(bytes.len())?;
+    /// Writes a value's bytes into the host's buffer, and gives its place. `items_at` is where
+    /// its items start, for a value whose layout is an array: they are put on an aligned
+    /// address, so a reader can view them as an array. None when this run's values don't leave
+    /// room for it: then it travels in the packet.
+    pub fn place(&mut self, bytes: &[u8], items_at: usize) -> Option<Place> {
+        let (start, room) = self.room(bytes.len(), items_at)?;
         room.copy_from_slice(bytes);
         Some(Place {
             at: At::Lent(TO_WORKER),
@@ -183,7 +209,7 @@ impl Lender {
 
     /// Writes a run's packet into the host's buffer after its values, and gives where.
     pub fn place_packet(&mut self, body: &[u8]) -> Option<(u64, u32)> {
-        let (start, room) = self.room(body.len())?;
+        let (start, room) = self.room(body.len(), 0)?;
         room.copy_from_slice(body);
         Some((start as u64, body.len() as u32))
     }
@@ -257,7 +283,7 @@ impl Lender {
     pub fn grant(&self, socket: BorrowedFd<'_>) -> Result<(), ShmError> {
         let msg = Shared::Grant {
             generation: self.pool.generation(),
-            threshold: THRESHOLD as u32,
+            threshold: u32::try_from(self.threshold).unwrap_or(u32::MAX),
             to_worker: TO_WORKER,
             to_host: TO_HOST,
             buffers: self
@@ -314,7 +340,7 @@ pub struct Borrower {
     to_host: u32,
     /// The buffers output values go in, once the host agreed values by reference.
     values: Vec<u32>,
-    by_reference: bool,
+    features: u32,
     /// The value buffer this run's outputs go in, and how far it is written.
     out: Option<u32>,
     out_cursor: usize,
@@ -368,7 +394,7 @@ impl Borrower {
             to_worker: *to_worker,
             to_host: *to_host,
             values: Vec::new(),
-            by_reference: false,
+            features: 0,
             out: None,
             out_cursor: 0,
             fds: crate::fds::FdTable::new(),
@@ -383,13 +409,18 @@ impl Borrower {
             && features & BY_REFERENCE != 0
         {
             self.values.clone_from(values);
-            self.by_reference = true;
+            self.features = *features;
         }
+    }
+
+    /// The features the host agreed.
+    pub fn features(&self) -> u32 {
+        self.features
     }
 
     /// Whether the host agreed values by reference.
     pub fn by_reference(&self) -> bool {
-        self.by_reference
+        self.features & BY_REFERENCE != 0
     }
 
     /// Takes a run's note: lets go of the buffers it forgets, maps the ones it attaches (`fds`,
@@ -520,10 +551,34 @@ impl Borrower {
     }
 }
 
-/// Where values by reference start in a buffer, for the worker's writes.
-pub(crate) const VALUE_ALIGN: usize = ALIGN;
-
 fn page_size() -> usize {
     // The pool rounds to its own pages too; 16 KiB covers 4 KiB and 16 KiB page kernels.
     16 * 1024
+}
+
+/// The first offset at or after `cursor` that puts the byte `items_at` into a value on an
+/// [`ALIGN`] boundary.
+pub(crate) fn aligned(cursor: usize, items_at: usize) -> usize {
+    let skew = items_at % ALIGN;
+    (cursor + skew).next_multiple_of(ALIGN) - skew
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ALIGN, aligned};
+
+    #[test]
+    fn a_value_starts_where_its_items_fall_on_the_boundary() {
+        for cursor in [0, 1, 60, 64, 100, 4096] {
+            for items_at in [0, 4, 12, 64, 68] {
+                let start = aligned(cursor, items_at);
+                assert!(start >= cursor, "{cursor} {items_at}");
+                assert!(
+                    start - cursor < ALIGN,
+                    "no more than one boundary of padding"
+                );
+                assert_eq!((start + items_at) % ALIGN, 0, "{cursor} {items_at}");
+            }
+        }
+    }
 }

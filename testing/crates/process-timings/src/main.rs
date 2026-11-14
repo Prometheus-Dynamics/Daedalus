@@ -10,22 +10,24 @@
 //! The fixture picks by its environment: `DAEDALUS_FIXTURE_NO_REFERENCE` asks for shared memory
 //! alone, `DAEDALUS_FIXTURE_PLAIN` for nothing.
 //!
+//! `process-timings sweep SWEEP_WORKER [RUNS]` instead finds where placing a value starts to
+//! pay, with the `daedalus-sweep-worker` binary this crate builds: see [`sweep`].
+//!
 //! It warms up, then times BATCHES batches of 1,000 operations and prints the median, minimum and
 //! maximum of the per-operation times, in nanoseconds. It then counts the allocations of 200 more
 //! runs on this thread, which must be zero.
 #![allow(clippy::print_stdout, clippy::print_stderr)] // the measurements and usage are this program's output
 
-use std::path::PathBuf;
+mod step;
+mod sweep;
+
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use daedalus_abi::counting::{CountingAlloc, counted};
 use daedalus_abi::testing::{release, run_once};
-use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
-use daedalus_backend::{
-    Backend, BodyIndex, CompileCx, Compiled, NO_METADATA, NodeBody, PortRef, RateId, Region,
-};
+use daedalus_abi::{Slot, Slots, StepCx, StepEnd};
 use daedalus_backend_process::{ProcessBackend, WorkerSpec};
-use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
 use daedalus_worker_conformance::runner::registry;
 
 #[global_allocator]
@@ -36,6 +38,7 @@ const WARM_UP: usize = 10_000;
 
 fn usage() -> ! {
     eprintln!("usage: process-timings WORKER [BATCHES] [MEGABYTES]");
+    eprintln!("       process-timings sweep SWEEP_WORKER [RUNS]");
     std::process::exit(2);
 }
 
@@ -51,6 +54,14 @@ fn p99(sorted: &[f64]) -> f64 {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(worker) = args.first() else { usage() };
+    if worker == "sweep" {
+        let Some(program) = args.get(1) else { usage() };
+        let runs = args
+            .get(2)
+            .map_or(101, |text| text.parse().expect("RUNS is a number"));
+        sweep::sweep(Path::new(program), runs);
+        return;
+    }
     let batches: usize = args
         .get(1)
         .map_or(101, |text| text.parse().expect("BATCHES is a number"));
@@ -60,82 +71,11 @@ fn main() {
         .add_worker(WorkerSpec::new(PathBuf::from(worker)), &registry())
         .expect("the worker registers its nodes");
 
-    let inputs = [
-        PortRef {
-            node: NodeIndex(0),
-            port: PortIndex(0),
-        },
-        PortRef {
-            node: NodeIndex(0),
-            port: PortIndex(1),
-        },
-    ];
-    let outputs = [PortRef {
-        node: NodeIndex(0),
-        port: PortIndex(0),
-    }];
-    let nodes = [NodeIndex(0)];
-    let region = Region {
-        backend: BackendIndex(0),
-        nodes: &nodes,
-        inputs: &inputs,
-        outputs: &outputs,
-        incoming: &[],
-        placed: &[],
-        rate: RateId(0),
-    };
-    let bodies = [NodeBody {
-        node: NodeIndex(0),
-        id: "fixture.scalar_add",
-        body: BodyIndex(0),
-        inputs: 2,
-        outputs: 1,
-        merges: false,
-        fire_all: false,
-        label: None,
-        metadata: &NO_METADATA,
-        code: &(),
-        text: "fixture.scalar_add",
-    }];
-    let cx = CompileCx {
-        types: &[],
-        consts: &[],
-        spaces: &[],
-        bodies: &bodies,
-        edges: &[],
-        host_inputs: &[],
-        host_outputs: &[],
-        fifo_capacity: 64,
-        merge_allowed: false,
-        freeze_params: false,
-        sharing: &[],
-    };
-    let mut step = match backend.compile(&region, &cx) {
-        Ok(Compiled::Steps(mut units)) => units.pop().expect("a unit").step,
-        other => panic!("compile: {other:?}"),
-    };
+    let mut step = step::one_node(&backend, "fixture.scalar_add", 2, 1);
 
     let mut a = 2i64.to_le_bytes();
     let mut b = 40i64.to_le_bytes();
-    let mut cells = [
-        Slot {
-            state: SlotState::Full as u32,
-            owner: 0,
-            data: a.as_mut_ptr(),
-            len: 8,
-            cap: 8,
-            ..Slot::EMPTY
-        },
-        Slot {
-            state: SlotState::Full as u32,
-            owner: 0,
-            data: b.as_mut_ptr(),
-            len: 8,
-            cap: 8,
-            ..Slot::EMPTY
-        },
-        Slot::EMPTY,
-    ];
+    let mut cells = [step::full(&mut a), step::full(&mut b), Slot::EMPTY];
     let mut cx_step = StepCx::new();
     let mut run = || {
         let end = run_once(&mut step, &mut Slots::of(&mut cells), &mut cx_step);
@@ -179,67 +119,10 @@ fn main() {
 
 /// Times a payload of `megabytes` MiB through the worker and back, one run per operation.
 fn hand_over(backend: &ProcessBackend, megabytes: usize, batches: usize) {
-    let inputs = [PortRef {
-        node: NodeIndex(0),
-        port: PortIndex(0),
-    }];
-    let outputs = [PortRef {
-        node: NodeIndex(0),
-        port: PortIndex(0),
-    }];
-    let nodes = [NodeIndex(0)];
-    let region = Region {
-        backend: BackendIndex(0),
-        nodes: &nodes,
-        inputs: &inputs,
-        outputs: &outputs,
-        incoming: &[],
-        placed: &[],
-        rate: RateId(0),
-    };
-    let bodies = [NodeBody {
-        node: NodeIndex(0),
-        id: "fixture.raw_io",
-        body: BodyIndex(0),
-        inputs: 1,
-        outputs: 1,
-        merges: false,
-        fire_all: false,
-        label: None,
-        metadata: &NO_METADATA,
-        code: &(),
-        text: "fixture.raw_io",
-    }];
-    let cx = CompileCx {
-        types: &[],
-        consts: &[],
-        spaces: &[],
-        bodies: &bodies,
-        edges: &[],
-        host_inputs: &[],
-        host_outputs: &[],
-        fifo_capacity: 64,
-        merge_allowed: false,
-        freeze_params: false,
-        sharing: &[],
-    };
-    let mut step = match backend.compile(&region, &cx) {
-        Ok(Compiled::Steps(mut units)) => units.pop().expect("a unit").step,
-        other => panic!("compile: {other:?}"),
-    };
+    let mut step = step::one_node(backend, "fixture.raw_io", 1, 1);
     let len = megabytes << 20;
     let mut payload: Vec<u8> = (0..len).map(|at| (at * 31 + 7) as u8).collect();
-    let mut cells = [
-        Slot {
-            state: SlotState::Full as u32,
-            owner: 0,
-            data: payload.as_mut_ptr(),
-            len,
-            cap: len,
-            ..Slot::EMPTY
-        },
-        Slot::EMPTY,
-    ];
+    let mut cells = [step::full(&mut payload), Slot::EMPTY];
     let mut cx_step = StepCx::new();
     let mut run = || {
         // The value handed back last time is let go, as its consumer would have.

@@ -7,10 +7,11 @@
 //! outputs, `log-exit` sends one and exits, and `long-fault` fails each run with a reason of
 //! several lines.
 //!
-//! It asks its host for shared memory and values by reference, as a Rust worker does. With
-//! `DAEDALUS_FIXTURE_PLAIN` set it asks for nothing and stays on the plain path; with
-//! `DAEDALUS_FIXTURE_NO_REFERENCE` it asks for shared memory alone. So one binary measures all
-//! three. `DAEDALUS_FIXTURE_PROBE` adds `fixture.dmabuf_probe` and `fixture.dmabuf_fail` (see `by_reference`).
+//! It asks its host for shared memory and values by reference of any type, as a Rust worker
+//! does. With `DAEDALUS_FIXTURE_PLAIN` set it asks for nothing and stays on the plain path; with
+//! `DAEDALUS_FIXTURE_NO_REFERENCE` it asks for shared memory alone; with
+//! `DAEDALUS_FIXTURE_BYTES_ONLY`, values by reference for `bytes` and opaque values alone. So one
+//! binary measures every way. `DAEDALUS_FIXTURE_PROBE` adds `fixture.dmabuf_probe` and `fixture.dmabuf_fail` (see `by_reference`).
 
 #![forbid(unsafe_code)]
 
@@ -81,7 +82,7 @@ fn run(
     let mut status = RunStatus::Ok;
     for node in &run.nodes {
         let ran = if schema.by_reference() || node.starts_with("fixture.dmabuf_") {
-            by_reference::execute(lent, node, &run.inputs, state)
+            by_reference::execute(lent, schema, node, &run.inputs, state)
         } else {
             nodes::execute(node, &run.inputs, state)
         };
@@ -150,8 +151,12 @@ fn main() {
         // Asks for nothing.
     } else if std::env::var_os("DAEDALUS_FIXTURE_NO_REFERENCE").is_some() {
         let _ = lent.ask(&mut out);
+    } else if std::env::var_os("DAEDALUS_FIXTURE_BYTES_ONLY").is_some() {
+        // Values by reference for `bytes` and opaque values alone, as before any type.
+        let _ = lent.ask_for(daedalus_wire::shared::BY_REFERENCE, &mut out);
     } else {
-        let _ = lent.ask_by_reference(&mut out);
+        use daedalus_wire::shared::{ANY_TYPE, BY_REFERENCE};
+        let _ = lent.ask_for(BY_REFERENCE | ANY_TYPE, &mut out);
     }
     let mut inbox = Inbox::new(lent.clone());
     let mut buf = Vec::new();
@@ -166,7 +171,7 @@ fn main() {
                 }
             }
             Ok(Incoming::Granted) => {
-                schema.set_by_reference(lent.by_reference());
+                schema.set_features(lent.features());
                 continue;
             }
             Ok(Incoming::Plain(_)) => continue,

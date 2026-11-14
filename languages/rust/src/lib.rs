@@ -8,6 +8,7 @@
 pub mod codec;
 pub mod context;
 mod serve;
+pub mod view;
 
 pub use codec::{Inputs, Pack, Pair, Value, Wire, WorkerReturn};
 pub use context::{Context, Event};
@@ -15,6 +16,7 @@ pub use context::{Context, Event};
 pub use daedalus_registry as registry;
 pub use daedalus_wire::WireValue;
 pub use serve::{NodeError, NodeFn, RustBody, serve, state_type};
+pub use view::{Flat, View, input_view};
 
 /// The context a node body takes as `&Ctx`: the tick's cancel flag, and progress and log events.
 pub type Ctx = Context;

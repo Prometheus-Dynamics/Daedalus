@@ -46,6 +46,31 @@ pub mod kind {
 /// A [`Shared::Want`] feature: the worker takes and gives values by reference.
 pub const BY_REFERENCE: u32 = 1;
 
+/// With [`BY_REFERENCE`]: a port's whole value of any type but a fixed-size scalar has a form
+/// byte, so a large list, struct or string can be a place too. A place names the value's bytes as
+/// the host's cell holds them: a string's or byte field's own bytes, and a compound value's wire
+/// form, which is how a host holds it.
+pub const ANY_TYPE: u32 = 2;
+
+/// Whether a port's whole value of type `ty` starts with a form byte between peers that agreed
+/// `features`, and so can be a place. With [`BY_REFERENCE`], a `bytes` or opaque value does; with
+/// [`ANY_TYPE`] as well, any value but a fixed-size scalar, whose few bytes always cost less
+/// inline. Decided by the type's shape, never by its name.
+pub fn has_form(features: u32, ty: &crate::WireType) -> bool {
+    use crate::WireType;
+    use daedalus_types::Scalar;
+    if features & BY_REFERENCE == 0 {
+        return false;
+    }
+    let any = features & ANY_TYPE != 0;
+    match ty {
+        WireType::Scalar(Scalar::Bytes) | WireType::Opaque(_) => true,
+        WireType::Scalar(Scalar::String) => any,
+        WireType::Scalar(_) => false,
+        _ => any,
+    }
+}
+
 /// Where a value's bytes are, when they don't travel in the packet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum At {
@@ -63,7 +88,8 @@ pub struct Place {
     pub len: u64,
 }
 
-/// The form byte of a `bytes` or opaque value between peers that agreed values by reference.
+/// The form byte of a port's value that has a form (see [`has_form`]) between peers that agreed
+/// values by reference.
 pub mod form {
     /// The bytes follow, as without the agreement.
     pub const INLINE: u8 = 0;

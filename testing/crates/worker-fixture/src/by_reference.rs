@@ -11,8 +11,12 @@
 use std::collections::BTreeMap;
 
 use daedalus_process_shm::{Brackets, Lent, View, Writes};
+use daedalus_wire::codec::Writer;
 use daedalus_wire::shared::{At, Place};
-use daedalus_wire::{BoundaryValue, Declaration, FaultCode, PortSpec, WireType, WireValue};
+use daedalus_wire::{
+    BoundaryValue, Declaration, Dir, FaultCode, PortSpec, Schema, WireType, WireValue,
+    decode_placed, encode_bare,
+};
 
 use crate::nodes;
 
@@ -44,6 +48,7 @@ fn probe() -> Declaration {
 /// Runs a run's nodes with its inputs where they are.
 pub fn execute(
     lent: &Lent,
+    schema: &Schema,
     node: &str,
     inputs: &[BoundaryValue],
     state: &mut BTreeMap<String, WireValue>,
@@ -63,7 +68,7 @@ pub fn execute(
             view.begin_read(*slot)
                 .map_err(|reason| (FaultCode::Internal, reason))?;
         }
-        let result = run_in(view, node, inputs, state);
+        let result = run_in(view, schema, node, inputs, state);
         for slot in &slots {
             view.end_read(*slot);
         }
@@ -73,6 +78,7 @@ pub fn execute(
 
 fn run_in(
     view: &mut View<'_>,
+    schema: &Schema,
     node: &str,
     inputs: &[BoundaryValue],
     state: &mut BTreeMap<String, WireValue>,
@@ -118,11 +124,17 @@ fn run_in(
         }
         _ => {}
     }
-    // Any other node is given its inputs' bytes.
+    // Any other node is given its inputs' values, read from where they are.
     let mut owned = Vec::with_capacity(inputs.len());
     for entry in inputs {
         let value = match &entry.value {
-            WireValue::Placed(place) => WireValue::Bytes(bytes_of(place)?.to_vec()),
+            WireValue::Placed(place) => {
+                let ty = schema
+                    .lookup(&entry.node, Dir::Input, &entry.port)
+                    .map_err(|error| (FaultCode::BadInput, error.to_string()))?;
+                decode_placed(ty, bytes_of(place)?, schema)
+                    .map_err(|error| (FaultCode::BadInput, error.to_string()))?
+            }
             other => other.clone(),
         };
         owned.push(BoundaryValue {
@@ -132,12 +144,23 @@ fn run_in(
         });
     }
     let mut values = nodes::execute(node, &owned, state)?;
+    // A large output of a type with a form is written into the value buffer as the host's cell
+    // will hold it, with an array's items aligned.
+    let mut bare = Writer::new();
     for value in &mut values {
-        if let WireValue::Bytes(bytes) = &value.value
-            && bytes.len() >= threshold
-            && let Some((place, room)) = writes.room(bytes.len())
-        {
-            room.copy_from_slice(bytes);
+        let Ok(ty) = schema.lookup(&value.node, Dir::Output, &value.port) else {
+            continue;
+        };
+        if !schema.has_form(ty) {
+            continue;
+        }
+        bare.buf.clear();
+        if encode_bare(ty, &value.value, schema, &mut bare).is_err() || bare.buf.len() < threshold {
+            continue;
+        }
+        let items_at = ty.layout().items_at().unwrap_or(0);
+        if let Some((place, room)) = writes.room_for(bare.buf.len(), items_at) {
+            room.copy_from_slice(&bare.buf);
             value.value = WireValue::Placed(place);
         }
     }

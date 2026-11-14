@@ -10,13 +10,15 @@ use std::time::{Duration, Instant};
 use daedalus_abi::{OwnedStep, Slot, Slots, StepCx, StepEnd};
 use daedalus_value::OwnerKind;
 use daedalus_wire::codec::{Reader, Writer};
-use daedalus_wire::{Dir, Hello, Schema, WireError, WireType, WorkerMsg, decode_value};
+use daedalus_wire::{Dir, Hello, Schema, WireError, WireType, WorkerMsg};
+use raw::{put_raw, read_raw};
 
 use crate::backoff::delay_after;
 use crate::child::{Got, Worker};
 use crate::spec::WorkerSpec;
 use crate::telemetry::{Count, Telemetry};
 
+mod raw;
 pub(crate) mod values;
 
 /// The stderr bytes a fault report carries.
@@ -253,6 +255,7 @@ impl WorkerStep {
         telemetry: &Telemetry,
     ) -> Result<usize, String> {
         let by_reference = worker.by_reference();
+        let features = worker.features();
         if by_reference {
             worker.begin_run(telemetry);
         }
@@ -269,6 +272,8 @@ impl WorkerStep {
         for (index, binding) in self.reads.iter().enumerate() {
             if self.input(*binding, &cells[index]).is_some() {
                 count += 1;
+            } else if cells[index].state == daedalus_abi::SlotState::Full as u32 {
+                return Err(self.no_bytes(*binding));
             }
         }
         out.len(count).map_err(|error| error.to_string())?;
@@ -286,12 +291,10 @@ impl WorkerStep {
             out.str(&node.inputs[binding.port as usize].0)
                 .map_err(|error| error.to_string())?;
             let ty = self.port_type(*binding, Dir::Input);
-            if by_reference && values::by_place(ty) {
-                if values::put_placed(worker, &input, out)? {
-                    telemetry.bump(Count::PlacedIn);
-                } else if let Some(bytes) = input.bytes() {
-                    sent += bytes.len();
-                }
+            // Otherwise the form, when there is one, said its bytes follow: they are written as
+            // without it.
+            if values::by_place(features, ty) && values::put_placed(worker, ty, &input, out)? {
+                telemetry.bump(Count::PlacedIn);
                 continue;
             }
             match input {
@@ -309,6 +312,21 @@ impl WorkerStep {
         }
         self.scratch = scratch;
         Ok(sent)
+    }
+
+    /// Why a full input cell can't go to the worker: it holds a value that has no bytes. Short,
+    /// to fit a step's reason.
+    fn no_bytes(&self, binding: Binding) -> String {
+        let node = &self.shared.nodes[binding.node as usize];
+        let port = &node.inputs[binding.port as usize].0;
+        let named = match self.port_type(binding, Dir::Input) {
+            WireType::Opaque(key) => format!("a {key} value"),
+            _ => "the value".to_owned(),
+        };
+        format!(
+            "{port} of {}: {named} has no bytes; it needs a byte codec or with_dmabuf",
+            node.id
+        )
     }
 
     /// What an input cell holds for its port, if anything.
@@ -329,7 +347,7 @@ impl WorkerStep {
         schema: &Schema,
         worker: &Worker,
     ) -> Result<RunStatus, WireError> {
-        let by_reference = worker.by_reference();
+        let features = worker.features();
         let mut input = Reader::new(buf);
         let _kind = input.u8()?;
         let _run = input.u64()?;
@@ -369,8 +387,7 @@ impl WorkerStep {
             let out = &mut self.outbufs[index];
             out.clear();
             self.produced[index] = true;
-            if by_reference
-                && values::by_place(&ty)
+            if values::by_place(features, &ty)
                 && let values::Output::Held(bytes) = values::read_placed(worker, &mut input)?
             {
                 self.adopted[index] = Some(bytes);
@@ -728,68 +745,4 @@ fn say(cx: &mut StepCx, at: Option<u32>, text: &str) {
     if cx.reason_cut() {
         cx.detail(text);
     }
-}
-
-/// Writes one input's bytes as its port type's wire form. Scalars are their own bytes, strings and
-/// byte fields are length-prefixed, and a compound value is already its wire form.
-fn put_raw(ty: &WireType, bytes: &[u8], out: &mut Writer) -> Result<(), String> {
-    match ty {
-        WireType::Scalar(scalar) => match fixed_size(*scalar) {
-            Some(size) if bytes.len() == size => {
-                out.buf.extend_from_slice(bytes);
-                Ok(())
-            }
-            Some(size) => Err(format!(
-                "a {scalar:?} input is {} bytes, not {size}",
-                bytes.len()
-            )),
-            None => out.bytes(bytes).map_err(|error| error.to_string()),
-        },
-        WireType::Opaque(_) => out.bytes(bytes).map_err(|error| error.to_string()),
-        _ => {
-            out.buf.extend_from_slice(bytes);
-            Ok(())
-        }
-    }
-}
-
-/// Reads one output's bytes from the wire into `out`, in the slot form `put_raw` writes back.
-fn read_raw(
-    ty: &WireType,
-    input: &mut Reader<'_>,
-    schema: &Schema,
-    out: &mut Vec<u8>,
-) -> Result<(), WireError> {
-    match ty {
-        WireType::Scalar(scalar) => match fixed_size(*scalar) {
-            Some(size) => out.extend_from_slice(input.take(size)?),
-            None => {
-                let len = input.count()?;
-                out.extend_from_slice(input.take(len)?);
-            }
-        },
-        WireType::Opaque(_) => {
-            let len = input.count()?;
-            out.extend_from_slice(input.take(len)?);
-        }
-        _ => {
-            let from = input.pos();
-            decode_value(ty, input, schema)?;
-            out.extend_from_slice(input.span(from));
-        }
-    }
-    Ok(())
-}
-
-/// The byte width of a scalar with a fixed width. Strings and byte fields have none.
-fn fixed_size(scalar: daedalus_types::Scalar) -> Option<usize> {
-    use daedalus_types::Scalar;
-    Some(match scalar {
-        Scalar::Unit => 0,
-        Scalar::Bool | Scalar::I8 | Scalar::U8 => 1,
-        Scalar::I16 | Scalar::U16 => 2,
-        Scalar::I32 | Scalar::U32 | Scalar::F32 => 4,
-        Scalar::Int | Scalar::ISize | Scalar::U64 | Scalar::USize | Scalar::Float => 8,
-        Scalar::String | Scalar::Bytes => return None,
-    })
 }

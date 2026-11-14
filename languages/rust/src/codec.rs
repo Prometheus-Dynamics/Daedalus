@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 
-use daedalus_wire::WireValue;
+use daedalus_wire::{Schema, WireType, WireValue, decode_placed};
 
 use crate::context::Context;
 use crate::serve::NodeError;
@@ -33,12 +33,32 @@ pub enum Value<'a> {
     /// A `bytes` or opaque value the host sent by reference: its bytes where the host put them,
     /// read-only, for the run.
     Bytes(&'a [u8]),
+    /// A value of another type the host sent by reference: its bytes where the host put them,
+    /// as its wire form, with its type and the schema that reads it.
+    Placed {
+        ty: &'a WireType,
+        bytes: &'a [u8],
+        schema: &'a Schema,
+    },
+}
+
+impl<'a> Value<'a> {
+    /// The value decoded, for a reader that needs it whole.
+    pub(crate) fn decoded<T: Wire>(self) -> Option<T> {
+        match self {
+            Value::Wire(value) => T::from_wire(value),
+            Value::Bytes(bytes) => T::from_bytes(bytes),
+            Value::Placed { ty, bytes, schema } => {
+                T::from_wire(&decode_placed(ty, bytes, schema).ok()?)
+            }
+        }
+    }
 }
 
 /// A node's inputs by port name.
 pub type Inputs<'a> = [(&'static str, Value<'a>)];
 
-fn found<'a>(inputs: &Inputs<'a>, name: &str) -> Result<Value<'a>, NodeError> {
+pub(crate) fn found<'a>(inputs: &Inputs<'a>, name: &str) -> Result<Value<'a>, NodeError> {
     // A parameter named `r#in` is the port `in`: the keyword needs its raw prefix in the name.
     let name = name.strip_prefix("r#").unwrap_or(name);
     inputs
@@ -48,18 +68,14 @@ fn found<'a>(inputs: &Inputs<'a>, name: &str) -> Result<Value<'a>, NodeError> {
         .ok_or_else(|| NodeError::bad_input(format!("no input {name}")))
 }
 
-fn shape(name: &str) -> NodeError {
+pub(crate) fn shape(name: &str) -> NodeError {
     let name = name.strip_prefix("r#").unwrap_or(name);
     NodeError::bad_input(format!("input {name} has another shape"))
 }
 
 /// The inputs of a node, looked up by port name.
 pub fn input<T: Wire>(inputs: &Inputs<'_>, name: &str) -> Result<T, NodeError> {
-    match found(inputs, name)? {
-        Value::Wire(value) => T::from_wire(value),
-        Value::Bytes(bytes) => T::from_bytes(bytes),
-    }
-    .ok_or_else(|| shape(name))
+    found(inputs, name)?.decoded().ok_or_else(|| shape(name))
 }
 
 /// A `bytes` input's bytes, borrowed for the call: where the host put them, or in the packet.
@@ -67,7 +83,7 @@ pub fn input_bytes<'a>(inputs: &Inputs<'a>, name: &str) -> Result<&'a [u8], Node
     match found(inputs, name)? {
         Value::Bytes(bytes) => Ok(bytes),
         Value::Wire(WireValue::Bytes(bytes)) => Ok(bytes),
-        Value::Wire(_) => Err(shape(name)),
+        Value::Wire(_) | Value::Placed { .. } => Err(shape(name)),
     }
 }
 
@@ -260,6 +276,7 @@ pub fn optional_input<T: Wire>(inputs: &Inputs<'_>, name: &str) -> Result<Option
     let shape = || shape(name);
     match value {
         Value::Bytes(bytes) => T::from_bytes(bytes).map(Some).ok_or_else(shape),
+        Value::Placed { .. } => value.decoded().map(Some).ok_or_else(shape),
         Value::Wire(WireValue::Optional(None)) => Ok(None),
         Value::Wire(WireValue::Optional(Some(inner))) => {
             T::from_wire(inner).map(Some).ok_or_else(shape)

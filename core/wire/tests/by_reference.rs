@@ -19,7 +19,7 @@ fn round_trip(ty: &WireType, value: &WireValue, schema: &Schema) -> WireValue {
 #[test]
 fn agreed_peers_carry_bytes_inline_or_by_place() {
     let mut schema = Schema::new();
-    schema.set_by_reference(true);
+    schema.set_features(daedalus_wire::shared::BY_REFERENCE);
     let bytes = WireType::Scalar(Scalar::Bytes);
     let inline = WireValue::Bytes(vec![1, 2, 3]);
     assert_eq!(round_trip(&bytes, &inline, &schema), inline);
@@ -39,7 +39,7 @@ fn agreed_peers_carry_bytes_inline_or_by_place() {
 #[test]
 fn bytes_inside_another_value_have_no_form_byte() {
     let mut schema = Schema::new();
-    schema.set_by_reference(true);
+    schema.set_features(daedalus_wire::shared::BY_REFERENCE);
     let list = WireType::List(Box::new(WireType::Scalar(Scalar::Bytes)));
     let value = WireValue::List(vec![WireValue::Bytes(vec![7; 3])]);
     let mut agreed = Writer::new();

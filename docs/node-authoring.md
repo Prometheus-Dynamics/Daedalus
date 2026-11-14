@@ -81,6 +81,58 @@ A node that takes `Arc<T>` and returns it, or returns an `Arc<T>` it keeps, allo
 change a large value in place and hand it on, take `Arc<T>` and use `Arc::make_mut`, which copies
 only when someone else still holds the value.
 
+## Values that cross to another process
+
+A node in a worker process (see [ffi.md](ffi.md)) gets its inputs as bytes: the wire form of the
+port's type. The type a port declares decides two things: whether a large value can go by
+reference, read where the host put it, and how a node reads it there. That is decided by the
+type's shape and the value's size, never by its name.
+
+- **A structure.** A port declared as what the value is made of (fixed scalars, structs of them, a
+  list) has a layout the worker can read in place. A list is a `u32` count and then its items,
+  packed and little-endian. A struct is its fields in order, with no padding. Each port's layout
+  comes from its type (`WireType::layout()`):
+  - `Fixed`: every part has a fixed size.
+  - `Array`: fixed fields, then one list of fixed-size items. The host puts the items on a 64-byte
+    boundary.
+  - `Walkable`: several lists or strings.
+  - `Decoded`: maps and opaque types.
+- **An opaque type.** A named type with no structure declared (`Opaque`, with an inspect hook for
+  tools) crosses only as the bytes its codec writes. The host places them like any other bytes, but
+  a reader in another language can't make sense of them without the codec. A typed value with no
+  bytes at all is refused before anything crosses, and the refusal names the port and the type.
+
+So a type meant to cross a process is declared as its structure. Three shapes that Opaque types
+carry today, declared as structure instead:
+
+```rust
+// Keypoints: a list of 28-byte records. Layout: Array { offset: 4, stride: 28 }.
+struct KeyPoint { x: f32, y: f32, size: f32, angle: f32, response: f32, octave: i32, class: i32 }
+// port type: Vec<KeyPoint>
+
+// A label image: width and height, then one label per pixel. Array { offset: 12, stride: 4 }.
+struct LabelImage { width: u32, height: u32, labels: Vec<u32> }
+
+// A tensor: element type, shape, then the data. Two lists, so Walkable: a reader finds the data
+// after the shape, still without a copy.
+struct Tensor { dtype: u8, shape: Vec<u64>, data: Vec<u8> }
+```
+
+A struct whose one list comes last is an `Array`. Put the fixed fields first. Prefer one list of
+records over several parallel lists.
+
+In the Rust SDK:
+- A `&[f32]` parameter (or `&[u32]`, `&[i64]` or any other number) borrows a placed list's items
+  where they are, when they are aligned and the machine is little-endian. Otherwise it decodes
+  them.
+- A `&[T]` parameter of a record type that implements `Flat` (its `SIZE` and how its bytes read)
+  reads every record straight from the placed bytes, with no decoded value in between.
+- A hand-written body reads a list of records, or a struct that ends in one, through
+  `input_view::<T>()`. That gives a `View` with `len`, `get`, `iter` and `header`.
+
+A large output of any type with a form is written once into the worker's value buffer, with its
+items aligned, and the host's cell holds it there.
+
 ## Constants and config
 
 An input that no edge feeds can be set by the graph as a constant:
