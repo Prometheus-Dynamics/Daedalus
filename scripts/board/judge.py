@@ -3,6 +3,7 @@
 
   judge.py linux <results dir>   a Linux board: one <name>.out and <name>.exit for each test binary
   judge.py pico <log file>       the Pico firmware's defmt log
+  judge.py measure <results dir> a measurement run: that every figure is there, and what it is
   judge.py --self-test           the judges against planted runs, good and bad
 
 A judge reads only files. It runs nothing and touches no board, so the same run can be judged
@@ -85,6 +86,48 @@ def judge_pico(path):
     return problems, lines
 
 
+# What a measurement run has to have written, by file: each a word that starts a line of it.
+MEASURED = {
+    "startup.txt": ["startup"],
+    "timings.txt": ["probe_off", "probe_every_1", "host_round_trip", "host_idle_step"],
+    "worker.txt": ["round_trip", "hand_over"],
+    "daemon.txt": ["daemon_rss_idle_kb", "daemon_rss_after_200_round_trips_kb"],
+}
+
+
+def judge_measure(directory):
+    """The run finished and every figure is there with a number. The lines are the figures."""
+    problems, lines = [], []
+    if not os.path.exists(os.path.join(directory, "finished.txt")):
+        problems.append("the run didn't finish")
+    for name in ("rev.txt", "board.txt"):
+        try:
+            text = open(os.path.join(directory, name), errors="replace").read().strip()
+            lines.append(f"{name}: " + " | ".join(text.splitlines()[:4]))
+        except FileNotFoundError:
+            pass
+    for name, wanted in MEASURED.items():
+        try:
+            text = open(os.path.join(directory, name), errors="replace").read()
+        except FileNotFoundError:
+            problems.append(f"{name} is missing")
+            continue
+        for word in wanted:
+            found = [line for line in text.splitlines() if line.startswith(word)]
+            if not found:
+                problems.append(f"{name}: no {word} figure")
+            elif not re.search(r"\d", found[-1][len(word):]):
+                problems.append(f"{name}: {word} has no number")
+        lines.extend(line for line in text.splitlines() if line.strip())
+        if "panicked" in text:
+            problems.append(f"{name}: a program panicked")
+    try:
+        lines.extend(open(os.path.join(directory, "perf.txt"), errors="replace").read().splitlines())
+    except FileNotFoundError:
+        pass
+    return problems, lines
+
+
 def verdict(problems, lines):
     for line in lines:
         print("  " + line)
@@ -140,6 +183,31 @@ def self_test():
     expect("pico: a plan that didn't load fails", pico("ERROR plan A does not load\n"), "load")
     expect("pico: too deep a stack fails", pico(good + report("compiled", stack=4000)), "stack")
     expect("pico: a short run fails", pico(good + report("loaded", ticks=7)), "ticks")
+    def measure(files):
+        directory = tempfile.mkdtemp()
+        for name, text in files.items():
+            open(os.path.join(directory, name), "w").write(text)
+        return judge_measure(directory)
+
+    whole = {
+        "finished.txt": "done\n",
+        "startup.txt": "startup planned_ns 5 loaded_ns 6\n",
+        "timings.txt": "probe_off median_ns 1.0\nprobe_every_1 median_ns 2.0\n"
+        "host_round_trip median_ns 3.0\nhost_idle_step median_ns 4.0\n",
+        "worker.txt": "round_trip median_ns 9.0\nhand_over megabytes 1 median_ns 8\n",
+        "daemon.txt": "daemon_rss_idle_kb 900\ndaemon_rss_after_200_round_trips_kb 950\n",
+    }
+    expect("measure: a whole run passes", measure(whole), None)
+    cut = dict(whole)
+    del cut["finished.txt"]
+    expect("measure: a run that didn't finish fails", measure(cut), "didn't finish")
+    gone = dict(whole)
+    del gone["worker.txt"]
+    expect("measure: a missing file fails", measure(gone), "worker.txt is missing")
+    empty = dict(whole, **{"daemon.txt": "daemon_rss_idle_kb \n"})
+    expect("measure: a figure with no number fails", measure(empty), "no number")
+    crashed = dict(whole, **{"timings.txt": whole["timings.txt"] + "thread main panicked\n"})
+    expect("measure: a panic fails", measure(crashed), "panicked")
     if failed:
         print(f"judge: self-test failed: {len(failed)} cases")
         return 1
@@ -152,6 +220,8 @@ def main(argv):
         return self_test()
     if len(argv) == 3 and argv[1] == "linux":
         return verdict(*judge_linux(argv[2]))
+    if len(argv) == 3 and argv[1] == "measure":
+        return verdict(*judge_measure(argv[2]))
     if len(argv) == 3 and argv[1] == "pico":
         return verdict(*judge_pico(argv[2]))
     print(__doc__)

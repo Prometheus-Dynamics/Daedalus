@@ -6,6 +6,14 @@
 #                                         the judge without a board
 #   scripts/board/run.sh luckfox-build    only builds what a Luckfox run would send
 #   scripts/board/run.sh luckfox --go     a Luckfox (armv7 Linux, musl), over ssh
+#   scripts/board/run.sh cm5-build        only builds what the CM5 test run would send, and
+#   scripts/board/run.sh cm5-measure-build  what its measurement run would
+#   scripts/board/run.sh cm5 --go         a CM5 (aarch64 Linux): the same tests, built static
+#   scripts/board/run.sh cm5-measure --go the measurements on a CM5: per-step cost with the
+#                                         counters off and on, a worker's hand-over, what a
+#                                         host and the daemon hold, and the time to a first step
+#   scripts/board/run.sh local-measure    the same measurements on this machine: proves the
+#                                         bundle, and its numbers are not results
 #   scripts/board/run.sh pico --go        a Raspberry Pi Pico (RP2040), through a debug probe
 #
 # A board is somebody's. Nobody runs on one on their own initiative: `--go` says the board's
@@ -14,6 +22,8 @@
 # Settings, from the environment:
 #   BOARD_SSH       where the Linux board is, as `ssh` takes it. It comes from your own ssh
 #                   config: this script adds no option that weakens a host-key or login check.
+#   BOARD_SSH_CONFIG  an ssh config file to use instead of your default one, for a board whose
+#                   address, jump host and known-hosts file are kept apart from your own.
 #   BOARD_SECONDS   the longest one test binary may run on the board (300), or how long the
 #                   Pico's log is read (60).
 #   BOARD_PACKAGES  the packages whose tests go in the bundle.
@@ -35,6 +45,11 @@ die() {
   echo "board: $*" >&2
   exit 2
 }
+
+# How a board is reached: your own ssh, never asking for a password, with a config file of the
+# board's own when one is given.
+ssh_to=(ssh -o BatchMode=yes)
+[[ -z "${BOARD_SSH_CONFIG:-}" ]] || ssh_to=(ssh -F "$BOARD_SSH_CONFIG" -o BatchMode=yes)
 
 need_go() {
   [[ "$go" == "--go" ]] || die "this would run on a real board. Ask its keeper first, and pass --go when they have said yes."
@@ -58,7 +73,7 @@ bundle() { # rust target: builds the test binaries and gathers them under $out/b
     esac
     env=(
       "ZIG_TARGET=$zig"
-      "CARGO_TARGET_${upper}_LINKER=$PWD/scripts/zigcc.sh"
+      "CARGO_TARGET_${upper}_LINKER=$PWD/scripts/board/zigcc.sh"
       "CARGO_TARGET_${upper}_RUSTFLAGS=-Clink-self-contained=no"
     )
   fi
@@ -85,6 +100,78 @@ for line in sys.stdin:
   echo "board: $(ls "$out/bundle/bin" | wc -l) test binaries in the bundle"
 }
 
+cross_env() { # rust target: prints the environment a cross build of it needs, one per line
+  local target="$1" upper
+  upper=$(tr '[:lower:]-' '[:upper:]_' <<<"$target")
+  [[ "$target" != "$(rustc -vV | sed -n 's/^host: //p')" ]] || return 0
+  case "$target" in
+    aarch64-unknown-linux-gnu)
+      # Against the board's glibc, since the daemon loads plugins and a static binary can't.
+      echo "ZIG_TARGET=aarch64-linux-gnu.2.36"
+      echo "CARGO_TARGET_${upper}_LINKER=$PWD/scripts/board/zigcc.sh"
+      echo "CC_aarch64_unknown_linux_gnu=$PWD/scripts/board/zigcc.sh"
+      ;;
+    *) die "no cross build is set up for $target" ;;
+  esac
+}
+
+measure_bundle() { # rust target: the programs a measurement runs, under $out/bundle
+  local target="$1" env=() line release
+  rm -rf "$out"
+  mkdir -p "$out/bundle/bin" "$out/bundle/lib" "$out/results"
+  while IFS= read -r line; do [[ -n "$line" ]] && env+=("$line"); done < <(cross_env "$target")
+  echo "board: building the measurement programs for $target"
+  env "${env[@]}" cargo build --release --target "$target" \
+    -p daedalus-cpu-timings -p daedalus-process-timings -p daedalus-worker-fixture \
+    -p daedalusd -p daedalus-ctl 2>"$out/build.log" ||
+    { tail -20 "$out/build.log" >&2; die "the build failed: $out/build.log"; }
+  # The plugin the daemon loads builds on its own, outside the workspace.
+  env "${env[@]}" cargo build --release --target "$target" \
+    --manifest-path testing/fixtures/dylib/Cargo.toml \
+    --target-dir "$out/fixture-target" 2>>"$out/build.log" ||
+    { tail -20 "$out/build.log" >&2; die "the plugin's build failed: $out/build.log"; }
+  release="$target_dir/$target/release"
+  cp "$release/daedalus-cpu-timings" "$out/bundle/bin/cpu-timings"
+  cp "$release/daedalus-process-timings" "$out/bundle/bin/process-timings"
+  cp "$release/daedalus-worker-fixture" "$out/bundle/bin/worker-fixture"
+  cp "$release/daedalusd" "$release/daedalus-ctl" "$out/bundle/bin/"
+  cp "$out/fixture-target/$target/release/libdaedalus_dylib_fixture.so" "$out/bundle/lib/"
+  # The graph the daemon is given, made by this machine's own build of the same program.
+  cargo run -q --release -p daedalus-cpu-timings -- daemon_graph > "$out/bundle/g.json"
+  cp scripts/board/measure-on-board.sh "$out/bundle/"
+  git rev-parse --short HEAD > "$out/results/rev.txt" 2>/dev/null || true
+  du -sh "$out/bundle" | sed 's/^/board: the bundle is /'
+}
+
+run_measure_local() {
+  measure_bundle "$(rustc -vV | sed -n 's/^host: //p')"
+  local work
+  work="$(mktemp -d)"
+  cp -r "$out/bundle/." "$work/"
+  (cd "$work" && sh ./measure-on-board.sh "${BOARD_BATCHES:-21}")
+  cp -r "$work/results/." "$out/results/"
+  rm -rf "$work"
+}
+
+run_measure_linux() { # rust target
+  need_go
+  local where="${BOARD_SSH:-}"
+  [[ -n "$where" ]] || die "set BOARD_SSH to where the board is, as ssh takes it"
+  measure_bundle "$1"
+  local dir="/tmp/daedalus-board-$$"
+  echo "board: putting the bundle on $where at $dir"
+  tar -C "$out/bundle" -cf - . | "${ssh_to[@]}" "$where" "mkdir -p $dir && tar -C $dir -xf -" ||
+    die "couldn't reach the board. If it asked for a password or its host key changed, stop and tell its keeper: type nothing."
+  echo "board: measuring"
+  "${ssh_to[@]}" "$where" "sh $dir/measure-on-board.sh ${BOARD_BATCHES:-101}" || echo "board: the run ended early"
+  "${ssh_to[@]}" "$where" "tar -C $dir/results -cf - ." | tar -C "$out/results" -xf - ||
+    echo "board: the results couldn't be fetched"
+  # A daemon the run started and didn't stop is stopped here, by the pid it wrote. Nothing else.
+  "${ssh_to[@]}" "$where" "if [ -f $dir/daemon.pid ]; then kill \$(cat $dir/daemon.pid) 2>/dev/null; fi; rm -rf $dir && test ! -e $dir" ||
+    die "couldn't remove $dir from the board: remove it by hand"
+  echo "board: $dir is gone from the board"
+}
+
 run_local() {
   bundle "$(rustc -vV | sed -n 's/^host: //p')"
   local work
@@ -101,7 +188,7 @@ run_linux() { # rust target
   local where="${BOARD_SSH:-}"
   [[ -n "$where" ]] || die "set BOARD_SSH to where the board is, as ssh takes it"
   bundle "$1"
-  local ssh=(ssh -o BatchMode=yes "$where")
+  local ssh=("${ssh_to[@]}" "$where")
   local dir="/tmp/daedalus-board-$$"
   echo "board: putting the bundle on $where at $dir"
   tar -C "$out/bundle" -cf - . | "${ssh[@]}" "mkdir -p $dir && tar -C $dir -xf -" ||
@@ -148,12 +235,33 @@ case "$board" in
     run_linux armv7-unknown-linux-musleabihf
     python3 scripts/board/judge.py linux "$out/results"
     ;;
+  cm5-build)
+    # Only the builds, which need no board: what the two CM5 runs would send.
+    bundle aarch64-unknown-linux-musl
+    file "$out"/bundle/bin/* | head -2
+    ;;
+  cm5-measure-build)
+    measure_bundle aarch64-unknown-linux-gnu
+    file "$out"/bundle/bin/* "$out"/bundle/lib/* | cut -c1-150
+    ;;
+  cm5)
+    run_linux aarch64-unknown-linux-musl
+    python3 scripts/board/judge.py linux "$out/results"
+    ;;
+  cm5-measure)
+    run_measure_linux aarch64-unknown-linux-gnu
+    python3 scripts/board/judge.py measure "$out/results"
+    ;;
+  local-measure)
+    run_measure_local
+    python3 scripts/board/judge.py measure "$out/results"
+    ;;
   pico)
     run_pico
     python3 scripts/board/judge.py pico "$out/results/pico.log"
     ;;
   *)
-    sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac
