@@ -6,11 +6,16 @@ use std::sync::OnceLock;
 
 use daedalus_backend_process::WorkerSpec;
 
-/// The worker fixture binary, built by cargo into the test target directory.
+/// The worker fixture binary, built by cargo into the test target directory, or the one
+/// `DAEDALUS_WORKER_FIXTURE` names: a machine with no cargo, such as a board, runs a test binary
+/// built elsewhere beside a fixture built with it.
 pub fn worker_binary() -> PathBuf {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT
         .get_or_init(|| {
+            if let Some(path) = std::env::var_os("DAEDALUS_WORKER_FIXTURE") {
+                return PathBuf::from(path);
+            }
             let target = Path::new(env!("CARGO_TARGET_TMPDIR")).join("worker-fixture");
             let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
             let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());

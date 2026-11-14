@@ -142,6 +142,10 @@ taken by place), `fd_sends` (descriptors sent; 0 in steady state), and `outs_ful
 value buffer free). `daedalus-worker-conformance::large_values` runs any worker through large
 values and gives these counters back.
 
+On a CM5, by reference took the hand-over of a 1 MiB value from 2.13 ms/MB (whole packets in
+shared memory) to 0.22 ms/MB, and of a 4 MiB one from 2.63 to 0.38, of which 0.28 is the node's own
+work: [testing/board-runs/worker-by-ref.md](../testing/board-runs/worker-by-ref.md).
+
 ## Failure
 
 A worker that exits, hangs or sends something unreadable is a fault of its region, with the
