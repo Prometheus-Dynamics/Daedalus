@@ -55,6 +55,7 @@ pub use dmabuf_value::{DmaBufBacked, dma_heap_fd};
 pub use driver::{DriverGuard, devices_created, driver_lock, with_driver_lock};
 pub use fence::Ticket;
 pub use host_bytes::HostBytes;
+pub use import_state::{DmaBufStatus, NoTrial, WhyCopied};
 pub use lease::GpuLease;
 pub use loss::{RETRY_CAP, RETRY_FIRST, retry_delay};
 pub use mapped::MappedBytes;

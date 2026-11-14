@@ -313,3 +313,106 @@ fn a_value_with_no_dma_buf_is_copied_from_its_bytes() {
     drop_owned(cells[0]);
     release(step);
 }
+
+/// A machine with no dma-heap, or one this process may not open, is a normal machine. The
+/// device opens, says in words what it will do with a dma-buf and why, and a graph runs.
+#[test]
+fn a_process_with_no_heap_is_told_what_happens_and_nothing_fails() {
+    use daedalus_wgpu::{DmaBufStatus, NoTrial, WhyCopied};
+
+    let closed = WgpuBackend::open(Options {
+        index: Some(0),
+        ..Options::default()
+    });
+    assert_eq!(closed.dmabuf_status(false), DmaBufStatus::NotOpen);
+
+    // As this machine is: with its heap, or without.
+    let backend = WgpuBackend::open(Options {
+        index: Some(0),
+        ..Options::default()
+    })
+    .with_dmabuf::<NoFd>();
+    if backend.start().is_err() {
+        assert!(
+            std::env::var_os("DAEDALUS_GPU_REQUIRED").is_none(),
+            "this lane needs an adapter"
+        );
+        return;
+    }
+    let status = backend.dmabuf_status(false);
+    let said = status.to_string();
+    eprintln!("no-heap: as this machine is: {said}");
+    match (DmaHeap::why_not("system"), status) {
+        // With a heap the device was tried, and the answer is one or the other.
+        (None, DmaBufStatus::Imports | DmaBufStatus::Copies(_)) => {}
+        // Without one, nothing could be tried, unless the device can't import at all.
+        (Some(_), DmaBufStatus::Undecided(why)) => {
+            assert!(
+                matches!(
+                    why,
+                    NoTrial::HeapMissing | NoTrial::HeapDenied | NoTrial::HeapError(_)
+                ),
+                "{why:?}"
+            );
+            assert!(said.contains("/dev/dma_heap"), "{said}");
+            assert!(said.contains("nothing fails"), "{said}");
+        }
+        (Some(_), DmaBufStatus::Copies(WhyCopied::DeviceCant)) => {}
+        other => panic!("the status doesn't fit the machine: {other:?}"),
+    }
+    // Either way a value is given to the device and comes back right.
+    let bytes = pattern();
+    let got = through_the_import_or_upload(&backend, &bytes);
+    assert_eq!(got, bytes);
+
+    // A process that is told to try nothing reads as one without a heap, on any machine.
+    let untried = WgpuBackend::open(Options {
+        index: Some(0),
+        no_heap_access: true,
+        ..Options::default()
+    })
+    .with_dmabuf::<NoFd>();
+    untried.start().expect("the adapter opened a moment ago");
+    match untried.dmabuf_status(false) {
+        DmaBufStatus::Undecided(NoTrial::NotAsked) => {
+            let said = untried.dmabuf_status(false).to_string();
+            assert!(
+                said.contains("the first dma-buf this process is handed decides"),
+                "{said}"
+            );
+        }
+        DmaBufStatus::Copies(WhyCopied::DeviceCant) => {}
+        other => panic!("expected nothing to be known: {other:?}"),
+    }
+
+    // And one whose host turned imports off says that, and copies.
+    let off = WgpuBackend::open(Options {
+        index: Some(0),
+        no_dma_heap: true,
+        ..Options::default()
+    })
+    .with_dmabuf::<NoFd>();
+    off.start().expect("the adapter opened a moment ago");
+    assert_eq!(
+        off.dmabuf_status(false),
+        DmaBufStatus::Copies(WhyCopied::TurnedOff)
+    );
+    assert!(
+        off.dmabuf_status(false)
+            .to_string()
+            .contains("the host turned dma-buf imports off")
+    );
+}
+
+/// `bytes` given to the device as a value with no dma-buf, by whichever move is planned for it:
+/// the import where one is, and otherwise the upload of its bytes.
+fn through_the_import_or_upload(backend: &WgpuBackend, bytes: &[u8]) -> Vec<u8> {
+    if listed(backend, NoFd::KEY.as_str()) {
+        return through_the_import(backend, NoFd(Some(bytes.to_vec())));
+    }
+    let storage = Storage::new(backend, bytes.len() as u64).expect("a buffer");
+    storage.write(0, bytes).expect("an upload");
+    let mut got = vec![0; bytes.len()];
+    storage.read_into(0, &mut got).expect("a readback");
+    got
+}

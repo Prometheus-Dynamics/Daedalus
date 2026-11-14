@@ -55,6 +55,8 @@ pub(crate) struct Context {
     pub(crate) record: CapsRecord,
     /// Whether the device imports a dma-buf, as far as anything has tried.
     pub(crate) imports: crate::import_state::ImportState,
+    /// Why nothing was tried when the device opened, or why it copies, where one of those is so.
+    pub(crate) untried: crate::import_state::Untried,
     pub(crate) limits: wgpu::Limits,
     /// Unique to this device in this process.
     pub(crate) key: u64,
@@ -169,7 +171,7 @@ impl Context {
         options: &Options,
     ) -> Context {
         let limits = device.limits();
-        let (caps, imports) = with_heap(
+        let (caps, imports, untried) = with_heap(
             CapsRecord::new(info, &limits, device.features()),
             &device,
             options,
@@ -202,6 +204,7 @@ impl Context {
             moved: crate::transfer::Counters::default(),
             record: caps,
             imports,
+            untried,
             limits,
             device,
             queue,
@@ -501,16 +504,39 @@ fn with_heap(
     record: CapsRecord,
     device: &wgpu::Device,
     options: &Options,
-) -> (CapsRecord, crate::import_state::ImportState) {
-    use crate::import_state::ImportState;
+) -> (
+    CapsRecord,
+    crate::import_state::ImportState,
+    crate::import_state::Untried,
+) {
+    use crate::import_state::{ImportState, Untried, WhyCopied};
     #[cfg(target_os = "linux")]
-    let (writable, read_only) = {
+    let (writable, read_only, untried) = {
+        use crate::import_state::NoTrial;
+        use daedalus_dma_sys::{DmaHeap, NoHeap};
         let can = daedalus_vk_sys::memory::imports_dma_buf(device);
-        let heap = !options.no_heap_access && daedalus_dma_sys::DmaHeap::open("system").is_ok();
-        if options.no_dma_heap || !can {
-            (Some(false), Some(false))
-        } else if !heap {
-            (None, None)
+        let no_heap = match options.no_heap_access {
+            true => Some(NoTrial::NotAsked),
+            false => DmaHeap::why_not("system").map(|why| match why {
+                NoHeap::Missing => NoTrial::HeapMissing,
+                NoHeap::Denied => NoTrial::HeapDenied,
+                NoHeap::Other(errno) => NoTrial::HeapError(errno),
+            }),
+        };
+        if options.no_dma_heap {
+            (
+                Some(false),
+                Some(false),
+                Untried::Copies(WhyCopied::TurnedOff),
+            )
+        } else if !can {
+            (
+                Some(false),
+                Some(false),
+                Untried::Copies(WhyCopied::DeviceCant),
+            )
+        } else if let Some(why) = no_heap {
+            (None, None, Untried::NoTrial(why))
         } else {
             let writable = imports_heap_buffers(device, false);
             // An fd that only allows reading is a second question: a driver may map what it
@@ -518,18 +544,23 @@ fn with_heap(
             (
                 Some(writable),
                 Some(writable && imports_heap_buffers(device, true)),
+                Untried::Tried,
             )
         }
     };
     #[cfg(not(target_os = "linux"))]
-    let (writable, read_only) = {
+    let (writable, read_only, untried) = {
         let _ = (device, options);
-        (Some(false), Some(false))
+        (
+            Some(false),
+            Some(false),
+            Untried::Copies(WhyCopied::DeviceCant),
+        )
     };
     let record = CapsRecord {
         dma_heap: writable == Some(true),
         dma_read_only: read_only == Some(true),
         ..record
     };
-    (record, ImportState::new(writable, read_only))
+    (record, ImportState::new(writable, read_only), untried)
 }

@@ -11,7 +11,7 @@ mod uapi;
 use std::fmt;
 
 pub use buf::{Access, DmaBuf, DmaBufRef, Lent, Mapping};
-pub use heap::DmaHeap;
+pub use heap::{DmaHeap, NoHeap};
 pub use ident::Identity;
 pub use sync::{SyncFence, is_sync_file};
 

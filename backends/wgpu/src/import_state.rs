@@ -6,11 +6,113 @@
 //! root's on a board, and a consumer there isn't root) has nothing to try with, and its answer is
 //! unknown until it is handed a real dma-buf, or its host says.
 
+use std::fmt;
 use std::sync::atomic::{AtomicU8, Ordering};
+
+/// Why a device that opened couldn't be tried with a dma-buf of this process's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoTrial {
+    /// There is no dma-heap here: the kernel has none, or this process isn't shown it.
+    HeapMissing,
+    /// The dma-heap is there and this user may not open it. It is usually root's.
+    HeapDenied,
+    /// The dma-heap couldn't be opened for another reason, with this `errno`.
+    HeapError(i32),
+    /// The host asked that nothing be tried ([`Options::no_heap_access`](crate::Options)).
+    NotAsked,
+}
+
+/// Why a device copies a dma-buf's bytes when it could have had the buffer in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WhyCopied {
+    /// The device has no way to import a dma-buf: its driver lacks the extensions, or this
+    /// isn't Linux.
+    DeviceCant,
+    /// The device was tried with one, or the host said, and it doesn't take this kind.
+    Refused,
+    /// The host turned imports off ([`Options::no_dma_heap`](crate::Options)).
+    TurnedOff,
+}
+
+/// What a device does with a value that is a dma-buf, and why. A host prints it to say what to
+/// expect, and what a person could change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DmaBufStatus {
+    /// No device is open yet.
+    NotOpen,
+    /// The device imports the buffer in place. Nothing is copied.
+    Imports,
+    /// The value's bytes are copied to the device.
+    Copies(WhyCopied),
+    /// Nothing has tried yet. The first dma-buf this process is handed decides.
+    Undecided(NoTrial),
+}
+
+impl fmt::Display for DmaBufStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DmaBufStatus::NotOpen => f.write_str("no device is open yet, so nothing is known"),
+            DmaBufStatus::Imports => {
+                f.write_str("the device imports a dma-buf in place: nothing is copied")
+            }
+            DmaBufStatus::Copies(why) => {
+                f.write_str("a dma-buf's bytes are copied to the device, because ")?;
+                f.write_str(match why {
+                    WhyCopied::DeviceCant => {
+                        "the device has no dma-buf import. Nothing here can change that: \
+                         another driver or device is what would"
+                    }
+                    WhyCopied::Refused => {
+                        "the device refused one of this kind when it was tried, or the host \
+                         said it would"
+                    }
+                    WhyCopied::TurnedOff => "the host turned dma-buf imports off",
+                })
+            }
+            DmaBufStatus::Undecided(why) => {
+                f.write_str("not known yet, because ")?;
+                f.write_str(match why {
+                    NoTrial::HeapMissing => {
+                        "there is no dma-heap under /dev/dma_heap for this process to try \
+                         the device with"
+                    }
+                    NoTrial::HeapDenied => {
+                        "this user may not open the dma-heap under /dev/dma_heap, which is \
+                         usually root's, so the device couldn't be tried"
+                    }
+                    NoTrial::HeapError(_) => {
+                        "the dma-heap under /dev/dma_heap couldn't be opened, so the device \
+                         couldn't be tried"
+                    }
+                    NoTrial::NotAsked => "the host asked that nothing be tried",
+                })?;
+                f.write_str(
+                    ". That is normal, and nothing fails: the first dma-buf this process is \
+                     handed decides. If the device takes it, it and every later one are used \
+                     in place. If not, that value and every later one are copied. A host that \
+                     knows the answer, or has a buffer to try with, can settle it first",
+                )
+            }
+        }
+    }
+}
 
 const UNKNOWN: u8 = 0;
 const YES: u8 = 1;
 const NO: u8 = 2;
+
+/// What happened when the device opened, for [`DmaBufStatus`] to say why.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// Off Linux no device is ever tried: the answer is always that it copies.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) enum Untried {
+    /// The device was tried with a buffer of this process's own.
+    Tried,
+    /// Nothing was tried, and the answer was left open.
+    NoTrial(NoTrial),
+    /// Nothing was tried, since the answer was already no.
+    Copies(WhyCopied),
+}
 
 /// The answer for each kind of fd: one that can be written through, and one that only allows
 /// reading.

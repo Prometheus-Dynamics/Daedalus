@@ -9,6 +9,39 @@ use crate::buf::DmaBuf;
 use crate::uapi::{DMA_HEAP_IOCTL_ALLOC, HeapAllocation};
 use crate::{Error, check};
 
+/// Why a process has no dma-heap to allocate from. It is the normal case on many machines: a
+/// kernel built without dma-heaps, a container that isn't given them, a board where they are
+/// root's and the process isn't root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoHeap {
+    /// The heap isn't there: the kernel has none, or `/dev` here doesn't show it.
+    Missing,
+    /// It is there, and this user may not open it.
+    Denied,
+    /// The kernel refused for another reason, with this `errno`.
+    Other(i32),
+}
+
+impl std::fmt::Display for NoHeap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NoHeap::Missing => f.write_str(
+                "there is no dma-heap under /dev/dma_heap: this kernel has none, or this \
+                 process isn't shown it",
+            ),
+            NoHeap::Denied => f.write_str(
+                "this user may not open the dma-heap under /dev/dma_heap, which is usually \
+                 root's",
+            ),
+            NoHeap::Other(errno) => write!(
+                f,
+                "the dma-heap under /dev/dma_heap couldn't be opened: {}",
+                std::io::Error::from_raw_os_error(*errno)
+            ),
+        }
+    }
+}
+
 /// An open dma-heap, such as `system`.
 pub struct DmaHeap {
     fd: OwnedFd,
@@ -18,6 +51,17 @@ impl DmaHeap {
     /// Opens `/dev/dma_heap/<name>`.
     pub fn open(name: &str) -> Result<DmaHeap, Error> {
         DmaHeap::open_path(&Path::new("/dev/dma_heap").join(name))
+    }
+
+    /// Why the heap `name` can't be opened, or `None` when it can.
+    pub fn why_not(name: &str) -> Option<NoHeap> {
+        match DmaHeap::open(name) {
+            Ok(_) => None,
+            Err(Error::Os(libc::ENOENT | libc::ENODEV | libc::ENXIO)) => Some(NoHeap::Missing),
+            Err(Error::Os(libc::EACCES | libc::EPERM)) => Some(NoHeap::Denied),
+            Err(Error::Os(errno)) => Some(NoHeap::Other(errno)),
+            Err(_) => Some(NoHeap::Other(0)),
+        }
     }
 
     pub fn open_path(path: &Path) -> Result<DmaHeap, Error> {

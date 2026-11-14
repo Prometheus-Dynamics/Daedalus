@@ -155,3 +155,24 @@ fn an_idle_buffer_exports_a_fence_that_has_signaled() {
     let again = SyncFence::from_fd(fence.into_fd()).expect("still a sync_file");
     assert_eq!(again.is_signaled(), Ok(true));
 }
+
+#[test]
+fn a_heap_that_isnt_there_says_so_in_words() {
+    use daedalus_dma_sys::{DmaHeap, NoHeap};
+    let why = DmaHeap::why_not("a-heap-no-kernel-has").expect("it can't be opened");
+    assert_eq!(why, NoHeap::Missing);
+    assert!(
+        why.to_string()
+            .contains("there is no dma-heap under /dev/dma_heap"),
+        "{why}"
+    );
+    // Whatever this machine has for the system heap, it is one of the answers, and it reads.
+    match DmaHeap::why_not("system") {
+        None => assert!(DmaHeap::open("system").is_ok()),
+        Some(why) => {
+            assert!(DmaHeap::open("system").is_err());
+            assert!(why.to_string().contains("/dev/dma_heap"), "{why}");
+        }
+    }
+    assert!(NoHeap::Denied.to_string().contains("may not open"));
+}
