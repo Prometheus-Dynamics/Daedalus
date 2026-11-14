@@ -1,9 +1,13 @@
-//! A run's `bytes` and opaque values, for a worker that agreed values by reference, and values in
-//! a buffer by descriptor (a dma-buf) for any worker.
+//! A run's values for a worker that agreed values by reference, and values in a buffer by
+//! descriptor (a dma-buf) for any worker.
 //!
-//! To a worker that agreed values by reference, a port's whole `bytes` or opaque value has a form
-//! byte: its bytes follow, or it is a place (`daedalus_wire::shared::Place`). A large input is
-//! written into the host's lent buffer and sent as its place; a value whose cell holds a type
+//! To a worker that agreed values by reference, a port's whole value has a form byte when
+//! `daedalus_wire::shared::has_form` says so: a `bytes` or opaque value, and with `ANY_TYPE` any
+//! value but a fixed-size scalar. Its bytes follow, or it is a place
+//! (`daedalus_wire::shared::Place`). Whether it is a place is decided by its size alone. A large
+//! input is written into the host's lent buffer as its cell holds it (a compound value's cell
+//! holds its wire form) and sent as its place, with an array's items on an aligned address; a
+//! value whose cell holds a type
 //! registered with [`crate::ProcessBackend::with_dmabuf`] is sent as its buffer's descriptor,
 //! once, and by slot after, so the worker reads the buffer itself and nothing is copied. An output
 //! the worker wrote into a value buffer is held by the output cell as it is.
@@ -12,7 +16,6 @@
 //! and copies them into the packet, inside the kernel's CPU access brackets.
 
 use daedalus_abi::{SharedBytes, Slot};
-use daedalus_types::Scalar;
 use daedalus_wire::WireType;
 use daedalus_wire::codec::{Reader, Writer};
 use daedalus_wire::shared::{Place, form};
@@ -37,9 +40,18 @@ pub(crate) fn fd_of<T: daedalus_dmabuf::DmaBufBacked>(
     Some((fd, value.offset(), len))
 }
 
-/// Whether a port's whole value can be a place: a `bytes` or opaque port.
-pub(crate) fn by_place(ty: &WireType) -> bool {
-    matches!(ty, WireType::Scalar(Scalar::Bytes) | WireType::Opaque(_))
+/// Whether a port's whole value can be a place, for a worker that agreed `features`.
+pub(crate) fn by_place(features: u32, ty: &WireType) -> bool {
+    daedalus_wire::shared::has_form(features, ty)
+}
+
+/// Whether a value by descriptor can stand for a port's value: a `bytes` or opaque port.
+#[cfg(target_os = "linux")]
+fn by_descriptor(ty: &WireType) -> bool {
+    matches!(
+        ty,
+        WireType::Scalar(daedalus_types::Scalar::Bytes) | WireType::Opaque(_)
+    )
 }
 
 /// One input cell's value, as a run sends it.
@@ -49,17 +61,6 @@ pub(crate) enum Input<'a> {
     Fd(std::os::fd::BorrowedFd<'a>, u64, u64),
 }
 
-impl Input<'_> {
-    /// The value's bytes, when the cell holds them itself.
-    pub(crate) fn bytes(&self) -> Option<&[u8]> {
-        match self {
-            Input::Bytes(bytes) => Some(bytes),
-            #[cfg(target_os = "linux")]
-            Input::Fd(..) => None,
-        }
-    }
-}
-
 /// What an input cell holds that a run can send, if anything.
 pub(crate) fn input_of<'a>(
     #[cfg(target_os = "linux")] types: &[DmaBufType],
@@ -67,7 +68,7 @@ pub(crate) fn input_of<'a>(
     cell: &'a Slot,
 ) -> Option<Input<'a>> {
     #[cfg(target_os = "linux")]
-    if by_place(ty)
+    if by_descriptor(ty)
         && let Some((fd, offset, len)) = types.iter().find_map(|kind| (kind.fd_of)(cell))
     {
         return Some(Input::Fd(fd, offset, len));
@@ -77,24 +78,25 @@ pub(crate) fn input_of<'a>(
     cell.bytes().map(Input::Bytes)
 }
 
-/// Writes a `bytes` or opaque input for a worker that agreed values by reference: as a place when
-/// it is large and fits, or by descriptor, and with its bytes after a form byte otherwise.
-/// Returns whether it went as a place.
+/// Writes an input's form for a worker that agreed values by reference: its place when it is
+/// large and fits, or it is by descriptor, and otherwise the form that says its bytes follow,
+/// which the caller then writes. Returns whether it went as a place.
 pub(crate) fn put_placed(
     worker: &mut Worker,
+    ty: &WireType,
     input: &Input<'_>,
     out: &mut Writer,
 ) -> Result<bool, String> {
     match input {
         Input::Bytes(bytes) => {
-            if bytes.len() >= daedalus_process_shm::THRESHOLD
-                && let Some(place) = worker.place(bytes)
+            let items_at = ty.layout().items_at().unwrap_or(0);
+            if bytes.len() >= worker.shared_from()
+                && let Some(place) = worker.place(bytes, items_at)
             {
                 place.encode(out);
                 return Ok(true);
             }
             out.u8(form::INLINE);
-            out.bytes(bytes).map_err(|error| error.to_string())?;
             Ok(false)
         }
         #[cfg(target_os = "linux")]

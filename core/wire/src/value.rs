@@ -336,6 +336,64 @@ fn encode_at(
     if depth > MAX_DEPTH {
         return Err(WireError::TooDeep);
     }
+    // A port's whole value, between peers that agreed values by reference, starts with its form:
+    // its bytes follow, or it is a place.
+    if depth == 0 && schema.has_form(ty) {
+        if let WireValue::Placed(place) = value {
+            place.encode(out);
+            return Ok(());
+        }
+        out.u8(crate::shared::form::INLINE);
+    }
+    encode_shape(ty, value, schema, out, depth)
+}
+
+/// Writes `value` with no form before it: as a place names it, the bytes a host's cell holds.
+/// A `bytes`, opaque or string value is its own bytes, with no length; any other its wire form.
+pub fn encode_bare(
+    ty: &WireType,
+    value: &WireValue,
+    schema: &Schema,
+    out: &mut Writer,
+) -> Result<(), WireError> {
+    match (ty, value) {
+        (WireType::Scalar(Scalar::Bytes), WireValue::Bytes(bytes))
+        | (WireType::Opaque(_), WireValue::Opaque(bytes)) => out.buf.extend_from_slice(bytes),
+        (WireType::Scalar(Scalar::String), WireValue::String(text)) => {
+            out.buf.extend_from_slice(text.as_bytes());
+        }
+        _ => encode_shape(ty, value, schema, out, 0)?,
+    }
+    Ok(())
+}
+
+/// The value a place names: `bytes` as [`encode_bare`] writes them.
+pub fn decode_placed(ty: &WireType, bytes: &[u8], schema: &Schema) -> Result<WireValue, WireError> {
+    Ok(match ty {
+        WireType::Scalar(Scalar::Bytes) => WireValue::Bytes(bytes.to_vec()),
+        WireType::Opaque(_) => WireValue::Opaque(bytes.to_vec()),
+        WireType::Scalar(Scalar::String) => WireValue::String(
+            String::from_utf8(bytes.to_vec()).map_err(|_| WireError::InvalidUtf8)?,
+        ),
+        _ => {
+            let mut input = Reader::new(bytes);
+            let value = decode_shape(ty, &mut input, schema, 0)?;
+            input.finish()?;
+            value
+        }
+    })
+}
+
+fn encode_shape(
+    ty: &WireType,
+    value: &WireValue,
+    schema: &Schema,
+    out: &mut Writer,
+    depth: u32,
+) -> Result<(), WireError> {
+    if depth > MAX_DEPTH {
+        return Err(WireError::TooDeep);
+    }
     let deeper = depth + 1;
     match (ty, value) {
         (WireType::Scalar(Scalar::Unit), WireValue::Unit) => {}
@@ -353,17 +411,7 @@ fn encode_at(
         (WireType::Scalar(Scalar::F32), WireValue::F32(v)) => out.f32(*v),
         (WireType::Scalar(Scalar::Float), WireValue::F64(v)) => out.f64(*v),
         (WireType::Scalar(Scalar::String), WireValue::String(v)) => out.str(v)?,
-        (WireType::Scalar(Scalar::Bytes), WireValue::Bytes(v)) => {
-            if depth == 0 && schema.by_reference() {
-                out.u8(crate::shared::form::INLINE);
-            }
-            out.bytes(v)?;
-        }
-        (WireType::Scalar(Scalar::Bytes) | WireType::Opaque(_), WireValue::Placed(place))
-            if depth == 0 && schema.by_reference() =>
-        {
-            place.encode(out);
-        }
+        (WireType::Scalar(Scalar::Bytes), WireValue::Bytes(v)) => out.bytes(v)?,
         (WireType::Optional(inner), WireValue::Optional(v)) => match v {
             None => out.u8(0),
             Some(item) => {
@@ -410,9 +458,6 @@ fn encode_at(
             if !schema.has_codec(key) {
                 return Err(WireError::NoCodec(key.clone()));
             }
-            if depth == 0 && schema.by_reference() {
-                out.u8(crate::shared::form::INLINE);
-            }
             out.bytes(bytes)?;
         }
         _ => return Err(shape(ty, value)),
@@ -420,7 +465,8 @@ fn encode_at(
     Ok(())
 }
 
-/// Reads one value of `ty` from `input`.
+/// Reads one value of `ty` from `input`: a port's whole value, with its form when the peers
+/// agreed values by reference.
 pub fn decode_value(
     ty: &WireType,
     input: &mut Reader<'_>,
@@ -429,7 +475,32 @@ pub fn decode_value(
     decode_at(ty, input, schema, 0)
 }
 
+/// Reads one value of `ty` from `input` with no form before it: the bytes after a form that
+/// said they follow, or a value a place names.
+pub fn decode_bare(
+    ty: &WireType,
+    input: &mut Reader<'_>,
+    schema: &Schema,
+) -> Result<WireValue, WireError> {
+    decode_shape(ty, input, schema, 0)
+}
+
 fn decode_at(
+    ty: &WireType,
+    input: &mut Reader<'_>,
+    schema: &Schema,
+    depth: u32,
+) -> Result<WireValue, WireError> {
+    if depth == 0 && schema.has_form(ty) {
+        match input.u8()? {
+            crate::shared::form::INLINE => {}
+            form => return crate::shared::Place::decode(form, input).map(WireValue::Placed),
+        }
+    }
+    decode_shape(ty, input, schema, depth)
+}
+
+fn decode_shape(
     ty: &WireType,
     input: &mut Reader<'_>,
     schema: &Schema,
@@ -456,10 +527,7 @@ fn decode_at(
             Scalar::F32 => WireValue::F32(input.f32()?),
             Scalar::Float => WireValue::F64(input.f64()?),
             Scalar::String => WireValue::String(input.str()?),
-            Scalar::Bytes => match by_reference_form(input, schema, depth)? {
-                None => WireValue::Bytes(input.bytes()?),
-                Some(place) => WireValue::Placed(place),
-            },
+            Scalar::Bytes => WireValue::Bytes(input.bytes()?),
         },
         WireType::Optional(inner) => match input.u8()? {
             0 => WireValue::Optional(None),
@@ -515,32 +583,10 @@ fn decode_at(
             WireValue::Enum { variant, payload }
         }
         WireType::Opaque(key) => {
-            // A value by reference is bytes the host never decodes, so it needs no codec.
-            if let Some(place) = by_reference_form(input, schema, depth)? {
-                return Ok(WireValue::Placed(place));
-            }
             if !schema.has_codec(key) {
                 return Err(WireError::NoCodec(key.clone()));
             }
             WireValue::Opaque(input.bytes()?)
         }
     })
-}
-
-/// Between peers that agreed values by reference, reads the form byte of a port's `bytes` or
-/// opaque value: `None` when its bytes follow, and the place otherwise. Reads nothing without the
-/// agreement, or inside another value: only a port's whole value can be a place, since a host
-/// holds a compound value as its wire form already.
-fn by_reference_form(
-    input: &mut Reader<'_>,
-    schema: &Schema,
-    depth: u32,
-) -> Result<Option<crate::shared::Place>, WireError> {
-    if depth != 0 || !schema.by_reference() {
-        return Ok(None);
-    }
-    match input.u8()? {
-        crate::shared::form::INLINE => Ok(None),
-        form => crate::shared::Place::decode(form, input).map(Some),
-    }
 }

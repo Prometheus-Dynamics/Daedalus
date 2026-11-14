@@ -28,6 +28,11 @@ pub struct WorkerSpec {
     pub packet_cap: u32,
     /// Runs on the command before it starts, for a launcher's own flags.
     pub launch: Option<fn(&mut Command)>,
+    /// The smallest packet or value, in bytes, that goes through the memory lent to the worker
+    /// rather than on its socket (Linux). `None` picks by what the worker agreed:
+    /// [`daedalus_process_shm::ANY_TYPE_THRESHOLD`] for a worker that takes values of any type by
+    /// reference, [`daedalus_process_shm::THRESHOLD`] for any other.
+    pub shared_from: Option<usize>,
 }
 
 impl WorkerSpec {
@@ -44,6 +49,7 @@ impl WorkerSpec {
             grace: Duration::from_millis(500),
             packet_cap: DEFAULT_CAP,
             launch: None,
+            shared_from: None,
         }
     }
 
@@ -87,6 +93,14 @@ impl WorkerSpec {
         self
     }
 
+    /// The smallest packet or value, in bytes, that goes through the memory lent to the worker.
+    /// What is smaller goes on the socket; what is at least this goes in the lent buffers, and a
+    /// value is placed there for a worker that takes values by reference.
+    pub fn shared_from(mut self, bytes: usize) -> WorkerSpec {
+        self.shared_from = Some(bytes);
+        self
+    }
+
     /// Whether two specs start the same worker. The launch hook is not compared.
     pub fn same_as(&self, other: &WorkerSpec) -> bool {
         self.program == other.program
@@ -99,5 +113,6 @@ impl WorkerSpec {
             && self.startup == other.startup
             && self.grace == other.grace
             && self.packet_cap == other.packet_cap
+            && self.shared_from == other.shared_from
     }
 }

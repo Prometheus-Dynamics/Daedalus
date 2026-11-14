@@ -14,68 +14,17 @@ use std::sync::Arc;
 use daedalus_abi::counting::{CountingAlloc, counted};
 use daedalus_abi::testing::{release, run_once};
 use daedalus_abi::{OWNER_HANDED, Slot, SlotState, Slots, Step, StepCx, StepEnd};
-use daedalus_backend::{
-    Backend, BodyIndex, CompileCx, Compiled, NO_METADATA, NodeBody, PortRef, RateId, Region,
-};
 use daedalus_backend_process::ProcessBackend;
 use daedalus_dma_sys::{Access, DmaBuf, DmaHeap};
 use daedalus_dmabuf::DmaBufBacked;
 use daedalus_runner::put_typed;
-use daedalus_types::{BackendIndex, NodeIndex, PortIndex, SpaceIndex, TypeExpr, TypeIndex};
+use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex};
 use daedalus_types::{TypeKey, Typed};
 use daedalus_worker_conformance::runner::registry;
-use support::spec;
+use support::{spec, step_of};
 
 #[global_allocator]
 static ALLOC: CountingAlloc = CountingAlloc;
-
-/// One node as a region of its own, with one input and one output.
-fn step_of(backend: &ProcessBackend, id: &'static str) -> Step {
-    let ports = [PortRef {
-        node: NodeIndex(0),
-        port: PortIndex(0),
-    }];
-    let nodes = [NodeIndex(0)];
-    let region = Region {
-        backend: BackendIndex(0),
-        nodes: &nodes,
-        inputs: &ports,
-        outputs: &ports,
-        incoming: &[],
-        placed: &[],
-        rate: RateId(0),
-    };
-    let bodies = [NodeBody {
-        node: NodeIndex(0),
-        id,
-        body: BodyIndex(0),
-        inputs: 1,
-        outputs: 1,
-        merges: false,
-        fire_all: false,
-        label: None,
-        metadata: &NO_METADATA,
-        code: &(),
-        text: id,
-    }];
-    let cx = CompileCx {
-        types: &[],
-        consts: &[],
-        spaces: &[],
-        bodies: &bodies,
-        edges: &[],
-        host_inputs: &[],
-        host_outputs: &[],
-        fifo_capacity: 64,
-        merge_allowed: false,
-        freeze_params: false,
-        sharing: &[],
-    };
-    match backend.compile(&region, &cx) {
-        Ok(Compiled::Steps(mut units)) => units.pop().expect("a unit").step,
-        other => panic!("compile: {other:?}"),
-    }
-}
 
 const LARGE: usize = 256 << 10;
 

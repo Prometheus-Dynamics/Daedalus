@@ -103,8 +103,13 @@ struct Lent {
     /// next run lends buffers at least this big.
     want: std::cell::Cell<usize>,
     note: Writer,
-    /// The worker asked to take and give values by reference.
-    wants: bool,
+    /// The features the worker asked for beyond shared memory: none, or values by reference,
+    /// and of any type.
+    wants: u32,
+    /// The smallest packet or value that goes through the lent buffers, once lent.
+    threshold: usize,
+    /// The spec's threshold, if it names one.
+    shared_from: Option<usize>,
 }
 
 pub(crate) struct Worker {
@@ -201,7 +206,10 @@ impl Worker {
             pid,
             input: Some(input),
             #[cfg(target_os = "linux")]
-            lent: Box::default(),
+            lent: Box::new(Lent {
+                shared_from: spec.shared_from,
+                ..Lent::default()
+            }),
             packets: Some(packets),
             recycle,
             stderr: ring,
@@ -236,7 +244,7 @@ impl Worker {
             return self.send_run_by_reference(body, telemetry);
         }
         #[cfg(target_os = "linux")]
-        if body.len() >= daedalus_process_shm::THRESHOLD && self.lent.lender.is_some() {
+        if body.len() >= self.lent.threshold && self.lent.lender.is_some() {
             let need = body.len().max(self.lent.want.get());
             if self
                 .lent
@@ -273,16 +281,31 @@ impl Worker {
             return;
         };
         self.lent.generation = self.lent.generation.wrapping_add(1).max(1);
-        let values = if self.lent.wants { lend::VALUES } else { 0 };
+        use daedalus_wire::shared::BY_REFERENCE;
+        let values = if self.lent.wants & BY_REFERENCE != 0 {
+            lend::VALUES
+        } else {
+            0
+        };
+        let features = self.lent.wants & lend::FEATURES;
+        self.lent.threshold =
+            self.lent
+                .shared_from
+                .unwrap_or(if features & daedalus_wire::shared::ANY_TYPE != 0 {
+                    daedalus_process_shm::ANY_TYPE_THRESHOLD
+                } else {
+                    daedalus_process_shm::THRESHOLD
+                });
         let lent = daedalus_process_shm::Lender::with_values(
             self.lent.generation,
             size.next_power_of_two(),
             values,
         )
+        .map(|lender| lender.with_threshold(self.lent.threshold))
         .and_then(|lender| lender.grant(socket.as_fd()).map(|()| lender))
-        .and_then(|lender| {
+        .and_then(|mut lender| {
             if lender.by_reference() {
-                lender.agree(socket.as_fd())?;
+                lender.agree(socket.as_fd(), features)?;
             }
             Ok(lender)
         });
@@ -332,7 +355,7 @@ impl Worker {
                         if kind == Some(shared_kind::WANT)
                             && let Ok(Shared::Want { features }) = Shared::decode(&buf)
                         {
-                            self.lent.wants = features & daedalus_wire::shared::BY_REFERENCE != 0;
+                            self.lent.wants = features;
                         }
                         self.give_back(buf);
                         if kind == Some(daedalus_wire::kind::PONG) {
@@ -437,7 +460,7 @@ impl Worker {
                 // buffers that hold them.
                 #[cfg(target_os = "linux")]
                 if self.lent.lender.is_some()
-                    && buf.len() >= daedalus_process_shm::THRESHOLD
+                    && buf.len() >= self.lent.threshold
                     && buf.first() == Some(&daedalus_wire::kind::OUTPUTS)
                 {
                     self.lent.want.set(self.lent.want.get().max(buf.len()));

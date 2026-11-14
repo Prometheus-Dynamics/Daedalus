@@ -18,8 +18,26 @@ use crate::telemetry::Telemetry;
 #[cfg(target_os = "linux")]
 pub(crate) const VALUES: u32 = 4;
 
+/// The features this host agrees to when a worker asks: values by reference, of any type.
+#[cfg(target_os = "linux")]
+pub(crate) const FEATURES: u32 =
+    daedalus_wire::shared::BY_REFERENCE | daedalus_wire::shared::ANY_TYPE;
+
 #[cfg(target_os = "linux")]
 impl Worker {
+    /// The features this worker agreed.
+    pub(crate) fn features(&self) -> u32 {
+        self.lent
+            .lender
+            .as_ref()
+            .map_or(0, daedalus_process_shm::Lender::features)
+    }
+
+    /// The smallest packet or value that goes through the lent buffers.
+    pub(crate) fn shared_from(&self) -> usize {
+        self.lent.threshold
+    }
+
     /// Whether this worker agreed values by reference.
     pub(crate) fn by_reference(&self) -> bool {
         self.lent
@@ -48,8 +66,8 @@ impl Worker {
     /// Writes an input value into the host's buffer, and gives its place. None when it doesn't
     /// fit beside the run's other values: it then goes in the packet, and the next run lends
     /// buffers that hold it.
-    pub(crate) fn place(&mut self, bytes: &[u8]) -> Option<Place> {
-        let placed = self.lent.lender.as_mut()?.place(bytes);
+    pub(crate) fn place(&mut self, bytes: &[u8], items_at: usize) -> Option<Place> {
+        let placed = self.lent.lender.as_mut()?.place(bytes, items_at);
         if placed.is_none() {
             // Room for the value, the run's other values and the packet after them.
             let need = bytes.len().saturating_mul(2);
@@ -100,7 +118,7 @@ impl Worker {
         if out.is_none() {
             telemetry.bump(Count::OutsFull);
         }
-        let packet = if body.len() >= daedalus_process_shm::THRESHOLD {
+        let packet = if body.len() >= lender.threshold() {
             let placed = lender.place_packet(body);
             if placed.is_some() {
                 telemetry.bump(Count::SharedIn);
@@ -130,13 +148,21 @@ impl Worker {
 
 #[cfg(not(target_os = "linux"))]
 impl Worker {
+    pub(crate) fn features(&self) -> u32 {
+        0
+    }
+
+    pub(crate) fn shared_from(&self) -> usize {
+        usize::MAX
+    }
+
     pub(crate) fn by_reference(&self) -> bool {
         false
     }
 
     pub(crate) fn begin_run(&mut self, _telemetry: &Telemetry) {}
 
-    pub(crate) fn place(&mut self, _bytes: &[u8]) -> Option<Place> {
+    pub(crate) fn place(&mut self, _bytes: &[u8], _items_at: usize) -> Option<Place> {
         None
     }
 

@@ -11,5 +11,5 @@ pub use fixtures::{
     CUSTOM_KEY, DIAGNOSTIC_CODE, DIAGNOSTIC_DETAIL, Expect, Fixture, Port, Round, declarations,
     fixtures, hello, slot_bytes,
 };
-pub use large::{Large, large_values};
+pub use large::{Large, large_list, large_values};
 pub use runner::{Failure, run_all, run_fixtures};

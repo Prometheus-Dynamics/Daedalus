@@ -24,9 +24,9 @@ use daedalus_registry::{NodeRecord, PortDecl, TypeRef, port_type};
 use daedalus_types::{Scalar, TypeKey, Typed};
 use daedalus_wire::codec::Writer;
 use daedalus_wire::{
-    BoundaryValue, DEFAULT_CAP, Declaration, Fault, FaultCode, Hello, HostMsg, LogLevel, Outputs,
-    PacketError, PortSpec, Progress, RunStatus, Schema, WireType, WireValue, WorkerMsg,
-    write_packet,
+    BoundaryValue, DEFAULT_CAP, Declaration, Dir, Fault, FaultCode, Hello, HostMsg, LogLevel,
+    Outputs, PacketError, PortSpec, Progress, RunStatus, Schema, WireType, WireValue, WorkerMsg,
+    encode_bare, write_packet,
 };
 
 use crate::codec::Value;
@@ -239,7 +239,8 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
     send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).map_err(io::Error::other)?;
     let lent = Lent::default();
     // Until the host answers, a run means it never will: it is an older host.
-    let mut unanswered = lent.ask_by_reference(&mut out).map_err(io::Error::other)?;
+    let features = daedalus_wire::shared::BY_REFERENCE | daedalus_wire::shared::ANY_TYPE;
+    let mut unanswered = lent.ask_for(features, &mut out).map_err(io::Error::other)?;
 
     let current = Arc::new(AtomicU64::new(0));
     let cancel = Arc::new(AtomicBool::new(false));
@@ -260,7 +261,7 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
             },
             Ok(Packet::Answer(None)) => {
                 unanswered = false;
-                schema.set_by_reference(lent.by_reference());
+                schema.set_features(lent.features());
                 continue;
             }
             Ok(Packet::Answer(Some(reason))) => {
@@ -415,16 +416,32 @@ fn run_each(
             Err(error) => return fault(run, Some(id), error.code, error.reason, schema, out),
         }
     }
-    // A large `bytes` or opaque output goes into the run's value buffer, where the host's cell
-    // holds it; the packet carries its place.
+    // A large output with a form goes into the run's value buffer, where the host's cell holds
+    // it, with its items aligned; the packet carries its place.
     for output in &mut outputs {
-        let (WireValue::Bytes(bytes) | WireValue::Opaque(bytes)) = &output.value else {
+        let Ok(ty) = schema.lookup(&output.node, Dir::Output, &output.port) else {
             continue;
         };
-        if bytes.len() >= threshold
-            && let Some((place, room)) = writes.room(bytes.len())
+        if !schema.has_form(ty) {
+            continue;
+        }
+        if let WireValue::Bytes(bytes) | WireValue::Opaque(bytes) = &output.value {
+            if bytes.len() >= threshold
+                && let Some((place, room)) = writes.room(bytes.len())
+            {
+                room.copy_from_slice(bytes);
+                output.value = WireValue::Placed(place);
+            }
+            continue;
+        }
+        let mut bare = Writer::new();
+        if encode_bare(ty, &output.value, schema, &mut bare).is_err() || bare.buf.len() < threshold
         {
-            room.copy_from_slice(bytes);
+            continue;
+        }
+        let items_at = ty.layout().items_at().unwrap_or(0);
+        if let Some((place, room)) = writes.room_for(bare.buf.len(), items_at) {
+            room.copy_from_slice(&bare.buf);
             output.value = WireValue::Placed(place);
         }
     }
@@ -460,7 +477,7 @@ fn run_node(
     out: &mut impl Write,
 ) -> io::Result<Result<Vec<BoundaryValue>, NodeError>> {
     let mut inputs: Vec<(&'static str, Value<'_>)> = Vec::with_capacity(node.inputs.len());
-    for (name, _) in &node.inputs {
+    for (name, ty) in &node.inputs {
         let Some(entry) = run
             .inputs
             .iter()
@@ -470,7 +487,12 @@ fn run_node(
         };
         let value = match &entry.value {
             WireValue::Placed(place) => match reads.bytes(place) {
-                Some(bytes) => Value::Bytes(bytes),
+                Some(bytes)
+                    if matches!(ty, WireType::Scalar(Scalar::Bytes) | WireType::Opaque(_)) =>
+                {
+                    Value::Bytes(bytes)
+                }
+                Some(bytes) => Value::Placed { ty, bytes, schema },
                 None => {
                     let reason = format!("input {name} is at {place:?}, not in lent memory");
                     return Ok(Err(NodeError::bad_input(reason)));

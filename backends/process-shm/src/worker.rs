@@ -66,29 +66,43 @@ impl Lent {
         Ok(false)
     }
 
-    /// As [`Lent::ask`], and also asks to take and give values by reference: a `bytes` or
-    /// opaque input then arrives as a place in lent memory or in a buffer sent by descriptor, and
-    /// an output value can be written straight into lent memory. Read and write them through
-    /// [`Lent::view`].
-    pub fn ask_by_reference(&self, out: &mut impl Write) -> Result<bool, PacketError> {
+    /// As [`Lent::ask`], and also asks for `features`: [`BY_REFERENCE`] to take and give values
+    /// by reference (a `bytes` or opaque input then arrives as a place in lent memory or in a
+    /// buffer sent by descriptor, and an output value can be written straight into lent memory),
+    /// and with it [`ANY_TYPE`] for values of any type but a fixed-size scalar. Read and write
+    /// them through [`Lent::view`].
+    ///
+    /// [`BY_REFERENCE`]: daedalus_wire::shared::BY_REFERENCE
+    /// [`ANY_TYPE`]: daedalus_wire::shared::ANY_TYPE
+    pub fn ask_for(&self, features: u32, out: &mut impl Write) -> Result<bool, PacketError> {
         if !self.ask(out)? {
             return Ok(false);
         }
         #[cfg(target_os = "linux")]
         {
             let mut writer = Writer::new();
-            daedalus_wire::shared::Shared::Want {
-                features: daedalus_wire::shared::BY_REFERENCE,
-            }
-            .encode(false, &mut writer)
-            .map_err(|error| PacketError::Io(io::Error::other(error.to_string())))?;
+            daedalus_wire::shared::Shared::Want { features }
+                .encode(false, &mut writer)
+                .map_err(|error| PacketError::Io(io::Error::other(error.to_string())))?;
             write_packet(out, &writer.buf, daedalus_wire::DEFAULT_CAP)?;
         }
+        #[cfg(not(target_os = "linux"))]
+        let _ = features;
         Ok(true)
     }
 
-    /// Whether the host agreed values by reference: then a run's values are read with the
-    /// schema's [`set_by_reference`](daedalus_wire::Schema::set_by_reference) on.
+    /// The features the host agreed: a run's values are read with the schema's
+    /// [`set_features`](daedalus_wire::Schema::set_features) set to them.
+    pub fn features(&self) -> u32 {
+        #[cfg(target_os = "linux")]
+        {
+            self.lock().as_ref().map_or(0, crate::Borrower::features)
+        }
+        #[cfg(not(target_os = "linux"))]
+        0
+    }
+
+    /// Whether the host agreed values by reference.
     pub fn by_reference(&self) -> bool {
         #[cfg(target_os = "linux")]
         {
@@ -423,12 +437,22 @@ impl Writes<'_> {
     /// Room for an output value of `len` bytes, and the place to send for it. None when the host
     /// named no buffer for this run or the value doesn't fit: then it goes in the packet.
     pub fn room(&mut self, len: usize) -> Option<(daedalus_wire::shared::Place, &mut [u8])> {
+        self.room_for(len, 0)
+    }
+
+    /// As [`Writes::room`], for a value whose items start `items_at` bytes in (its layout is an
+    /// array): they are put on an aligned address, so the host's cell holds them aligned too.
+    pub fn room_for(
+        &mut self,
+        len: usize,
+        items_at: usize,
+    ) -> Option<(daedalus_wire::shared::Place, &mut [u8])> {
         #[cfg(target_os = "linux")]
         {
             use daedalus_wire::shared::{At, Place};
             let buffer = self.out?;
             let cursor = self.cursor.as_mut()?;
-            let start = cursor.next_multiple_of(crate::linux::VALUE_ALIGN);
+            let start = crate::linux::aligned(**cursor, items_at);
             let end = start.checked_add(len)?;
             let room = self
                 .view
@@ -448,7 +472,7 @@ impl Writes<'_> {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = len;
+            let _ = (len, items_at);
             None
         }
     }

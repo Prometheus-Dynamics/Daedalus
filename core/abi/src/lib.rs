@@ -24,6 +24,7 @@ mod handed;
 mod handle;
 #[cfg(feature = "std")]
 mod held;
+mod items;
 #[cfg(not(daedalus_abi_baseline))]
 mod kept;
 mod layout;
@@ -62,6 +63,7 @@ pub use handed::{
 pub use handle::Handle;
 #[cfg(feature = "std")]
 pub use held::{HeldRegions, Regions};
+pub use items::{LeItem, le_items};
 pub use layout::{DESCRIPTORS, FROZEN_HASH, SHAPES, abi_desc, layout_hash};
 pub use message::MessageSink;
 pub use out::{Written, write_out, write_text};

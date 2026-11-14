@@ -171,8 +171,8 @@ pub fn optional_value(r#in: Option<i64>) -> Option<i64> {
 }
 
 #[node(id = "fixture.list_reverse", inputs("in"), outputs("out"), backend = daedalus_lang_rust)]
-pub fn list_reverse(r#in: Vec<u32>) -> Vec<u32> {
-    r#in.into_iter().rev().collect()
+pub fn list_reverse(r#in: &[u32]) -> Vec<u32> {
+    r#in.iter().rev().copied().collect()
 }
 
 #[node(

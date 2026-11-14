@@ -2,8 +2,8 @@
 //!
 //! A worker's stdin and stdout are one unix socket. The host lends a worker two buffers in one
 //! sealed memfd: one it writes packets into for the worker, one the worker writes its answers
-//! into. A packet of at least [`THRESHOLD`] bytes is written into its buffer and only a short
-//! note goes on the socket; anything smaller goes on the socket as before. The buffers are handed
+//! into. A packet of at least the grant's threshold ([`THRESHOLD`] by default) is written into its
+//! buffer and only a short note goes on the socket; anything smaller goes on the socket as before. The buffers are handed
 //! over once, as descriptors on the socket, and named by number afterwards, so a steady run sends
 //! no descriptors and allocates nothing.
 //!
@@ -18,6 +18,11 @@
 /// The smallest packet that goes in a buffer, in bytes: the default capacity of a pipe, below
 /// which one write on the socket is one wake-up of the reader.
 pub const THRESHOLD: usize = 64 * 1024;
+
+/// The smallest packet or value that goes in a buffer for a worker that agreed values by reference
+/// of any type, in bytes. On a CM5 a list placed and read where it is beats the socket from about
+/// 1 KiB; at this size it takes half the time (testing/board-runs/worker-any-type.md).
+pub const ANY_TYPE_THRESHOLD: usize = 4 * 1024;
 
 /// The size of each buffer a worker is first lent, in bytes. Untouched pages of a memfd cost no
 /// memory, so this is address space until a packet that large is sent.

@@ -87,7 +87,7 @@ stays on the plain path, with the reason. A worker logs that reason as
 worker logs the same line, without a reason, when its first run arrives with no answer, and stays
 plain. Nothing is ignored on either side.
 
-With memory granted, a packet of 64 KiB or more is written into the buffer for its direction and
+With memory granted, a packet of 64 KiB or more (the worker's threshold; see below) is written into the buffer for its direction and
 only a short note (kind `0x08` from the host, `0x4A` from the worker) travels on the socket. Only a
 run goes in the host's buffer and only outputs in the worker's, and the host waits for one run's
 outputs before it writes the next, so neither side ever writes over what the other is reading.
@@ -110,11 +110,26 @@ a 4 MiB one from 4.10 to 2.69: [testing/board-runs/worker-shm.md](../testing/boa
 A worker can ask for more than whole packets in shared memory: right after its ask it sends a want
 (kind `0x4B`) naming values by reference. A host that supports it answers its grant with an agree
 (kind `0x09`) and lends four more buffers, for output values. A host older than this ignores the
-want, so the worker stays on whole packets. From then on a port's whole `bytes` or opaque value,
-in a run or in outputs, starts with a form byte: `0` and its bytes follow as before, `1` and it
-is a place in a lent buffer (buffer, offset, length), `2` and it is a place in a buffer the host
-sent by descriptor (slot, offset, length). A value inside a list, struct or other compound never
-has a form byte.
+want, so the worker stays on whole packets. The want's features say what goes by reference:
+`BY_REFERENCE` (1) for `bytes` and opaque values, and `ANY_TYPE` (2) on top of it for a value of
+any type but a fixed scalar (a string, a list, a struct and the rest). The agree names the
+features the host took. From then on a port's whole value of such a type, in a run or in
+outputs, starts with a form byte: `0` and its bytes follow as before, `1` and it is a place in a
+lent buffer (buffer, offset, length), `2` and it is a place in a buffer the host sent by
+descriptor (slot, offset, length). A value inside a list, struct or other compound never has a
+form byte.
+
+A place names the value's bytes as the host's cell holds them: the content of a `bytes`, opaque
+or string value, and the wire form of anything else (a list is its `u32` count, then its items,
+packed). Whether a value goes as a place depends only on its size, never on its type: from the
+worker's threshold up it goes as a place, below that in the packet. The threshold is 4 KiB for
+a worker that agreed values of any type by reference, where a list read in place takes half the
+socket's time on a CM5 ([testing/board-runs/worker-any-type.md](../testing/board-runs/worker-any-type.md)),
+and 64 KiB otherwise. `WorkerSpec::shared_from` sets it. The host sends it in the grant, and it
+applies to whole packets too. The host lays out a value whose type has
+fixed fields and then one list of fixed-size items so that the items start on a 64-byte boundary.
+A reader can then take them as a slice where they are. Only a `bytes` or opaque value can be a
+buffer sent by descriptor.
 
 Each run goes with a note (kind `0x0A`): the value buffer the worker writes this run's outputs
 into, if one is free, descriptors to keep and slots to let go, and where the run is. A small run
@@ -135,12 +150,15 @@ follows the note in the same frame; a large one is in the host's buffer after it
 - **A plain worker.** A worker that didn't agree is sent a descriptor value's bytes, copied out of
   a read-only mapping inside the same brackets.
 
-In the Rust SDK a node's `&[u8]` parameter borrows the input where the host put it for the call,
-and a large `Vec<u8>` output is copied once into the value buffer instead of into the packet. The
+In the Rust SDK a node's `&[u8]` parameter borrows the input where the host put it for the call.
+So does a `&[f32]`, `&[u32]` or other number slice of a placed list. A `&[T]` of a `Flat` record
+type reads its records straight from the place (see
+[node-authoring.md](node-authoring.md#values-that-cross-to-another-process)). A large output of
+any type with a form is copied once into the value buffer instead of into the packet. The
 host's counters: `agreed` (workers that agreed), `placed_in` and `placed_out` (values sent and
 taken by place), `fd_sends` (descriptors sent; 0 in steady state), and `outs_full` (runs with no
 value buffer free). `daedalus-worker-conformance::large_values` runs any worker through large
-values and gives these counters back.
+values and gives these counters back, and `large_list` does the same with a long `list<u32>`.
 
 On a CM5, by reference took the hand-over of a 1 MiB value from 2.13 ms/MB (whole packets in
 shared memory) to 0.22 ms/MB, and of a 4 MiB one from 2.63 to 0.38, of which 0.28 is the node's own

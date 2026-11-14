@@ -909,6 +909,7 @@ dependencies = [
 name = "daedalus-lang-rust"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus-abi",
  "daedalus-backend-process",
  "daedalus-macros",
  "daedalus-process-shm",
@@ -1018,8 +1019,12 @@ dependencies = [
  "daedalus-abi",
  "daedalus-backend",
  "daedalus-backend-process",
+ "daedalus-lang-rust",
+ "daedalus-macros",
+ "daedalus-registry",
  "daedalus-runner",
  "daedalus-types",
+ "daedalus-wire",
  "daedalus-worker-conformance",
 ]
 

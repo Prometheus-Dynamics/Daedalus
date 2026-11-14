@@ -27,9 +27,9 @@ struct Entry {
 pub struct Schema {
     ports: Vec<Entry>,
     codecs: Vec<String>,
-    /// Whether the peers agreed values by reference, which gives every `bytes` and opaque value a
-    /// form byte: see [`crate::shared`].
-    by_reference: bool,
+    /// The [features](crate::shared::BY_REFERENCE) the peers agreed, which decide which port
+    /// values start with a form byte: see [`Schema::has_form`].
+    features: u32,
 }
 
 impl Schema {
@@ -54,13 +54,24 @@ impl Schema {
         }
     }
 
-    /// Sets whether the peers agreed values by reference.
-    pub fn set_by_reference(&mut self, on: bool) {
-        self.by_reference = on;
+    /// Sets the features the peers agreed.
+    pub fn set_features(&mut self, features: u32) {
+        self.features = features;
     }
 
+    pub fn features(&self) -> u32 {
+        self.features
+    }
+
+    /// Whether the peers agreed values by reference.
     pub fn by_reference(&self) -> bool {
-        self.by_reference
+        self.features & crate::shared::BY_REFERENCE != 0
+    }
+
+    /// Whether a port's whole value of type `ty` starts with a form byte, and so can be a place:
+    /// see [`crate::shared::has_form`].
+    pub fn has_form(&self, ty: &WireType) -> bool {
+        crate::shared::has_form(self.features, ty)
     }
 
     pub fn has_codec(&self, key: &str) -> bool {

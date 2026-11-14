@@ -11,9 +11,17 @@ publish = false
 daedalus-abi = { path = "../../../core/abi", features = ["count-alloc", "test-run"] }
 daedalus-backend = { path = "../../../core/backend" }
 daedalus-backend-process = { path = "../../../backends/process" }
+daedalus-lang-rust = { path = "../../../languages/rust" }
+daedalus-macros = { path = "../../../core/macros" }
+daedalus-registry = { path = "../../../core/registry" }
 daedalus-runner = { path = "../../../core/runner" }
 daedalus-types = { path = "../../../core/types" }
+daedalus-wire = { path = "../../../core/wire" }
 daedalus-worker-conformance = { path = "../worker-conformance" }
+
+[[bin]]
+name = "daedalus-sweep-worker"
+path = "src/bin/sweep-worker.rs"
 
 [lints]
 workspace = true
