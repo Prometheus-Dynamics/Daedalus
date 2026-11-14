@@ -17,7 +17,6 @@ daedalus-host = { path = "../host", features = ["std"] }
 daedalus-loader = { path = "../loader" }
 daedalus-planner = { path = "../planner" }
 daedalus-registry = { path = "../registry" }
-daedalus-types = { path = "../types" }
 daedalus-value = { path = "../value", features = ["std"] }
 serde_json = { workspace = true }
 

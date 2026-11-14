@@ -42,10 +42,6 @@ impl ScalarKind {
         }
     }
 
-    pub const fn is_float(self) -> bool {
-        matches!(self, ScalarKind::F32 | ScalarKind::F64)
-    }
-
     /// The inclusive range of an integer kind.
     pub const fn int_range(self) -> Option<(i128, i128)> {
         Some(match self {

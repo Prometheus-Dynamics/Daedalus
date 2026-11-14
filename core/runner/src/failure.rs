@@ -178,9 +178,4 @@ impl StepHealth {
     pub const fn calls(&self) -> u32 {
         self.calls
     }
-
-    /// True when the next call must reset the body's state.
-    pub const fn restart_pending(&self) -> bool {
-        self.restart
-    }
 }

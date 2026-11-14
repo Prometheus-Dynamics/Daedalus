@@ -37,7 +37,8 @@ pub fn read_packet(input: &mut impl Read, cap: u32, buf: &mut Vec<u8>) -> Result
     if len > cap {
         return Err(PacketError::TooLarge { len, cap });
     }
-    buf.clear();
+    // Not cleared first: a buffer that already has this many bytes is read over as it is, and
+    // only the part a longer packet adds is zeroed.
     buf.resize(len as usize, 0);
     input.read_exact(buf).map_err(|error| match error.kind() {
         ErrorKind::UnexpectedEof => PacketError::Truncated,

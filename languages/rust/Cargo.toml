@@ -11,7 +11,6 @@ daedalus-registry = { path = "../../core/registry" }
 daedalus-types = { path = "../../core/types" }
 daedalus-wire = { path = "../../core/wire" }
 daedalus-macros = { path = "../../core/macros" }
-daedalus-derive = { path = "../../core/derive" }
 
 [dev-dependencies]
 daedalus-backend-process = { path = "../../backends/process" }
