@@ -249,6 +249,34 @@ types, and one body.
 - A declaration is kept for the life of the process, as every record is. The same declaration
   registered again reuses its record, and one with other code is another declaration.
 
+For the usual case, a function of a few values, `daedalus_cpu::closure::closure_node` makes the
+whole declaration from a plain closure, with the cells, the port types and the fault handled:
+
+```rust
+use daedalus_cpu::closure::closure_node;
+use daedalus_cpu::Fault;
+
+let limit = read_limit();
+registry.register_owned(closure_node(
+    "app.over_limit",
+    "made at run time",
+    &["level"],
+    Some("over"),
+    move |level: u32| Ok::<bool, Fault>(level > limit),
+)?)?;
+```
+
+- The closure takes up to four inputs and gives one value, or `()` with `None` for the output's
+  name. Its types are the ports' types: a closure that doesn't fit the names given is refused
+  when the declaration is made, in words.
+- A value is the numbers and `bool`, `String`, or `Arc<T>` of any typed `T`. They sit in a cell
+  the way a `#[node]` function's do, so the two kinds of node pass values to each other. A
+  `String` is copied for the closure, and an `Arc<T>` is handed over as it is: use that for a
+  value too large to copy.
+- An `Err(Fault { code, reason })` is the step's fault, with the node's own code.
+- Its inputs come from edges. A constant is something the closure holds, which is what a
+  closure is for.
+
 ## Graph documents
 
 A graph is JSON in the format [`schema/`](schema) describes: nodes by id, edges between ports,
