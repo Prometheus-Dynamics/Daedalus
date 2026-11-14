@@ -96,7 +96,8 @@ pub use owned::{INLINE_BYTES, InlineCell, Untyped, place};
 pub use owned::{TypedOps, typed_ops, typed_raw};
 pub use policy::Recovery;
 pub use probe::{
-    ClockFn, HISTOGRAM_BUCKETS, ProbeClock, StepHistogram, TickProbe, TickSample, best_clock,
+    ClockFn, HISTOGRAM_BUCKETS, ProbeClock, StepFigures, StepHistogram, TickProbe, TickSample,
+    best_clock,
 };
 pub use reuse::{
     InputVersion, ReuseEntry, ReuseMarker, ReuseMemory, ReuseReason, ReuseRefused, check_reuse,

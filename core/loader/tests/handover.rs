@@ -207,8 +207,8 @@ fn a_steady_state_take_of_a_handed_megabyte_allocates_nothing() {
     assert_megabyte(&value);
     assert_eq!(bytes_copied(), copied, "no bytes are copied");
     assert!(
-        allocations <= 4,
-        "a steady-state tick and take allocate a few headers, not the bytes: {allocations}"
+        allocations == 0,
+        "a steady-state tick and take of a megabyte allocate nothing: {allocations}"
     );
     drop(value);
 }

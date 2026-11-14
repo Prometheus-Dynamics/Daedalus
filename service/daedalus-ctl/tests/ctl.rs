@@ -664,11 +664,14 @@ mod with_daemon {
             [
                 "auto_off",
                 "backing_off",
+                "bytes",
                 "calls",
                 "disabled",
                 "failures",
                 "nodes",
-                "step"
+                "step",
+                "time_ns",
+                "timed_runs"
             ]
         );
         let host = shape(

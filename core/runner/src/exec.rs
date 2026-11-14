@@ -287,7 +287,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
                 store(env, index, meta);
             }
             commit_inputs(env, meta);
-            if let Err(error) = publish(env, meta, false) {
+            if let Err(error) = publish(env, index, meta, false) {
                 if meta.reuse {
                     forget(env, index, meta);
                 }
@@ -308,7 +308,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         StepEnd::Pending(fence) => {
             // The outputs are stored now, hidden: no reader sees them until the fence is Ready.
             commit_inputs(env, meta);
-            let kept = publish(env, meta, true)?;
+            let kept = publish(env, index, meta, true)?;
             let step = index as u32;
             if !env.register_pending(Pending { step, fence, kept }) {
                 return Err(RunError::PendingFull { step });
@@ -415,9 +415,15 @@ pub(crate) fn commit_inputs<'t, E: Env<'t>>(env: &mut E, meta: StepMeta) {
 /// Publishes a step's outputs, hidden when `hide` is set. Returns a mask with bit `at` set for
 /// each output that was stored, so a pending step's values can be shown when its fence is
 /// ready, or taken back if it fails.
-fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta, hide: bool) -> Result<u32, RunError> {
+fn publish<'t, E: Env<'t>>(
+    env: &mut E,
+    index: usize,
+    meta: StepMeta,
+    hide: bool,
+) -> Result<u32, RunError> {
     let mut overflow = None;
     let mut kept = 0u32;
+    let probe = env.probe();
     for (at, &slot) in spanned(env.table(), meta.outputs).iter().enumerate() {
         let mut cell = core::mem::replace(&mut env.parts().0[output_at(meta, at)], Slot::EMPTY);
         if cell.state != SlotState::Full as u32 {
@@ -457,8 +463,13 @@ fn publish<'t, E: Env<'t>>(env: &mut E, meta: StepMeta, hide: bool) -> Result<u3
                 env.counters().backpressure_events += 1;
             }
         }
-        if stored == Stored::Kept && at < 32 {
-            kept |= 1 << at;
+        if stored == Stored::Kept {
+            if let Some(probe) = probe {
+                probe.add_bytes(index, cell.len as u64);
+            }
+            if at < 32 {
+                kept |= 1 << at;
+            }
         }
         if stored == Stored::Full {
             // SAFETY: the cell is Full and this step wrote it, so the reference is still the

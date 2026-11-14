@@ -172,6 +172,9 @@ pub fn inspections() -> Vec<Inspection> {
                 backing_off: true,
                 disabled: false,
                 auto_off: false,
+                timed_runs: 12,
+                time_ns: 3400,
+                bytes: 4096,
             }],
         }),
         Inspection::Host(HostInfo {
@@ -334,4 +337,32 @@ pub fn client_messages() -> Vec<ClientMsg> {
         }));
     }
     messages
+}
+
+/// A server's message as a side built at the first version sent it: every field added since at
+/// its default. Added since: a fault event's `code` and `own_code`, and a telemetry row's
+/// `timed_runs`, `time_ns` and `bytes`.
+#[allow(dead_code)] // each test binary uses the helpers it needs
+pub fn as_first_sent(mut message: ServerMsg) -> ServerMsg {
+    match &mut message {
+        ServerMsg::Event(daedalus_wire::service::Event {
+            body: EventBody::Fault(fault),
+            ..
+        }) => {
+            fault.code = 0;
+            fault.own_code = false;
+        }
+        ServerMsg::Response(Response {
+            result: Ok(Reply::Inspection(Inspection::Telemetry(info))),
+            ..
+        }) => {
+            for row in &mut info.rows {
+                row.timed_runs = 0;
+                row.time_ns = 0;
+                row.bytes = 0;
+            }
+        }
+        _ => {}
+    }
+    message
 }

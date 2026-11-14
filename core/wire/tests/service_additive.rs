@@ -83,20 +83,6 @@ fn client_as_first_sent(message: ClientMsg) -> ClientMsg {
     message
 }
 
-/// A server's sample as a side built at the first version sent it. Added since: a fault
-/// event's `code` and `own_code`, which that side doesn't send, and which read as zero and no.
-fn server_as_first_sent(mut message: ServerMsg) -> ServerMsg {
-    if let ServerMsg::Event(Event {
-        body: EventBody::Fault(fault),
-        ..
-    }) = &mut message
-    {
-        fault.code = 0;
-        fault.own_code = false;
-    }
-    message
-}
-
 #[test]
 fn what_the_first_version_sent_is_still_read_as_the_same_messages() {
     let schema = Schema::new();
@@ -123,7 +109,7 @@ fn what_the_first_version_sent_is_still_read_as_the_same_messages() {
     for (body, message) in kept.iter().zip(servers) {
         assert_eq!(
             ServerMsg::decode(body, &schema).expect("decode"),
-            server_as_first_sent(message)
+            service_support::as_first_sent(message)
         );
     }
 }
