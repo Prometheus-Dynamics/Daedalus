@@ -102,6 +102,9 @@ new pool.
 were added after the layout hash was fixed and aren't part of it. Elsewhere than Linux the worker
 runs on pipes and stays plain.
 
+On a CM5 the hand-over of a 1 MiB value there and back went from 3.91 ms/MB to 2.06 ms/MB, and of
+a 4 MiB one from 4.10 to 2.69: [testing/board-runs/worker-shm.md](../testing/board-runs/worker-shm.md).
+
 ## Failure
 
 A worker that exits, hangs or sends something unreadable is a fault of its region, with the

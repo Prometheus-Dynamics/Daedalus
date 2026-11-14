@@ -40,6 +40,11 @@ fn median(sorted: &[f64]) -> f64 {
     sorted[sorted.len() / 2]
 }
 
+/// The 99th percentile of sorted times: the slowest with fewer than 100 runs.
+fn p99(sorted: &[f64]) -> f64 {
+    sorted[(sorted.len() * 99 / 100).min(sorted.len() - 1)]
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(worker) = args.first() else { usage() };
@@ -165,7 +170,7 @@ fn main() {
     // reversed. Across a pipe that is one copy in and one out, and this is what it costs.
     if let Some(megabytes) = args.get(2) {
         let megabytes: usize = megabytes.parse().expect("MEGABYTES is a number");
-        hand_over(&backend, megabytes, batches.min(31));
+        hand_over(&backend, megabytes, batches.min(101));
     }
 }
 
@@ -278,10 +283,12 @@ fn hand_over(backend: &ProcessBackend, megabytes: usize, batches: usize) {
     };
     let work_per_mb = median(&work) / megabytes as f64;
     println!(
-        "hand_over transport {transport} megabytes {megabytes} median_ns {:.0} min_ns {:.0} max_ns {:.0} ns_per_megabyte {per_mb:.0} node_work_ns_per_megabyte {work_per_mb:.0} transport_ns_per_megabyte {:.0} runs {} allocations_per_8_runs {allocations}",
+        "hand_over transport {transport} megabytes {megabytes} median_ns {:.0} p99_ns {:.0} min_ns {:.0} max_ns {:.0} ns_per_megabyte {per_mb:.0} p99_ns_per_megabyte {:.0} node_work_ns_per_megabyte {work_per_mb:.0} transport_ns_per_megabyte {:.0} runs {} allocations_per_8_runs {allocations}",
         median(&times),
+        p99(&times),
         times[0],
         times[times.len() - 1],
+        p99(&times) / megabytes as f64,
         per_mb - work_per_mb,
         times.len()
     );
