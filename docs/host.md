@@ -93,6 +93,19 @@ Nothing is turned off automatically.
 - `Telemetry`: counters (ticks, idle ticks, steps called, faults, skips), one row per step at the
   detailed level, and an event per tick at the trace level.
   [`examples/03_metrics`](../examples/03_metrics) prints them.
+- What each step costs, at the detailed level: a row has the step's calls and failures, and
+  with `LoadOptions::overhead_window` above zero also `timed_runs`, `time_ns` and `bytes`. The
+  time is the sum over the step's timed runs, each from the end of the step before it to its
+  own end. The bytes are the lengths of the values the step published: a value handed on by
+  reference counts its length and is not copied, and a typed value, whose size Daedalus
+  doesn't know, counts as nothing. Over the service they are on a telemetry row.
+
+  The cost is stated so that a small board can decide. Calls and failures are always counted:
+  one addition a step. With no probe (`overhead_window` zero, the default) the rest costs one
+  check a step and one for each output, and nothing is read or written. With a probe, a step
+  costs one clock read and three additions, and one more addition for each output it
+  publishes. Nothing in either case allocates: the figures are in a table sized when the plan
+  loads, 144 bytes a step.
 - `set_node_on(node, on)`: turn a node off or on by hand.
 - `set_unmerged(true)`: run every node as its own step, to find which node in a merged step
   fails. It is never done automatically.

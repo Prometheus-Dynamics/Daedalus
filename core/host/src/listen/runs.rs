@@ -242,6 +242,9 @@ impl RunEntry {
                 backing_off: row.backing_off,
                 disabled: row.disabled,
                 auto_off: row.auto_off,
+                timed_runs: row.timed_runs,
+                time_ns: row.time_ns,
+                bytes: row.bytes,
             })
             .collect();
         TelemetryInfo {

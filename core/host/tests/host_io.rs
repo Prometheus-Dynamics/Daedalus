@@ -214,6 +214,53 @@ fn a_steady_feed_step_take_loop_allocates_nothing_after_warm_up() {
     assert_eq!(allocations, 0);
 }
 
+#[test]
+fn a_probe_counts_the_bytes_each_step_publishes_and_the_loop_still_allocates_nothing() {
+    use daedalus_runner::{StepHistogram, TickProbe};
+    fn clock() -> u64 {
+        0
+    }
+    let mut graph = Graph::new();
+    let steps = graph.steps.len();
+    let figures: &'static [StepHistogram] = Box::leak(
+        (0..steps)
+            .map(|_| StepHistogram::new())
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    let probe: &'static TickProbe<'static> =
+        Box::leak(Box::new(TickProbe::new(clock).with_steps(figures)));
+    let mut runner = graph.runner();
+    runner.set_probe(probe);
+    let mut host = Host::new(runner, Ports::new(&PORTS).unwrap(), &TYPES);
+    host.feed("in", bytes(TY_A, b"warm")).unwrap();
+    host.step().unwrap();
+    drop(host.take_value("out").unwrap());
+    let published = |host: &mut Host<'_>| -> u64 {
+        (0..steps as u32)
+            .filter_map(|step| host.runner().step_figures(step))
+            .map(|figures| figures.bytes)
+            .sum()
+    };
+    let before = published(&mut host);
+    assert!(before >= 4, "the warm-up value was counted: {before}");
+
+    let ((), allocations) = counted(|| {
+        for _ in 0..1000 {
+            host.feed("in", bytes(TY_A, b"steady")).unwrap();
+            host.step().unwrap();
+            drop(host.take_value("out").unwrap());
+        }
+    });
+    assert_eq!(allocations, 0, "counting costs no allocation");
+    // Each step that publishes the six bytes counts them once a tick.
+    let counted_bytes = published(&mut host) - before;
+    assert!(
+        counted_bytes >= 6_000 && counted_bytes % 6_000 == 0,
+        "six bytes a tick for each step that publishes them: {counted_bytes}"
+    );
+}
+
 /// A payload that is not `Copy`: it records its id in a log when it is dropped.
 #[derive(Clone)]
 struct Tracked {

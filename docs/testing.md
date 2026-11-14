@@ -45,6 +45,36 @@ scripts/gpu-lavapipe.sh                     # the GPU lane, on Mesa's software V
 - **Fake clocks.** A backoff is tested by handing the code a clock or a sleep function, so no
   test waits for real time.
 
+## Steady state
+
+A graph that is running must not allocate, and must not copy what it was handed. These are
+counting tests, in the gate's test stage, and each fails on the first allocation after its
+warm-up. None is a benchmark.
+
+| What | Test | Where |
+|---|---|---|
+| The runner, ten thousand ticks | `ten_thousand_warm_ticks_allocate_nothing` | `core/runner/tests/no_alloc.rs` |
+| The runner's parallel lanes | `warm_parallel_ticks_allocate_nothing_on_any_thread` | `core/runner/tests/lanes_alloc.rs` |
+| The runner with its counters | `warm_ticks_with_counters_allocate_nothing` | `core/runner/tests/telemetry.rs` |
+| A host's feed, step and take | `a_steady_feed_step_take_loop_allocates_nothing_after_warm_up` | `core/host/tests/host_io.rs` |
+| The same with each step's time and bytes kept | `a_probe_counts_the_bytes_each_step_publishes_and_the_loop_still_allocates_nothing` | `core/host/tests/host_io.rs` |
+| The CPU backend's steps | `a_thousand_runs_allocate_nothing` | `backends/cpu/tests/no_alloc.rs` |
+| A plugin's step, across the library boundary | `a_plugin_tick_allocates_nothing_after_warm_up` | `core/loader/tests/alloc.rs` |
+| A megabyte a plugin hands over, taken by the host: no allocation, no byte copied | `a_steady_state_take_of_a_handed_megabyte_allocates_nothing` | `core/loader/tests/handover.rs` |
+| A worker's region, on the host's thread | `a_steady_state_run_allocates_nothing_on_the_host_thread` | `backends/process/tests/alloc.rs` |
+| Every backend's steps, as a conformance check | `steps_do_not_allocate` | `testing/crates/conformance/src/checks.rs` |
+
+Copies are decided when a graph is planned, not while it runs: the planner refuses a reader that
+takes a shared value by value unless a copy is planned, so a plan with no copy step copies
+nothing (`a_single_move_consumer_needs_no_copy`, `a_shared_output_replays_by_handle_with_no_copy`,
+`a_host_that_takes_its_output_by_value_gets_it_moved_with_no_copy_or_allocation`). Where the
+host does copy, it is counted (`copies_are_counted_when_the_host_copies`).
+
+A worker is the exception, and by construction: it is another process reached through a pipe,
+so a value's bytes are written into the pipe and read out of it, once each way. The host's side
+adds no allocation to that. What the worker's own process allocates is its SDK's and its
+language's, and is not Daedalus's to promise.
+
 ## What CI cannot run
 
 - Timings. A hosted runner's clock is not a measurement. The `Budgets` workflow compares

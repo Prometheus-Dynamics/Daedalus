@@ -57,9 +57,29 @@ use sum::Sum;
 /// Log-scale buckets of a step's run time: bucket `i` counts runs under `2^(i+8)` ns.
 pub const HISTOGRAM_BUCKETS: usize = 16;
 
-/// One step's run-time histogram.
+/// One step's figures: how long its runs took, as a histogram and a sum, and the bytes it
+/// published. They cost a step one clock read and three additions when its tick is timed, and
+/// one addition for each output it publishes. Nothing here allocates.
 pub struct StepHistogram {
     buckets: [Sum; HISTOGRAM_BUCKETS],
+    /// The time of every timed run, added up.
+    total: Sum,
+    /// The lengths of the values the step published, added up.
+    bytes: Sum,
+}
+
+/// One step's figures, read out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StepFigures {
+    /// Runs that were timed: all of them when every tick is, one in `every` otherwise.
+    pub timed_runs: u32,
+    /// The time those runs took together. A run's time is from the end of the step before it
+    /// to its own end, so it holds the runner's work between the two.
+    pub time_ns: u64,
+    /// The bytes the step published: the lengths of its outputs as their cells give them. A
+    /// value handed on by reference counts its length and is not copied. A typed value, whose
+    /// size the runner doesn't know, counts as nothing.
+    pub bytes: u64,
 }
 
 impl Default for StepHistogram {
@@ -72,12 +92,24 @@ impl StepHistogram {
     pub const fn new() -> StepHistogram {
         StepHistogram {
             buckets: [const { Sum::new() }; HISTOGRAM_BUCKETS],
+            total: Sum::new(),
+            bytes: Sum::new(),
         }
     }
 
     fn record(&self, nanos: u64) {
         let bucket = ((64 - (nanos >> 8).leading_zeros()) as usize).min(HISTOGRAM_BUCKETS - 1);
         self.buckets[bucket].add(1);
+        self.total.add(nanos);
+    }
+
+    /// The step's figures as of now.
+    pub fn figures(&self) -> StepFigures {
+        StepFigures {
+            timed_runs: self.counts().iter().sum(),
+            time_ns: self.total.get(),
+            bytes: self.bytes.get(),
+        }
     }
 
     /// The counts, one per bucket.
@@ -341,6 +373,19 @@ impl<'a> TickProbe<'a> {
         }
     }
 
+    /// This probe, also keeping each step's figures in `steps`: one entry per step of the plan.
+    pub const fn with_steps(mut self, steps: &'a [StepHistogram]) -> TickProbe<'a> {
+        self.histograms = steps;
+        self
+    }
+
+    /// Counts `len` bytes that step `step` published. One addition, on every tick.
+    pub(crate) fn add_bytes(&self, step: usize, len: u64) {
+        if let Some(histogram) = self.histograms.get(step) {
+            histogram.bytes.add(len);
+        }
+    }
+
     /// Changes how often ticks are timed, from the next tick on. Zero is taken as one.
     pub fn set_every(&self, every: u32) {
         self.every.set(every.max(1));
@@ -458,6 +503,11 @@ impl<'a> Runner<'a> {
     /// Attaches `probe`. Every tick from now on fills it.
     pub fn set_probe(&mut self, probe: &'a TickProbe<'a>) {
         self.probe = Some(probe);
+    }
+
+    /// The time and bytes of `step`, when a probe that keeps each step's figures is attached.
+    pub fn step_figures(&self, step: u32) -> Option<StepFigures> {
+        Some(self.probe?.histogram(step as usize)?.figures())
     }
 }
 

@@ -28,6 +28,7 @@
 //! are binary, each with its type, and a value whose type has no codec on both sides is refused.
 
 mod errors;
+mod events;
 mod fields;
 mod requests;
 mod responses;
@@ -35,15 +36,15 @@ mod responses;
 use std::collections::VecDeque;
 
 pub use errors::{Diagnostic, ErrorCode, ServiceError, Severity};
+pub use events::{EndReason, EventBody, FaultEvent, TelemetryEvent};
 pub use fields::TypedValue;
 pub use requests::{
     CacheAction, EventKinds, InspectTarget, Op, OpKind, PlanForm, PlanOptions, RunId, StartConfig,
     StopMode, SubId, TelemetryLevel, WatchTarget,
 };
 pub use responses::{
-    CacheInfo, CarryReport, EndReason, EventBody, FaultEvent, HostInfo, Inspection, Names,
-    PlanSummary, PluginInfo, PortInfo, Reply, RunBrief, RunInfo, RunState, StepSummary,
-    TelemetryEvent, TelemetryInfo, TelemetryRow, TraceEntry,
+    CacheInfo, CarryReport, HostInfo, Inspection, Names, PlanSummary, PluginInfo, PortInfo, Reply,
+    RunBrief, RunInfo, RunState, StepSummary, TelemetryInfo, TelemetryRow, TraceEntry,
 };
 
 use crate::codec::{Reader, Writer};

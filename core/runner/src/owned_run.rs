@@ -87,6 +87,8 @@ pub struct RunBuffers {
     _faults: Raw<StepFault>,
     progress: Arc<[Progress]>,
     probe: Option<Raw<TickProbe<'static>>>,
+    /// Each step's figures, which the probe fills. Empty without a probe.
+    _figures: Raw<crate::probe::StepHistogram>,
 }
 
 impl RunBuffers {
@@ -196,6 +198,13 @@ pub fn build(
         .max()
         .unwrap_or(0);
     let may_pend = meta.iter().filter(|record| record.may_pend).count();
+    // One entry per step for a probe to fill, and none where there is no probe.
+    let figures = Raw::new(match clock {
+        Some(_) => (0..count)
+            .map(|_| crate::probe::StepHistogram::new())
+            .collect(),
+        None => Vec::new(),
+    });
     let buffers = RunBuffers {
         _steps: Raw::new(steps),
         _meta: Raw::new(meta),
@@ -220,7 +229,12 @@ pub fn build(
         cancel: Arc::new(CancelWord::new()),
         _faults: Raw::new(vec![StepFault::EMPTY; count]),
         progress: (0..count).map(|_| Progress::new()).collect(),
-        probe: clock.map(|clock| Raw::new(vec![TickProbe::sampled_by(clock, 1)])),
+        probe: clock.map(|clock| {
+            Raw::new(vec![
+                TickProbe::sampled_by(clock, 1).with_steps(figures.shared()),
+            ])
+        }),
+        _figures: figures,
     };
     // SAFETY: each buffer is borrowed exactly once here, and `RunBuffers` keeps them alive until
     // the runner is gone, as the function's documentation requires of the caller.

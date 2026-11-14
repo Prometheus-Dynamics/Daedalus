@@ -148,6 +148,45 @@ fn a_warm_tick_with_a_probe_attached_allocates_nothing() {
 }
 
 #[test]
+fn each_steps_time_is_summed_and_a_step_that_publishes_nothing_has_no_bytes() {
+    static CLOCK: AtomicU64 = AtomicU64::new(0);
+    fn clock() -> u64 {
+        CLOCK.fetch_add(100, Ordering::Relaxed)
+    }
+    let steps: &'static [StepHistogram] = leak(vec![StepHistogram::new(), StepHistogram::new()]);
+    let probe: &'static TickProbe<'static> =
+        Box::leak(Box::new(TickProbe::new(clock).with_steps(steps)));
+    let mut runner = runner(2);
+    assert_eq!(runner.step_figures(0), None, "no probe, no figures");
+    runner.set_probe(probe);
+    for _ in 0..5 {
+        runner.tick().unwrap();
+    }
+    // The clock moves 100 ns a reading, and a step's time is one reading less the one before.
+    for step in 0..2 {
+        let figures = runner.step_figures(step).expect("a probe that keeps them");
+        assert_eq!(
+            (figures.timed_runs, figures.time_ns, figures.bytes),
+            (5, 500, 0)
+        );
+    }
+    assert_eq!(runner.step_figures(2), None);
+
+    // Keeping them costs no allocation.
+    let ((), allocations) = counted(|| {
+        for _ in 0..2_000 {
+            runner.tick().unwrap();
+            let _ = runner.step_figures(1);
+        }
+    });
+    assert_eq!(allocations, 0);
+    assert_eq!(
+        runner.step_figures(1).map(|figures| figures.timed_runs),
+        Some(2_005)
+    );
+}
+
+#[test]
 fn diagnostics_round_trip_as_json() {
     let host = Host::new(runner(2), Ports::new(&[]).unwrap(), &TYPES);
     let report = host.render_plan();
