@@ -33,6 +33,7 @@ function flushEvents(run, events) {
   for (const event of events) {
     if (event.kind === "progress") writeOut(wire.encodeProgress(run, 0, event.message, event.fraction));
     else if (event.kind === "detail") writeOut(wire.encodeDetail(run, event.text));
+    else if (event.kind === "fault_code") writeOut(wire.encodeNodeCode(run, event.code));
     else writeOut(wire.encodeLog(event.level, event.text));
   }
 }
@@ -131,6 +132,9 @@ function runRun(msg, byId, schema) {
       // More about a failure than the fault's reason holds: any number of pieces before the
       // throw, kept in order with the step's fault, and dropped by the host if the node succeeds.
       detail(text) { events.push({ kind: "detail", text: String(text) }); },
+      // A number of the node's own for this failure, for a host that acts on which failure it
+      // was. The host passes it through untouched, with the node's id.
+      faultCode(code) { events.push({ kind: "fault_code", code: code >>> 0 }); },
     };
     let result;
     try {

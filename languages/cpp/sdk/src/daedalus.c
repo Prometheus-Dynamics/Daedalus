@@ -54,7 +54,8 @@ enum {
     KIND_PONG = 0x46,
     /* Added after the layout was fixed, and not part of its hash: a host ignores a kind it
      * doesn't know. */
-    KIND_DETAIL = 0x47
+    KIND_DETAIL = 0x47,
+    KIND_NODE_CODE = 0x48
 };
 
 /* ---- arena ---------------------------------------------------------------------------------- */
@@ -610,6 +611,15 @@ void dd_detail(dd_ctx *cx, const char *text) {
     put_u8(&b, KIND_DETAIL);
     put_le(&b, cx->run, 8);
     put_str(&b, text);
+    write_packet(cx->packets, &b);
+    buf_free(&b);
+}
+
+void dd_fault_code(dd_ctx *cx, uint32_t code) {
+    dd_buf b = {0};
+    put_u8(&b, KIND_NODE_CODE);
+    put_le(&b, cx->run, 8);
+    put_u32(&b, code);
     write_packet(cx->packets, &b);
     buf_free(&b);
 }

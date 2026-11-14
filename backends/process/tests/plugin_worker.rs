@@ -214,5 +214,10 @@ fn what_a_plugins_node_gives_as_detail_reaches_the_host_through_its_worker() {
     assert!(matches!(end, StepEnd::Fault));
     assert!(cx.reason().contains("panicked"), "{}", cx.reason());
     assert_eq!(kept.text(), "boom: what led up to it, in 2 pieces");
+    assert_eq!(
+        (cx.code, cx.code_is_own()),
+        (daedalus_abi::own::PANIC, true),
+        "a panic in a worker is named as one, as it is in the host's process"
+    );
     release(boom);
 }

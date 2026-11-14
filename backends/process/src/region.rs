@@ -135,6 +135,8 @@ impl ProcessBackend {
                 writer: Writer::new(),
                 killed: Vec::new(),
                 fault: None,
+                code: None,
+                panicked: false,
             }),
         };
         self.workers.push(Arc::new(shared));

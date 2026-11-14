@@ -67,6 +67,7 @@ int stateful_counter(dd_ctx* cx, const dd_value* in, dd_value* out) {
 int failure_diagnostic(dd_ctx* cx, const dd_value*, dd_value*) {
     dd_detail(cx, "diagnostic detail: the value is rejected, ");
     dd_detail(cx, "and this is the rest of it");
+    dd_fault_code(cx, 77);
     dd_fault(cx, "node_error", "diagnostic: the value is rejected");
     return 1;
 }

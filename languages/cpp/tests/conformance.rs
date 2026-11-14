@@ -70,6 +70,8 @@ fn a_fault_and_a_malformed_packet_each_leave_the_worker_serving() {
         assert_eq!(buf[0], kind::DETAIL, "the detail comes before the fault");
     }
     read_packet(&mut stdout, DEFAULT_CAP, &mut buf).unwrap();
+    assert_eq!(buf[0], kind::NODE_CODE, "then the node's own code");
+    read_packet(&mut stdout, DEFAULT_CAP, &mut buf).unwrap();
     assert_eq!(buf[0], kind::FAULT, "then the fault");
     read_packet(&mut stdout, DEFAULT_CAP, &mut buf).unwrap();
     assert_eq!(buf[0], kind::OUTPUTS);

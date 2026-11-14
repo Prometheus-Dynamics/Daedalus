@@ -28,6 +28,7 @@ pub mod kind {
     pub const STATE_VALUE: u8 = 0x45;
     pub const PONG: u8 = 0x46;
     pub const DETAIL: u8 = 0x47;
+    pub const NODE_CODE: u8 = 0x48;
 }
 
 /// One boundary value: which node's port it is for, and the value.
@@ -229,6 +230,12 @@ pub enum WorkerMsg {
         run: u64,
         text: String,
     },
+    /// The code a node of run `run` gives its failure: the node's own number, which the host
+    /// passes through untouched as the fault's code. Sent before the fault.
+    NodeCode {
+        run: u64,
+        code: u32,
+    },
 }
 
 fn put_boundary(
@@ -395,6 +402,11 @@ impl WorkerMsg {
                 out.u64(*run);
                 out.str(text)?;
             }
+            WorkerMsg::NodeCode { run, code } => {
+                out.u8(kind::NODE_CODE);
+                out.u64(*run);
+                out.u32(*code);
+            }
         }
         Ok(())
     }
@@ -482,6 +494,10 @@ impl WorkerMsg {
             kind::DETAIL => WorkerMsg::Detail {
                 run: input.u64()?,
                 text: input.str()?,
+            },
+            kind::NODE_CODE => WorkerMsg::NodeCode {
+                run: input.u64()?,
+                code: input.u32()?,
             },
             other => return Err(WireError::UnknownKind(other)),
         };

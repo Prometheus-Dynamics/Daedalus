@@ -39,6 +39,12 @@ class Context:
         node writes and then doesn't fail is dropped by the host."""
         self.events.append(("detail", str(text)))
 
+    def fault_code(self, code):
+        """Gives this failure a number of the node's own, for a host that acts on which failure
+        it was without reading the words. Call it before raising. The number means what this
+        node's author says: the host passes it through untouched, with the node's id."""
+        self.events.append(("fault_code", int(code)))
+
 
 class Node:
     def __init__(self, id, inputs, outputs, fn, state=None):
@@ -223,6 +229,8 @@ def _flush_events(run, context, out):
             wire.write_packet(out, wire.encode_progress(run, 0, event[2], event[1]))
         elif event[0] == "detail":
             wire.write_packet(out, wire.encode_detail(run, event[1]))
+        elif event[0] == "fault_code":
+            wire.write_packet(out, wire.encode_node_code(run, event[1]))
         else:
             wire.write_packet(out, wire.encode_log(event[1], event[2]))
     context.events = []

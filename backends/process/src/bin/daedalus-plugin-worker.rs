@@ -138,6 +138,7 @@ fn execute(
     node: &str,
     inputs: &[BoundaryValue],
     kept: &'static daedalus_abi::KeptDetail,
+    node_code: &mut Option<u32>,
 ) -> Result<Vec<BoundaryValue>, (FaultCode, String)> {
     // Input bytes live here for the call; the cells point into them.
     let mut bufs = Vec::new();
@@ -167,7 +168,18 @@ fn execute(
     kept.attach(&mut cx);
     let end = run_step(&mut served.step, &mut Slots::of(&mut cells), &mut cx);
     if !matches!(end, StepEnd::Done) {
-        return Err((FaultCode::NodeError, cx.reason().to_owned()));
+        // A panic is the host's to name, and travels as that kind of fault. Any other code is
+        // the node's own, and is sent as it is.
+        let panicked = cx.code_is_own() && cx.code == daedalus_abi::own::PANIC;
+        if !cx.code_is_own() && cx.code != 0 {
+            *node_code = Some(cx.code);
+        }
+        let kind = if panicked {
+            FaultCode::NodePanic
+        } else {
+            FaultCode::NodeError
+        };
+        return Err((kind, cx.reason().to_owned()));
     }
     let mut outputs = Vec::new();
     for (index, (port, ty)) in served.outputs.iter().enumerate() {
@@ -245,7 +257,8 @@ fn main() {
                         status = RunStatus::Fault;
                         break;
                     };
-                    let result = execute(entry, node, &run.inputs, kept);
+                    let mut node_code = None;
+                    let result = execute(entry, node, &run.inputs, kept, &mut node_code);
                     let detail = kept.take();
                     match result {
                         Ok(values) => outputs.extend(values),
@@ -256,6 +269,10 @@ fn main() {
                                     text: detail,
                                 };
                                 let _ = send(&mut out, &more, &schema);
+                            }
+                            if let Some(code) = node_code {
+                                let number = WorkerMsg::NodeCode { run: run.run, code };
+                                let _ = send(&mut out, &number, &schema);
                             }
                             let fault = WorkerMsg::Fault(Fault {
                                 run: run.run,

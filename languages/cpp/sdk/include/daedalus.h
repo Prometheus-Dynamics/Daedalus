@@ -109,6 +109,11 @@ void dd_log(dd_ctx *cx, const char *level, const char *text);
  * dropped by the host. */
 void dd_detail(dd_ctx *cx, const char *text);
 
+/* Gives this failure a number of the node's own, for a host that acts on which failure it was
+ * without reading the words. Call it before dd_fault. The number means what this node's author
+ * says: the host passes it through untouched, with the node's id. */
+void dd_fault_code(dd_ctx *cx, uint32_t code);
+
 /* A node's state, kept in the worker between runs. Nodes with no state never touch it. */
 dd_value *dd_state(dd_ctx *cx);
 void dd_set_state(dd_ctx *cx, dd_value value);

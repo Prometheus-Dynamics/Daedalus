@@ -224,6 +224,7 @@ pub fn stateful_counter(delta: i64, state: &mut Count) -> i64 {
 pub fn failure_diagnostic(value: i64, cx: &Ctx) -> Result<i64, Fault> {
     cx.detail("diagnostic detail: the value is rejected, ");
     cx.detail("and this is the rest of it");
+    cx.fault_code(77);
     Err(Fault {
         code: FaultCode::NodeError,
         reason: format!("value {value} is refused"),

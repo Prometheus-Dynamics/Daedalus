@@ -272,6 +272,10 @@ public final class Worker {
                 out.str(event.message());
                 out.u8(1);
                 out.f32(event.fraction());
+            } else if (event.kind().equals("fault_code")) {
+                out.u8(Wire.NODE_CODE);
+                out.u64(new java.math.BigInteger(Long.toString(run)));
+                out.u32(Long.parseLong(event.message()));
             } else if (event.kind().equals("detail")) {
                 out.u8(Wire.DETAIL);
                 out.u64(new java.math.BigInteger(Long.toString(run)));
