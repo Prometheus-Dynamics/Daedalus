@@ -35,6 +35,8 @@ use daedalus_backend::Backend;
 use daedalus_graph::GraphBody;
 use daedalus_planner::cache::PlanCache;
 use daedalus_registry::Registry;
+#[cfg(target_os = "linux")]
+use daedalus_runner::event_fd::{EventFd, poll_readable};
 use daedalus_wire::Schema;
 use daedalus_wire::service::{
     Capabilities, EndReason, ErrorCode, OpKind, PlanSummary, PluginInfo, RunId, ServiceError,
@@ -106,12 +108,31 @@ pub trait PluginLoader: Send {
     ) -> Result<PluginInfo, String>;
 }
 
+/// Waits until `acceptor` has a connection waiting (true) or `stop` is signalled (false).
+#[cfg(target_os = "linux")]
+fn until_readable(acceptor: &impl Acceptor, stop: &EventFd) -> io::Result<bool> {
+    let Some(listener) = acceptor.readable() else {
+        return Ok(true);
+    };
+    let ready = poll_readable(&[listener, stop.as_fd()], -1)?;
+    Ok(!ready[1])
+}
+
 /// Where connections come from. The unix and TCP transports implement it, and a test can too.
 pub trait Acceptor: Send + 'static {
     /// Waits for the next connection.
     fn accept(&mut self) -> io::Result<Channel>;
-    /// Something that makes a blocked `accept` return, by connecting to it.
+    /// Something that makes a blocked `accept` return, by connecting to it. On Linux it is used
+    /// only by an acceptor that gives no [`readable`](Acceptor::readable) descriptor.
     fn waker(&self) -> Box<dyn Fn() + Send + Sync>;
+    /// The descriptor that turns readable when a connection waits, with the listener set
+    /// nonblocking. Given one, the accept loop waits on it together with a stop signal of its
+    /// own and calls `accept` only once it is readable, so a stopping host never depends on
+    /// reaching its own address: a unix socket whose file was removed still stops.
+    #[cfg(target_os = "linux")]
+    fn readable(&self) -> Option<std::os::fd::BorrowedFd<'_>> {
+        None
+    }
     /// The address, for logs.
     fn describe(&self) -> String;
 }
@@ -336,13 +357,41 @@ impl ServiceHost {
         pause: impl Fn(Duration) + Send + 'static,
     ) -> Listener {
         let address = acceptor.describe();
-        lock(&self.wakers).push(acceptor.waker());
+        #[cfg(target_os = "linux")]
+        let stop = acceptor
+            .readable()
+            .and_then(|_| EventFd::new().ok())
+            .map(Arc::new);
+        #[cfg(target_os = "linux")]
+        let wake: Box<dyn Fn() + Send + Sync> = match &stop {
+            Some(stop) => {
+                let stop = Arc::clone(stop);
+                Box::new(move || stop.signal())
+            }
+            None => acceptor.waker(),
+        };
+        #[cfg(not(target_os = "linux"))]
+        let wake = acceptor.waker();
+        lock(&self.wakers).push(wake);
         let host = Arc::clone(self);
         let thread = std::thread::Builder::new()
             .name("daedalus-accept".into())
             .spawn(move || {
                 let mut failures = 0u32;
                 while !host.is_stopping() {
+                    #[cfg(target_os = "linux")]
+                    if let Some(stop) = &stop {
+                        match until_readable(&acceptor, stop) {
+                            Ok(true) => {}
+                            Ok(false) => break,
+                            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                            Err(_) => {
+                                failures = failures.saturating_add(1);
+                                pause(accept_backoff(failures));
+                                continue;
+                            }
+                        }
+                    }
                     match acceptor.accept() {
                         Ok(channel) => {
                             failures = 0;
@@ -352,6 +401,8 @@ impl ServiceHost {
                             }
                             host.admit(channel);
                         }
+                        // Readable, then taken by the time `accept` ran: wait again.
+                        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                         Err(_) => {
                             failures = failures.saturating_add(1);
                             pause(accept_backoff(failures));

@@ -549,6 +549,70 @@ fn a_unix_socket_serves_clients_and_replaces_a_stale_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Joins `listener` on a thread of its own and says whether it ended within ten seconds.
+#[cfg(unix)]
+fn joins(listener: daedalus_host::listen::Listener) -> bool {
+    let (done, ended) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        listener.join();
+        let _ = done.send(());
+    });
+    ended
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .is_ok()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_host_whose_socket_file_was_removed_still_stops() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("listen-unix-removed");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("daedalusd.sock");
+    let host = host(ListenOptions::default());
+    let listener = host.listen_unix(&path).unwrap();
+    let client = Client::connect(Endpoint::unix(&path), Options::default()).unwrap();
+    client.ping().unwrap();
+    drop(client);
+
+    // The file goes while the host serves, as when its directory is cleaned away.
+    std::fs::remove_dir_all(&dir).unwrap();
+    host.shutdown();
+    assert!(
+        joins(listener),
+        "the accept loop ended without its socket file"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stopping_host_leaves_a_socket_file_that_replaced_its_own() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("listen-unix-replaced");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("daedalusd.sock");
+    let first = host(ListenOptions::default());
+    let first_listener = first.listen_unix(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let second = host(ListenOptions::default());
+    let second_listener = second.listen_unix(&path).unwrap();
+
+    first.shutdown();
+    assert!(joins(first_listener), "the first host stopped");
+    assert!(
+        path.exists(),
+        "the second host's socket file is not the first's to remove"
+    );
+    let client = Client::connect(Endpoint::unix(&path), Options::default()).unwrap();
+    client.ping().unwrap();
+    drop(client);
+
+    second.shutdown();
+    assert!(joins(second_listener));
+    assert!(!path.exists(), "a host removes the socket file it bound");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_run_that_is_reloaded_or_stopped_releases_its_steps() {
     let live = || listen_support::PROBES.load(Ordering::SeqCst);

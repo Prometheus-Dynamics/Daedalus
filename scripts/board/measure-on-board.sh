@@ -73,7 +73,24 @@ mkdir -p "$here/daemon/plugins"
 cp "$here/lib/libdaedalus_dylib_fixture.so" "$here/daemon/plugins/fixture.so"
 printf 'listen = ["unix:%s"]\nplugin_dir = "%s"\n' "$here/daemon/d.sock" "$here/daemon/plugins" \
   > "$here/daemon/daedalusd.toml"
-started="$(date +%s%N 2>/dev/null)"
+# Nanoseconds now. A busybox `date` prints `%N` as it is, so a board without a finer clock in
+# `date` reads /proc/uptime, whose resolution is 10 ms, and the figure says which it was.
+now_ns() {
+  t="$(date +%s%N 2>/dev/null)"
+  case "$t" in
+    '' | *[!0-9]*)
+      read -r up _ < /proc/uptime
+      hundredths="${up#*.}"
+      echo $(( ${up%.*} * 1000000000 + ${hundredths#0} * 10000000 ))
+      ;;
+    *) echo "$t" ;;
+  esac
+}
+case "$(date +%s%N 2>/dev/null)" in
+  '' | *[!0-9]*) clock_resolution_ns=10000000 ;;
+  *) clock_resolution_ns=1 ;;
+esac
+started="$(now_ns)"
 ./bin/daedalusd --config "$here/daemon/daedalusd.toml" > "$out/daedalusd.log" 2>&1 &
 daemon=$!
 echo "$daemon" > "$here/daemon.pid"
@@ -84,9 +101,9 @@ until ctl ping >/dev/null 2>&1; do
   if [ "$tries" -gt 500 ] || ! kill -0 "$daemon" 2>/dev/null; then break; fi
   sleep 0.01 2>/dev/null || sleep 1
 done
-answered="$(date +%s%N 2>/dev/null)"
+answered="$(now_ns)"
 {
-  echo "daemon_start_to_first_answer_ns $((answered - started))"
+  echo "daemon_start_to_first_answer_ns $((answered - started)) resolution_ns $clock_resolution_ns"
   echo "daemon_rss_idle_kb $(rss_kb "$daemon")"
   ctl put-graph g "$here/g.json" >/dev/null 2>&1
   ctl plan g >/dev/null 2>&1

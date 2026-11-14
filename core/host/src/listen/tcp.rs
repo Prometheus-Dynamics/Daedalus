@@ -13,6 +13,9 @@ pub struct TcpAcceptor {
     listener: TcpListener,
     addr: SocketAddr,
     write_timeout: Option<Duration>,
+    /// The listener is nonblocking, so the accept loop waits on its descriptor.
+    #[cfg(target_os = "linux")]
+    waits: bool,
 }
 
 impl TcpAcceptor {
@@ -26,10 +29,14 @@ impl TcpAcceptor {
         }
         let listener = TcpListener::bind(addr)?;
         let addr = listener.local_addr()?;
+        #[cfg(target_os = "linux")]
+        let waits = listener.set_nonblocking(true).is_ok();
         Ok(TcpAcceptor {
             listener,
             addr,
             write_timeout,
+            #[cfg(target_os = "linux")]
+            waits,
         })
     }
 
@@ -50,6 +57,8 @@ impl Acceptor for TcpAcceptor {
                 std::format!("{peer} is not a loopback peer"),
             ));
         }
+        // A connection is served blocking, whatever the listener is.
+        stream.set_nonblocking(false)?;
         stream.set_write_timeout(self.write_timeout)?;
         let _ = stream.set_nodelay(true);
         let (reader, closer) = (stream.try_clone()?, stream.try_clone()?);
@@ -67,6 +76,11 @@ impl Acceptor for TcpAcceptor {
         Box::new(move || {
             let _ = TcpStream::connect(addr);
         })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn readable(&self) -> Option<std::os::fd::BorrowedFd<'_>> {
+        self.waits.then(|| std::os::fd::AsFd::as_fd(&self.listener))
     }
 
     fn describe(&self) -> std::string::String {
