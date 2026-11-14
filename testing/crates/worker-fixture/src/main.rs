@@ -6,6 +6,9 @@
 //! writes a megabyte to stderr before each run, `log` sends two log messages before each run's
 //! outputs, `log-exit` sends one and exits, and `long-fault` fails each run with a reason of
 //! several lines.
+//!
+//! It asks its host for shared memory, as a Rust worker does, unless `DAEDALUS_FIXTURE_PLAIN` is
+//! set: then it stays on the plain path, so one binary measures both.
 
 #![forbid(unsafe_code)]
 
@@ -17,10 +20,11 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Duration;
 
+use daedalus_process_shm::{Inbox, Incoming, Lent};
 use daedalus_wire::codec::Writer;
 use daedalus_wire::{
     DEFAULT_CAP, Fault, FaultCode, HostMsg, LogLevel, Outputs, PacketError, Run, RunStatus, Schema,
-    WireValue, WorkerMsg, read_packet, write_packet,
+    WireValue, WorkerMsg, write_packet,
 };
 use daedalus_worker_conformance::{CUSTOM_KEY, DIAGNOSTIC_CODE, DIAGNOSTIC_DETAIL, hello};
 
@@ -67,6 +71,7 @@ fn run(
     run: Run,
     schema: &Schema,
     state: &mut BTreeMap<String, WireValue>,
+    lent: &Lent,
     out: &mut impl Write,
 ) -> Result<(), PacketError> {
     let mut outputs = Vec::new();
@@ -108,15 +113,15 @@ fn run(
             }
         }
     }
-    send(
-        out,
-        &WorkerMsg::Outputs(Outputs {
-            run: run.run,
-            status,
-            outputs,
-        }),
-        schema,
-    )
+    let mut writer = Writer::new();
+    WorkerMsg::Outputs(Outputs {
+        run: run.run,
+        status,
+        outputs,
+    })
+    .encode(schema, &mut writer)
+    .expect("outputs encode");
+    lent.send_outputs(&writer.buf, out)
 }
 
 fn main() {
@@ -129,16 +134,26 @@ fn main() {
     if send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).is_err() {
         return;
     }
-    let stdin = io::stdin();
-    let mut input = stdin.lock();
+    let lent = Lent::default();
+    if std::env::var_os("DAEDALUS_FIXTURE_PLAIN").is_none() {
+        let _ = lent.ask(&mut out);
+    }
+    let mut inbox = Inbox::new(lent.clone());
     let mut buf = Vec::new();
     let mut state: BTreeMap<String, WireValue> = BTreeMap::new();
     loop {
-        match read_packet(&mut input, DEFAULT_CAP, &mut buf) {
-            Ok(()) => {}
+        let decoded = match inbox.next(&mut buf) {
+            Ok(Incoming::Packet(len)) => HostMsg::decode(&buf[..len], &schema),
+            Ok(Incoming::Run { len, .. }) => {
+                match lent.run(len, |bytes| HostMsg::decode(bytes, &schema)) {
+                    Some(decoded) => decoded,
+                    None => continue,
+                }
+            }
+            Ok(Incoming::Granted | Incoming::Plain(_)) => continue,
             Err(_) => return,
-        }
-        let msg = match HostMsg::decode(&buf, &schema) {
+        };
+        let msg = match decoded {
             Ok(msg) => msg,
             Err(error) => {
                 let _ = send(
@@ -223,7 +238,7 @@ fn main() {
                     }
                     Mode::Normal => {}
                 }
-                if run(run_msg, &schema, &mut state, &mut out).is_err() {
+                if run(run_msg, &schema, &mut state, &lent, &mut out).is_err() {
                     return;
                 }
             }

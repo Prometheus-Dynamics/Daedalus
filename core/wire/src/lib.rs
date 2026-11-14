@@ -14,6 +14,7 @@ mod hello;
 mod packet;
 mod schema;
 pub mod service;
+pub mod shared;
 mod value;
 mod worker;
 pub use worker::kind;

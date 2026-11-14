@@ -3,7 +3,9 @@
 //! step run per operation: the host sends the two `i64` inputs, the worker adds them and sends the
 //! sum back. Run by hand, not in the gate:
 //! `process-timings WORKER [BATCHES] [MEGABYTES]`, where WORKER is the `daedalus-worker-fixture`
-//! binary. With MEGABYTES it also times a payload of that size handed to the worker and back.
+//! binary. With MEGABYTES it also times a payload of that size handed to the worker and back, and
+//! the node's own work on it (the worker reverses it) timed in this process, so the transport's
+//! share is the difference. It says which transport the worker got: shared memory or plain.
 //!
 //! It warms up, then times BATCHES batches of 1,000 operations and prints the median, minimum and
 //! maximum of the per-operation times, in nanoseconds. It then counts the allocations of 200 more
@@ -258,12 +260,29 @@ fn hand_over(backend: &ProcessBackend, megabytes: usize, batches: usize) {
             run();
         }
     });
+    // The node's own work (the worker reverses the bytes), timed here on the same machine,
+    // so the transport's share is the hand-over less this.
+    let mut work = Vec::with_capacity(batches);
+    for _ in 0..batches {
+        let start = Instant::now();
+        payload.reverse();
+        core::hint::black_box(&payload);
+        work.push(start.elapsed().as_nanos() as f64);
+    }
+    work.sort_by(f64::total_cmp);
+    let per_mb = median(&times) / megabytes as f64;
+    let transport = if backend.telemetry().grants > 0 {
+        "shared"
+    } else {
+        "plain"
+    };
+    let work_per_mb = median(&work) / megabytes as f64;
     println!(
-        "hand_over megabytes {megabytes} median_ns {:.0} min_ns {:.0} max_ns {:.0} ns_per_megabyte {:.0} runs {} allocations_per_8_runs {allocations}",
+        "hand_over transport {transport} megabytes {megabytes} median_ns {:.0} min_ns {:.0} max_ns {:.0} ns_per_megabyte {per_mb:.0} node_work_ns_per_megabyte {work_per_mb:.0} transport_ns_per_megabyte {:.0} runs {} allocations_per_8_runs {allocations}",
         median(&times),
         times[0],
         times[times.len() - 1],
-        median(&times) / megabytes as f64,
+        per_mb - work_per_mb,
         times.len()
     );
     release(step);

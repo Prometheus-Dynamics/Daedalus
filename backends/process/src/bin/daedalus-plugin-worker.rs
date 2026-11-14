@@ -12,12 +12,13 @@ use std::process;
 
 use daedalus_abi::{BoundaryPort, Slot, SlotState, Slots, Step, StepCx, StepEnd};
 use daedalus_loader::{Loader, Plugin, RegionIn, run_step};
+use daedalus_process_shm::{Inbox, Incoming, Lent, PLAIN_LINE};
 use daedalus_types::{Scalar, TypeKey};
 use daedalus_wire::codec::{Reader, Writer};
 use daedalus_wire::{
-    BoundaryValue, DEFAULT_CAP, Declaration, Fault, FaultCode, Hello, HostMsg, Outputs,
+    BoundaryValue, DEFAULT_CAP, Declaration, Fault, FaultCode, Hello, HostMsg, LogLevel, Outputs,
     PacketError, PortSpec, RunStatus, Schema, WireType, WireValue, WorkerMsg, decode_value,
-    encode_value, read_packet, write_packet,
+    encode_value, write_packet,
 };
 
 /// A node of the plugin, compiled once: its step, and its port types in declaration order.
@@ -220,15 +221,39 @@ fn main() {
     if send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).is_err() {
         return;
     }
-    let stdin = io::stdin();
-    let mut input = stdin.lock();
+    // Shared memory, when the host lends it: large runs and outputs travel in lent buffers.
+    let lent = Lent::default();
+    let mut unanswered = lent.ask(&mut out).unwrap_or(false);
+    let mut inbox = Inbox::new(lent.clone());
     let mut buf = Vec::new();
     let kept = daedalus_abi::KeptDetail::forever();
     loop {
-        if read_packet(&mut input, DEFAULT_CAP, &mut buf).is_err() {
-            return;
-        }
-        let msg = match HostMsg::decode(&buf, &schema) {
+        let decoded = match inbox.next(&mut buf) {
+            Ok(Incoming::Packet(len)) => {
+                if unanswered && buf.first() == Some(&daedalus_wire::kind::RUN) {
+                    unanswered = false;
+                    log(&mut out, PLAIN_LINE, &schema);
+                }
+                HostMsg::decode(&buf[..len], &schema)
+            }
+            Ok(Incoming::Run { len, .. }) => {
+                match lent.run(len, |bytes| HostMsg::decode(bytes, &schema)) {
+                    Some(decoded) => decoded,
+                    None => continue,
+                }
+            }
+            Ok(Incoming::Granted) => {
+                unanswered = false;
+                continue;
+            }
+            Ok(Incoming::Plain(reason)) => {
+                unanswered = false;
+                log(&mut out, &format!("{PLAIN_LINE}: {reason}"), &schema);
+                continue;
+            }
+            Err(_) => return,
+        };
+        let msg = match decoded {
             Ok(msg) => msg,
             Err(error) => {
                 let fault = WorkerMsg::Fault(Fault {
@@ -292,7 +317,10 @@ fn main() {
                     status,
                     outputs,
                 });
-                if send(&mut out, &reply, &schema).is_err() {
+                let mut writer = Writer::new();
+                if reply.encode(&schema, &mut writer).is_err()
+                    || lent.send_outputs(&writer.buf, &mut out).is_err()
+                {
                     return;
                 }
             }
@@ -305,6 +333,15 @@ fn main() {
             HostMsg::Cancel { .. } | HostMsg::StateExport { .. } | HostMsg::StateImport { .. } => {}
         }
     }
+}
+
+/// Sends one log line to the host.
+fn log(out: &mut impl Write, text: &str, schema: &Schema) {
+    let line = WorkerMsg::Log {
+        level: LogLevel::Info,
+        text: text.to_owned(),
+    };
+    let _ = send(out, &line, schema);
 }
 
 /// The hello for a plugin's nodes, with each node compiled once.

@@ -1,0 +1,17 @@
+[package]
+name = "daedalus-process-shm"
+description = "Shared memory between a host and its process workers: large packets in lent buffers instead of on the stream."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-wire = { path = "../../core/wire" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+shm-fdpass = { workspace = true }
+shm-ring-buffers = { workspace = true }
+
+[lints]
+workspace = true

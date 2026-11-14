@@ -76,6 +76,32 @@ which the worker declared, so nothing on the wire names a type. There is no JSON
 on this path. The first message each way carries a protocol version and a layout hash, and a
 mismatch is refused. `core/wire` is the Rust implementation, and each SDK has its own.
 
+### Large values in shared memory
+
+On Linux a worker's stdin and stdout are one Unix socket, and a large value doesn't travel in its
+packet. After the hello the host sends a ping. A worker that can take shared memory asks for it
+(kind `0x49`) before its pong, and the host always answers (kind `0x07`): either it grants it,
+passing a pool of two memfd buffers over the socket, one for each direction, or it says the worker
+stays on the plain path, with the reason. A worker logs that reason as
+"host offers no shared memory: plain path: <reason>". A host older than this never answers: the
+worker logs the same line, without a reason, when its first run arrives with no answer, and stays
+plain. Nothing is ignored on either side.
+
+With memory granted, a packet of 64 KiB or more is written into the buffer for its direction and
+only a short note (kind `0x08` from the host, `0x4A` from the worker) travels on the socket. Only a
+run goes in the host's buffer and only outputs in the worker's, and the host waits for one run's
+outputs before it writes the next, so neither side ever writes over what the other is reading.
+Each buffer starts at 1 MiB. A value that doesn't fit goes plain that once, and the host lends a
+larger pool (the next power of two) before the next run. A worker that dies, or hangs past its
+deadline and is killed, takes its mapping with it, and the worker started in its place is lent a
+new pool.
+
+`ProcessBackend::telemetry()` shows each worker's transport: `grants` counts pools lent,
+`plain_workers` counts workers that stayed plain (they didn't ask, or were refused), and
+`shared_in` and `shared_out` count runs and outputs that travelled in shared memory. The kinds
+were added after the layout hash was fixed and aren't part of it. Elsewhere than Linux the worker
+runs on pipes and stays plain.
+
 ## Failure
 
 A worker that exits, hangs or sends something unreadable is a fault of its region, with the

@@ -472,6 +472,7 @@ dependencies = [
  "daedalus-abi",
  "daedalus-backend",
  "daedalus-loader",
+ "daedalus-process-shm",
  "daedalus-registry",
  "daedalus-runner",
  "daedalus-types",
@@ -908,6 +909,7 @@ version = "3.0.1-dev"
 dependencies = [
  "daedalus-backend-process",
  "daedalus-macros",
+ "daedalus-process-shm",
  "daedalus-registry",
  "daedalus-types",
  "daedalus-wire",
@@ -994,6 +996,15 @@ dependencies = [
  "daedalus-types",
  "daedalus-value",
  "serde_json",
+]
+
+[[package]]
+name = "daedalus-process-shm"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-wire",
+ "shm-fdpass",
+ "shm-ring-buffers",
 ]
 
 [[package]]
@@ -1168,6 +1179,7 @@ dependencies = [
 name = "daedalus-worker-fixture"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus-process-shm",
  "daedalus-wire",
  "daedalus-worker-conformance",
 ]
@@ -2393,6 +2405,40 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "shm-fdpass"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos?rev=bded77a096ce48cf00d686ceb8f3a41286ea871e#bded77a096ce48cf00d686ceb8f3a41286ea871e"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "shm-ring"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos?rev=bded77a096ce48cf00d686ceb8f3a41286ea871e#bded77a096ce48cf00d686ceb8f3a41286ea871e"
+dependencies = [
+ "libc",
+ "shm-sample-time",
+]
+
+[[package]]
+name = "shm-ring-buffers"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos?rev=bded77a096ce48cf00d686ceb8f3a41286ea871e#bded77a096ce48cf00d686ceb8f3a41286ea871e"
+dependencies = [
+ "libc",
+ "shm-ring",
+]
+
+[[package]]
+name = "shm-sample-time"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos?rev=bded77a096ce48cf00d686ceb8f3a41286ea871e#bded77a096ce48cf00d686ceb8f3a41286ea871e"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "signal-hook"

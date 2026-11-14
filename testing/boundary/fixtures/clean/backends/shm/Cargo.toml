@@ -1,0 +1,8 @@
+[package]
+name = "fx-shm"
+version = "0.0.0"
+edition = "2024"
+
+# One of the three shared-memory crates, from the allowed repository and revision.
+[dependencies]
+shm-fdpass = { workspace = true }

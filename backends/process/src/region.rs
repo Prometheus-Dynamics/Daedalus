@@ -88,7 +88,7 @@ impl ProcessBackend {
 
     /// Starts the worker of `spec` and reads its hello.
     fn greet(&self, spec: &WorkerSpec) -> Result<(Worker, Hello), ProcessError> {
-        let worker = Worker::spawn(spec, &self.telemetry)?;
+        let mut worker = Worker::spawn(spec, &self.telemetry)?;
         let hello = read_hello(&worker, spec.startup).map_err(|reason| ProcessError::Startup {
             program: spec.program.clone(),
             reason,
@@ -97,6 +97,12 @@ impl ProcessBackend {
             program: spec.program.clone(),
             error,
         })?;
+        worker
+            .offer(spec.startup, &self.telemetry)
+            .map_err(|reason| ProcessError::Startup {
+                program: spec.program.clone(),
+                reason,
+            })?;
         Ok((worker, hello))
     }
 
