@@ -1,3 +1,6 @@
 [workspace]
-members = ["core/fine"]
+members = ["core/fine", "backends/shm"]
 resolver = "3"
+
+[workspace.dependencies]
+shm-fdpass = { git = "https://github.com/Prometheus-Dynamics/Lemnos", rev = "bded77a096ce48cf00d686ceb8f3a41286ea871e" }

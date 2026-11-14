@@ -24,6 +24,10 @@ for rule in core-deps no-lemnos core-names unsafe heap-free glob-folders names; 
   expect_fail "$rule" "$scripts/check-boundaries.sh" "$fixtures/$rule"
 done
 expect_fail unsafe "$scripts/check-boundaries.sh" "$fixtures/unsafe-comment"
+# The shared-memory exception is exactly three crates at one revision: another crate from the same
+# repository, or one of the three at another revision, is refused. The clean tree holds an allowed one.
+expect_fail no-lemnos "$scripts/check-boundaries.sh" "$fixtures/no-lemnos-same-repo"
+expect_fail no-lemnos "$scripts/check-boundaries.sh" "$fixtures/no-lemnos-other-rev"
 
 if out="$("$scripts/check-boundaries.sh" --root "$fixtures/clean" --no-build 2>&1)"; then
   echo "ok   clean tree"

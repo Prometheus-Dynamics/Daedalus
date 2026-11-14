@@ -36,6 +36,11 @@ embedded-hal = "1.0.0"
 glob = "0.3.4"
 hashbrown = "0.17.1"
 libc = "0.2"
+# Shared memory for process workers, at the revision the rest of the stack pins. These three crates
+# depend on nothing but libc; scripts/boundaries.py allows exactly them from that repository.
+shm-fdpass = { git = "https://github.com/Prometheus-Dynamics/Lemnos", rev = "bded77a096ce48cf00d686ceb8f3a41286ea871e" }
+shm-ring-buffers = { git = "https://github.com/Prometheus-Dynamics/Lemnos", rev = "bded77a096ce48cf00d686ceb8f3a41286ea871e" }
+shm-ring-holds = { git = "https://github.com/Prometheus-Dynamics/Lemnos", rev = "bded77a096ce48cf00d686ceb8f3a41286ea871e" }
 windows-sys = { version = "0.61", default-features = false }
 libloading = "0.9.0"
 listenfd = "1.0.2"

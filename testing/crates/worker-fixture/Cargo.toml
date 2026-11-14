@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 daedalus-wire = { path = "../../../core/wire" }
+daedalus-process-shm = { path = "../../../backends/process-shm" }
 daedalus-worker-conformance = { path = "../worker-conformance" }
 
 [lints]

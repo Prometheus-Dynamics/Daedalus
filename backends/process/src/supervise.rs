@@ -156,6 +156,11 @@ fn start(shared: &Shared) -> Result<Worker, String> {
         worker.kill();
         return Err(format!("{}: {error}", shared.spec.program.display()));
     }
+    // A worker started again after one died or was killed is lent memory anew.
+    if let Err(reason) = worker.offer(shared.spec.startup, &shared.telemetry) {
+        worker.kill();
+        return Err(format!("{}: {reason}", shared.spec.program.display()));
+    }
     Ok(worker)
 }
 
@@ -170,6 +175,7 @@ pub(crate) fn read_hello(worker: &Worker, startup: Duration) -> Result<Hello, St
                 Err(error) => Err(format!("the worker's hello did not decode: {error}")),
             }
         }
+        Got::InBuffer(_) => Err("the worker's first message was not a hello".into()),
         Got::Broken(error) => Err(format!("the worker closed before its hello: {error}")),
         Got::Timeout => Err(format!("no hello within {startup:?}")),
     }
@@ -363,7 +369,7 @@ impl OwnedStep for WorkerStep {
         let Link::Up(worker) = &mut sup.link else {
             return self.fail(&shared, sup, cx, "worker is not running", Blame::Worker);
         };
-        if let Err(error) = worker.send(&sup.writer.buf) {
+        if let Err(error) = worker.send_run(&sup.writer.buf, &shared.telemetry) {
             return self.fail(
                 &shared,
                 sup,
@@ -480,6 +486,28 @@ impl WorkerStep {
                     if let Some(outcome) = outcome {
                         return outcome;
                     }
+                }
+                Got::InBuffer(len) => {
+                    let Some(bytes) = worker.worker_wrote(len) else {
+                        return Outcome::Gone(format!(
+                            "the worker named {len} bytes of a buffer it was not lent"
+                        ));
+                    };
+                    let run_of = bytes
+                        .get(1..9)
+                        .map(|raw| u64::from_le_bytes(raw.try_into().unwrap_or([0; 8])));
+                    // Outputs from an earlier run that was cancelled or killed are stale.
+                    if run_of != Some(run) {
+                        continue;
+                    }
+                    return match self.read_outputs(bytes, &shared.schema) {
+                        Ok(status) => {
+                            shared.telemetry.bump(Count::BytesOut(len as u64));
+                            shared.telemetry.bump(Count::SharedOut);
+                            Outcome::Replied(status)
+                        }
+                        Err(error) => Outcome::Gone(format!("a malformed outputs packet: {error}")),
+                    };
                 }
                 Got::Broken(error) => return Outcome::Gone(error.to_string()),
                 Got::Timeout => {

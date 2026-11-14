@@ -66,7 +66,9 @@ about 260 KiB before its values. An edge that declares a capacity of one is 128 
 The daemon also holds, for the whole process: the last 1024 requests served (`TRACE_RING`), 64
 events for each watch that isn't being read (`WATCH_QUEUE`), and one thread for each client
 connection, of at most 64 (`ListenOptions`). A worker process costs the host 64 KiB of its last
-stderr and two packet buffers, each the size of the largest value it has carried.
+stderr and two packet buffers, each the size of the largest value it has carried. On Linux it
+also maps two shared buffers for that worker, 1 MiB each to start, which grow to the next power of
+two of the largest packet of 64 KiB or more it has carried.
 
 ## What was removed
 

@@ -1,0 +1,8 @@
+[package]
+name = "fx-thing"
+version = "0.0.0"
+edition = "2024"
+
+# From the allowed repository and revision, but not one of the three crates.
+[dependencies]
+lemnos-client = { git = "https://github.com/Prometheus-Dynamics/Lemnos", rev = "bded77a096ce48cf00d686ceb8f3a41286ea871e" }

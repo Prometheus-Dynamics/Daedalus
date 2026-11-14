@@ -17,6 +17,14 @@ UNSAFE_ALLOWED = (
 )
 HEAP_FREE_TARGETS = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"]
 PRODUCT_NAMES = re.compile(r"\b(lemnos|eidos|ariadne|gaia|orion|helios)\b", re.I)
+# The one exception to keeping Lemnos out (2026-11-14, the user's ruling, relayed by the stack's
+# coordinator): process workers move large values in shared memory with exactly these three crates,
+# from the Lemnos repository at exactly this revision, the copy the rest of the stack pins. They are
+# product-neutral and depend only on libc. Any other crate from that repository, or these at another
+# revision, is still refused, and the name stays out of every file but the lines that pin them.
+SHM_CRATES = {"shm-fdpass", "shm-ring-buffers", "shm-ring-holds"}
+SHM_URL = "https://github.com/Prometheus-Dynamics/Lemnos"
+SHM_REV = "bded77a096ce48cf00d686ceb8f3a41286ea871e"
 HEAP_TOKENS = re.compile(r"\b(alloc::|std::|Vec<|Box<|extern\s+crate\s+alloc)|\bString::|(?<!:):\s*String\b|->\s*String\b|[<&(]\s*String\b")
 FEATURE_GATE = re.compile(r'#\[cfg\((?:test|(?:any\()?feature\s*=\s*"(?:alloc|std|count-alloc|schema)")')
 
@@ -139,8 +147,15 @@ def check_no_lemnos(root, packages):
     for pkg in packages:
         for dep in pkg["dependencies"]:
             source = dep.get("source") or ""
+            if dep["name"] in SHM_CRATES and shm_source(source):
+                continue
             if dep["name"].lower().startswith("lemnos") or "lemnos" in source.lower():
                 report("no-lemnos", rel(root, pkg["manifest_path"]), 0, f"depends on {dep['name']}")
+
+
+def shm_source(source):
+    """True for the one source the shared-memory crates may come from."""
+    return source == f"git+{SHM_URL}?rev={SHM_REV}"
 
 
 def check_core_names(root):
@@ -260,7 +275,10 @@ def check_names(root):
             text = open(full, encoding="utf-8").read()
         except UnicodeDecodeError:
             continue
+        pins = os.path.basename(path) in ("Cargo.toml", "Cargo.lock")
         for lineno, line in enumerate(text.splitlines(), 1):
+            if pins and SHM_URL in line and SHM_REV in line:
+                line = line.replace(SHM_URL, "")
             if m := PRODUCT_NAMES.search(line):
                 report("names", path, lineno, f"names {m.group(0)}")
 

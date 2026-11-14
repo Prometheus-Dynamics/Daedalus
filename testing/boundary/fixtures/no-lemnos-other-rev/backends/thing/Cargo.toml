@@ -1,0 +1,8 @@
+[package]
+name = "fx-thing"
+version = "0.0.0"
+edition = "2024"
+
+# One of the three crates, at another revision.
+[dependencies]
+shm-fdpass = { git = "https://github.com/Prometheus-Dynamics/Lemnos", rev = "0000000000000000000000000000000000000000" }

@@ -10,6 +10,7 @@ repository.workspace = true
 daedalus-registry = { path = "../../core/registry" }
 daedalus-types = { path = "../../core/types" }
 daedalus-wire = { path = "../../core/wire" }
+daedalus-process-shm = { path = "../../backends/process-shm" }
 daedalus-macros = { path = "../../core/macros" }
 
 [dev-dependencies]

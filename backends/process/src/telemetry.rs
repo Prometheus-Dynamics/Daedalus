@@ -13,6 +13,10 @@ pub struct Telemetry {
     bytes_out: AtomicU64,
     stderr_bytes: AtomicU64,
     logs: AtomicU64,
+    grants: AtomicU64,
+    shared_in: AtomicU64,
+    shared_out: AtomicU64,
+    plain_workers: AtomicU64,
 }
 
 /// A copy of the counts at one time.
@@ -27,6 +31,17 @@ pub struct Snapshot {
     pub stderr_bytes: u64,
     /// Log messages the workers sent.
     pub logs: u64,
+    /// Lendings of shared memory to a worker: one at each start of a worker that asked, and one
+    /// each time a larger value made the host lend bigger buffers.
+    pub grants: u64,
+    /// Runs sent in a shared buffer instead of on the stream.
+    pub shared_in: u64,
+    /// Outputs a worker wrote in a shared buffer instead of on the stream.
+    pub shared_out: u64,
+    /// Worker starts that stayed on the plain path: the worker did not ask, or the host could
+    /// not lend. A worker on a path of large values that shows up here copies them through its
+    /// stream.
+    pub plain_workers: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -39,6 +54,10 @@ pub(crate) enum Count {
     BytesOut(u64),
     Stderr(u64),
     Log,
+    Grant,
+    SharedIn,
+    SharedOut,
+    Plain,
 }
 
 impl Telemetry {
@@ -52,6 +71,10 @@ impl Telemetry {
             Count::BytesOut(n) => (&self.bytes_out, n),
             Count::Stderr(n) => (&self.stderr_bytes, n),
             Count::Log => (&self.logs, 1),
+            Count::Grant => (&self.grants, 1),
+            Count::SharedIn => (&self.shared_in, 1),
+            Count::SharedOut => (&self.shared_out, 1),
+            Count::Plain => (&self.plain_workers, 1),
         };
         field.fetch_add(by, Ordering::Relaxed);
     }
@@ -66,6 +89,10 @@ impl Telemetry {
             bytes_out: self.bytes_out.load(Ordering::Relaxed),
             stderr_bytes: self.stderr_bytes.load(Ordering::Relaxed),
             logs: self.logs.load(Ordering::Relaxed),
+            grants: self.grants.load(Ordering::Relaxed),
+            shared_in: self.shared_in.load(Ordering::Relaxed),
+            shared_out: self.shared_out.load(Ordering::Relaxed),
+            plain_workers: self.plain_workers.load(Ordering::Relaxed),
         }
     }
 }

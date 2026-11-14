@@ -1,5 +1,10 @@
 //! The worker loop. A reader thread takes packets from stdin, so a cancel can reach a running
 //! node; the loop runs each node under a panic guard, and sends its events and outputs in order.
+//!
+//! Right after its hello the worker asks the host for shared memory. A host that lends it some
+//! sends large runs in a buffer and takes large outputs in another (`daedalus-process-shm`); one
+//! that lends none, or an older host that doesn't answer, leaves the worker on the plain path,
+//! and the worker logs one line saying so.
 
 use std::io::{self, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -8,13 +13,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 
+use daedalus_process_shm::{Inbox, Incoming, Lent, PLAIN_LINE};
 use daedalus_registry::{NodeRecord, PortDecl, TypeRef, port_type};
 use daedalus_types::{Scalar, TypeKey, Typed};
 use daedalus_wire::codec::Writer;
 use daedalus_wire::{
-    BoundaryValue, DEFAULT_CAP, Declaration, Fault, FaultCode, Hello, HostMsg, Outputs,
+    BoundaryValue, DEFAULT_CAP, Declaration, Fault, FaultCode, Hello, HostMsg, LogLevel, Outputs,
     PacketError, PortSpec, Progress, RunStatus, Schema, WireType, WireValue, WorkerMsg,
-    read_packet, write_packet,
+    write_packet,
 };
 
 use crate::context::{Context, Event};
@@ -225,17 +231,39 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
     send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).map_err(io::Error::other)?;
+    let lent = Lent::default();
+    // Until the host answers, a run means it never will: it is an older host.
+    let mut unanswered = lent.ask(&mut out).map_err(io::Error::other)?;
 
     let current = Arc::new(AtomicU64::new(0));
     let cancel = Arc::new(AtomicBool::new(false));
-    let packets = read_in_thread(current.clone(), cancel.clone());
+    let packets = read_in_thread(current.clone(), cancel.clone(), Inbox::new(lent.clone()));
 
     while let Ok(packet) = packets.recv() {
-        let packet = match packet {
-            Ok(packet) => packet,
+        let decoded = match packet {
+            Ok(Packet::Bytes(packet)) => {
+                if unanswered && packet.first() == Some(&daedalus_wire::kind::RUN) {
+                    unanswered = false;
+                    log(&mut out, PLAIN_LINE, &schema)?;
+                }
+                HostMsg::decode(&packet, &schema)
+            }
+            Ok(Packet::Run(len)) => match lent.run(len, |bytes| HostMsg::decode(bytes, &schema)) {
+                Some(decoded) => decoded,
+                None => continue,
+            },
+            Ok(Packet::Answer(None)) => {
+                unanswered = false;
+                continue;
+            }
+            Ok(Packet::Answer(Some(reason))) => {
+                unanswered = false;
+                log(&mut out, &format!("{PLAIN_LINE}: {reason}"), &schema)?;
+                continue;
+            }
             Err(_) => return Ok(()),
         };
-        let msg = match HostMsg::decode(&packet, &schema) {
+        let msg = match decoded {
             Ok(msg) => msg,
             Err(error) => {
                 let fault = WorkerMsg::Fault(Fault {
@@ -288,7 +316,12 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
                     status,
                     outputs,
                 });
-                send(&mut out, &reply, &schema).map_err(io::Error::other)?;
+                let mut writer = Writer::new();
+                reply
+                    .encode(&schema, &mut writer)
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+                lent.send_outputs(&writer.buf, &mut out)
+                    .map_err(io::Error::other)?;
             }
             HostMsg::Ping => send(&mut out, &WorkerMsg::Pong, &schema).map_err(io::Error::other)?,
             HostMsg::Shutdown => return Ok(()),
@@ -408,45 +441,82 @@ fn run_node(
         .collect()))
 }
 
+/// Sends one log line to the host.
+fn log(out: &mut impl Write, text: &str, schema: &Schema) -> io::Result<()> {
+    let line = WorkerMsg::Log {
+        level: LogLevel::Info,
+        text: text.to_owned(),
+    };
+    send(out, &line, schema).map_err(io::Error::other)
+}
+
+/// What the reader thread passes on.
+enum Packet {
+    Bytes(Vec<u8>),
+    /// A run in the lent buffer, this many bytes.
+    Run(usize),
+    /// The host answered the ask: lent memory (`None`), or the reason it lends none.
+    Answer(Option<String>),
+}
+
 /// The stdin reader. It forwards every packet in order. A run starts a new cancel window, and a
 /// cancel that names the run going on sets the cancel flag, so a cancel that arrives right after its
 /// run is never lost.
 fn read_in_thread(
     current: Arc<AtomicU64>,
     cancel: Arc<AtomicBool>,
-) -> Receiver<Result<Vec<u8>, PacketError>> {
+    mut inbox: Inbox,
+) -> Receiver<Result<Packet, PacketError>> {
     let (tx, rx) = channel();
     thread::spawn(move || {
-        let stdin = io::stdin();
-        let mut input = stdin.lock();
         let mut buf = Vec::new();
         loop {
-            match read_packet(&mut input, DEFAULT_CAP, &mut buf) {
-                Ok(()) => {
-                    let run_id = buf
-                        .get(1..9)
-                        .map(|raw| u64::from_le_bytes(raw.try_into().unwrap_or([0; 8])));
-                    match (buf.first(), run_id) {
-                        (Some(&daedalus_wire::kind::RUN), Some(run)) => {
-                            current.store(run, Ordering::SeqCst);
-                            cancel.store(false, Ordering::SeqCst);
-                        }
-                        (Some(&daedalus_wire::kind::CANCEL), Some(run))
-                            if run == current.load(Ordering::SeqCst) =>
-                        {
-                            cancel.store(true, Ordering::SeqCst);
-                        }
-                        _ => {}
-                    }
-                    let packet = std::mem::take(&mut buf);
-                    if tx.send(Ok(packet)).is_err() {
+            let len = match inbox.next(&mut buf) {
+                Ok(Incoming::Packet(len)) => len,
+                Ok(Incoming::Run { len, run }) => {
+                    current.store(run, Ordering::SeqCst);
+                    cancel.store(false, Ordering::SeqCst);
+                    if tx.send(Ok(Packet::Run(len))).is_err() {
                         return;
                     }
+                    continue;
+                }
+                Ok(Incoming::Granted) => {
+                    if tx.send(Ok(Packet::Answer(None))).is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                Ok(Incoming::Plain(reason)) => {
+                    if tx.send(Ok(Packet::Answer(Some(reason)))).is_err() {
+                        return;
+                    }
+                    continue;
                 }
                 Err(error) => {
                     let _ = tx.send(Err(error));
                     return;
                 }
+            };
+            buf.truncate(len);
+            let run_id = buf
+                .get(1..9)
+                .map(|raw| u64::from_le_bytes(raw.try_into().unwrap_or([0; 8])));
+            match (buf.first(), run_id) {
+                (Some(&daedalus_wire::kind::RUN), Some(run)) => {
+                    current.store(run, Ordering::SeqCst);
+                    cancel.store(false, Ordering::SeqCst);
+                }
+                (Some(&daedalus_wire::kind::CANCEL), Some(run))
+                    if run == current.load(Ordering::SeqCst) =>
+                {
+                    cancel.store(true, Ordering::SeqCst);
+                }
+                _ => {}
+            }
+            let packet = std::mem::take(&mut buf);
+            if tx.send(Ok(Packet::Bytes(packet))).is_err() {
+                return;
             }
         }
     });
