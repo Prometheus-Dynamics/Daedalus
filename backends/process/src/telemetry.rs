@@ -54,7 +54,10 @@ pub(crate) enum Count {
     BytesOut(u64),
     Stderr(u64),
     Log,
+    // Lending memory is Linux only.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Grant,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     SharedIn,
     SharedOut,
     Plain,

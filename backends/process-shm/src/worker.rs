@@ -6,8 +6,11 @@
 //! inbox maps a grant when it arrives, and both reach the mapping through [`Lent`].
 
 use std::io::{self, Write};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
+#[cfg(target_os = "linux")]
+use std::sync::{MutexGuard, PoisonError};
 
+#[cfg(target_os = "linux")]
 use daedalus_wire::codec::Writer;
 use daedalus_wire::{PacketError, read_packet, write_packet};
 
@@ -99,6 +102,7 @@ impl Lent {
 
 /// The reading half: reads stdin.
 pub struct Inbox {
+    #[cfg(target_os = "linux")]
     lent: Lent,
     #[cfg(target_os = "linux")]
     socket: bool,
@@ -113,7 +117,10 @@ impl Inbox {
             Inbox { lent, socket }
         }
         #[cfg(not(target_os = "linux"))]
-        Inbox { lent }
+        {
+            let _ = lent;
+            Inbox {}
+        }
     }
 
     /// Reads the next thing from the host into `buf`. A grant is mapped here, before it is

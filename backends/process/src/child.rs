@@ -52,7 +52,8 @@ impl Ring {
 /// What one receive returned.
 pub(crate) enum Got {
     Packet(Vec<u8>),
-    /// The worker's outputs, in the buffer the host lent it: the first `len` bytes.
+    /// The worker's outputs, in the buffer the host lent it: the first `len` bytes. Linux only.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     InBuffer(usize),
     /// The channel closed or broke: the worker is gone or sent something unreadable.
     Broken(PacketError),
@@ -128,6 +129,7 @@ impl Worker {
         for key in &spec.env_remove {
             command.env_remove(key);
         }
+        #[cfg(target_os = "linux")]
         let spawn_error = |error: std::io::Error| ProcessError::Spawn {
             program: spec.program.clone(),
             message: error.to_string(),
