@@ -96,6 +96,13 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 
+# What is built to run: one unit, optimised across crates. It is about a fifth smaller than the
+# compiler's default for the daemon and a host, and no slower. It costs build time, which a
+# debug build doesn't pay.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 # Firmware size profile.
 [profile.chip]
 inherits = "release"

@@ -11,6 +11,7 @@ publish = false
 daedalus-abi = { path = "../../../core/abi", features = ["count-alloc", "test-run"] }
 daedalus-backend = { path = "../../../core/backend" }
 daedalus-backend-process = { path = "../../../backends/process" }
+daedalus-runner = { path = "../../../core/runner" }
 daedalus-types = { path = "../../../core/types" }
 daedalus-worker-conformance = { path = "../worker-conformance" }
 

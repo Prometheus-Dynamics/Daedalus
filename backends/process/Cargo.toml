@@ -17,6 +17,7 @@ daedalus-wire = { path = "../../core/wire" }
 
 [dev-dependencies]
 daedalus-abi = { path = "../../core/abi", features = ["count-alloc", "test-run"] }
+daedalus-runner = { path = "../../core/runner" }
 daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance" }
 
 [lints]

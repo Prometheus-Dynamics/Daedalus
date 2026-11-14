@@ -23,6 +23,7 @@ nodes by their ports, and a planner proves the graph valid before anything runs.
 | Store a plan, or generate code from one | [plan-forms.md](plan-forms.md) |
 | Run a graph on a microcontroller | [mcu.md](mcu.md), [chips.md](chips.md) |
 | Ship nodes or a backend as a library loaded at run time | [plugins.md](plugins.md) |
+| Fit a board with little flash or memory | [weak-hardware.md](weak-hardware.md) |
 | Write nodes in Python, JavaScript, Java, C or C++ | [ffi.md](ffi.md) |
 | Pass a value Daedalus did not make | [foreign-values.md](foreign-values.md) |
 | Run Daedalus as a daemon | [host.md](host.md#the-service) |

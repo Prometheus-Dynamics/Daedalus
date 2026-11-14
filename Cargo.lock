@@ -473,6 +473,7 @@ dependencies = [
  "daedalus-backend",
  "daedalus-loader",
  "daedalus-registry",
+ "daedalus-runner",
  "daedalus-types",
  "daedalus-value",
  "daedalus-wire",
@@ -509,7 +510,6 @@ dependencies = [
  "daedalus-loader",
  "daedalus-planner",
  "daedalus-registry",
- "daedalus-types",
  "daedalus-value",
  "serde_json",
 ]
@@ -907,7 +907,6 @@ name = "daedalus-lang-rust"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-backend-process",
- "daedalus-derive",
  "daedalus-macros",
  "daedalus-registry",
  "daedalus-types",
@@ -1004,6 +1003,7 @@ dependencies = [
  "daedalus-abi",
  "daedalus-backend",
  "daedalus-backend-process",
+ "daedalus-runner",
  "daedalus-types",
  "daedalus-worker-conformance",
 ]
@@ -1176,7 +1176,6 @@ dependencies = [
 name = "daedalusd"
 version = "3.0.1-dev"
 dependencies = [
- "daedalus-abi",
  "daedalus-backend",
  "daedalus-client",
  "daedalus-graph",

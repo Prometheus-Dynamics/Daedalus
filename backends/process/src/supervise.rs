@@ -184,6 +184,10 @@ pub(crate) struct WorkerStep {
     pub writes: Vec<Binding>,
     /// One buffer per output, kept between runs so a run reuses them.
     pub outbufs: Vec<Vec<u8>>,
+    /// The shared bytes last handed out for each long output, kept so that the same memory is
+    /// used again once whoever took it has let go: a steady run of large values allocates
+    /// nothing.
+    pub handed: Vec<Option<Arc<[u8]>>>,
     pub produced: Vec<bool>,
 }
 
@@ -195,6 +199,7 @@ impl WorkerStep {
         writes: Vec<Binding>,
     ) -> WorkerStep {
         let outbufs = writes.iter().map(|_| Vec::new()).collect();
+        let handed = writes.iter().map(|_| None).collect();
         let produced = vec![false; writes.len()];
         WorkerStep {
             shared,
@@ -202,6 +207,7 @@ impl WorkerStep {
             reads,
             writes,
             outbufs,
+            handed,
             produced,
         }
     }
@@ -291,14 +297,27 @@ impl WorkerStep {
         Ok(status)
     }
 
-    /// Points an output cell at its buffer: inline for a short value, shared for a long one.
-    fn publish(cell: &mut Slot, bytes: &mut Vec<u8>) {
+    /// Points an output cell at its buffer: inline for a short value, shared for a long one. A
+    /// long value goes in the memory the last one of its length used, when nobody else still
+    /// holds that.
+    fn publish(cell: &mut Slot, bytes: &mut Vec<u8>, kept: &mut Option<Arc<[u8]>>) {
         let len = bytes.len();
         if len <= INLINE {
             cell.owner = OwnerKind::Inline as u32;
             cell.data = bytes.as_mut_ptr();
         } else {
-            let shared: Arc<[u8]> = Arc::from(bytes.as_slice());
+            let again = kept
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .filter(|held| held.len() == len);
+            match again {
+                Some(held) => held.copy_from_slice(bytes),
+                None => *kept = Some(Arc::from(bytes.as_slice())),
+            }
+            // One reference stays here, to find the memory again, and one goes with the cell.
+            let Some(shared) = kept.as_ref().map(Arc::clone) else {
+                return;
+            };
             let raw = Arc::into_raw(shared);
             cell.owner = OwnerKind::Shared as u32;
             cell.data = raw.cast::<u8>().cast_mut();
@@ -362,7 +381,7 @@ impl OwnedStep for WorkerStep {
                 for index in 0..self.writes.len() {
                     if self.produced[index] {
                         let cell = &mut cells[self.reads.len() + index];
-                        Self::publish(cell, &mut self.outbufs[index]);
+                        Self::publish(cell, &mut self.outbufs[index], &mut self.handed[index]);
                     }
                 }
                 StepEnd::Done

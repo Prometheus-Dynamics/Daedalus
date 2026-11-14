@@ -159,8 +159,8 @@ fn main() {
     );
     release(step);
 
-    // A value's bytes handed to the worker and back: `fixture.raw_io` returns its payload as it
-    // is. Across a pipe that is one copy in and one out, and this is what it costs.
+    // A value's bytes handed to the worker and back: `fixture.raw_io` returns its payload
+    // reversed. Across a pipe that is one copy in and one out, and this is what it costs.
     if let Some(megabytes) = args.get(2) {
         let megabytes: usize = megabytes.parse().expect("MEGABYTES is a number");
         hand_over(&backend, megabytes, batches.min(31));
@@ -232,7 +232,8 @@ fn hand_over(backend: &ProcessBackend, megabytes: usize, batches: usize) {
     ];
     let mut cx_step = StepCx::new();
     let mut run = || {
-        cells[1] = Slot::EMPTY;
+        // The value handed back last time is let go, as its consumer would have.
+        daedalus_runner::drop_owned(core::mem::replace(&mut cells[1], Slot::EMPTY));
         let end = run_once(&mut step, &mut Slots::of(&mut cells), &mut cx_step);
         assert!(
             matches!(end, StepEnd::Done),
