@@ -9,6 +9,10 @@ it reads only the files a run left, so a run can be judged again later.
 | `scripts/board/run.sh local` | The same bundle on this machine, run from a directory of its own. It proves the run and the judge with no board, and shows a test that needs the source tree. |
 | `scripts/board/run.sh luckfox-build` | Only builds what a Luckfox run would send: static armv7 musl test binaries. Needs zig, and no board. |
 | `scripts/board/run.sh luckfox --go` | A Luckfox (armv7 Linux, musl), over ssh. |
+| `scripts/board/run.sh cm5-build`, `cm5-measure-build` | Only build what the two CM5 runs would send. |
+| `scripts/board/run.sh cm5 --go` | A CM5 (aarch64 Linux): the same tests, static. |
+| `scripts/board/run.sh cm5-measure --go` | The measurements on a CM5, below. |
+| `scripts/board/run.sh local-measure` | The same measurements on this machine. It proves the bundle. Its numbers are not results: only a board's are. |
 | `scripts/board/run.sh pico --go` | A Raspberry Pi Pico (RP2040), through a debug probe with `probe-rs`. |
 
 ## Before a run on a board
@@ -35,7 +39,37 @@ remove its directory says so and stops: remove it by hand.
 On a Pico it flashes the firmware, reads the log for the time given, and stops the probe it
 started.
 
+## What a measurement run measures
+
+`measure-on-board.sh` runs in the bundle's own directory and writes to `results/`:
+
+- `board.txt`: the kernel, the image, the memory, the page size and the CPU governor.
+- `startup.txt`: a host with one small graph, five times: the time from `main` to its first
+  step, and what the process holds at the start, once loaded, after ten thousand round trips,
+  and at its peak.
+- `timings.txt`: a tick of a sixteen-step chain with the counters off (`probe_off`) and on
+  (`probe_every_1`), a host's round trip, an idle step, and a clock read. The cost of a step is
+  the tick's over sixteen.
+- `perf.txt`: cycles and instructions for the same two runs, where the board has `perf`.
+- `worker.txt`: a small value to a worker and back, and one and four megabytes handed over,
+  with the host thread's allocations.
+- `daemon.txt`: the daemon's start to its first answer, and what it holds idle, with a graph
+  planned, with a run that has stepped once, after two hundred round trips, and at its peak.
+
+It is user space only. It starts the programs in the bundle and a daemon of its own, on a
+socket in the bundle's directory, and stops that daemon by its pid. It stops no service, loads
+no module, unbinds no driver, writes nothing outside its directory, and changes no permission.
+The daemon loads a plugin, which a static binary can't, so this bundle is linked against the
+board's libc (glibc 2.36).
+
+For a board kept apart from your own ssh setup, `BOARD_SSH_CONFIG` names an ssh config file
+with its address, its jump host and its own known-hosts file. Pin the board's host key there
+with strict checking. A key that has changed since you last saw it is a reason to stop and ask.
+
 ## What the judge wants
+
+- Measure: the run finished, every figure is there with a number, and nothing panicked. Its
+  lines are the figures.
 
 - Linux: every binary exited 0 and reported a clean result itself, and at least one test ran.
   The line for each binary has its exit code and its counts.
@@ -55,5 +89,6 @@ board, the revision, the judge's lines, and what was not run.
 
 ## State
 
-No Luckfox or Pico run has been made: none has been assigned a board. `local` passes on the
-development machine, and `luckfox-build` builds 54 static armv7 test binaries there.
+No Luckfox, Pico or CM5 run has been made with these scripts yet. `local` and `local-measure`
+pass on the development machine, and `luckfox-build`, `cm5-build` and `cm5-measure-build` build
+there.

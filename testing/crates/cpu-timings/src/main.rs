@@ -1,7 +1,8 @@
 //! The CPU timings a board run records. It runs on boards and by hand, not in the gate:
 //! `cargo run --release -p daedalus-cpu-timings -- SECTION [BATCHES] [LIBRARY]`, with the
 //! sections `host_round_trip`, `host_idle_step`, `probe_off`, `probe_on`, `probe_sampled` (with
-//! EVERY as the third argument), `clock_read`, `detector_fused`, `detector_unfused` and `plugin_tick`.
+//! EVERY as the third argument), `clock_read`, `detector_fused`, `detector_unfused`, `plugin_tick`
+//! and `startup`, which prints the time to a small host's first step and what the process holds.
 //!
 //! Each section warms up, then times BATCHES batches of operations and prints the median of the
 //! per-operation times of the batches, in nanoseconds. A batch is 1,000 operations, so the clock's
@@ -231,7 +232,71 @@ fn plugin_tick_section(batches: usize, library: &Path) {
     report("plugin_tick", &times);
 }
 
+/// The graph a board run gives the daemon, as its JSON: the dylib fixture's pass node between
+/// a host bridge's `in` and `out`.
+fn daemon_graph() -> String {
+    let mut bridge = NodeDoc::new("host");
+    bridge.kind = NodeKindDoc::HostBridge;
+    for port in ["in", "out"] {
+        bridge
+            .port_types
+            .insert(port.to_string(), "u32".to_string());
+    }
+    let body = GraphBody {
+        nodes: vec![bridge, NodeDoc::new("fixture.pass")],
+        edges: vec![edge(0, "in", 1, "in"), edge(1, "out", 0, "out")],
+        groups: Vec::new(),
+    };
+    daedalus_graph::GraphDoc::new(body)
+        .to_json()
+        .expect("the graph is JSON")
+}
+
+/// A figure from `/proc/self/status`, in kilobytes: `VmRSS` is what the process holds now and
+/// `VmHWM` the most it has held. `None` off Linux.
+fn status_kb(name: &str) -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find_map(|line| line.strip_prefix(name))?;
+    line.trim_start_matches(':')
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// A host with one small graph, from the start of `main` to its first step, and what it holds:
+/// when the process has only started, once the graph is planned and loaded, and after ten
+/// thousand round trips. The time before `main` (the loader, the runtime's start) is not in it.
+fn startup(started: Instant) {
+    let at_start = status_kb("VmRSS");
+    let planned = pass_through();
+    let planned_ns = started.elapsed().as_nanos();
+    let mut host = LoadedHost::load(planned, LoadOptions::default()).expect("it loads");
+    let loaded_ns = started.elapsed().as_nanos();
+    let io = host.host();
+    io.feed_inline("x", &1_i64.to_le_bytes()).expect("a feed");
+    io.step().expect("a tick");
+    let first_step_ns = started.elapsed().as_nanos();
+    let loaded = status_kb("VmRSS");
+    for value in 0..10_000_i64 {
+        let io = host.host();
+        io.feed_inline("x", &value.to_le_bytes()).expect("a feed");
+        io.step().expect("a tick");
+        let _ = io.take_copy::<i64>("out").expect("a take");
+    }
+    let kb = |value: Option<u64>| value.map_or("?".to_string(), |kb| kb.to_string());
+    println!(
+        "startup planned_ns {planned_ns} loaded_ns {loaded_ns} first_step_ns {first_step_ns} \
+         rss_at_start_kb {} rss_loaded_kb {} rss_after_10000_ticks_kb {} rss_peak_kb {}",
+        kb(at_start),
+        kb(loaded),
+        kb(status_kb("VmRSS")),
+        kb(status_kb("VmHWM"))
+    );
+}
+
 fn main() {
+    let started = Instant::now();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(section) = args.first() else {
         eprintln!("usage: cpu-timings SECTION [BATCHES] [LIBRARY]");
@@ -251,6 +316,8 @@ fn main() {
                 .map_or(1, |text| text.parse().expect("EVERY is a number"));
             probe_every(batches, every);
         }
+        "startup" => startup(started),
+        "daemon_graph" => print!("{}", daemon_graph()),
         "clock_read" => clock_read(batches),
         "detector_fused" => detector_frame(batches, true),
         "detector_unfused" => detector_frame(batches, false),
