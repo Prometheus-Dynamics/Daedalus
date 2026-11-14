@@ -121,6 +121,16 @@ def judge_measure(directory):
         lines.extend(line for line in text.splitlines() if line.strip())
         if "panicked" in text:
             problems.append(f"{name}: a program panicked")
+    # The reference column is there when the bundle carried its program. It is reported, not
+    # required.
+    for name in ("dev-rev.txt", "dev.txt"):
+        try:
+            text = open(os.path.join(directory, name), errors="replace").read()
+        except FileNotFoundError:
+            continue
+        lines.extend("dev: " + line for line in text.splitlines() if line.strip())
+        if "panicked" in text:
+            problems.append(f"{name}: the reference program panicked")
     try:
         lines.extend(open(os.path.join(directory, "perf.txt"), errors="replace").read().splitlines())
     except FileNotFoundError:

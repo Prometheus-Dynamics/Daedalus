@@ -1,0 +1,23 @@
+[package]
+name = "dev-measure"
+description = "The measurements next's cpu-timings makes, against the Daedalus the dev image ships."
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# The dev branch's crates, from a checkout of it beside this repository's own directory: see
+# testing/board-runs/scorecard/README.md. Nothing in the workspace depends on this crate or on dev.
+[dependencies]
+daedalus-engine = { path = "../../../../../dd-dev/crates/engine", features = ["plugins"] }
+daedalus-data = { path = "../../../../../dd-dev/crates/data" }
+daedalus-planner = { path = "../../../../../dd-dev/crates/planner" }
+daedalus-registry = { path = "../../../../../dd-dev/crates/registry" }
+daedalus-runtime = { path = "../../../../../dd-dev/crates/runtime", features = ["plugins"] }
+daedalus-transport = { path = "../../../../../dd-dev/crates/transport" }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+# Builds on its own, outside the root workspace.
+[workspace]
