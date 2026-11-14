@@ -24,6 +24,8 @@ pub mod steps;
 pub mod blob;
 #[cfg(feature = "chip")]
 pub mod chip;
+#[cfg(feature = "alloc")]
+pub mod closure;
 #[cfg(all(feature = "alloc", feature = "merge"))]
 pub(crate) mod merge;
 #[cfg(feature = "source")]
