@@ -218,6 +218,11 @@ fn a_fault_reaches_every_watcher_and_a_cancel_stops_a_tick_in_progress() {
                     "boom: the input was 1, and that is all it takes"
                 );
                 assert!(!fault.detail_cut);
+                assert_eq!(
+                    (fault.code, fault.own_code),
+                    (42, false),
+                    "the node's own code"
+                );
                 assert_eq!(fault.consecutive, 1);
             }
             other => panic!("expected a fault, got {other:?}"),

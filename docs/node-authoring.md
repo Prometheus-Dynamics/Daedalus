@@ -187,6 +187,18 @@ host that set the bound to zero, nobody does and the calls do nothing. The host 
 step wrote with its failure, up to a bound it sets, and drops what a step wrote and then didn't
 fail. It is the same call in the host's own process and in a plugin library.
 
+A fault's `code` is the node's own. The node that failed owns its numbers: they mean what its
+author says, all 32 bits of them, and Daedalus passes them through untouched to whoever reads
+the failure (`FaultReport::code`, and `code` on a fault event over the service). A host acts on
+which failure it was by matching the code, with the node's id beside it, so two plugins that
+use the same number are still told apart. A node that gives none has code zero.
+
+Daedalus raises a few faults itself, and those have codes of its own, marked as such
+(`own_code` beside the code) so that they can't be taken for a node's: the body panicked (1), a
+move between two memory spaces failed (2), a worker went (3), a worker was stopped by the host
+(4), a worker wasn't asked because it is down or its inputs didn't fit (5), and the run was
+cancelled (6). They are `daedalus_abi::own`.
+
 A node that panics is a fault like any other, and the fault's reason is `panicked: ` and then
 what the panic said, cut to 120 bytes. It is the same for a node in the host's own process, in a
 plugin library and in a Rust worker, whose reason reads `node panicked: ...`.

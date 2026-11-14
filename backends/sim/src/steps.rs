@@ -7,6 +7,8 @@ use crate::counters::{bump_node, bump_transfer};
 
 const FAULT: usize = 1 << (usize::BITS - 1);
 const REASON: &str = "sim fault";
+/// The code a failing sim node gives with its reason.
+pub const FAULT_CODE: u32 = 7;
 
 /// How many lines of detail a failing node writes. Zero, the default, writes none.
 static DETAIL_LINES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
@@ -29,6 +31,7 @@ fn fail(node: u32, cx: &mut StepCx) -> StepEnd {
         cx.detail_fmt(format_args!("node {node} found line {line}\n"));
     }
     cx.fault(Some(node), REASON);
+    cx.code = FAULT_CODE;
     StepEnd::Fault
 }
 

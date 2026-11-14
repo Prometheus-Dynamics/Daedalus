@@ -24,6 +24,11 @@ pub struct StepFault {
     reason: [u8; REASON_CAPACITY],
     /// The reason the body gave was longer than fits, and `reason` is only its start.
     pub reason_cut: bool,
+    /// The code of the body's error, for a caller that acts on which failure it was without
+    /// reading the words. Zero when the body gave none.
+    pub code: u32,
+    /// The code is one of Daedalus's own (`daedalus_abi::own`), and not the node's.
+    pub own_code: bool,
 }
 
 impl StepFault {
@@ -36,6 +41,8 @@ impl StepFault {
         reason_len: 0,
         reason: [0; REASON_CAPACITY],
         reason_cut: false,
+        code: 0,
+        own_code: false,
     };
 
     /// The node the body named, if it named one.
@@ -76,6 +83,8 @@ impl FaultLog {
         cell.tick = tick;
         cell.at = cx.at;
         cell.reason_cut = cx.reason_cut();
+        cell.code = cx.code;
+        cell.own_code = cx.code_is_own();
         cell.consecutive = health.failures();
         cell.until_ns = if health.backing_off() {
             health.until_ns()

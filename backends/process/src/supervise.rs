@@ -368,6 +368,7 @@ impl OwnedStep for WorkerStep {
                     .unwrap_or_else(|| "the run was cancelled".into());
                 shared.telemetry.bump(Count::Fault);
                 cx.fault(None, &reason);
+                cx.own_code(daedalus_abi::own::CANCELLED);
                 StepEnd::Fault
             }
             Outcome::Replied(RunStatus::Fault) => {
@@ -556,6 +557,11 @@ impl WorkerStep {
             }
         }
         say(cx, None, &text);
+        cx.own_code(match blame {
+            Blame::Worker => daedalus_abi::own::WORKER_GONE,
+            Blame::Host => daedalus_abi::own::WORKER_STOPPED,
+            Blame::Nobody => daedalus_abi::own::WORKER_NOT_RUN,
+        });
         StepEnd::Fault
     }
 }

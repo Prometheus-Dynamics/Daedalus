@@ -53,7 +53,7 @@ fn fields_added_to_the_end_of_any_record_are_skipped() {
 
 /// The samples as this version first encoded them, kept as files. A side built then sends these
 /// bytes, and every later version has to read them as the same messages. A field added since has
-/// its default in what they decode to, which `as_first_sent` gives.
+/// its default in what they decode to, which the two `as_first_sent` functions give.
 fn corpus(name: &str, bodies: &[Vec<u8>]) -> Vec<Vec<u8>> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/service");
     let path = dir.join(name);
@@ -77,9 +77,23 @@ fn corpus(name: &str, bodies: &[Vec<u8>]) -> Vec<Vec<u8>> {
     out
 }
 
-/// A sample as a side built at the first version sent it: with nothing added since. Nothing has
-/// been, so it is the sample.
-fn as_first_sent<T>(message: T) -> T {
+/// A client's sample as a side built at the first version sent it: with nothing added since.
+/// Nothing has been added to what a client sends.
+fn client_as_first_sent(message: ClientMsg) -> ClientMsg {
+    message
+}
+
+/// A server's sample as a side built at the first version sent it. Added since: a fault
+/// event's `code` and `own_code`, which that side doesn't send, and which read as zero and no.
+fn server_as_first_sent(mut message: ServerMsg) -> ServerMsg {
+    if let ServerMsg::Event(Event {
+        body: EventBody::Fault(fault),
+        ..
+    }) = &mut message
+    {
+        fault.code = 0;
+        fault.own_code = false;
+    }
     message
 }
 
@@ -96,7 +110,7 @@ fn what_the_first_version_sent_is_still_read_as_the_same_messages() {
     for (body, message) in kept.iter().zip(clients) {
         assert_eq!(
             ClientMsg::decode(body, &schema).expect("decode"),
-            as_first_sent(message)
+            client_as_first_sent(message)
         );
     }
     let servers = server_messages();
@@ -109,7 +123,7 @@ fn what_the_first_version_sent_is_still_read_as_the_same_messages() {
     for (body, message) in kept.iter().zip(servers) {
         assert_eq!(
             ServerMsg::decode(body, &schema).expect("decode"),
-            as_first_sent(message)
+            server_as_first_sent(message)
         );
     }
 }

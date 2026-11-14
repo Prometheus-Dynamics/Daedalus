@@ -12,7 +12,7 @@ mod steps;
 pub use backend::{SimBackend, SimConfig, SimForm};
 pub use counters::ran;
 pub use memory_only::SimMemory;
-pub use steps::write_details;
+pub use steps::{FAULT_CODE, write_details};
 
 pub const BACKEND_ID: &str = "sim";
 pub const HOST: &str = "sim.host";

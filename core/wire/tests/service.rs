@@ -450,6 +450,19 @@ impl Noise {
     }
 }
 
+/// A message with the fields added since the first version at their defaults.
+fn without_additions(mut message: ServerMsg) -> ServerMsg {
+    if let ServerMsg::Event(Event {
+        body: EventBody::Fault(fault),
+        ..
+    }) = &mut message
+    {
+        fault.code = 0;
+        fault.own_code = false;
+    }
+    message
+}
+
 #[test]
 fn every_truncation_and_noise_gives_an_error_and_never_a_panic() {
     let schema = Schema::new();
@@ -462,7 +475,13 @@ fn every_truncation_and_noise_gives_an_error_and_never_a_panic() {
     for message in server_messages() {
         let body = message.encode(&schema).expect("encode");
         for cut in 0..body.len() {
-            assert!(ServerMsg::decode(&body[..cut], &schema).is_err());
+            // A message cut where an earlier version of it ended is that earlier version's: its
+            // later fields read as their defaults, and nothing else about it differs. Any other
+            // cut is an error.
+            match ServerMsg::decode(&body[..cut], &schema) {
+                Err(_) => {}
+                Ok(read) => assert_eq!(read, without_additions(message.clone()), "cut at {cut}"),
+            }
         }
     }
     let mut noise = Noise(0x9e37_79b9_7f4a_7c15);

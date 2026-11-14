@@ -255,6 +255,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         // A body that fails without saying why mustn't inherit the last one's reason.
         cx.reason_len = 0;
         cx.at = NO_NODE;
+        cx.code = 0;
         let mut slots = Slots::of(&mut cells[..port_count(meta)]);
         report.step_calls += 1;
         // SAFETY: `run` and `data` come from one `Step`, so the body was built to take that data.

@@ -499,3 +499,31 @@ fn a_workers_reason_that_doesnt_fit_goes_whole_to_the_hosts_detail() {
     }
     release(step);
 }
+
+#[test]
+fn a_worker_that_goes_has_a_code_of_the_hosts_own_and_a_nodes_failure_does_not() {
+    use daedalus_abi::own;
+    let mut backend = ProcessBackend::new();
+    backend
+        .add_worker(spec(&["--misbehave", "exit"]), &registry())
+        .expect("registers");
+    let mut step = scalar_add_step(&backend);
+    let mut cx = StepCx::new();
+    let (end, reason, _) = run_add_with(&mut step, &mut cx);
+    assert!(matches!(end, StepEnd::Fault), "{reason}");
+    assert_eq!((cx.code, cx.code_is_own()), (own::WORKER_GONE, true));
+    release(step);
+
+    // A node of the worker's that fails is not the host's failure: the code is left as the
+    // node's, which this worker doesn't give.
+    let mut backend = ProcessBackend::new();
+    backend
+        .add_worker(spec(&["--misbehave", "long-fault"]), &registry())
+        .expect("registers");
+    let mut step = scalar_add_step(&backend);
+    let mut cx = StepCx::new();
+    let (end, _, _) = run_add_with(&mut step, &mut cx);
+    assert!(matches!(end, StepEnd::Fault));
+    assert_eq!((cx.code, cx.code_is_own()), (0, false));
+    release(step);
+}

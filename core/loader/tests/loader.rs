@@ -126,6 +126,11 @@ fn a_panicking_node_is_a_fault_and_the_host_keeps_running() {
     let end = run_once(&mut step, &mut Slots::of(&mut cells), &mut cx);
     assert!(matches!(end, StepEnd::Fault));
     assert_eq!(kept.text(), "boom: what led up to it, in 2 pieces");
+    assert_eq!(
+        (cx.code, cx.code_is_own()),
+        (daedalus_abi::own::PANIC, true),
+        "a panic is one of the host's own codes, not the node's"
+    );
     assert_eq!(cx.at, 0, "the fault names the node");
     assert_eq!(
         cx.reason(),

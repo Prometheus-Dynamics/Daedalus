@@ -290,6 +290,8 @@ pub fn event(event: &Event) -> Value {
             "reason_cut": fault.reason_cut,
             "detail": fault.detail,
             "detail_cut": fault.detail_cut,
+            "code": fault.code,
+            "own_code": fault.own_code,
         }),
         EventBody::Telemetry(telemetry) => json!({
             "event": "telemetry",

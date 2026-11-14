@@ -177,6 +177,8 @@ impl RunEntry {
                         reason_cut: fault.reason_cut,
                         detail,
                         detail_cut,
+                        code: fault.code,
+                        own_code: fault.own_code,
                     }
                 })
                 .collect()

@@ -38,6 +38,15 @@ pub struct FaultReport {
     /// The reason the body gave was longer than 120 bytes, and [`FaultReport::reason`] is only
     /// its start.
     pub reason_cut: bool,
+    /// The code of the failure, for a caller that acts on which failure it was without reading
+    /// the words. It is the node's own, as it returned it in `Fault { code, .. }`, unless
+    /// `own_code` says otherwise: the node owns its numbers, and Daedalus passes them through
+    /// untouched. Read it with [`FaultReport::node`], so two plugins that use the same number
+    /// are told apart. Zero is a node that gave none.
+    pub code: u32,
+    /// The code is one of Daedalus's own, from `daedalus_abi::own`: the body panicked, a move
+    /// between memory spaces failed, a worker went or was stopped.
+    pub own_code: bool,
     /// The step gave more than a reason: [`LoadedHost::fault_detail`] has it, until the step
     /// fails again.
     pub detail: bool,
@@ -59,6 +68,12 @@ impl FaultReport {
             reason_len: text.len() as u32,
             reason,
             reason_cut: fault.reason_cut,
+            // A move runs no node, so a failure of one that gave no code is Daedalus's own.
+            code: match (site.transfer, fault.code) {
+                (Some(_), 0) => daedalus_abi::own::TRANSFER,
+                (_, code) => code,
+            },
+            own_code: fault.own_code || (site.transfer.is_some() && fault.code == 0),
             detail: false,
         }
     }
