@@ -312,6 +312,26 @@ impl WgpuBackend {
         self.open_context()?.imports.get(read_only)
     }
 
+    /// What this backend's device does with a value that is a dma-buf of this kind, and why:
+    /// imported in place, copied, or not known yet. It prints as a sentence a person can act on.
+    /// A process with no dma-heap to try with, which is the normal case for one that isn't
+    /// root, reads as not known yet, and says what settles it.
+    pub fn dmabuf_status(&self, read_only: bool) -> crate::DmaBufStatus {
+        use crate::import_state::Untried;
+        use crate::{DmaBufStatus, WhyCopied};
+        let Some(context) = self.open_context() else {
+            return DmaBufStatus::NotOpen;
+        };
+        match (context.imports.get(read_only), context.untried) {
+            (Some(true), _) => DmaBufStatus::Imports,
+            (Some(false), Untried::Copies(why)) => DmaBufStatus::Copies(why),
+            (Some(false), _) => DmaBufStatus::Copies(WhyCopied::Refused),
+            (None, Untried::NoTrial(why)) => DmaBufStatus::Undecided(why),
+            // An answer is only left open when nothing was tried.
+            (None, _) => DmaBufStatus::Undecided(crate::NoTrial::NotAsked),
+        }
+    }
+
     /// Says whether the device imports a dma-buf of this kind, for a host that knows: a process
     /// that can't allocate from a dma-heap can't find out by itself until it is handed one. It
     /// applies to the device this backend has open and to any it opens later. Said wrongly, an

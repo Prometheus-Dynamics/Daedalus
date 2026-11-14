@@ -87,6 +87,32 @@ The trial at open needs a buffer, and so a dma-heap the process can open. On a b
 
 A host that knows can say so before the first value, so that one isn't special: `backend.assume_dmabuf_import(read_only, imports)`, or `backend.try_dmabuf_import(fd, read_only)` with a buffer the producer supplies. `backend.dmabuf_import(read_only)` gives the answer so far, `None` while nothing has tried. `Options::no_heap_access` opens a device as such a process would, on any machine.
 
+### On a machine with no dma-heap, and nothing else installed
+
+Daedalus needs nothing beside itself to run. It depends on no device service, no camera stack
+and no allocator of anyone else's, and the gate fails a manifest that adds one. A dma-heap is
+not needed either: a machine without one, or a process that may not open it, is a normal
+machine, and nothing faults there. What changes is only whether a value that is a dma-buf is
+used in place or copied, and a host can ask which, in words:
+
+```rust
+println!("{}", backend.dmabuf_status(false));
+```
+
+| It says | Because | What a person can do |
+|---|---|---|
+| the device imports a dma-buf in place | it was tried when it opened, or with the first one handed over | nothing |
+| copied, the device has no dma-buf import | the driver lacks it, or this isn't Linux | another driver or device |
+| copied, the device refused one of this kind | a driver that takes only its own buffers, or not a read-only fd | hand over the other kind of fd, or accept the copy |
+| copied, the host turned imports off | `Options::no_dma_heap` | turn it back on |
+| not known yet, there is no dma-heap under `/dev/dma_heap` | the kernel has none, or a container isn't shown it | nothing is needed: the first dma-buf handed over decides |
+| not known yet, this user may not open the dma-heap | the heaps are root's, and this process isn't | the same. Don't run as root for this: have the producer hand a buffer to `try_dmabuf_import`, or say with `assume_dmabuf_import` |
+
+A value that has no dma-buf at all, as one made on a machine where no heap opens, gives its
+bytes (`DmaBufBacked::bytes`) and is copied from them. Only a value with neither is a fault,
+and its reason says so. `Storage::new_dma_heap`, which allocates from the heap itself, is the
+one call that needs a heap: without one it returns an error, and `Storage::new` is what to use.
+
 A type whose values are dma-buffers says so once: it implements `DmaBufBacked` and the backend is given `with_dmabuf::<T>()`. While the open device imports dma-bufs the planner takes that import over the upload of the type's bytes (its `HostBytes`), which is the route a device that can't import gets.
 
 A node can also say its output is in the dma-buf space (`memory(out = "dmabuf")`, with the `daedalus-dmabuf` backend in the plan). The same `with_dmabuf::<T>()` imports from there, and a device that can't import gets the value handed to the host and uploaded. See [foreign-values.md](foreign-values.md).
