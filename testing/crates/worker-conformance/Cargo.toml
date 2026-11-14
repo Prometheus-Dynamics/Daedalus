@@ -12,6 +12,7 @@ daedalus-abi = { path = "../../../core/abi", features = ["test-run"] }
 daedalus-backend = { path = "../../../core/backend" }
 daedalus-backend-process = { path = "../../../backends/process" }
 daedalus-registry = { path = "../../../core/registry" }
+daedalus-runner = { path = "../../../core/runner", features = ["std"] }
 daedalus-types = { path = "../../../core/types" }
 daedalus-wire = { path = "../../../core/wire" }
 

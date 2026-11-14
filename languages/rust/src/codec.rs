@@ -1,8 +1,13 @@
 //! Typed values. A node's ports are Rust types; on the wire each is a [`WireValue`]. The
 //! conversions below cover the scalars, strings, byte fields, options, pairs, lists and maps of
 //! the canonical fixtures. A value that does not have the port's shape is a `BadInput` fault.
+//!
+//! A node's input is a [`Value`]: a wire value, or bytes where the host put them, when the host
+//! sent a `bytes` or opaque input by reference. A `&[u8]` parameter borrows those bytes for the
+//! call, with no copy; any other parameter is decoded as before.
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
 use daedalus_wire::WireValue;
 
@@ -13,18 +18,85 @@ use crate::serve::NodeError;
 pub trait Wire: Sized {
     fn to_wire(&self) -> WireValue;
     fn from_wire(value: &WireValue) -> Option<Self>;
+
+    /// The value from a `bytes` or opaque input's bytes, when the host sent it by reference.
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        Self::from_wire(&WireValue::Bytes(bytes.to_vec()))
+    }
+}
+
+/// One input of a run.
+#[derive(Clone, Copy, Debug)]
+pub enum Value<'a> {
+    /// A value that came in the run's packet.
+    Wire(&'a WireValue),
+    /// A `bytes` or opaque value the host sent by reference: its bytes where the host put them,
+    /// read-only, for the run.
+    Bytes(&'a [u8]),
+}
+
+/// A node's inputs by port name.
+pub type Inputs<'a> = [(&'static str, Value<'a>)];
+
+fn found<'a>(inputs: &Inputs<'a>, name: &str) -> Result<Value<'a>, NodeError> {
+    // A parameter named `r#in` is the port `in`: the keyword needs its raw prefix in the name.
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    inputs
+        .iter()
+        .find(|(port, _)| *port == name)
+        .map(|(_, value)| *value)
+        .ok_or_else(|| NodeError::bad_input(format!("no input {name}")))
+}
+
+fn shape(name: &str) -> NodeError {
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    NodeError::bad_input(format!("input {name} has another shape"))
 }
 
 /// The inputs of a node, looked up by port name.
-pub fn input<T: Wire>(inputs: &[(&'static str, WireValue)], name: &str) -> Result<T, NodeError> {
-    // A parameter named `r#in` is the port `in`: the keyword needs its raw prefix in the name.
-    let name = name.strip_prefix("r#").unwrap_or(name);
-    let (_, value) = inputs
-        .iter()
-        .find(|(port, _)| *port == name)
-        .ok_or_else(|| NodeError::bad_input(format!("no input {name}")))?;
-    T::from_wire(value)
-        .ok_or_else(|| NodeError::bad_input(format!("input {name} has another shape")))
+pub fn input<T: Wire>(inputs: &Inputs<'_>, name: &str) -> Result<T, NodeError> {
+    match found(inputs, name)? {
+        Value::Wire(value) => T::from_wire(value),
+        Value::Bytes(bytes) => T::from_bytes(bytes),
+    }
+    .ok_or_else(|| shape(name))
+}
+
+/// A `bytes` input's bytes, borrowed for the call: where the host put them, or in the packet.
+pub fn input_bytes<'a>(inputs: &Inputs<'a>, name: &str) -> Result<&'a [u8], NodeError> {
+    match found(inputs, name)? {
+        Value::Bytes(bytes) => Ok(bytes),
+        Value::Wire(WireValue::Bytes(bytes)) => Ok(bytes),
+        Value::Wire(_) => Err(shape(name)),
+    }
+}
+
+/// How a parameter taken by reference is read. A `&[u8]` parameter (held as `Vec<u8>`) borrows
+/// the input's bytes; any other is decoded into a value the call borrows. The `#[node]` call
+/// picks between the two by method lookup on `&Reading<T>`, so a `Wire` type of any crate is read.
+#[doc(hidden)]
+pub struct Reading<T>(PhantomData<T>);
+
+impl<T> Reading<T> {
+    pub const NEW: Reading<T> = Reading(PhantomData);
+}
+
+impl Reading<Vec<u8>> {
+    pub fn hold<'a>(&self, inputs: &Inputs<'a>, name: &str) -> Result<&'a [u8], NodeError> {
+        input_bytes(inputs, name)
+    }
+}
+
+/// The decoded reading, for every type but bytes.
+#[doc(hidden)]
+pub trait Decoded<T> {
+    fn hold(&self, inputs: &Inputs<'_>, name: &str) -> Result<T, NodeError>;
+}
+
+impl<T: Wire> Decoded<T> for &Reading<T> {
+    fn hold(&self, inputs: &Inputs<'_>, name: &str) -> Result<T, NodeError> {
+        input(inputs, name)
+    }
 }
 
 /// The outputs a node returns: one value for a single output, and a pair for two outputs. A pair
@@ -110,6 +182,9 @@ impl Wire for Vec<u8> {
             _ => None,
         }
     }
+    fn from_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+        Some(bytes.to_vec())
+    }
 }
 
 impl Wire for Option<i64> {
@@ -178,18 +253,18 @@ impl Wire for BTreeMap<String, i64> {
 /// An optional input: `None` when the port has no value. A port declared as an option carries the
 /// value inside `Optional`, and a port of the value's own type carries the value itself, so both
 /// are read.
-pub fn optional_input<T: Wire>(
-    inputs: &[(&'static str, WireValue)],
-    name: &str,
-) -> Result<Option<T>, NodeError> {
-    let Some((_, value)) = inputs.iter().find(|(port, _)| *port == name) else {
+pub fn optional_input<T: Wire>(inputs: &Inputs<'_>, name: &str) -> Result<Option<T>, NodeError> {
+    let Ok(value) = found(inputs, name) else {
         return Ok(None);
     };
-    let shape = || NodeError::bad_input(format!("input {name} has another shape"));
+    let shape = || shape(name);
     match value {
-        WireValue::Optional(None) => Ok(None),
-        WireValue::Optional(Some(inner)) => T::from_wire(inner).map(Some).ok_or_else(shape),
-        other => T::from_wire(other).map(Some).ok_or_else(shape),
+        Value::Bytes(bytes) => T::from_bytes(bytes).map(Some).ok_or_else(shape),
+        Value::Wire(WireValue::Optional(None)) => Ok(None),
+        Value::Wire(WireValue::Optional(Some(inner))) => {
+            T::from_wire(inner).map(Some).ok_or_else(shape)
+        }
+        Value::Wire(other) => T::from_wire(other).map(Some).ok_or_else(shape),
     }
 }
 

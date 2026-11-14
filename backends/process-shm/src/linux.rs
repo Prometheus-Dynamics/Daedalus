@@ -6,18 +6,26 @@ use std::fs::File;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::fs::FileTypeExt;
 
+use daedalus_abi::SharedBytes;
 use daedalus_wire::PacketError;
 use daedalus_wire::codec::Writer;
-use daedalus_wire::shared::{Shared, Span};
+use daedalus_wire::shared::{At, BY_REFERENCE, Place, Shared, Span};
 use shm_fdpass::{FdSet, MAX_FDS, RecvError};
 use shm_ring_buffers::{BufferDesc, BufferIndex, Pool, PoolView};
 
 use crate::THRESHOLD;
+use crate::fds::FdCache;
+use crate::held::Held;
 
 /// The buffer the host writes for the worker.
 pub(crate) const TO_WORKER: u32 = 0;
 /// The buffer the worker writes for the host.
 const TO_HOST: u32 = 1;
+/// The first buffer output values go in, for a worker that agreed values by reference.
+const FIRST_VALUE: u32 = 2;
+/// Where values by reference start in a buffer: a cache line, so no value shares one with
+/// another.
+const ALIGN: usize = 64;
 
 /// Why shared memory could not be set up or used.
 #[derive(Debug)]
@@ -77,18 +85,167 @@ pub struct Lender {
     pool: Pool,
     view: PoolView,
     size: usize,
+    /// The value buffers and who holds them, when the worker agreed values by reference.
+    held: Option<Held>,
+    /// Where the next value by reference goes in the host's buffer, during a run.
+    cursor: usize,
+    fds: FdCache,
+    note: Writer,
 }
 
 impl Lender {
     /// Two buffers of at least `size` bytes each, in one new sealed memfd. `generation` must be
     /// higher than that of any lender this worker was granted before.
     pub fn new(generation: u32, size: usize) -> Result<Lender, ShmError> {
+        Lender::with_values(generation, size, 0)
+    }
+
+    /// As [`Lender::new`], with `values` more buffers that output values by reference go in:
+    /// for a worker that wants values by reference. Untouched, they cost address space only.
+    pub fn with_values(generation: u32, size: usize, values: u32) -> Result<Lender, ShmError> {
         let size = size.max(THRESHOLD).next_multiple_of(page_size());
-        let pool = Pool::in_memory(generation, 2, size).map_err(|e| fail("the pool", e))?;
+        let pool = Pool::in_memory(generation, FIRST_VALUE + values, size)
+            .map_err(|e| fail("the pool", e))?;
         let view = pool
             .writable_view()
             .map_err(|e| fail("the host's view of the pool", e))?;
-        Ok(Lender { pool, view, size })
+        let held = if values == 0 {
+            None
+        } else {
+            let cells = pool
+                .view()
+                .map_err(|e| fail("the cells' view of the pool", e))?;
+            Some(Held::new(cells, FIRST_VALUE, values))
+        };
+        Ok(Lender {
+            pool,
+            view,
+            size,
+            held,
+            cursor: 0,
+            fds: FdCache::new(),
+            note: Writer::new(),
+        })
+    }
+
+    /// Whether this pool has value buffers: the worker agreed values by reference.
+    pub fn by_reference(&self) -> bool {
+        self.held.is_some()
+    }
+
+    /// Sends the agreement that follows the grant, naming the value buffers.
+    pub fn agree(&self, socket: BorrowedFd<'_>) -> Result<(), ShmError> {
+        let Some(held) = &self.held else {
+            return Err(ShmError("this pool has no value buffers".into()));
+        };
+        let mut out = Writer::new();
+        Shared::Agree {
+            features: BY_REFERENCE,
+            values: held.buffers().collect(),
+        }
+        .encode(true, &mut out)
+        .map_err(|e| fail("the agreement", e))?;
+        shm_fdpass::send(socket, &[&out.buf], &[], false)
+            .map_err(|e| fail("sending the agreement", e))
+    }
+
+    /// Starts a run: values by reference go in the host's buffer from its start again, and the
+    /// note has no descriptors yet.
+    pub fn begin_run(&mut self) {
+        self.cursor = 0;
+        self.fds.begin();
+    }
+
+    /// Room for `len` bytes in the host's buffer after this run's other values, if they fit.
+    fn room(&mut self, len: usize) -> Option<(usize, &mut [u8])> {
+        let start = self.cursor.next_multiple_of(ALIGN);
+        let end = start.checked_add(len)?;
+        let room = self
+            .view
+            .write_bytes(BufferIndex(TO_WORKER))
+            .ok()?
+            .get_mut(start..end)?;
+        self.cursor = end;
+        Some((start, room))
+    }
+
+    /// Writes a value's bytes into the host's buffer, and gives its place. None when this run's
+    /// values don't leave room for it: then it travels in the packet.
+    pub fn place(&mut self, bytes: &[u8]) -> Option<Place> {
+        let (start, room) = self.room(bytes.len())?;
+        room.copy_from_slice(bytes);
+        Some(Place {
+            at: At::Lent(TO_WORKER),
+            offset: start as u64,
+            len: bytes.len() as u64,
+        })
+    }
+
+    /// Writes a run's packet into the host's buffer after its values, and gives where.
+    pub fn place_packet(&mut self, body: &[u8]) -> Option<(u64, u32)> {
+        let (start, room) = self.room(body.len())?;
+        room.copy_from_slice(body);
+        Some((start as u64, body.len() as u32))
+    }
+
+    /// The place of `len` bytes from `offset` in the buffer behind `fd`: by its slot, attached
+    /// to this run's note the first time the buffer is seen.
+    pub fn fd_place(
+        &mut self,
+        fd: BorrowedFd<'_>,
+        offset: u64,
+        len: u64,
+    ) -> Result<Place, ShmError> {
+        let slot = self.fds.slot(fd)?;
+        Ok(Place {
+            at: At::Fd(slot),
+            offset,
+            len,
+        })
+    }
+
+    /// How many buffers the worker has by descriptor.
+    pub fn kept_fds(&self) -> usize {
+        self.fds.kept()
+    }
+
+    /// A value buffer no cell holds, for the worker to write this run's output values into.
+    pub fn free_out(&self) -> Option<u32> {
+        self.held.as_ref()?.free_buffer()
+    }
+
+    /// An output value the worker wrote at `place`, held by the cell it goes to, with no copy.
+    /// None when the place is not inside a value buffer.
+    pub fn adopt(&self, place: &Place) -> Option<SharedBytes> {
+        let At::Lent(buffer) = place.at else {
+            return None;
+        };
+        self.held.as_ref()?.adopt(buffer, place.offset, place.len)
+    }
+
+    /// Sends a run: its note, then the packet in the same frame when `packet` is None, with the
+    /// descriptors this run attaches. Returns how many descriptors went.
+    pub fn send_run(
+        &mut self,
+        socket: BorrowedFd<'_>,
+        out: Option<u32>,
+        packet: Option<(u64, u32)>,
+        run: &[u8],
+    ) -> Result<usize, ShmError> {
+        self.note.buf.clear();
+        Shared::RunNote {
+            packet,
+            out,
+            attach: self.fds.attach.clone(),
+            forget: self.fds.forget.clone(),
+        }
+        .encode(true, &mut self.note)
+        .map_err(|e| fail("the run note", e))?;
+        let fds: Vec<BorrowedFd<'_>> = self.fds.attached().collect();
+        let body: &[u8] = if packet.is_some() { &[] } else { run };
+        shm_fdpass::send(socket, &[&self.note.buf, body], &fds, false)
+            .map_err(|e| fail("sending the run", e))?;
+        Ok(fds.len())
     }
 
     /// The size of each buffer.
@@ -155,6 +312,18 @@ pub struct Borrower {
     threshold: usize,
     to_worker: u32,
     to_host: u32,
+    /// The buffers output values go in, once the host agreed values by reference.
+    values: Vec<u32>,
+    by_reference: bool,
+    /// The value buffer this run's outputs go in, and how far it is written.
+    out: Option<u32>,
+    out_cursor: usize,
+    fds: crate::fds::FdTable,
+    /// Where the next run's packet starts in the host's buffer.
+    run_offset: u64,
+    /// A second view of the same buffers, which output values are written through while the
+    /// node reads its inputs through the first.
+    outs: PoolView,
 }
 
 impl Borrower {
@@ -183,14 +352,133 @@ impl Borrower {
                 size: span.size,
             })
             .collect();
+        let dup = |fd: &OwnedFd| {
+            fd.try_clone()
+                .map_err(|e| fail("duplicating a descriptor", e))
+        };
+        let page_again = dup(&page)?;
+        let rest_again = rest.iter().map(dup).collect::<Result<Vec<_>, _>>()?;
         let view = PoolView::attach_writable(page, rest, &descs)
             .map_err(|e| fail("mapping the lent buffers", e))?;
+        let outs = PoolView::attach_writable(page_again, rest_again, &descs)
+            .map_err(|e| fail("mapping the lent buffers again", e))?;
         Ok(Borrower {
             view,
             threshold: *threshold as usize,
             to_worker: *to_worker,
             to_host: *to_host,
+            values: Vec::new(),
+            by_reference: false,
+            out: None,
+            out_cursor: 0,
+            fds: crate::fds::FdTable::new(),
+            run_offset: 0,
+            outs,
         })
+    }
+
+    /// Takes the host's agreement to values by reference, for this grant.
+    pub fn agree(&mut self, msg: &Shared) {
+        if let Shared::Agree { features, values } = msg
+            && features & BY_REFERENCE != 0
+        {
+            self.values.clone_from(values);
+            self.by_reference = true;
+        }
+    }
+
+    /// Whether the host agreed values by reference.
+    pub fn by_reference(&self) -> bool {
+        self.by_reference
+    }
+
+    /// Takes a run's note: lets go of the buffers it forgets, maps the ones it attaches (`fds`,
+    /// in order), and starts the value buffer it names for this run's outputs.
+    pub fn note(&mut self, msg: &Shared, mut fds: FdSet) -> Result<(), ShmError> {
+        let Shared::RunNote {
+            out,
+            attach,
+            forget,
+            ..
+        } = msg
+        else {
+            return Err(ShmError("not a run note".into()));
+        };
+        for slot in forget {
+            self.fds.forget(*slot);
+        }
+        for (index, slot) in attach.iter().enumerate() {
+            let fd = fds
+                .take(index)
+                .ok_or_else(|| ShmError(format!("the note attaches slot {slot} without it")))?;
+            self.fds.attach(*slot, fd)?;
+        }
+        self.out = out.filter(|buffer| self.values.contains(buffer));
+        self.out_cursor = 0;
+        if let Shared::RunNote {
+            packet: Some((offset, _)),
+            ..
+        } = msg
+        {
+            self.run_offset = *offset;
+        }
+        Ok(())
+    }
+
+    /// Where a run in the host's buffer starts: after its values with a run note, at the start
+    /// without.
+    pub(crate) fn run_offset(&mut self) -> u64 {
+        std::mem::take(&mut self.run_offset)
+    }
+
+    /// The node's two sides at once: reading its inputs, and writing its output values.
+    pub fn split(&mut self) -> (crate::Reads<'_>, crate::Writes<'_>) {
+        (
+            crate::Reads {
+                view: Some(&self.view),
+                to_worker: self.to_worker,
+                fds: Some(&self.fds),
+                _of: std::marker::PhantomData,
+            },
+            crate::Writes {
+                view: Some(&mut self.outs),
+                out: self.out,
+                cursor: Some(&mut self.out_cursor),
+                _of: std::marker::PhantomData,
+            },
+        )
+    }
+
+    /// The size of each lent buffer.
+    pub fn buffer_size(&self) -> usize {
+        self.view
+            .read_bytes(BufferIndex(self.to_worker))
+            .map_or(0, <[u8]>::len)
+    }
+
+    /// Begins the node's reads of the buffer in `slot`: the kernel's sync call, for a buffer
+    /// that takes it.
+    pub fn begin_read(&mut self, slot: u32) -> Result<(), ShmError> {
+        self.fds.begin(slot)
+    }
+
+    /// Ends what [`Borrower::begin_read`] began.
+    pub fn end_read(&mut self, slot: u32) {
+        self.fds.end(slot);
+    }
+
+    /// What this worker did to its buffers by descriptor.
+    pub fn brackets(&self) -> crate::Brackets {
+        self.fds.brackets
+    }
+
+    /// A run's packet at `offset` of the host's buffer.
+    pub fn packet_at(&self, offset: u64, len: usize) -> Option<&[u8]> {
+        let start = usize::try_from(offset).ok()?;
+        self.view
+            .read_bytes(BufferIndex(self.to_worker))
+            .ok()?
+            .get(start..start.checked_add(len)?)
     }
 
     /// The smallest packet that goes in a buffer.
@@ -215,7 +503,7 @@ impl Borrower {
         if body.len() < self.threshold {
             return false;
         }
-        let Ok(buffer) = self.view.write_bytes(BufferIndex(self.to_host)) else {
+        let Ok(buffer) = self.outs.write_bytes(BufferIndex(self.to_host)) else {
             return false;
         };
         let Some(room) = buffer.get_mut(..body.len()) else {
@@ -231,6 +519,9 @@ impl Borrower {
         true
     }
 }
+
+/// Where values by reference start in a buffer, for the worker's writes.
+pub(crate) const VALUE_ALIGN: usize = ALIGN;
 
 fn page_size() -> usize {
     // The pool rounds to its own pages too; 16 KiB covers 4 KiB and 16 KiB page kernels.

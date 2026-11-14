@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+daedalus-types = { path = "../../../core/types" }
 daedalus-wire = { path = "../../../core/wire" }
 daedalus-process-shm = { path = "../../../backends/process-shm" }
 daedalus-worker-conformance = { path = "../worker-conformance" }

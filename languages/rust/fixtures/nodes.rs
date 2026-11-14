@@ -138,8 +138,9 @@ pub fn multi_output(x: u32) -> (u32, u32) {
 }
 
 #[node(id = "fixture.raw_io", inputs(payload), outputs(out), backend = daedalus_lang_rust)]
-pub fn raw_io(payload: Vec<u8>) -> Vec<u8> {
-    payload.into_iter().rev().collect()
+pub fn raw_io(payload: &[u8]) -> Vec<u8> {
+    // Borrowed: a large payload is read where the host put it.
+    payload.iter().rev().copied().collect()
 }
 
 #[node(id = "fixture.bytes_echo", inputs("in"), outputs("out"), backend = daedalus_lang_rust)]

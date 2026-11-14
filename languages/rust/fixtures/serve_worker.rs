@@ -12,7 +12,7 @@ use daedalus_registry::{BodyRecord, Fire, NodeDecl, NodeRecord, PortDecl, Source
 use daedalus_types::Scalar;
 use daedalus_wire::{FaultCode, LogLevel, WireValue};
 
-type Inputs<'a> = &'a [(&'static str, WireValue)];
+type Inputs<'a, 'b> = &'a daedalus_lang_rust::Inputs<'b>;
 
 fn panics(_: Inputs, _: &mut Context) -> Result<Vec<WireValue>, NodeError> {
     panic!("the node panicked on purpose");

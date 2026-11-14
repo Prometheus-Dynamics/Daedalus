@@ -17,6 +17,8 @@ use crate::child::{Got, Worker};
 use crate::spec::WorkerSpec;
 use crate::telemetry::{Count, Telemetry};
 
+pub(crate) mod values;
+
 /// The stderr bytes a fault report carries.
 const STDERR_REPORT: usize = 512;
 
@@ -195,6 +197,13 @@ pub(crate) struct WorkerStep {
     /// nothing.
     pub handed: Vec<Option<Arc<[u8]>>>,
     pub produced: Vec<bool>,
+    /// Each output the worker wrote into a value buffer this run, held for its cell.
+    pub adopted: Vec<Option<daedalus_abi::SharedBytes>>,
+    /// The types whose values go by descriptor.
+    #[cfg(target_os = "linux")]
+    pub dmabufs: Vec<values::DmaBufType>,
+    /// A dma-buf value's bytes, copied for a worker that takes no places.
+    pub scratch: Vec<u8>,
 }
 
 impl WorkerStep {
@@ -203,9 +212,11 @@ impl WorkerStep {
         region: Vec<u16>,
         reads: Vec<Binding>,
         writes: Vec<Binding>,
+        #[cfg(target_os = "linux")] dmabufs: Vec<values::DmaBufType>,
     ) -> WorkerStep {
         let outbufs = writes.iter().map(|_| Vec::new()).collect();
         let handed = writes.iter().map(|_| None).collect();
+        let adopted = writes.iter().map(|_| None).collect();
         let produced = vec![false; writes.len()];
         WorkerStep {
             shared,
@@ -215,6 +226,10 @@ impl WorkerStep {
             outbufs,
             handed,
             produced,
+            adopted,
+            #[cfg(target_os = "linux")]
+            dmabufs,
+            scratch: Vec::new(),
         }
     }
 
@@ -226,8 +241,21 @@ impl WorkerStep {
         }
     }
 
-    /// Writes the run message: the region's nodes, then each input that has a value.
-    fn encode_run(&self, run: u64, cells: &[Slot], out: &mut Writer) -> Result<usize, String> {
+    /// Writes the run message: the region's nodes, then each input that has a value. To a
+    /// worker that agreed values by reference, a large `bytes` input goes as a place in lent
+    /// memory, and a dma-buf value as its descriptor.
+    fn encode_run(
+        &mut self,
+        run: u64,
+        cells: &[Slot],
+        out: &mut Writer,
+        worker: &mut Worker,
+        telemetry: &Telemetry,
+    ) -> Result<usize, String> {
+        let by_reference = worker.by_reference();
+        if by_reference {
+            worker.begin_run(telemetry);
+        }
         out.u8(daedalus_wire::kind::RUN);
         out.u64(run);
         out.u32(0);
@@ -238,29 +266,70 @@ impl WorkerStep {
                 .map_err(|error| error.to_string())?;
         }
         let mut count = 0usize;
-        for (index, _) in self.reads.iter().enumerate() {
-            if cells[index].bytes().is_some() {
+        for (index, binding) in self.reads.iter().enumerate() {
+            if self.input(*binding, &cells[index]).is_some() {
                 count += 1;
             }
         }
         out.len(count).map_err(|error| error.to_string())?;
         let mut sent = 0usize;
+        // Kept between runs, so a steady run of dma-buf values to a plain worker allocates
+        // nothing. An error drops it.
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+        let mut scratch = std::mem::take(&mut self.scratch);
         for (index, binding) in self.reads.iter().enumerate() {
-            let Some(bytes) = cells[index].bytes() else {
+            let Some(input) = self.input(*binding, &cells[index]) else {
                 continue;
             };
             let node = &self.shared.nodes[binding.node as usize];
             out.str(&node.id).map_err(|error| error.to_string())?;
             out.str(&node.inputs[binding.port as usize].0)
                 .map_err(|error| error.to_string())?;
-            put_raw(self.port_type(*binding, Dir::Input), bytes, out)?;
-            sent += bytes.len();
+            let ty = self.port_type(*binding, Dir::Input);
+            if by_reference && values::by_place(ty) {
+                if values::put_placed(worker, &input, out)? {
+                    telemetry.bump(Count::PlacedIn);
+                } else if let Some(bytes) = input.bytes() {
+                    sent += bytes.len();
+                }
+                continue;
+            }
+            match input {
+                values::Input::Bytes(bytes) => {
+                    put_raw(ty, bytes, out)?;
+                    sent += bytes.len();
+                }
+                #[cfg(target_os = "linux")]
+                values::Input::Fd(fd, offset, len) => {
+                    values::copy_out(fd, offset, len, &mut scratch)?;
+                    put_raw(ty, &scratch, out)?;
+                    sent += scratch.len();
+                }
+            }
         }
+        self.scratch = scratch;
         Ok(sent)
     }
 
-    /// Reads an `Outputs` packet into the output buffers. Returns the worker's status.
-    fn read_outputs(&mut self, buf: &[u8], schema: &Schema) -> Result<RunStatus, WireError> {
+    /// What an input cell holds for its port, if anything.
+    fn input<'a>(&self, binding: Binding, cell: &'a Slot) -> Option<values::Input<'a>> {
+        values::input_of(
+            #[cfg(target_os = "linux")]
+            &self.dmabufs,
+            self.port_type(binding, Dir::Input),
+            cell,
+        )
+    }
+
+    /// Reads an `Outputs` packet into the output buffers, holding each output the worker wrote
+    /// into a value buffer for its cell. Returns the worker's status.
+    fn read_outputs(
+        &mut self,
+        buf: &[u8],
+        schema: &Schema,
+        worker: &Worker,
+    ) -> Result<RunStatus, WireError> {
+        let by_reference = worker.by_reference();
         let mut input = Reader::new(buf);
         let _kind = input.u8()?;
         let _run = input.u64()?;
@@ -279,6 +348,9 @@ impl WorkerStep {
         for produced in self.produced.iter_mut() {
             *produced = false;
         }
+        for adopted in self.adopted.iter_mut() {
+            *adopted = None;
+        }
         for _ in 0..count {
             let node = input.text()?;
             let port = input.text()?;
@@ -296,8 +368,15 @@ impl WorkerStep {
             let ty = self.port_type(binding, Dir::Output).clone();
             let out = &mut self.outbufs[index];
             out.clear();
-            read_raw(&ty, &mut input, schema, out)?;
             self.produced[index] = true;
+            if by_reference
+                && values::by_place(&ty)
+                && let values::Output::Held(bytes) = values::read_placed(worker, &mut input)?
+            {
+                self.adopted[index] = Some(bytes);
+                continue;
+            }
+            read_raw(&ty, &mut input, schema, out)?;
         }
         input.finish()?;
         Ok(status)
@@ -356,7 +435,10 @@ impl OwnedStep for WorkerStep {
         sup.run = sup.run.wrapping_add(1);
         let run = sup.run;
         sup.writer.buf.clear();
-        let sent = match self.encode_run(run, cells, &mut sup.writer) {
+        let Link::Up(worker) = &mut sup.link else {
+            return self.fail(&shared, sup, cx, "worker is not running", Blame::Worker);
+        };
+        let sent = match self.encode_run(run, cells, &mut sup.writer, worker, &shared.telemetry) {
             Ok(sent) => sent,
             Err(reason) => return self.fail(&shared, sup, cx, &reason, Blame::Nobody),
         };
@@ -387,6 +469,14 @@ impl OwnedStep for WorkerStep {
                 for index in 0..self.writes.len() {
                     if self.produced[index] {
                         let cell = &mut cells[self.reads.len() + index];
+                        if let Some(bytes) = self.adopted[index].take() {
+                            // The worker wrote it into lent memory: the cell holds it there.
+                            let ty = daedalus_types::TypeIndex(cell.type_index);
+                            let space = daedalus_types::SpaceIndex(cell.space as _);
+                            daedalus_runner::put_handed(cell, ty, space, bytes);
+                            shared.telemetry.bump(Count::PlacedOut);
+                            continue;
+                        }
                         Self::publish(cell, &mut self.outbufs[index], &mut self.handed[index]);
                     }
                 }
@@ -464,7 +554,7 @@ impl WorkerStep {
                         Some(daedalus_wire::kind::OUTPUTS) if run_of != Some(run) => None,
                         Some(daedalus_wire::kind::OUTPUTS) => {
                             let schema = &shared.schema;
-                            match self.read_outputs(&buf, schema) {
+                            match self.read_outputs(&buf, schema, worker) {
                                 Ok(status) => {
                                     shared.telemetry.bump(Count::BytesOut(buf.len() as u64));
                                     Some(Outcome::Replied(status))
@@ -500,7 +590,7 @@ impl WorkerStep {
                     if run_of != Some(run) {
                         continue;
                     }
-                    return match self.read_outputs(bytes, &shared.schema) {
+                    return match self.read_outputs(bytes, &shared.schema, worker) {
                         Ok(status) => {
                             shared.telemetry.bump(Count::BytesOut(len as u64));
                             shared.telemetry.bump(Count::SharedOut);

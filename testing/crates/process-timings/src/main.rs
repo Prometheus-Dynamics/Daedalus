@@ -5,7 +5,10 @@
 //! `process-timings WORKER [BATCHES] [MEGABYTES]`, where WORKER is the `daedalus-worker-fixture`
 //! binary. With MEGABYTES it also times a payload of that size handed to the worker and back, and
 //! the node's own work on it (the worker reverses it) timed in this process, so the transport's
-//! share is the difference. It says which transport the worker got: shared memory or plain.
+//! share is the difference. It says which transport the worker got: values by reference (inputs as
+//! places, outputs held where the worker wrote them), shared memory for whole packets, or plain.
+//! The fixture picks by its environment: `DAEDALUS_FIXTURE_NO_REFERENCE` asks for shared memory
+//! alone, `DAEDALUS_FIXTURE_PLAIN` for nothing.
 //!
 //! It warms up, then times BATCHES batches of 1,000 operations and prints the median, minimum and
 //! maximum of the per-operation times, in nanoseconds. It then counts the allocations of 200 more
@@ -276,21 +279,27 @@ fn hand_over(backend: &ProcessBackend, megabytes: usize, batches: usize) {
     }
     work.sort_by(f64::total_cmp);
     let per_mb = median(&times) / megabytes as f64;
-    let transport = if backend.telemetry().grants > 0 {
+    let telemetry = backend.telemetry();
+    let transport = if telemetry.agreed > 0 {
+        "by_reference"
+    } else if telemetry.grants > 0 {
         "shared"
     } else {
         "plain"
     };
     let work_per_mb = median(&work) / megabytes as f64;
     println!(
-        "hand_over transport {transport} megabytes {megabytes} median_ns {:.0} p99_ns {:.0} min_ns {:.0} max_ns {:.0} ns_per_megabyte {per_mb:.0} p99_ns_per_megabyte {:.0} node_work_ns_per_megabyte {work_per_mb:.0} transport_ns_per_megabyte {:.0} runs {} allocations_per_8_runs {allocations}",
+        "hand_over transport {transport} megabytes {megabytes} median_ns {:.0} p99_ns {:.0} min_ns {:.0} max_ns {:.0} ns_per_megabyte {per_mb:.0} p99_ns_per_megabyte {:.0} node_work_ns_per_megabyte {work_per_mb:.0} transport_ns_per_megabyte {:.0} runs {} allocations_per_8_runs {allocations} placed_in {} placed_out {} fd_sends {}",
         median(&times),
         p99(&times),
         times[0],
         times[times.len() - 1],
         p99(&times) / megabytes as f64,
         per_mb - work_per_mb,
-        times.len()
+        times.len(),
+        telemetry.placed_in,
+        telemetry.placed_out,
+        telemetry.fd_sends
     );
     release(step);
 }

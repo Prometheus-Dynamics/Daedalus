@@ -11,10 +11,15 @@ daedalus-abi = { path = "../../core/abi" }
 daedalus-backend = { path = "../../core/backend" }
 daedalus-loader = { path = "../../core/loader" }
 daedalus-registry = { path = "../../core/registry" }
+daedalus-runner = { path = "../../core/runner", features = ["std"] }
 daedalus-types = { path = "../../core/types" }
 daedalus-value = { path = "../../core/value" }
 daedalus-wire = { path = "../../core/wire" }
 daedalus-process-shm = { path = "../process-shm" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+daedalus-dma-sys = { path = "../dma-sys" }
+daedalus-dmabuf = { path = "../dmabuf" }
 
 [dev-dependencies]
 daedalus-abi = { path = "../../core/abi", features = ["count-alloc", "test-run"] }
