@@ -68,7 +68,9 @@ events for each watch that isn't being read (`WATCH_QUEUE`), and one thread for 
 connection, of at most 64 (`ListenOptions`). A worker process costs the host 64 KiB of its last
 stderr and two packet buffers, each the size of the largest value it has carried. On Linux it
 also maps two shared buffers for that worker, 1 MiB each to start, which grow to the next power of
-two of the largest packet of 64 KiB or more it has carried.
+two of the largest packet of 64 KiB or more it has carried. A worker that takes values by reference
+gets four more of the same size for its output values, and the host keeps at most 16 of its dma-buf
+descriptors open for it.
 
 ## What was removed
 

@@ -22,6 +22,8 @@ mod foreign;
 mod guard;
 mod handed;
 mod handle;
+#[cfg(feature = "std")]
+mod held;
 #[cfg(not(daedalus_abi_baseline))]
 mod kept;
 mod layout;
@@ -58,6 +60,8 @@ pub use handed::{
     HANDOVER_PENDING, HandedRecord, OWNER_HANDED, SharedBytes, handed_release, handed_retain,
 };
 pub use handle::Handle;
+#[cfg(feature = "std")]
+pub use held::{HeldRegions, Regions};
 pub use layout::{DESCRIPTORS, FROZEN_HASH, SHAPES, abi_desc, layout_hash};
 pub use message::MessageSink;
 pub use out::{Written, write_out, write_text};

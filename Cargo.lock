@@ -471,6 +471,8 @@ version = "3.0.1-dev"
 dependencies = [
  "daedalus-abi",
  "daedalus-backend",
+ "daedalus-dma-sys",
+ "daedalus-dmabuf",
  "daedalus-loader",
  "daedalus-process-shm",
  "daedalus-registry",
@@ -1002,6 +1004,8 @@ dependencies = [
 name = "daedalus-process-shm"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus-abi",
+ "daedalus-dma-sys",
  "daedalus-wire",
  "shm-fdpass",
  "shm-ring-buffers",
@@ -1171,6 +1175,7 @@ dependencies = [
  "daedalus-backend",
  "daedalus-backend-process",
  "daedalus-registry",
+ "daedalus-runner",
  "daedalus-types",
  "daedalus-wire",
 ]
@@ -1180,6 +1185,7 @@ name = "daedalus-worker-fixture"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-process-shm",
+ "daedalus-types",
  "daedalus-wire",
  "daedalus-worker-conformance",
 ]

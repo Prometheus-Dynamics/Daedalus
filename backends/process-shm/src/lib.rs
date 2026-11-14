@@ -24,9 +24,27 @@ pub const THRESHOLD: usize = 64 * 1024;
 pub const START_SIZE: usize = 1 << 20;
 
 #[cfg(target_os = "linux")]
+mod fds;
+#[cfg(target_os = "linux")]
+mod held;
+#[cfg(target_os = "linux")]
 mod linux;
 mod worker;
 
 #[cfg(target_os = "linux")]
+pub use fds::SLOTS;
+#[cfg(target_os = "linux")]
 pub use linux::{Borrower, Lender, ShmError, is_socket, recv_packet};
-pub use worker::{Inbox, Incoming, Lent, PLAIN_LINE};
+pub use worker::{Inbox, Incoming, Lent, PLAIN_LINE, Reads, View, Writes};
+
+/// What a worker did to the buffers it was sent by descriptor, for a test to read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Brackets {
+    /// Descriptors received.
+    pub attached: u64,
+    /// Reads begun, and ended, with the kernel's sync call.
+    pub begun: u64,
+    pub ended: u64,
+    /// Reads of a buffer that takes no sync call: a memfd, with no device behind it.
+    pub unbracketed: u64,
+}

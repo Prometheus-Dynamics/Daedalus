@@ -1,7 +1,8 @@
 //! The shared-memory transport on Linux: a large value travels in memory the host lends the worker,
 //! a small one stays in its packet, a worker that doesn't ask stays plain and is counted, the
 //! lent memory grows when a value outgrows it, and a worker that dies or hangs is replaced by one
-//! that is lent memory again.
+//! that is lent memory again. The worker asks for shared memory alone here, so whole packets go
+//! in it; values by reference are `tests/by_reference.rs`.
 
 #![cfg(target_os = "linux")]
 
@@ -18,6 +19,11 @@ use daedalus_backend_process::ProcessBackend;
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
 use daedalus_worker_conformance::runner::registry;
 use support::spec;
+
+/// The fixture, asking for shared memory but not values by reference.
+fn packets(args: &[&str]) -> daedalus_backend_process::WorkerSpec {
+    spec(args).env("DAEDALUS_FIXTURE_NO_REFERENCE", "1")
+}
 
 /// The `fixture.raw_io` node, which hands its bytes back reversed, compiled as a one-node region.
 fn raw_io_step(backend: &ProcessBackend) -> Step {
@@ -101,7 +107,7 @@ const LARGE: usize = 256 << 10;
 fn a_large_value_travels_in_lent_memory_both_ways() {
     let mut backend = ProcessBackend::new();
     backend
-        .add_worker(spec(&[]), &registry())
+        .add_worker(packets(&[]), &registry())
         .expect("registers");
     let mut step = raw_io_step(&backend);
     for _ in 0..3 {
@@ -120,7 +126,7 @@ fn a_large_value_travels_in_lent_memory_both_ways() {
 fn a_small_value_stays_in_its_packet() {
     let mut backend = ProcessBackend::new();
     backend
-        .add_worker(spec(&[]), &registry())
+        .add_worker(packets(&[]), &registry())
         .expect("registers");
     let mut step = raw_io_step(&backend);
     let (end, reason) = round_trip(&mut step, 1024);
@@ -136,7 +142,7 @@ fn a_small_value_stays_in_its_packet() {
 fn a_worker_that_does_not_ask_stays_plain_and_is_counted() {
     let mut backend = ProcessBackend::new();
     backend
-        .add_worker(spec(&[]).env("DAEDALUS_FIXTURE_PLAIN", "1"), &registry())
+        .add_worker(packets(&[]).env("DAEDALUS_FIXTURE_PLAIN", "1"), &registry())
         .expect("registers");
     let mut step = raw_io_step(&backend);
     let (end, reason) = round_trip(&mut step, LARGE);
@@ -153,7 +159,7 @@ fn a_worker_that_does_not_ask_stays_plain_and_is_counted() {
 fn lent_memory_grows_when_a_value_outgrows_it() {
     let mut backend = ProcessBackend::new();
     backend
-        .add_worker(spec(&[]), &registry())
+        .add_worker(packets(&[]), &registry())
         .expect("registers");
     let mut step = raw_io_step(&backend);
     // Larger than the memory first lent, so the first run goes plain and the memory grows.
@@ -190,7 +196,7 @@ fn a_worker_that_dies_is_replaced_by_one_lent_memory_again() {
     let mut backend = ProcessBackend::new();
     let arg = format!("exit-once:{}", marker.display());
     backend
-        .add_worker(spec(&["--misbehave", &arg]), &registry())
+        .add_worker(packets(&["--misbehave", &arg]), &registry())
         .expect("registers");
     let mut step = raw_io_step(&backend);
     let (end, reason) = round_trip(&mut step, LARGE);
@@ -210,7 +216,7 @@ fn a_worker_that_dies_is_replaced_by_one_lent_memory_again() {
 #[test]
 fn a_hung_worker_is_killed_and_its_replacement_lent_memory_again() {
     let mut backend = ProcessBackend::new();
-    let hang = spec(&["--misbehave", "hang"])
+    let hang = packets(&["--misbehave", "hang"])
         .deadline(Duration::from_millis(300))
         .grace(Duration::from_millis(200));
     backend.add_worker(hang, &registry()).expect("registers");

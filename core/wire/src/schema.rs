@@ -27,6 +27,9 @@ struct Entry {
 pub struct Schema {
     ports: Vec<Entry>,
     codecs: Vec<String>,
+    /// Whether the peers agreed values by reference, which gives every `bytes` and opaque value a
+    /// form byte: see [`crate::shared`].
+    by_reference: bool,
 }
 
 impl Schema {
@@ -49,6 +52,15 @@ impl Schema {
         if !self.has_codec(key) {
             self.codecs.push(key.to_owned());
         }
+    }
+
+    /// Sets whether the peers agreed values by reference.
+    pub fn set_by_reference(&mut self, on: bool) {
+        self.by_reference = on;
+    }
+
+    pub fn by_reference(&self) -> bool {
+        self.by_reference
     }
 
     pub fn has_codec(&self, key: &str) -> bool {

@@ -7,11 +7,14 @@
 //! outputs, `log-exit` sends one and exits, and `long-fault` fails each run with a reason of
 //! several lines.
 //!
-//! It asks its host for shared memory, as a Rust worker does, unless `DAEDALUS_FIXTURE_PLAIN` is
-//! set: then it stays on the plain path, so one binary measures both.
+//! It asks its host for shared memory and values by reference, as a Rust worker does. With
+//! `DAEDALUS_FIXTURE_PLAIN` set it asks for nothing and stays on the plain path; with
+//! `DAEDALUS_FIXTURE_NO_REFERENCE` it asks for shared memory alone. So one binary measures all
+//! three. `DAEDALUS_FIXTURE_PROBE` adds `fixture.dmabuf_probe` and `fixture.dmabuf_fail` (see `by_reference`).
 
 #![forbid(unsafe_code)]
 
+mod by_reference;
 mod nodes;
 
 use std::collections::BTreeMap;
@@ -77,7 +80,12 @@ fn run(
     let mut outputs = Vec::new();
     let mut status = RunStatus::Ok;
     for node in &run.nodes {
-        match nodes::execute(node, &run.inputs, state) {
+        let ran = if schema.by_reference() || node.starts_with("fixture.dmabuf_") {
+            by_reference::execute(lent, node, &run.inputs, state)
+        } else {
+            nodes::execute(node, &run.inputs, state)
+        };
+        match ran {
             Ok(values) => outputs.extend(values),
             Err((code, reason)) => {
                 if node == "fixture.failure_diagnostic" {
@@ -126,8 +134,11 @@ fn run(
 
 fn main() {
     let mode = mode_from_args();
-    let hello = hello(DEFAULT_CAP);
-    let mut schema = Schema::from_hello(&hello, &[CUSTOM_KEY]);
+    let mut hello = hello(DEFAULT_CAP);
+    if std::env::var_os("DAEDALUS_FIXTURE_PROBE").is_some() {
+        hello.nodes.extend(by_reference::probes());
+    }
+    let mut schema = Schema::from_hello(&hello, &[CUSTOM_KEY, by_reference::SHOT]);
     schema.codec(CUSTOM_KEY);
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -135,8 +146,12 @@ fn main() {
         return;
     }
     let lent = Lent::default();
-    if std::env::var_os("DAEDALUS_FIXTURE_PLAIN").is_none() {
+    if std::env::var_os("DAEDALUS_FIXTURE_PLAIN").is_some() {
+        // Asks for nothing.
+    } else if std::env::var_os("DAEDALUS_FIXTURE_NO_REFERENCE").is_some() {
         let _ = lent.ask(&mut out);
+    } else {
+        let _ = lent.ask_by_reference(&mut out);
     }
     let mut inbox = Inbox::new(lent.clone());
     let mut buf = Vec::new();
@@ -150,7 +165,11 @@ fn main() {
                     None => continue,
                 }
             }
-            Ok(Incoming::Granted | Incoming::Plain(_)) => continue,
+            Ok(Incoming::Granted) => {
+                schema.set_by_reference(lent.by_reference());
+                continue;
+            }
+            Ok(Incoming::Plain(_)) => continue,
             Err(_) => return,
         };
         let msg = match decoded {

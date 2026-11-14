@@ -17,6 +17,11 @@ pub struct Telemetry {
     shared_in: AtomicU64,
     shared_out: AtomicU64,
     plain_workers: AtomicU64,
+    agreed: AtomicU64,
+    placed_in: AtomicU64,
+    placed_out: AtomicU64,
+    fd_sends: AtomicU64,
+    outs_full: AtomicU64,
 }
 
 /// A copy of the counts at one time.
@@ -42,6 +47,18 @@ pub struct Snapshot {
     /// not lend. A worker on a path of large values that shows up here copies them through its
     /// stream.
     pub plain_workers: u64,
+    /// Lendings that also agreed values by reference: the worker asked for it.
+    pub agreed: u64,
+    /// Input values sent by reference: a place in lent memory or in a buffer by descriptor,
+    /// instead of their bytes.
+    pub placed_in: u64,
+    /// Output values a worker wrote into lent memory that a cell then held, with no copy.
+    pub placed_out: u64,
+    /// Descriptors sent to workers. A buffer goes once, so a steady run sends none.
+    pub fd_sends: u64,
+    /// Runs with every value buffer still held by cells: the worker sent that run's output
+    /// values in its packet.
+    pub outs_full: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -61,6 +78,16 @@ pub(crate) enum Count {
     SharedIn,
     SharedOut,
     Plain,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Agree,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    PlacedIn,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    PlacedOut,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    FdSends(u64),
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    OutsFull,
 }
 
 impl Telemetry {
@@ -78,6 +105,11 @@ impl Telemetry {
             Count::SharedIn => (&self.shared_in, 1),
             Count::SharedOut => (&self.shared_out, 1),
             Count::Plain => (&self.plain_workers, 1),
+            Count::Agree => (&self.agreed, 1),
+            Count::PlacedIn => (&self.placed_in, 1),
+            Count::PlacedOut => (&self.placed_out, 1),
+            Count::FdSends(n) => (&self.fd_sends, n),
+            Count::OutsFull => (&self.outs_full, 1),
         };
         field.fetch_add(by, Ordering::Relaxed);
     }
@@ -96,6 +128,11 @@ impl Telemetry {
             shared_in: self.shared_in.load(Ordering::Relaxed),
             shared_out: self.shared_out.load(Ordering::Relaxed),
             plain_workers: self.plain_workers.load(Ordering::Relaxed),
+            agreed: self.agreed.load(Ordering::Relaxed),
+            placed_in: self.placed_in.load(Ordering::Relaxed),
+            placed_out: self.placed_out.load(Ordering::Relaxed),
+            fd_sends: self.fd_sends.load(Ordering::Relaxed),
+            outs_full: self.outs_full.load(Ordering::Relaxed),
         }
     }
 }

@@ -3,7 +3,9 @@
 //!
 //! On Linux a worker's stdin and stdout are one unix socket, so the host can lend it shared
 //! memory (`daedalus-process-shm`): a worker that asks is lent two buffers, and a large run and
-//! its outputs travel in them instead of on the stream. Elsewhere they are two pipes.
+//! its outputs travel in them instead of on the stream. A worker that also wants values by
+//! reference is lent value buffers too, and takes and gives `bytes` values as places (`lend`).
+//! Elsewhere they are two pipes.
 
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
@@ -22,6 +24,8 @@ use crate::ProcessError;
 use crate::reader::{self, Packets};
 use crate::spec::WorkerSpec;
 use crate::telemetry::{Count, Telemetry};
+
+mod lend;
 
 /// The stderr tail kept for a fault report.
 pub(crate) const STDERR_CAP: usize = 64 * 1024;
@@ -99,6 +103,8 @@ struct Lent {
     /// next run lends buffers at least this big.
     want: std::cell::Cell<usize>,
     note: Writer,
+    /// The worker asked to take and give values by reference.
+    wants: bool,
 }
 
 pub(crate) struct Worker {
@@ -226,6 +232,10 @@ impl Worker {
         telemetry: &Telemetry,
     ) -> Result<(), PacketError> {
         #[cfg(target_os = "linux")]
+        if self.by_reference() {
+            return self.send_run_by_reference(body, telemetry);
+        }
+        #[cfg(target_os = "linux")]
         if body.len() >= daedalus_process_shm::THRESHOLD && self.lent.lender.is_some() {
             let need = body.len().max(self.lent.want.get());
             if self
@@ -263,12 +273,25 @@ impl Worker {
             return;
         };
         self.lent.generation = self.lent.generation.wrapping_add(1).max(1);
-        let lent =
-            daedalus_process_shm::Lender::new(self.lent.generation, size.next_power_of_two())
-                .and_then(|lender| lender.grant(socket.as_fd()).map(|()| lender));
+        let values = if self.lent.wants { lend::VALUES } else { 0 };
+        let lent = daedalus_process_shm::Lender::with_values(
+            self.lent.generation,
+            size.next_power_of_two(),
+            values,
+        )
+        .and_then(|lender| lender.grant(socket.as_fd()).map(|()| lender))
+        .and_then(|lender| {
+            if lender.by_reference() {
+                lender.agree(socket.as_fd())?;
+            }
+            Ok(lender)
+        });
         match lent {
             Ok(lender) => {
                 telemetry.bump(Count::Grant);
+                if lender.by_reference() {
+                    telemetry.bump(Count::Agree);
+                }
                 self.lent.lender = Some(lender);
             }
             Err(_) => {
@@ -305,6 +328,11 @@ impl Worker {
                                 Ok(Shared::Ask { version }) => Some(version),
                                 _ => Some(0),
                             };
+                        }
+                        if kind == Some(shared_kind::WANT)
+                            && let Ok(Shared::Want { features }) = Shared::decode(&buf)
+                        {
+                            self.lent.wants = features & daedalus_wire::shared::BY_REFERENCE != 0;
                         }
                         self.give_back(buf);
                         if kind == Some(daedalus_wire::kind::PONG) {

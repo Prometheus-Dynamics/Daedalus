@@ -10,6 +10,8 @@ repository.workspace = true
 daedalus-wire = { path = "../../core/wire" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+daedalus-abi = { path = "../../core/abi", features = ["std"] }
+daedalus-dma-sys = { path = "../dma-sys" }
 shm-fdpass = { workspace = true }
 shm-ring-buffers = { workspace = true }
 

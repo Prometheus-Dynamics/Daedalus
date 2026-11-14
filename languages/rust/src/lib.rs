@@ -9,7 +9,7 @@ pub mod codec;
 pub mod context;
 mod serve;
 
-pub use codec::{Pack, Pair, Wire, WorkerReturn};
+pub use codec::{Inputs, Pack, Pair, Value, Wire, WorkerReturn};
 pub use context::{Context, Event};
 /// The registry records `#[node]` writes into.
 pub use daedalus_registry as registry;
@@ -54,7 +54,7 @@ macro_rules! __daedalus_body {
             memory: &[],
             code: &{
                 fn __adapter(
-                    inputs: &[(&'static str, $crate::WireValue)],
+                    inputs: &$crate::codec::Inputs<'_>,
                     cx: &mut $crate::Context,
                 ) -> ::core::result::Result<::std::vec::Vec<$crate::WireValue>, $crate::NodeError> {
                     $crate::__worker_call!(
@@ -168,7 +168,12 @@ macro_rules! __worker_call {
             cx = $cx,
             ret = $ret,
             name = ($($name)*),
-            pre = [$($pre)* let $id: $t = $crate::codec::input($inputs, $port)?;],
+            pre = [$($pre)*
+                // A `&[u8]` borrows the input's bytes; anything else is decoded (`Reading`).
+                #[allow(unused_imports)]
+                use $crate::codec::Decoded as _;
+                let $id = (&$crate::codec::Reading::<$t>::NEW).hold($inputs, $port)?;
+            ],
             args = [$($args)* &$id,],
             post = [$($post)*],
             entries = ($($rest)*)

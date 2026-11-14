@@ -105,6 +105,43 @@ runs on pipes and stays plain.
 On a CM5 the hand-over of a 1 MiB value there and back went from 3.91 ms/MB to 2.06 ms/MB, and of
 a 4 MiB one from 4.10 to 2.69: [testing/board-runs/worker-shm.md](../testing/board-runs/worker-shm.md).
 
+### Values by reference
+
+A worker can ask for more than whole packets in shared memory: right after its ask it sends a want
+(kind `0x4B`) naming values by reference. A host that supports it answers its grant with an agree
+(kind `0x09`) and lends four more buffers, for output values. A host older than this ignores the
+want, so the worker stays on whole packets. From then on a port's whole `bytes` or opaque value,
+in a run or in outputs, starts with a form byte: `0` and its bytes follow as before, `1` and it
+is a place in a lent buffer (buffer, offset, length), `2` and it is a place in a buffer the host
+sent by descriptor (slot, offset, length). A value inside a list, struct or other compound never
+has a form byte.
+
+Each run goes with a note (kind `0x0A`): the value buffer the worker writes this run's outputs
+into, if one is free, descriptors to keep and slots to let go, and where the run is. A small run
+follows the note in the same frame; a large one is in the host's buffer after its input values.
+
+- **Inputs.** A large input is written into the host's buffer and sent as its place. A cell whose
+  type was registered with `ProcessBackend::with_dmabuf::<T>()` (a `DmaBufBacked` type) is sent as
+  its buffer's descriptor: once per distinct buffer, kept by the worker in one of 16 slots, and
+  named by slot after that. Both sides know a buffer by its device and inode. When all 16 are in
+  use, the least recently used is let go, and the worker is told to close it. The worker maps
+  each such buffer read-only, so it can never change a value other nodes read. Each read is
+  inside the kernel's `DMA_BUF_IOCTL_SYNC` START and END, with READ. A buffer that refuses the
+  call (a memfd has no device to sync with) is counted and read as it is.
+- **Outputs.** A worker writes a large output into the value buffer the note named, and sends its
+  place. The output cell holds that buffer as it is (`OWNER_HANDED`), through a pooled record with
+  no allocation. While cells hold a buffer, the host names another. When cells hold all four, the
+  run names none, the outputs go in the packet that once, and the run is counted. Nothing waits.
+- **A plain worker.** A worker that didn't agree is sent a descriptor value's bytes, copied out of
+  a read-only mapping inside the same brackets.
+
+In the Rust SDK a node's `&[u8]` parameter borrows the input where the host put it for the call,
+and a large `Vec<u8>` output is copied once into the value buffer instead of into the packet. The
+host's counters: `agreed` (workers that agreed), `placed_in` and `placed_out` (values sent and
+taken by place), `fd_sends` (descriptors sent; 0 in steady state), and `outs_full` (runs with no
+value buffer free). `daedalus-worker-conformance::large_values` runs any worker through large
+values and gives these counters back.
+
 ## Failure
 
 A worker that exits, hangs or sends something unreadable is a fault of its region, with the

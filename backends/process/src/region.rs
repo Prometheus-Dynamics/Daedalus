@@ -35,6 +35,9 @@ pub struct ProcessBackend {
     served: BTreeMap<String, (usize, usize)>,
     telemetry: Arc<Telemetry>,
     log: Arc<crate::log::LogSink>,
+    /// The types whose values go to a worker by descriptor.
+    #[cfg(target_os = "linux")]
+    dmabufs: Vec<crate::supervise::values::DmaBufType>,
 }
 
 impl Default for ProcessBackend {
@@ -50,7 +53,23 @@ impl ProcessBackend {
             served: BTreeMap::new(),
             telemetry: Arc::new(Telemetry::default()),
             log: Arc::default(),
+            #[cfg(target_os = "linux")]
+            dmabufs: Vec::new(),
         }
+    }
+
+    /// Lists `T` as a type whose values are a dma-buf (`daedalus_dmabuf::DmaBufBacked`). A `T`
+    /// that reaches a worker's `bytes` or opaque input goes as its buffer's descriptor to a worker
+    /// that agreed values by reference: sent once per buffer, mapped read-only by the worker, and
+    /// never copied. A worker on the plain path is sent its bytes, read through a read-only
+    /// mapping. Linux only.
+    #[cfg(target_os = "linux")]
+    #[must_use]
+    pub fn with_dmabuf<T: daedalus_dmabuf::DmaBufBacked>(mut self) -> ProcessBackend {
+        self.dmabufs.push(crate::supervise::values::DmaBufType {
+            fd_of: crate::supervise::values::fd_of::<T>,
+        });
+        self
     }
 
     /// Starts a worker, reads its hello, and checks every node it declares against the registry.
@@ -410,7 +429,14 @@ impl Backend for ProcessBackend {
             absorbed: Vec::new(),
             may_pend: false,
         };
-        let step: Step = Step::boxed(WorkerStep::new(shared, region_nodes, reads, writes));
+        let step: Step = Step::boxed(WorkerStep::new(
+            shared,
+            region_nodes,
+            reads,
+            writes,
+            #[cfg(target_os = "linux")]
+            self.dmabufs.clone(),
+        ));
         Ok(Compiled::Steps(vec![StepUnit { step, info }]))
     }
 }

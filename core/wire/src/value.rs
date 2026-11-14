@@ -271,6 +271,9 @@ pub enum WireValue {
     },
     /// The bytes a codec wrote for an opaque type.
     Opaque(Vec<u8>),
+    /// A `bytes` or opaque value by reference, between peers that agreed it: see
+    /// [`crate::shared`].
+    Placed(crate::shared::Place),
 }
 
 impl WireValue {
@@ -293,6 +296,7 @@ impl WireValue {
             WireValue::F64(_) => "f64",
             WireValue::String(_) => "string",
             WireValue::Bytes(_) => "bytes",
+            WireValue::Placed(_) => "placed",
             WireValue::Optional(_) => "optional",
             WireValue::List(_) => "list",
             WireValue::Map(_) => "map",
@@ -349,7 +353,17 @@ fn encode_at(
         (WireType::Scalar(Scalar::F32), WireValue::F32(v)) => out.f32(*v),
         (WireType::Scalar(Scalar::Float), WireValue::F64(v)) => out.f64(*v),
         (WireType::Scalar(Scalar::String), WireValue::String(v)) => out.str(v)?,
-        (WireType::Scalar(Scalar::Bytes), WireValue::Bytes(v)) => out.bytes(v)?,
+        (WireType::Scalar(Scalar::Bytes), WireValue::Bytes(v)) => {
+            if depth == 0 && schema.by_reference() {
+                out.u8(crate::shared::form::INLINE);
+            }
+            out.bytes(v)?;
+        }
+        (WireType::Scalar(Scalar::Bytes) | WireType::Opaque(_), WireValue::Placed(place))
+            if depth == 0 && schema.by_reference() =>
+        {
+            place.encode(out);
+        }
         (WireType::Optional(inner), WireValue::Optional(v)) => match v {
             None => out.u8(0),
             Some(item) => {
@@ -396,6 +410,9 @@ fn encode_at(
             if !schema.has_codec(key) {
                 return Err(WireError::NoCodec(key.clone()));
             }
+            if depth == 0 && schema.by_reference() {
+                out.u8(crate::shared::form::INLINE);
+            }
             out.bytes(bytes)?;
         }
         _ => return Err(shape(ty, value)),
@@ -439,7 +456,10 @@ fn decode_at(
             Scalar::F32 => WireValue::F32(input.f32()?),
             Scalar::Float => WireValue::F64(input.f64()?),
             Scalar::String => WireValue::String(input.str()?),
-            Scalar::Bytes => WireValue::Bytes(input.bytes()?),
+            Scalar::Bytes => match by_reference_form(input, schema, depth)? {
+                None => WireValue::Bytes(input.bytes()?),
+                Some(place) => WireValue::Placed(place),
+            },
         },
         WireType::Optional(inner) => match input.u8()? {
             0 => WireValue::Optional(None),
@@ -495,10 +515,32 @@ fn decode_at(
             WireValue::Enum { variant, payload }
         }
         WireType::Opaque(key) => {
+            // A value by reference is bytes the host never decodes, so it needs no codec.
+            if let Some(place) = by_reference_form(input, schema, depth)? {
+                return Ok(WireValue::Placed(place));
+            }
             if !schema.has_codec(key) {
                 return Err(WireError::NoCodec(key.clone()));
             }
             WireValue::Opaque(input.bytes()?)
         }
     })
+}
+
+/// Between peers that agreed values by reference, reads the form byte of a port's `bytes` or
+/// opaque value: `None` when its bytes follow, and the place otherwise. Reads nothing without the
+/// agreement, or inside another value: only a port's whole value can be a place, since a host
+/// holds a compound value as its wire form already.
+fn by_reference_form(
+    input: &mut Reader<'_>,
+    schema: &Schema,
+    depth: u32,
+) -> Result<Option<crate::shared::Place>, WireError> {
+    if depth != 0 || !schema.by_reference() {
+        return Ok(None);
+    }
+    match input.u8()? {
+        crate::shared::form::INLINE => Ok(None),
+        form => crate::shared::Place::decode(form, input).map(Some),
+    }
 }

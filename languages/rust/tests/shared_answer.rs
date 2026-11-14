@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 
 use daedalus_process_shm::PLAIN_LINE;
 use daedalus_wire::codec::Writer;
-use daedalus_wire::shared::{Shared, VERSION};
+use daedalus_wire::shared::{BY_REFERENCE, Shared, VERSION};
 use daedalus_wire::{DEFAULT_CAP, Schema, WorkerMsg, kind, read_packet, write_packet};
 
 const WORKER: &str = env!("CARGO_BIN_EXE_daedalus-rust-serve-worker");
@@ -48,6 +48,13 @@ fn start() -> (std::process::Child, UnixStream) {
     assert_eq!(
         Shared::decode(&buf).expect("the ask decodes"),
         Shared::Ask { version: VERSION }
+    );
+    read_packet(&mut reader, DEFAULT_CAP, &mut buf).expect("the want arrives");
+    assert_eq!(
+        Shared::decode(&buf).expect("the want decodes"),
+        Shared::Want {
+            features: BY_REFERENCE
+        }
     );
     (child, host)
 }

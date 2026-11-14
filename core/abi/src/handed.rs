@@ -72,17 +72,21 @@ pub unsafe fn handed_release(record: *mut HandedRecord) {
     // SAFETY: this was the last count, so nothing else reads or writes the record now, and the
     // fields it reads were set before the record was shared.
     let fields = unsafe { &*record };
+    // Everything after `recycle` is read first: `recycle` may put the record back where another
+    // thread takes it and fills it in again, or free it.
+    let (keep, keep_drop) = (fields.keep, fields.keep_drop);
     if let Some(release) = fields.bytes.release {
         // SAFETY: the plugin handed `data` out with this release, and this is its one call.
         unsafe { release(fields.bytes.data) };
     }
     if let Some(recycle) = fields.recycle {
-        // SAFETY: the record is no longer shared, and `recycle` takes it over.
+        // SAFETY: the record is no longer shared, and `recycle` takes it over. The record is not
+        // read again.
         unsafe { recycle(record) };
     }
-    if let Some(keep_drop) = fields.keep_drop {
+    if let Some(keep_drop) = keep_drop {
         // SAFETY: `keep` came from the same record, and this is its one drop.
-        unsafe { keep_drop(fields.keep) };
+        unsafe { keep_drop(keep) };
     }
 }
 

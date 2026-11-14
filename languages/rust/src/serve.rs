@@ -5,6 +5,12 @@
 //! sends large runs in a buffer and takes large outputs in another (`daedalus-process-shm`); one
 //! that lends none, or an older host that doesn't answer, leaves the worker on the plain path,
 //! and the worker logs one line saying so.
+//!
+//! It asks for values by reference too. A host that agrees sends a large `bytes` or opaque input
+//! as its place: in the host's buffer, or in a buffer by descriptor (a dma-buf), which the worker
+//! maps read-only and reads inside the kernel's sync brackets. A node's `&[u8]` parameter borrows
+//! those bytes for the call. A large `bytes` output is written into the value buffer the host named
+//! for the run, and the host's cell holds it there.
 
 use std::io::{self, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -13,7 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 
-use daedalus_process_shm::{Inbox, Incoming, Lent, PLAIN_LINE};
+use daedalus_process_shm::{Inbox, Incoming, Lent, PLAIN_LINE, Reads, View, Writes};
 use daedalus_registry::{NodeRecord, PortDecl, TypeRef, port_type};
 use daedalus_types::{Scalar, TypeKey, Typed};
 use daedalus_wire::codec::Writer;
@@ -23,11 +29,11 @@ use daedalus_wire::{
     write_packet,
 };
 
+use crate::codec::Value;
 use crate::context::{Context, Event};
 
 /// A node's body: its inputs by port name, and its context. It returns one value per output port.
-pub type NodeFn =
-    fn(&[(&'static str, WireValue)], &mut Context) -> Result<Vec<WireValue>, NodeError>;
+pub type NodeFn = fn(&crate::codec::Inputs<'_>, &mut Context) -> Result<Vec<WireValue>, NodeError>;
 
 /// What a Rust node's body is: the function the worker calls, and the type of its state if it keeps
 /// one. A stateful node names its state type with [`state_type`], so the hello declares it.
@@ -227,13 +233,13 @@ fn send(out: &mut impl Write, msg: &WorkerMsg, schema: &Schema) -> Result<(), Pa
 pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
     let (mut served, hello, keys) = served(nodes).map_err(io::Error::other)?;
     let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
-    let schema = Schema::from_hello(&hello, &keys);
+    let mut schema = Schema::from_hello(&hello, &keys);
     let stdout = io::stdout();
     let mut out = stdout.lock();
     send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).map_err(io::Error::other)?;
     let lent = Lent::default();
     // Until the host answers, a run means it never will: it is an older host.
-    let mut unanswered = lent.ask(&mut out).map_err(io::Error::other)?;
+    let mut unanswered = lent.ask_by_reference(&mut out).map_err(io::Error::other)?;
 
     let current = Arc::new(AtomicU64::new(0));
     let cancel = Arc::new(AtomicBool::new(false));
@@ -254,6 +260,7 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
             },
             Ok(Packet::Answer(None)) => {
                 unanswered = false;
+                schema.set_by_reference(lent.by_reference());
                 continue;
             }
             Ok(Packet::Answer(Some(reason))) => {
@@ -278,36 +285,8 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
         };
         match msg {
             HostMsg::Run(run) => {
-                let mut outputs = Vec::new();
-                let mut status = RunStatus::Ok;
-                for id in &run.nodes {
-                    let Some(node) = served.iter_mut().find(|node| node.id == id) else {
-                        let fault = WorkerMsg::Fault(Fault {
-                            run: run.run,
-                            node: Some(id.clone()),
-                            code: FaultCode::UnknownNode,
-                            reason: format!("no node {id}"),
-                        });
-                        send(&mut out, &fault, &schema).map_err(io::Error::other)?;
-                        status = RunStatus::Fault;
-                        break;
-                    };
-                    match run_node(node, &run, &cancel, &schema, &mut out)? {
-                        Ok(values) => outputs.extend(values),
-                        Err(error) => {
-                            let fault = WorkerMsg::Fault(Fault {
-                                run: run.run,
-                                node: Some(id.clone()),
-                                code: error.code,
-                                reason: error.reason,
-                            });
-                            send(&mut out, &fault, &schema).map_err(io::Error::other)?;
-                            status = RunStatus::Fault;
-                            outputs.clear();
-                            break;
-                        }
-                    }
-                }
+                let (mut status, outputs) = lent
+                    .view(|view| run_nodes(&mut served, &run, view, &cancel, &schema, &mut out))?;
                 if status == RunStatus::Cancelled || cancel.load(Ordering::SeqCst) {
                     status = RunStatus::Cancelled;
                 }
@@ -363,24 +342,144 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
     Ok(())
 }
 
+/// Runs a run's nodes in order, with its inputs by reference where the host sent them so. Every
+/// read of a buffer by descriptor is inside the kernel's sync brackets. Gives the run's status and
+/// its outputs; a node that fails sends its fault, and the run ends there.
+fn run_nodes(
+    served: &mut [Served],
+    run: &daedalus_wire::Run,
+    view: &mut View<'_>,
+    cancel: &Arc<AtomicBool>,
+    schema: &Schema,
+    out: &mut impl Write,
+) -> io::Result<(RunStatus, Vec<BoundaryValue>)> {
+    let slots: Vec<u32> = run
+        .inputs
+        .iter()
+        .filter_map(|entry| match &entry.value {
+            WireValue::Placed(daedalus_wire::shared::Place {
+                at: daedalus_wire::shared::At::Fd(slot),
+                ..
+            }) => Some(*slot),
+            _ => None,
+        })
+        .collect();
+    let mut begun = 0;
+    let mut result = Ok((RunStatus::Ok, Vec::new()));
+    for slot in &slots {
+        if let Err(reason) = view.begin_read(*slot) {
+            result = fault(run, None, FaultCode::Internal, reason, schema, out);
+            break;
+        }
+        begun += 1;
+    }
+    if begun == slots.len() {
+        let threshold = view.threshold();
+        let (reads, mut writes) = view.split();
+        result = run_each(
+            served,
+            run,
+            &reads,
+            &mut writes,
+            threshold,
+            cancel,
+            schema,
+            out,
+        );
+    }
+    for slot in &slots[..begun] {
+        view.end_read(*slot);
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_each(
+    served: &mut [Served],
+    run: &daedalus_wire::Run,
+    reads: &Reads<'_>,
+    writes: &mut Writes<'_>,
+    threshold: usize,
+    cancel: &Arc<AtomicBool>,
+    schema: &Schema,
+    out: &mut impl Write,
+) -> io::Result<(RunStatus, Vec<BoundaryValue>)> {
+    let mut outputs = Vec::new();
+    for id in &run.nodes {
+        let Some(node) = served.iter_mut().find(|node| node.id == id) else {
+            let reason = format!("no node {id}");
+            return fault(run, Some(id), FaultCode::UnknownNode, reason, schema, out);
+        };
+        match run_node(node, run, reads, cancel, schema, out)? {
+            Ok(values) => outputs.extend(values),
+            Err(error) => return fault(run, Some(id), error.code, error.reason, schema, out),
+        }
+    }
+    // A large `bytes` or opaque output goes into the run's value buffer, where the host's cell
+    // holds it; the packet carries its place.
+    for output in &mut outputs {
+        let (WireValue::Bytes(bytes) | WireValue::Opaque(bytes)) = &output.value else {
+            continue;
+        };
+        if bytes.len() >= threshold
+            && let Some((place, room)) = writes.room(bytes.len())
+        {
+            room.copy_from_slice(bytes);
+            output.value = WireValue::Placed(place);
+        }
+    }
+    Ok((RunStatus::Ok, outputs))
+}
+
+/// Sends a node's fault, and gives the run's status after it.
+fn fault(
+    run: &daedalus_wire::Run,
+    node: Option<&String>,
+    code: FaultCode,
+    reason: String,
+    schema: &Schema,
+    out: &mut impl Write,
+) -> io::Result<(RunStatus, Vec<BoundaryValue>)> {
+    let fault = WorkerMsg::Fault(Fault {
+        run: run.run,
+        node: node.cloned(),
+        code,
+        reason,
+    });
+    send(out, &fault, schema).map_err(io::Error::other)?;
+    Ok((RunStatus::Fault, Vec::new()))
+}
+
 /// Runs one node. Its events go out before anything else, and a panic becomes a fault.
 fn run_node(
     node: &mut Served,
     run: &daedalus_wire::Run,
+    reads: &Reads<'_>,
     cancel: &Arc<AtomicBool>,
     schema: &Schema,
     out: &mut impl Write,
 ) -> io::Result<Result<Vec<BoundaryValue>, NodeError>> {
-    let inputs: Vec<(&'static str, WireValue)> = node
-        .inputs
-        .iter()
-        .filter_map(|(name, _)| {
-            run.inputs
-                .iter()
-                .find(|entry| entry.node == node.id && entry.port == *name)
-                .map(|entry| (*name, entry.value.clone()))
-        })
-        .collect();
+    let mut inputs: Vec<(&'static str, Value<'_>)> = Vec::with_capacity(node.inputs.len());
+    for (name, _) in &node.inputs {
+        let Some(entry) = run
+            .inputs
+            .iter()
+            .find(|entry| entry.node == node.id && entry.port == *name)
+        else {
+            continue;
+        };
+        let value = match &entry.value {
+            WireValue::Placed(place) => match reads.bytes(place) {
+                Some(bytes) => Value::Bytes(bytes),
+                None => {
+                    let reason = format!("input {name} is at {place:?}, not in lent memory");
+                    return Ok(Err(NodeError::bad_input(reason)));
+                }
+            },
+            value => Value::Wire(value),
+        };
+        inputs.push((*name, value));
+    }
     let mut context = Context::new(cancel.clone(), node.state.take());
     let run_fn = node.run;
     let result = catch_unwind(AssertUnwindSafe(|| run_fn(&inputs, &mut context)));
