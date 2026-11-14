@@ -271,6 +271,8 @@ pub fn events() -> Vec<EventBody> {
             reason_cut: true,
             detail: "boom, and the three lines that led to it".to_owned(),
             detail_cut: false,
+            code: 9,
+            own_code: true,
         }),
         EventBody::Telemetry(TelemetryEvent {
             run: 7,

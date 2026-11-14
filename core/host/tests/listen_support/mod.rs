@@ -85,6 +85,7 @@ impl OwnedStep for Body {
                 cx.detail("boom: the input was ");
                 cx.detail_fmt(format_args!("{input}, and that is all it takes"));
                 cx.fault(Some(self.node), "boom: the node failed on purpose");
+                cx.code = 42;
                 StepEnd::Fault
             }
             Kind::Echo | Kind::Typed => StepEnd::Fault,

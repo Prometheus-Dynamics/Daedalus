@@ -67,6 +67,12 @@ fn a_failing_node_in_a_merged_region_is_reported_with_its_covers_and_at() {
     assert_eq!(all[0].consecutive, 1);
     assert_eq!(all[0].tick, 1);
     assert!(!all[0].reason().is_empty());
+    assert_eq!(
+        all[0].code,
+        daedalus_sim::FAULT_CODE,
+        "the code the body gave"
+    );
+    assert!(!all[0].own_code, "and it is the body's own");
 }
 
 #[test]

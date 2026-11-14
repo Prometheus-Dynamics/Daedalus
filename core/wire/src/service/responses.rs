@@ -659,6 +659,13 @@ pub struct FaultEvent {
     pub detail: String,
     /// The step wrote more detail than the host keeps, and `detail` is only its start.
     pub detail_cut: bool,
+    /// The code of the failure: the node's own, unless `own_code`. Zero when the node gave
+    /// none. Added after the first version: a server built before it sends none, and it reads
+    /// as zero.
+    pub code: u32,
+    /// The code is one of Daedalus's own (`daedalus_abi::own`), and not the node's. Added with
+    /// `code`.
+    pub own_code: bool,
 }
 
 /// What one batch of ticks did.
@@ -708,6 +715,8 @@ impl EventBody {
                 out.bool(fault.reason_cut);
                 out.str(&fault.detail)?;
                 out.bool(fault.detail_cut);
+                out.u32(fault.code);
+                out.bool(fault.own_code);
             }
             EventBody::Telemetry(event) => {
                 out.u8(1);
@@ -733,18 +742,29 @@ impl EventBody {
 
     pub(crate) fn decode(input: &mut Reader<'_>) -> Result<EventBody, WireError> {
         Ok(match input.u8()? {
-            0 => EventBody::Fault(FaultEvent {
-                run: input.u64()?,
-                tick: input.u32()?,
-                step: input.u32()?,
-                node: get_opt_str(input)?,
-                covers: get_strs(input)?,
-                consecutive: input.u32()?,
-                reason: input.str()?,
-                reason_cut: flag(input, "reason cut")?,
-                detail: input.str()?,
-                detail_cut: flag(input, "detail cut")?,
-            }),
+            0 => {
+                let mut fault = FaultEvent {
+                    run: input.u64()?,
+                    tick: input.u32()?,
+                    step: input.u32()?,
+                    node: get_opt_str(input)?,
+                    covers: get_strs(input)?,
+                    consecutive: input.u32()?,
+                    reason: input.str()?,
+                    reason_cut: flag(input, "reason cut")?,
+                    detail: input.str()?,
+                    detail_cut: flag(input, "detail cut")?,
+                    code: 0,
+                    own_code: false,
+                };
+                // Added together, after the first version: both are there, or neither is. A
+                // code without its marker could be the host's own read as a node's.
+                if input.more() {
+                    fault.code = input.u32()?;
+                    fault.own_code = flag(input, "own code")?;
+                }
+                EventBody::Fault(fault)
+            }
             1 => EventBody::Telemetry(TelemetryEvent {
                 run: input.u64()?,
                 tick: input.u64()?,

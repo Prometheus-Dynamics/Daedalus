@@ -12,6 +12,29 @@ pub const REASON_CAPACITY: usize = 120;
 pub const RESTART: u32 = 1;
 /// In [`StepCx::flags`], set by a step that faults: the reason it gave didn't fit, and was cut.
 pub const REASON_CUT: u32 = 2;
+/// In [`StepCx::flags`], set with a fault's code: the code is one of Daedalus's own, from
+/// [`own`], and not the node's.
+pub const OWN_CODE: u32 = 4;
+
+/// The codes of the faults Daedalus raises itself. A fault's code is otherwise the node's: the
+/// node that failed owns its numbers, they mean what its author says, and Daedalus passes them
+/// through untouched, all 32 bits. So that the two can't be confused, a code from here comes
+/// with [`OWN_CODE`] set, and a node's never does. A code is read with the node's id, so two
+/// plugins that use the same number are still told apart.
+pub mod own {
+    /// The body panicked. The reason is what the panic said.
+    pub const PANIC: u32 = 1;
+    /// A move between two memory spaces failed: an import was refused, a copy didn't fit.
+    pub const TRANSFER: u32 = 2;
+    /// The worker exited, hung up or sent something unreadable, a mismatched hello included.
+    pub const WORKER_GONE: u32 = 3;
+    /// The host stopped the worker: its run passed its deadline, or didn't answer a cancel.
+    pub const WORKER_STOPPED: u32 = 4;
+    /// The worker wasn't asked: it is down and backing off, or the run's inputs didn't fit.
+    pub const WORKER_NOT_RUN: u32 = 5;
+    /// The run was cancelled.
+    pub const CANCELLED: u32 = 6;
+}
 
 /// A step's `(done, total)` pair, in cells the host sized when it loaded the graph.
 #[repr(C)]
@@ -222,12 +245,26 @@ impl StepCx {
         self.reason[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
         self.reason[PREFIX.len()..PREFIX.len() + end].copy_from_slice(&message.as_bytes()[..end]);
         self.reason_len = (PREFIX.len() + end) as u32;
+        self.own_code(own::PANIC);
     }
 
     /// Records a body's error: its code, and its reason as [`StepCx::fault`] keeps it.
     pub fn fail(&mut self, at: u32, error: &impl FixedError) {
         self.fault(Some(at), error.reason());
         self.code = error.code();
+        self.flags &= !OWN_CODE;
+    }
+
+    /// Gives the fault one of Daedalus's own codes, from [`own`]. A backend calls it for a
+    /// failure that is its own and not a node's.
+    pub fn own_code(&mut self, code: u32) {
+        self.code = code;
+        self.flags |= OWN_CODE;
+    }
+
+    /// Whether the fault's code is one of Daedalus's own, and not the node's.
+    pub fn code_is_own(&self) -> bool {
+        self.flags & OWN_CODE != 0
     }
 
     fn note_cut(&mut self, cut: bool) {
