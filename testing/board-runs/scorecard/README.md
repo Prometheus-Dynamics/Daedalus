@@ -37,5 +37,8 @@ test.
 
 ## Results
 
-A board run's figures go in `testing/board-runs/`, with the image and the kernel named. None
-has been made yet.
+A board run's figures go in this folder, with the image and the kernel named.
+
+- [2026-11-14, CM5](2026-11-14-cm5.md): `next` is 3.8 to 5.3 times faster on every like-for-like
+  row, allocates nothing in steady state where dev allocates on every round trip, and holds less
+  memory.

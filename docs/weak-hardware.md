@@ -90,3 +90,7 @@ Ideas with no measurement behind them yet. None is being worked on.
 - Smaller stacks for the daemon's connection threads. It would lower address space, not
   resident memory.
 - A host feature that leaves the planner out for a board that loads a plan made elsewhere.
+- A query for the offset alignment a device needs to import a dma-buf in place, beside
+  `dmabuf_status`, with the refused-for-alignment case named in the status sentence. Today a
+  misaligned offset is copied every time and the caller can only find the alignment by
+  trying offsets. Asked for by a consumer that lays out a pool of offsets.
