@@ -44,6 +44,24 @@ else
   echo "no perf on this board" > "$out/perf.txt"
 fi
 
+# The same sections against the reference revision, when the bundle has that program: the
+# scorecard's other column, from the same board in the same run.
+if [ -x ./bin/dev-measure ]; then
+  {
+    for n in 1 2 3 4 5; do ./bin/dev-measure startup; done
+    for section in probe_off probe_on host_round_trip; do
+      ./bin/dev-measure "$section" "$batches"
+    done
+    ./bin/dev-measure allocations
+  } > "$out/dev.txt" 2>&1
+  if command -v perf >/dev/null 2>&1; then
+    for section in probe_off probe_on; do
+      echo "== reference $section"
+      perf stat -e cycles,instructions ./bin/dev-measure "$section" "$batches" 2>&1
+    done >> "$out/perf.txt" 2>&1
+  fi
+fi
+
 # A worker: a small value there and back, and one and four megabytes handed over.
 {
   ./bin/process-timings ./bin/worker-fixture "$batches" 1

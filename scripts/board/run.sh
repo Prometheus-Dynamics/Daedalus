@@ -136,6 +136,17 @@ measure_bundle() { # rust target: the programs a measurement runs, under $out/bu
   cp "$release/daedalus-worker-fixture" "$out/bundle/bin/worker-fixture"
   cp "$release/daedalusd" "$release/daedalus-ctl" "$out/bundle/bin/"
   cp "$out/fixture-target/$target/release/libdaedalus_dylib_fixture.so" "$out/bundle/lib/"
+  # The scorecard's other column: the same measurements against the reference revision, where
+  # a checkout of it is beside this repository (testing/board-runs/scorecard/README.md).
+  if [[ -d ../dd-dev/crates/engine ]]; then
+    echo "board: building the reference column's program from ../dd-dev"
+    env "${env[@]}" cargo build --release --target "$target" \
+      --manifest-path testing/board-runs/scorecard/dev-measure/Cargo.toml \
+      --target-dir "$out/dev-target" 2>>"$out/build.log" ||
+      { tail -20 "$out/build.log" >&2; die "the reference program's build failed: $out/build.log"; }
+    cp "$out/dev-target/$target/release/dev-measure" "$out/bundle/bin/"
+    git -C ../dd-dev rev-parse --short HEAD > "$out/results/dev-rev.txt" 2>/dev/null || true
+  fi
   # The graph the daemon is given, made by this machine's own build of the same program.
   cargo run -q --release -p daedalus-cpu-timings -- daemon_graph > "$out/bundle/g.json"
   cp scripts/board/measure-on-board.sh "$out/bundle/"
