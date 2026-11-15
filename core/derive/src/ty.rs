@@ -210,6 +210,7 @@ fn wire_form_impl(input: &DeriveInput) -> TokenStream {
                         #(#writes)*
                         at
                     }
+                    #[inline]
                     #[allow(unused_mut, unused_variables)]
                     fn read_wire(bytes: &[u8]) -> ::core::option::Option<(Self, usize)> {
                         let mut at = 0;

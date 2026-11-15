@@ -48,16 +48,27 @@ Setting `Config.freeze_params` turns every marker back into a plain constant, an
 
 A `#[node]` needs nothing to run on both. `examples/chip_shared` declares its nodes once, and the same records go into a host's registry, the generated module and a chip's stored plans. Only the `host` feature adds the facade, for tests, so a chip build doesn't pull it.
 
-## Limitations
+## Rules
 
-- Port values must be `Copy`. Planning refuses anything else and names the type.
-- Node state must be `Default`. It's created the first time the node runs.
-- A module holds one connected graph. Planning refuses a graph with separate parts.
-- Two host ports whose names become the same Rust identifier are refused by name.
+Each is refused when the graph is planned, with the node, port or type named. Each is a rule of
+the form, not a missing feature:
+
+- Port values must be `Copy`. Values live in the fixed queues of a `static` graph, are copied into
+  each node that reads them, and are never dropped. That is sound for a `Copy` value only: one
+  that owned memory would need an allocator to clone it for a second reader and drop glue to free
+  it, and a chip build has neither.
+- Node state must be `Default`. `Graph::new()` is a `const fn`, so the graph can sit in a `static`
+  with no setup, and state isn't built there. It is made the first time the node runs, from
+  `Default`, since nothing else is there to build it from on a chip.
+- A module holds one connected graph. Parts with no edge between them have no order to run in,
+  and may want different rates: plan each part as its own module, with its own `tick`.
+- Two host ports whose names become the same Rust identifier are refused by name. The names are
+  the module's API (`push_<port>`, `pop_<port>`), and renaming one quietly would hide which port
+  a call reaches.
 
 ## On a board
 
-`examples/chip_board` runs the blink graph on a Raspberry Pi Pico in all three modes, reading ADC0 and driving the LED, and reports tick times and stack depth over defmt-RTT. `tests/host.rs` runs the same loop with a mock board. It hasn't run on a real board yet: `testing/board-runs/D12.md` has the procedure.
+`examples/chip_board` runs the blink graph on a Raspberry Pi Pico in all three modes, reading ADC0 and driving the LED, and reports tick times and stack depth over defmt-RTT. `tests/host.rs` runs the same loop with a mock board. It will not be run on a real board: there is no RP2040 board, as `testing/board-runs/D12.md` records.
 
 ## Measurements
 

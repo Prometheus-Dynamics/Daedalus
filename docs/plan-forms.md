@@ -54,8 +54,8 @@ backend and a plugin's backend give steps only.
   backend merged into one step has no value of its own, and both spaces are absent.
 - `decodes` lists each input a step converts as it reads it, with the node, the port, the type
   read and why. Nothing else in the plan shows that cost. A CPU node reading a value in `cpu.wire`
-  decodes it from its wire form unless it reads a list of numbers as `&[T]`, which it views where
-  the bytes are. The list is left out of the JSON when it is empty.
+  decodes it from its wire form unless it reads a list of numbers as `&[T]`, or a list of
+  fixed-size records as a `ListView`, which it reads where the bytes are. The list is left out of the JSON when it is empty.
 - An output a CPU node writes into a worker's lent memory (an `OutView`) has `written_in` set to
   `process.lent` and no transfer: the worker reads it where it was written.
 - `Config { lints: true, .. }` fills `planned.warnings`.

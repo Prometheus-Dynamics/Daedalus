@@ -183,9 +183,15 @@ fn the_plan_shows_where_the_value_is_written_and_decoded() {
         .iter()
         .find(|edge| edge.from_node == 1)
         .expect("the edge to the worker");
-    // Written where the worker reads it, in its lent memory: no move on the way.
-    assert_eq!(to_worker.written_in.as_deref(), Some("process.lent"));
-    assert!(to_worker.transfer.is_empty(), "{:?}", to_worker.transfer);
+    if cfg!(target_os = "linux") {
+        // Written where the worker reads it, in its lent memory: no move on the way.
+        assert_eq!(to_worker.written_in.as_deref(), Some("process.lent"));
+        assert!(to_worker.transfer.is_empty(), "{:?}", to_worker.transfer);
+    } else {
+        // Lent memory is Linux's: elsewhere the wire form is written in `cpu.wire` and moved.
+        assert_eq!(to_worker.written_in.as_deref(), Some("cpu.wire"));
+        assert!(!to_worker.transfer.is_empty(), "a move to the worker");
+    }
     let back = explain
         .edges
         .iter()

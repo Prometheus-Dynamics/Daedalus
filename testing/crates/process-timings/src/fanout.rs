@@ -3,7 +3,8 @@
 //! in `cpu.host` with no worker in the graph.
 //!
 //! Two shapes. A `list<f32>`, which the CPU reader takes as `&[f32]` and views where its bytes are;
-//! and a list of 28-byte records, which it decodes, a cost the plan lists. Four graphs per shape and
+//! and a list of 28-byte records, which it takes as a `ListView` and reads where the bytes are,
+//! one record at a time. Four graphs per shape and
 //! size, each timed by the tick:
 //!
 //! - `producer`: the producer alone.
@@ -27,7 +28,7 @@ use daedalus::layers::planner::explain::explain_plan;
 use daedalus::prelude::*;
 use daedalus_backend_process::{ProcessBackend, WorkerSpec};
 use daedalus_cpu::CpuBackend;
-use daedalus_cpu_author::{OutView, Refused};
+use daedalus_cpu_author::{ListView, OutView, Refused};
 
 use crate::{median, minor_faults, p99};
 use daedalus_abi::counting::counted;
@@ -89,7 +90,7 @@ pub fn points_view(n: u32, mut out: OutView<'_, Point>) -> Result<(), Refused> {
 }
 
 #[node(id = "fan.points_sum", inputs(items), outputs(sum))]
-pub fn points_sum(items: &[Point]) -> u32 {
+pub fn points_sum(items: ListView<'_, Point>) -> u32 {
     items.iter().fold(0u32, |sum, p| {
         sum.wrapping_add(p.x.to_bits())
             .wrapping_add(p.response.to_bits())

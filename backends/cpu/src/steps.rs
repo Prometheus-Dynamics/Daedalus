@@ -16,11 +16,15 @@ use daedalus_runner::{INLINE_BYTES, InlineCell, read_inline, write_inline};
 pub use daedalus_abi::{FixedError, OwnedStep, Slot, Slots, StepCx, StepEnd};
 
 #[cfg(feature = "alloc")]
+mod list_view;
+#[cfg(feature = "alloc")]
 mod out_view;
 #[cfg(feature = "alloc")]
 mod setup;
 #[cfg(feature = "alloc")]
 pub use daedalus_abi::Step;
+#[cfg(feature = "alloc")]
+pub use list_view::{ListView, list_viewed};
 #[cfg(feature = "alloc")]
 pub use out_view::{OutSlot, OutView, Refused};
 #[cfg(feature = "alloc")]
