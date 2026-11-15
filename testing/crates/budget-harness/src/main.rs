@@ -97,6 +97,7 @@ fn allocations(planted: bool) {
     println!("alloc_detector_frame {}", count as u64 / TICKS);
     if !planted {
         handoff_allocations();
+        i3_round_allocations();
     }
 }
 
@@ -120,6 +121,19 @@ fn handoff_allocations() {
                 cost.allocations
             );
         }
+    }
+}
+
+/// Allocations, copies and reference counts per tick of a round trip of the I3 value
+/// (testing/board-runs/I3.md).
+fn i3_round_allocations() {
+    for path in handoff::Path::ALL {
+        let cost = handoff::round_cost(path, handoff::I3_BYTES, 200);
+        // One figure a line, as every row here: the budget check reads `name value`.
+        let name = path.name();
+        println!("alloc_i3_{name}_round_tick {}", cost.allocations);
+        println!("copies_i3_{name}_round_tick {}", cost.copies);
+        println!("retains_i3_{name}_round_tick {}", cost.retains);
     }
 }
 

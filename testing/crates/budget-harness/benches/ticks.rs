@@ -57,5 +57,16 @@ fn ticks(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, ticks);
+/// The I3 round trip: a 3,110,400-byte value handed to one node and back per tick
+/// (testing/board-runs/I3.md). `static`: the node runs in this process, with no stable-ABI plugin.
+fn i3_round_trip(c: &mut Criterion) {
+    for path in handoff::Path::ALL {
+        let mut round = handoff::RoundTrip::new(path, handoff::I3_BYTES);
+        c.bench_function(&format!("i3_{}_static_round_tick", path.name()), |b| {
+            b.iter(|| black_box(round.tick()))
+        });
+    }
+}
+
+criterion_group!(benches, ticks, i3_round_trip);
 criterion_main!(benches);

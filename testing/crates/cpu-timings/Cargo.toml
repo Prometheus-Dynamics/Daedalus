@@ -12,6 +12,7 @@ daedalus-abi = { path = "../../../core/abi" }
 daedalus-budget-harness = { path = "../budget-harness" }
 daedalus-cpu = { path = "../../../backends/cpu" }
 daedalus-cpu-author = { path = "../../../backends/cpu-author" }
+daedalus-dma-sys = { path = "../../../backends/dma-sys" }
 daedalus-graph = { path = "../../../core/graph" }
 daedalus-host = { path = "../../../core/host" }
 daedalus-macros = { path = "../../../core/macros" }
