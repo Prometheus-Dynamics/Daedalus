@@ -151,6 +151,11 @@ and the nodes that read its outputs run once it is ready. Each wait is bounded.
 A lost device is a fault of the region's step, reported with every node the region covers. The
 backend opens the device again and the region runs again: it is not turned off.
 
+A driver that resets the GPU says so at the next poll, and wgpu answers that poll with a panic. The
+backend catches it, so the wait fails with the driver's words and nothing reads the lost buffers. A
+build with `panic = "abort"` cannot catch it: there a lost device ends the process, and whatever
+supervises the process starts it again.
+
 ## What it costs
 
 - A region of whole-shader nodes is one queue submit, however many nodes it has, and one pass a

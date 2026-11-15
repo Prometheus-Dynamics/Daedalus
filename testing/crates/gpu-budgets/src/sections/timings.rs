@@ -6,51 +6,23 @@
 use std::time::{Duration, Instant};
 
 use daedalus_wgpu::fragment::FragmentPass;
-use daedalus_wgpu::shader::{BindingKind, BindingSpec, Bound, Dispatch, Run, Shader, ShaderSpec};
+use daedalus_wgpu::shader::{Bound, Run, Shader};
 use daedalus_wgpu::{Format, Storage, Texture, TextureDesc, TimeSource, WgpuBackend};
 use daedalus_wgpu_conformance::{COPY, In, Net, Op, filled, port, run};
 
+use super::region_batch::TRIPLE;
 #[cfg(target_os = "linux")]
 use super::{MIB, pattern};
-use super::{RUNS, WARM, median, median_of, ms, us};
+use super::{RUNS, WARM, line_ms, measure, median, median_of, ms, summary, us};
+
+/// The raw submit timings: 20 warm-up runs, then the median of 200.
+const SUBMIT_WARM: usize = 20;
+const SUBMIT_TIMED: usize = 200;
 
 /// Elements of the small ops, as the region test uses them.
 const ELEMENTS: u64 = 1000;
 /// Nodes in the region.
 const NODES: usize = 8;
-
-const fn storage(index: u32, name: &'static str, read_only: bool) -> BindingSpec {
-    BindingSpec {
-        index,
-        name,
-        kind: BindingKind::Storage {
-            read_only,
-            stride: 4,
-        },
-    }
-}
-
-/// `out = src * 3`, element by element: the triple op of the region test.
-static TRIPLE: ShaderSpec = ShaderSpec {
-    name: "triple",
-    entry: "main",
-    source: "
-        @group(0) @binding(0) var<storage, read> src: array<u32>;
-        @group(0) @binding(1) var<storage, read_write> out: array<u32>;
-        @compute @workgroup_size(64)
-        fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-            if id.x < arrayLength(&out) { out[id.x] = src[id.x] * 3u; }
-        }
-    ",
-    workgroup: [64, 1, 1],
-    bindings: &[storage(0, "src", true), storage(1, "out", false)],
-    dispatch: Dispatch::PerElement {
-        binding: 1,
-        stride: 4,
-    },
-    inputs: &[0],
-    outputs: &[1],
-};
 
 /// A region of eight triple nodes over 1000 words, one submit; then the same eight ops as eight
 /// separate submits. The record's procedure is the add and triple ops of the region test: add
@@ -132,28 +104,95 @@ pub fn fragment_pass(backend: &WgpuBackend) {
     );
 }
 
-/// The record and submit of one dispatch, with no wait, against the wait for it: the floor a
-/// node's submit pays.
+/// The record and submit of one dispatch, with no wait, two ways: through the backend's own
+/// submit (`Op`), and through a raw Vulkan chain of one stage, which records the dispatch into a
+/// command buffer it reuses. Each is the median of 200 runs after 20 warm-up runs.
 pub fn raw_submit(backend: &WgpuBackend) {
     let copy = Op::new(backend, &COPY);
     let (src, dst) = (
         Storage::new(backend, 4).expect("a buffer"),
         Storage::new(backend, 4).expect("a buffer"),
     );
-    let mut submit = Vec::new();
-    for round in 0..(WARM + RUNS) {
+    let mut wgpu_submit = Vec::with_capacity(SUBMIT_TIMED);
+    for round in 0..(SUBMIT_WARM + SUBMIT_TIMED) {
         let start = Instant::now();
         let ticket = copy.run(&src, &dst);
         let took = start.elapsed();
         ticket.wait().expect("finishes");
-        if round >= WARM {
-            submit.push(took);
+        if round >= SUBMIT_WARM {
+            wgpu_submit.push(took);
         }
     }
     println!(
-        "one dispatch, record and submit (no wait): {:.1} us (median of {RUNS})",
-        us(median_of(&mut submit))
+        "one dispatch, wgpu record and submit (no wait): {}",
+        line_ms(summary(&mut wgpu_submit))
     );
+    raw_chain_submit(backend);
+}
+
+/// A word-add shader, one stage, run through a raw chain on the backend's device.
+#[cfg(target_os = "linux")]
+const BUMP: &str = "@group(0) @binding(0) var<storage, read_write> data: array<u32>;
+    @compute @workgroup_size(64)
+    fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+        if id.x < arrayLength(&data) { data[id.x] = data[id.x] + 1u; }
+    }";
+
+/// One dispatch recorded and submitted by a raw Vulkan chain, with no wait. Waiting for the run
+/// before the next one is done before the clock starts, so the time is the record and submit.
+#[cfg(target_os = "linux")]
+fn raw_chain_submit(backend: &WgpuBackend) {
+    use daedalus_wgpu::Arg;
+    let mut chain = match backend.raw_chain(&[(BUMP, "main")], 1) {
+        Ok(chain) => chain,
+        Err(error) => {
+            println!("raw submit (vk chain): refused: {error}");
+            return;
+        }
+    };
+    // The buffer is outside the chain's reach until the chain drops, so it is declared first.
+    let buffer = Storage::new(backend, 256).expect("a buffer");
+    buffer.write(0, &[0u8; 256]).expect("in range");
+    // A write reaches the device with wgpu's next submit, which a readback makes: the chain's
+    // submits do not make one, so the write is flushed here, before the first run.
+    let mut flushed = [0u8; 4];
+    buffer.read_into(0, &mut flushed).expect("a readback");
+    let mut times = Vec::with_capacity(SUBMIT_TIMED);
+    for round in 0..(SUBMIT_WARM + SUBMIT_TIMED) {
+        assert!(chain.wait(Duration::from_secs(10)), "the last run finished");
+        let start = Instant::now();
+        chain.begin();
+        chain
+            .dispatch(
+                0,
+                &[Arg::Storage {
+                    buffer: buffer.wgpu_buffer(),
+                    size: 256,
+                }],
+                [1, 1, 1],
+            )
+            .expect("dispatches");
+        chain.submit().expect("submits");
+        let took = start.elapsed();
+        if round >= SUBMIT_WARM {
+            times.push(took);
+        }
+    }
+    assert!(chain.wait(Duration::from_secs(10)), "the last run finished");
+    // Each run adds one to every word, so the buffer counts the runs: a check that the chain ran.
+    let mut first = [0u8; 4];
+    buffer.read_into(0, &mut first).expect("a readback");
+    let counted = u32::from_le_bytes(first);
+    let runs = (SUBMIT_WARM + SUBMIT_TIMED) as u32;
+    println!(
+        "one dispatch, raw Vulkan chain record and submit (no wait): {} (buffer counts {counted} of {runs} runs)",
+        line_ms(summary(&mut times))
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+fn raw_chain_submit(_backend: &WgpuBackend) {
+    println!("raw submit (vk chain): skipped, raw Vulkan is a Linux path");
 }
 
 /// Which time source a timed pass reports on this device, and its median: timestamps the device
@@ -168,7 +207,7 @@ pub fn timer_source(backend: &WgpuBackend) {
     );
     let mut sources = Vec::new();
     let mut times = Vec::new();
-    for _ in 0..(WARM + RUNS) {
+    for round in 0..(WARM + RUNS) {
         let bound = [Bound::Storage(&src), Bound::Storage(&dst)];
         let ticket = match shader.run(&bound).expect("runs") {
             Run::Started(ticket) => ticket,
@@ -189,7 +228,8 @@ pub fn timer_source(backend: &WgpuBackend) {
                 }
             }
         };
-        if let Some((took, source)) = measured {
+        // The warm-up runs are not reported.
+        if let (Some((took, source)), true) = (measured, round >= WARM) {
             sources.push(source);
             times.push(took);
         }
@@ -218,8 +258,8 @@ pub fn timer_source(backend: &WgpuBackend) {
 }
 
 /// A 1 MiB dma-heap buffer: allocate and map, then a CPU write and read bracketed by the sync,
-/// each the median of 50; then the sync fence the device would signal for it, and how long
-/// the fence takes to signal after a CPU write.
+/// each the median of 50 runs after 5; then the fence the buffer exports after a CPU write, and
+/// how long that fence takes to signal.
 #[cfg(target_os = "linux")]
 pub fn dma_1mib() {
     use daedalus_dma_sys::{Access, DmaHeap};
@@ -230,28 +270,29 @@ pub fn dma_1mib() {
         println!("dma 1 MiB: skipped, no /dev/dma_heap/system");
         return;
     };
-    let alloc_map = median(WARM, RUNS, || {
+    let alloc_map = measure(WARM, RUNS, || {
         let buf = heap.allocate(bytes as u64).expect("a dma-heap buffer");
         let map = buf.as_ref().map().expect("a mapping");
         std::hint::black_box(&map);
     });
     let buf = heap.allocate(bytes as u64).expect("a dma-heap buffer");
     let map = buf.as_ref().map().expect("a mapping");
-    let write = median(WARM, RUNS, || {
+    let write = measure(WARM, RUNS, || {
         buf.as_ref().begin_cpu_access(Access::Write).expect("begin");
         map.write(0, &payload).expect("in range");
         buf.as_ref().end_cpu_access(Access::Write).expect("end");
     });
-    let read = median(WARM, RUNS, || {
+    let read = measure(WARM, RUNS, || {
         buf.as_ref().begin_cpu_access(Access::Read).expect("begin");
         map.read(0, &mut out).expect("in range");
         buf.as_ref().end_cpu_access(Access::Read).expect("end");
     });
-    println!("dma 1 MiB allocate and map: {:.4} ms", ms(alloc_map));
-    println!("dma 1 MiB write (sync, copy, sync): {:.4} ms", ms(write));
-    println!("dma 1 MiB read (sync, copy, sync): {:.4} ms", ms(read));
+    println!("dma 1 MiB allocate and map: {}", line_ms(alloc_map));
+    println!("dma 1 MiB write (sync, copy, sync): {}", line_ms(write));
+    println!("dma 1 MiB read (sync, copy, sync): {}", line_ms(read));
     // The fence the buffer exports after a CPU write: time from the export to its signal.
     let mut signal = Vec::new();
+    let mut unsignalled = 0usize;
     for round in 0..(WARM + RUNS) {
         buf.as_ref().begin_cpu_access(Access::Write).expect("begin");
         map.write(0, &payload).expect("in range");
@@ -259,17 +300,21 @@ pub fn dma_1mib() {
         let start = Instant::now();
         let fence = buf.as_ref().export_fence(Access::Read).expect("exports");
         let done = fence.wait(Duration::from_secs(5)).expect("waits");
-        if round >= WARM && done {
-            signal.push(start.elapsed());
+        if round >= WARM {
+            if done {
+                signal.push(start.elapsed());
+            } else {
+                unsignalled += 1;
+            }
         }
     }
     if signal.is_empty() {
-        println!("dma 1 MiB export_fence: no fence signalled");
+        println!("dma 1 MiB export_fence: no fence signalled in {RUNS} runs");
     } else {
         println!(
-            "dma 1 MiB export_fence to signal, median of {}: {:.1} us",
+            "dma 1 MiB export_fence to signal, {} signalled, {unsignalled} not within 5 s: {}",
             signal.len(),
-            us(median_of(&mut signal))
+            line_ms(summary(&mut signal))
         );
     }
 }

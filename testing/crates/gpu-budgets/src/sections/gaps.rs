@@ -9,10 +9,10 @@ use daedalus_macros::node;
 use daedalus_registry::NodeRecord;
 use daedalus_wgpu::merge::{ElementSpec, chain_shader, fragment_pass};
 use daedalus_wgpu::shader::{Bound, Run};
-use daedalus_wgpu::{Format, Storage, Texture, TextureDesc, WgpuBackend};
+use daedalus_wgpu::{Format, Options, Storage, Texture, TextureDesc, WgpuBackend};
 use daedalus_wgpu_conformance::{Net, filled, port, run};
 
-use super::{MIB, RUNS, WARM, median, median_of, ms, us};
+use super::{MIB, RUNS, WARM, device_with, line_ms, measure, median, median_of, ms, us};
 
 /// The target the element forms run on, as the procedures name it.
 const WIDTH: u32 = 1280;
@@ -179,26 +179,45 @@ pub fn busy(backend: &WgpuBackend) {
     );
 }
 
-/// The host-cached buffer at 16 MiB: the host writes it and reads it back.
-pub(crate) fn host_cached(backend: &WgpuBackend) {
+/// The host-cached buffer at 16 MiB: the host writes it and reads it back. It is made on a
+/// device with the dma-heap on and on one with it off, so both plans are timed. The environment
+/// variable `DAEDALUS_CACHED_HEAP` set to `on` or `off` runs only that one.
+pub(crate) fn host_cached() {
+    let only = std::env::var("DAEDALUS_CACHED_HEAP").unwrap_or_default();
     let bytes = 16 * MIB as usize;
     let payload = vec![7u8; bytes];
     let mut out = vec![0u8; bytes];
-    let made = Storage::new_host_cached(backend, bytes as u64);
-    let Ok(storage) = made else {
-        println!("host-cached 16 MiB: not made");
-        return;
-    };
-    println!("host-cached 16 MiB buffer is in space {}", storage.space());
-    let write = median(WARM, RUNS, || storage.write(0, &payload).expect("in range"));
-    let read = median(WARM, RUNS, || {
-        storage.read_into(0, &mut out).expect("a readback")
-    });
-    println!(
-        "host-cached 16 MiB: host write {:.3} ms, host read {:.3} ms",
-        ms(write),
-        ms(read)
-    );
+    for (label, heap) in [("dma-heap on", true), ("dma-heap off", false)] {
+        if (only == "on" && !heap) || (only == "off" && heap) {
+            continue;
+        }
+        let Some(backend) = device_with(|options| Options {
+            no_dma_heap: !heap,
+            ..options
+        }) else {
+            println!("host-cached 16 MiB ({label}): skipped, no device");
+            continue;
+        };
+        // The device may not have a dma-heap at all, so the line says what it actually used.
+        let heap_here = backend.caps().is_some_and(|record| record.dma_heap);
+        let Ok(storage) = Storage::new_host_cached(&backend, bytes as u64) else {
+            println!("host-cached 16 MiB ({label}): not made");
+            continue;
+        };
+        println!(
+            "host-cached 16 MiB ({label}): made in space {}; dma-heap in use on this device: {heap_here}",
+            storage.space()
+        );
+        let write = measure(WARM, RUNS, || storage.write(0, &payload).expect("in range"));
+        let read = measure(WARM, RUNS, || {
+            storage.read_into(0, &mut out).expect("a readback")
+        });
+        println!(
+            "host-cached 16 MiB ({label}), host write: {}",
+            line_ms(write)
+        );
+        println!("host-cached 16 MiB ({label}), host read: {}", line_ms(read));
+    }
 }
 
 /// The 16 MiB dma-heap read, split: the storage's own read, a raw read of the same kind of

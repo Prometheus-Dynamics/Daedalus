@@ -45,4 +45,6 @@ pub fn run(backend: &WgpuBackend) {
         "poll a finished ticket, median of 10000: {:.3} us",
         us(median_of(&mut done_polls))
     );
+    // The time source a timed pass reports on this device, named here with the fence figures.
+    super::timings::timer_source(backend);
 }

@@ -5,10 +5,14 @@ pub mod allocations;
 pub mod chains;
 pub mod fences;
 pub mod gaps;
+pub mod grind;
+pub mod region_batch;
 pub mod timings;
 pub mod transfers;
 
 use std::time::{Duration, Instant};
+
+use daedalus_wgpu::{Options, WgpuBackend};
 
 /// Runs before the timed ones, so pipelines, buffers and caches are built.
 pub(crate) const WARM: usize = 5;
@@ -82,4 +86,71 @@ pub(crate) fn median_with_setup<T>(
         })
         .collect();
     median_of(&mut times)
+}
+
+/// The figures a timed measure prints: the median, the 99th percentile and the best of its runs.
+#[derive(Clone, Copy, Debug)]
+pub struct Stats {
+    pub runs: usize,
+    pub median: Duration,
+    pub p99: Duration,
+    pub best: Duration,
+}
+
+/// The stats of `times`, which is sorted in place. The p99 is the run at or above which one run
+/// in a hundred falls, so with fewer than 100 runs it is the slowest run.
+pub fn summary(times: &mut [Duration]) -> Stats {
+    times.sort_unstable();
+    let last = times.len().saturating_sub(1);
+    let p99 = times[(times.len() * 99).div_ceil(100).saturating_sub(1).min(last)];
+    Stats {
+        runs: times.len(),
+        median: median_of(times),
+        p99,
+        best: times.first().copied().unwrap_or_default(),
+    }
+}
+
+/// `warm` untimed calls of `body`, then `runs` timed ones, summarised.
+pub fn measure(warm: usize, runs: usize, body: impl FnMut()) -> Stats {
+    let mut times = timed(warm, runs, body);
+    summary(&mut times)
+}
+
+/// The times of `runs` calls of `body`, after `warm` untimed ones.
+pub fn timed(warm: usize, runs: usize, mut body: impl FnMut()) -> Vec<Duration> {
+    for _ in 0..warm {
+        body();
+    }
+    (0..runs)
+        .map(|_| {
+            let start = Instant::now();
+            body();
+            start.elapsed()
+        })
+        .collect()
+}
+
+/// The figures of `stats` on one line, in milliseconds: `median 1.234 ms (p99 1.5, best 1.1, n 50)`.
+pub fn line_ms(stats: Stats) -> String {
+    format!(
+        "median {:.4} ms (p99 {:.4}, best {:.4}, n {})",
+        ms(stats.median),
+        ms(stats.p99),
+        ms(stats.best),
+        stats.runs
+    )
+}
+
+/// A device of its own on the shared device's adapter, with `tune` applied to its options.
+/// `None` when there is no device to open.
+pub fn device_with(tune: impl FnOnce(Options) -> Options) -> Option<WgpuBackend> {
+    let shared = WgpuBackend::open(Options::default());
+    let record = shared.start().ok()?;
+    let backend = WgpuBackend::open(tune(Options {
+        adapter: Some(record.adapter.name),
+        ..Options::default()
+    }));
+    backend.start().ok()?;
+    Some(backend)
 }
