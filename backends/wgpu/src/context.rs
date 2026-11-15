@@ -271,7 +271,11 @@ impl Context {
 
     /// Lets the device run the callbacks of what has finished. Never blocks.
     pub(crate) fn poll(&self) {
-        let _ = self.device.poll(wgpu::PollType::Poll);
+        if let crate::wait::Polled::Lost(why) =
+            crate::wait::poll(&self.device, wgpu::PollType::Poll)
+        {
+            self.mark_lost(&why);
+        }
     }
 
     /// Notes that the queue was given `bytes` to write. Past [`WRITE_BUDGET`] the queue is
@@ -315,10 +319,14 @@ impl Context {
     pub(crate) fn take_spare(&self, size: u64) -> Option<Spare> {
         let mut spare = self.spare.lock().unwrap_or_else(PoisonError::into_inner);
         let at = spare.iter().position(|(buffer, _)| buffer.size() == size)?;
-        let idle = self
-            .device
-            .poll(wgpu::PollType::Poll)
-            .is_ok_and(|status| status.is_queue_empty());
+        let idle = match crate::wait::poll(&self.device, wgpu::PollType::Poll) {
+            crate::wait::Polled::Answered(empty) => empty,
+            crate::wait::Polled::TimedOut => false,
+            crate::wait::Polled::Lost(why) => {
+                self.mark_lost(&why);
+                false
+            }
+        };
         let chains = self.chains.lock().unwrap_or_else(PoisonError::into_inner);
         let chains_idle = chains
             .iter()
@@ -352,10 +360,13 @@ impl Context {
 
     /// Waits for everything submitted, up to the bound. A timeout marks the device lost.
     pub(crate) fn wait(&self, what: &'static str) -> Result<(), WaitError> {
-        if crate::wait::wait_idle(&self.device, self.wait_timeout) && self.chains_idle() {
-            Ok(())
-        } else {
-            Err(self.timed_out(what))
+        match crate::wait::wait_idle(&self.device, self.wait_timeout) {
+            crate::wait::Polled::Answered(_) if self.chains_idle() => Ok(()),
+            crate::wait::Polled::Lost(why) => {
+                self.mark_lost(&why);
+                Err(WaitError::Device(format!("the device was lost: {why}")))
+            }
+            _ => Err(self.timed_out(what)),
         }
     }
 

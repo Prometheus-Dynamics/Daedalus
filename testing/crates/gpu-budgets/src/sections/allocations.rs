@@ -1,35 +1,23 @@
 //! Allocating a 16 MiB buffer, with each memory hint, with a first write (which pays the device's
-//! zero-fill), and uninitialised. Each is the median of the timed runs after warm-up allocations.
+//! zero-fill), and uninitialised. Each is the median of 50 timed runs after 5 warm-up allocations,
+//! with the p99 and the best of the same runs.
 
 use std::time::{Duration, Instant};
 
-use daedalus_wgpu::{MemoryHints, Options, Storage, WgpuBackend};
+use daedalus_wgpu::{MemoryHints, Options, Storage};
 
-use super::{MIB, RUNS, WARM, median_of, ms};
+use super::{MIB, RUNS, Stats, WARM, device_with, line_ms, summary};
 
 const SIZE: u64 = 16 * MIB;
 
-/// A device of this section's own with the memory hint given.
-fn with_hints(hints: MemoryHints) -> Option<WgpuBackend> {
-    let shared = WgpuBackend::open(Options::default());
-    let record = shared.start().ok()?;
-    let backend = WgpuBackend::open(Options {
-        adapter: Some(record.adapter.name),
-        hints,
-        ..Options::default()
-    });
-    backend.start().ok()?;
-    Some(backend)
-}
-
-/// The median of `RUNS` times that `body` reports, after `WARM` untimed calls. The buffer is
+/// The stats of `RUNS` times that `body` reports, after `WARM` untimed calls. The buffer is
 /// dropped inside `body`, so each run pays for its own allocation.
-fn sample(mut body: impl FnMut() -> Duration) -> Duration {
+fn sample(mut body: impl FnMut() -> Duration) -> Stats {
     for _ in 0..WARM {
         body();
     }
     let mut times: Vec<Duration> = (0..RUNS).map(|_| body()).collect();
-    median_of(&mut times)
+    summary(&mut times)
 }
 
 pub fn run() {
@@ -37,7 +25,7 @@ pub fn run() {
         ("MemoryUsage", MemoryHints::MemoryUsage),
         ("Performance", MemoryHints::Performance),
     ] {
-        let Some(backend) = with_hints(hints) else {
+        let Some(backend) = device_with(|options| Options { hints, ..options }) else {
             println!("alloc 16 MiB, hint {label}: skipped, no device");
             continue;
         };
@@ -57,10 +45,10 @@ pub fn run() {
             drop(storage);
             took
         });
+        println!("Storage::new 16 MiB, hint {label}: {}", line_ms(new));
         println!(
-            "Storage::new 16 MiB, hint {label}: {:.4} ms; new then a first write: {:.4} ms",
-            ms(new),
-            ms(first_write)
+            "Storage::new then a first write 16 MiB, hint {label}: {}",
+            line_ms(first_write)
         );
         if label == "MemoryUsage" {
             let uninit = sample(|| {
@@ -70,7 +58,7 @@ pub fn run() {
                 drop(storage);
                 took
             });
-            println!("Storage::new_uninit 16 MiB: {:.4} ms", ms(uninit));
+            println!("Storage::new_uninit 16 MiB: {}", line_ms(uninit));
             // The device's first use of a buffer nobody has written: a 4-byte copy out of it, as
             // the reference's `first_use` times it. The device clears the buffer on that first use.
             let copy =
@@ -85,8 +73,8 @@ pub fn run() {
                 took
             });
             println!(
-                "16 MiB first use of an unwritten buffer (device clear): {:.4} ms",
-                ms(first_use)
+                "16 MiB first use of an unwritten buffer (device clear): {}",
+                line_ms(first_use)
             );
         }
     }

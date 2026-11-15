@@ -3,7 +3,25 @@
 //! `tests/budgets.rs` measures the backend against it on whatever device the lane has, which in
 //! CI is lavapipe. A count doesn't depend on the device's speed, so it is the same everywhere.
 //!
-//! The timed budgets are the tool in `main.rs`, which runs on boards and not in the gate.
+//! The timed budgets are the tool in `main.rs`, which runs on boards and not in the gate:
+//! `cargo run --release -p daedalus-gpu-budgets -- [section ...]`. Each timed figure is the median
+//! of its runs after a warm-up, and most also print the p99 and the best. Sections:
+//!
+//! - `limits`, `batching`, `allocation`, `dispatch-floor`, `readback`, `transfers`, `chains`:
+//!   the device's limits, and the transfer, submit and allocation costs the budgets name.
+//! - `fences`: polls of a ticket, and the time source a timed pass reports on the device.
+//! - `alloc16`: a 16 MiB buffer per memory hint, with a first write and uninitialised.
+//! - `elements`, `busy`, `cached`, `heap-read`, `heap-probe`, `heap-alone`: the element forms,
+//!   the busy answer, and the host-cached and dma-heap reads. `cached` makes its host-cached
+//!   buffer with the dma-heap on and off; `DAEDALUS_CACHED_HEAP=on` or `off` runs one of them.
+//! - `region8`, `region-batch`: a region of eight nodes as one submit, and as eight. `region-batch`
+//!   uses the add and triple shaders of the region test, over 1000 words.
+//! - `fragment-pass`, `raw-submit`, `timer-source`: a fragment pass, the record and submit of one
+//!   dispatch on the wgpu path and on a raw Vulkan chain, and the timer source of a timed pass.
+//! - `dma-1mib`: a 1 MiB dma-heap buffer's allocate, map, read and write, and its export_fence.
+//! - `grind`, opt-in and never in a default run: a long shader that runs past the 5 s wait bound,
+//!   so the timeout, the device loss and the reopen are exercised. `DAEDALUS_GRIND_ROUNDS`,
+//!   `DAEDALUS_GRIND_REPEAT` and `DAEDALUS_GRIND_ELEMENTS` set its work. It writes nothing to disk.
 
 #![forbid(unsafe_code)]
 

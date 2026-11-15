@@ -79,12 +79,44 @@ impl PendingErrors {
 }
 
 /// Waits for everything submitted on `device`, up to `bound`. `false` on a timeout.
-pub(crate) fn wait_idle(device: &wgpu::Device, bound: Duration) -> bool {
-    let poll = wgpu::PollType::Wait {
-        submission_index: None,
-        timeout: Some(bound),
-    };
-    device.poll(poll).is_ok()
+pub(crate) fn wait_idle(device: &wgpu::Device, bound: Duration) -> Polled {
+    poll(
+        device,
+        wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(bound),
+        },
+    )
+}
+
+/// What a poll of the device found.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Polled {
+    /// It answered. True when nothing submitted is left to run.
+    Answered(bool),
+    /// A wait outlived its bound.
+    TimedOut,
+    /// The device is lost, in the driver's words.
+    Lost(String),
+}
+
+/// Polls the device. wgpu panics when the device behind a poll is lost (a driver that reset the
+/// GPU says so only at the next submit or poll), so the panic is caught here and becomes a lost
+/// device: the run that polled fails with words, and the host replaces the device. A build with
+/// `panic = "abort"` ends the process here instead (docs/gpu-nodes.md, Failure).
+pub(crate) fn poll(device: &wgpu::Device, kind: wgpu::PollType) -> Polled {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| device.poll(kind))) {
+        Ok(Ok(status)) => Polled::Answered(status.is_queue_empty()),
+        Ok(Err(_)) => Polled::TimedOut,
+        Err(panic) => {
+            let words = panic
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_string())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| String::from("the driver gave no reason"));
+            Polled::Lost(words)
+        }
+    }
 }
 
 /// The error an error scope caught, once the device has answered. Setup only.

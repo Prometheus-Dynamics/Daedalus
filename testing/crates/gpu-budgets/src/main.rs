@@ -1,8 +1,8 @@
 //! The measurement tool for the timed GPU budgets. It runs on boards and by hand, not in the
-//! gate: `cargo run --release -p daedalus-gpu-budgets -- [section ...]`, with the sections
-//! `limits`, `batching`, `allocation`, `dispatch-floor`, `readback`,
-//! `transfers`, `chains`, `fences` and `alloc16`, or none for all.
-//! Times are the best of the runs, since a budget is what the device can do.
+//! gate: `cargo run --release -p daedalus-gpu-budgets -- [section ...]`. The sections and what
+//! they print are listed in the crate's docs (`lib.rs`). With no section named, every section
+//! runs except the opt-in ones; `grind` runs only when named.
+//! Each figure is the median of its timed runs, with the p99 and the best where a line prints them.
 #![allow(clippy::print_stdout)] // the measurements are this program's output
 
 use std::time::{Duration, Instant};
@@ -19,7 +19,7 @@ static COUNTING: CountingAlloc = CountingAlloc;
 
 mod sections;
 
-const SECTIONS: [&str; 20] = [
+const SECTIONS: &[&str] = &[
     "limits",
     "batching",
     "allocation",
@@ -40,7 +40,11 @@ const SECTIONS: [&str; 20] = [
     "raw-submit",
     "timer-source",
     "dma-1mib",
+    "region-batch",
+    "grind",
 ];
+/// Sections that run only when named: a run with no section named leaves them out.
+const OPT_IN: &[&str] = &["grind"];
 const RUNS: usize = 200;
 
 fn best(mut body: impl FnMut()) -> Duration {
@@ -148,12 +152,20 @@ fn dispatch_floor(backend: &WgpuBackend) {
     );
 }
 
+/// Reads of 4 KiB, 256 KiB and 4 MiB from device memory into the host: the median of
+/// `sections::RUNS` runs after `sections::WARM`, with the p99 and the best of the same runs.
 fn readback(backend: &WgpuBackend) {
     for bytes in [4 * 1024, 256 * 1024, 4 * 1024 * 1024] {
         let storage = Storage::new(backend, bytes).expect("a buffer");
         let mut out = vec![0; bytes as usize];
-        let read = best(|| storage.read_into(0, &mut out).expect("a readback"));
-        println!("read back {} KiB: {:.3} ms", bytes / 1024, ms(read));
+        let read = sections::measure(sections::WARM, sections::RUNS, || {
+            storage.read_into(0, &mut out).expect("a readback");
+        });
+        println!(
+            "read back {} KiB: {}",
+            bytes / 1024,
+            sections::line_ms(read)
+        );
     }
     let counted = boundaries(backend, 64 * 1024);
     println!(
@@ -174,11 +186,15 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::FAILURE;
     }
     for section in SECTIONS {
-        if !asked.is_empty() && !asked.iter().any(|name| name == section) {
+        let run_it = match asked.is_empty() {
+            true => !OPT_IN.contains(section),
+            false => asked.iter().any(|name| name == section),
+        };
+        if !run_it {
             continue;
         }
         println!("== {section}");
-        match section {
+        match *section {
             "limits" => limits(&backend),
             "batching" => batching(&backend),
             "allocation" => allocation(&backend),
@@ -195,7 +211,9 @@ fn main() -> std::process::ExitCode {
             "alloc16" => sections::allocations::run(),
             "elements" => sections::gaps::element_forms(&backend),
             "busy" => sections::gaps::busy(&backend),
-            "cached" => sections::gaps::host_cached(&backend),
+            "cached" => sections::gaps::host_cached(),
+            "region-batch" => sections::region_batch::region_batch(&backend),
+            "grind" => sections::grind::run(),
             #[cfg(target_os = "linux")]
             "heap-read" => sections::gaps::heap_read(&backend),
             #[cfg(target_os = "linux")]
@@ -207,7 +225,8 @@ fn main() -> std::process::ExitCode {
             ),
             #[cfg(not(target_os = "linux"))]
             "heap-read" => println!("heap-read: skipped, dma-heaps are a Linux interface"),
-            _ => readback(&backend),
+            "readback" => readback(&backend),
+            other => println!("{other}: not built on this platform"),
         }
     }
     std::process::ExitCode::SUCCESS

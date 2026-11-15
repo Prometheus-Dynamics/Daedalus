@@ -5,13 +5,20 @@
 //! is the safe part: the ring is made on the backend's device with the device's own submit
 //! lock, so a raw submit never overlaps one of wgpu's. Linux and Vulkan only.
 
+use std::sync::Arc;
+
 use daedalus_vk_sys::ash::vk;
+use daedalus_vk_sys::compute::ComputePipeline;
 use daedalus_vk_sys::device::Extras;
 use daedalus_vk_sys::submit::Submitter;
 
 use crate::WgpuBackend;
 use crate::buffer::Storage;
 use crate::context::OpenError;
+
+/// A chain of compute stages run in one submit, recorded with Vulkan itself. See
+/// `daedalus_vk_sys::chain`. Its runs are begun, given a dispatch per stage, and submitted.
+pub use daedalus_vk_sys::chain::{Arg, Chain};
 
 /// Why there is no raw submitter.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +50,27 @@ impl WgpuBackend {
             .map_err(|error| RawError::Vulkan(error.to_string()))
     }
 
+    /// A raw chain of one compute stage per `(wgsl source, entry point)` in `stages`, on this
+    /// backend's device, with `sets` sets of buffers for each stage to remember. The chain
+    /// takes the device's submit lock, so its submits never overlap wgpu's.
+    pub fn raw_chain(&self, stages: &[(&str, &str)], sets: usize) -> Result<Chain, RawError> {
+        let context = self.context().map_err(RawError::Open)?;
+        let mut pipelines = Vec::with_capacity(stages.len());
+        for (source, entry) in stages {
+            let pipeline = ComputePipeline::from_wgsl(&context.device, source, entry)
+                .map_err(|error| RawError::Vulkan(error.to_string()))?;
+            pipelines.push(Arc::new(pipeline));
+        }
+        Chain::new(
+            &context.device,
+            &context.queue,
+            &context.submit,
+            &pipelines,
+            sets,
+        )
+        .map_err(|error| RawError::Vulkan(error.to_string()))
+    }
+
     /// Whether shaders on this device may read 8-bit types from a storage buffer. Check before
     /// making a raw pipeline that does: without the feature the pipeline is invalid.
     pub fn storage_buffer_8bit(&self) -> bool {
@@ -58,5 +86,11 @@ impl Storage {
     /// storage has to outlive every submit that uses the handle.
     pub fn raw_buffer(&self) -> Option<vk::Buffer> {
         daedalus_vk_sys::memory::handle(self.buffer())
+    }
+
+    /// The wgpu buffer behind this storage, for a raw chain's [`Arg::Storage`]. The storage has
+    /// to outlive every run that binds it.
+    pub fn wgpu_buffer(&self) -> &wgpu::Buffer {
+        self.buffer()
     }
 }
