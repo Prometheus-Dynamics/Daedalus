@@ -292,3 +292,26 @@ fn layout_matches_golden_bytes() {
     }
     assert_eq!(text, std::fs::read_to_string(path).unwrap());
 }
+
+#[test]
+fn a_plan_with_a_move_has_no_blob() {
+    use daedalus_graph::GraphBody;
+    use daedalus_planner::{Config, Form, PlanError, plan};
+    let (a, b) = (mover(), own("b", "m.b"));
+    let (nodes, edges) = line(&["t.a", "t.b"]);
+    let graph = GraphBody {
+        nodes,
+        edges,
+        groups: Vec::new(),
+    };
+    let config = Config {
+        form: Form::Blob,
+        ..Config::default()
+    };
+    let planned = plan(&graph, &registry(), &[&a, &b], &config).unwrap();
+    let error = planned.blob().unwrap_err();
+    assert!(
+        matches!(&error, PlanError::TransferUnavailable { id, reason } if id == "t.move" && reason.contains("steps form")),
+        "{error}"
+    );
+}
