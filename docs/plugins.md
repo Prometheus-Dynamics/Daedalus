@@ -81,6 +81,17 @@ to that table, with the shape's name on the line.
 - A panic in a plugin's node does not cross. It is a fault of that step: the tick goes on and the
   host keeps running.
 
+## Handing an input on
+
+A node that passes a value it was given on as it is, a run of bytes for example, must not copy
+the input cell into the output cell: both would then own the one reference, and it would be
+released twice. It marks the output instead, with `daedalus_abi::forward(output, input)`: an empty
+cell with `reserved` set to `FORWARD_PENDING` (4) and `len` the input's index. When the step
+returns, the runner hands that input's value on to the output. It moves the reference when the
+node is the input's only reader, and takes another one when the value is still another reader's,
+which only the runner knows. Nothing is copied. A host that predates the mark sees an empty output.
+The fixture's `fixture.pass_bytes` does this, and `core/loader/tests/forward.rs` checks both cases.
+
 ## Handing bytes over
 
 A node hands bytes over by marking one of its output cells and describing the bytes in

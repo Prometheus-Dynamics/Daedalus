@@ -141,3 +141,35 @@ pub fn plugin_tick(host: &mut LoadedHost, value: u32) -> u32 {
         .expect("a take")
         .expect("a value")
 }
+
+/// The fixture's `pass_bytes` node between a bytes input and a bytes output: a run of bytes
+/// crosses into the plugin and back by reference, as the I3 stable row measures.
+pub fn bytes_node(library: &Path) -> LoadedHost {
+    let plugin = Arc::new(Loader::new().open(library).expect("the plugin loads"));
+    let mut registry = Registry::new();
+    plugin.join(&mut registry).expect("the plugin's nodes join");
+    let backend = OneNode { plugin };
+    let graph = GraphBody {
+        nodes: vec![
+            bridge(&[("in", "bytes"), ("out", "bytes")]),
+            NodeDoc::new("fixture.pass_bytes"),
+        ],
+        edges: vec![edge(0, "in", 1, "in"), edge(1, "out", 0, "out")],
+        groups: Vec::new(),
+    };
+    let planned =
+        plan(&graph, &registry, &[&backend], &Config::default()).expect("the graph plans");
+    LoadedHost::load(planned, LoadOptions::default()).expect("the plan loads")
+}
+
+/// One round trip of `bytes` through the plugin: fed shared, stepped, taken back and dropped.
+/// Returns how many bytes came out.
+pub fn bytes_tick(host: &mut LoadedHost, bytes: &Arc<[u8]>) -> usize {
+    let io = host.host();
+    io.feed_shared("in", Arc::clone(bytes)).expect("a feed");
+    io.step().expect("a tick");
+    let taken = io.take_value("out").expect("a take").expect("a value");
+    let len = taken.bytes().expect("bytes").len();
+    drop(taken);
+    len
+}

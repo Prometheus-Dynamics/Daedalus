@@ -1,11 +1,12 @@
-//! A plugin the loader tests open. `pass` forwards its input cell to its output cell. `boom`
+//! A plugin the loader tests open. `pass` forwards its input cell to its output cell, and
+//! `pass_bytes` hands a run of bytes on by reference (`daedalus_abi::forward`). `boom`
 //! panics, to prove a panic in a node is a fault. `abort` ends the process.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use daedalus_abi::{
-    BytesC, Fence, FencePoll, FenceWord, HANDOVER_PENDING, OWNER_HANDED, PlainData, Slot, SlotState,
-    Slots, StepCx, StepEnd,
+    BytesC, Fence, FencePoll, FenceWord, HANDOVER_PENDING, OWNER_HANDED, PlainData, Slot,
+    SlotState, Slots, StepCx, StepEnd,
 };
 use daedalus_derive::PlainData;
 use daedalus_loader::export::{CodecDef, NodeDef, PluginDef, PortDef};
@@ -17,7 +18,6 @@ use daedalus_loader::export::{CodecDef, NodeDef, PluginDef, PortDef};
 struct Number {
     value: u32,
 }
-
 
 /// How many polls the gated node's fence waits for before it is ready. The runner polls once a
 /// tick, so its output appears on the fourth tick after the node ran.
@@ -44,6 +44,18 @@ fn gated(slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
     match pass(slots, cx) {
         StepEnd::Done => StepEnd::Pending(Fence::of::<Polls>(0)),
         other => other,
+    }
+}
+
+/// Hands its input on by reference: the runner moves the value, or takes another reference when
+/// the input is still another reader's.
+fn pass_on(slots: &mut Slots, _cx: &mut StepCx) -> StepEnd {
+    match slots.cell(1) {
+        Some(output) => {
+            daedalus_abi::forward(output, 0);
+            StepEnd::Done
+        }
+        None => StepEnd::Fault,
     }
 }
 
@@ -122,13 +134,24 @@ static PASS_OUT: [PortDef; 1] = [PortDef {
     optional: false,
 }];
 
+static BYTES_IN: [PortDef; 1] = [PortDef {
+    name: "in",
+    key: "bytes",
+    optional: false,
+}];
+static BYTES_OUT: [PortDef; 1] = [PortDef {
+    name: "out",
+    key: "bytes",
+    optional: false,
+}];
+
 static HANDED_OUT: [PortDef; 1] = [PortDef {
     name: "out",
     key: "bytes",
     optional: false,
 }];
 
-static NODES: [NodeDef; 5] = [
+static NODES: [NodeDef; 7] = [
     NodeDef {
         id: "fixture.pass",
         source: "dylib-fixture",
@@ -164,6 +187,26 @@ static NODES: [NodeDef; 5] = [
         inputs: &PASS_IN,
         outputs: &HANDED_OUT,
         run: handover,
+    },
+    NodeDef {
+        id: "fixture.pass_bytes",
+        source: "dylib-fixture",
+        backend: "fixture.cpu",
+        text: "pass_on",
+        inputs: &BYTES_IN,
+        outputs: &BYTES_OUT,
+        run: pass_on,
+    },
+    // The wrong way to pass bytes on, kept so a test shows what the forward mark prevents: the
+    // cell is copied, so the input and the output both own the one reference.
+    NodeDef {
+        id: "fixture.copy_cell",
+        source: "dylib-fixture",
+        backend: "fixture.cpu",
+        text: "pass",
+        inputs: &BYTES_IN,
+        outputs: &BYTES_OUT,
+        run: pass,
     },
     NodeDef {
         id: "fixture.gated",

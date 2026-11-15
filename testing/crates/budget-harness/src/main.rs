@@ -20,11 +20,14 @@ use std::process::ExitCode;
 
 use daedalus_abi::counting::{CountingAlloc, counted};
 use daedalus_budget_harness::detector::{detector, frame, picture};
-use daedalus_budget_harness::plugin::{handover_node, handover_tick, plugin_node, plugin_tick};
+use daedalus_budget_harness::plugin::{
+    bytes_node, bytes_tick, handover_node, handover_tick, plugin_node, plugin_tick,
+};
 use daedalus_budget_harness::{
     Stage, big, chain, chain_tick, idle_tick, large_feed, large_handle, large_step,
 };
 use daedalus_handoff_bench as handoff;
+use std::sync::Arc;
 
 #[global_allocator]
 static ALLOC: CountingAlloc = CountingAlloc;
@@ -169,6 +172,20 @@ fn plugin_allocations(library: &Path) {
         "every hand-over arrives whole"
     );
     println!("alloc_plugin_handover_tick {}", count as u64 / TICKS);
+
+    // The I3 value into the plugin and back, by reference: the stable-path row I3 sets beside
+    // the static ones.
+    let value: Arc<[u8]> = vec![7u8; handoff::I3_BYTES].into();
+    let mut host = bytes_node(library);
+    for _ in 0..WARM_UP {
+        bytes_tick(&mut host, &value);
+    }
+    let ((), count) = counted(|| {
+        for _ in 0..TICKS {
+            assert_eq!(bytes_tick(&mut host, &value), handoff::I3_BYTES);
+        }
+    });
+    println!("alloc_i3_stable_round_tick {}", count as u64 / TICKS);
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -222,6 +239,30 @@ fn run(args: &[String]) -> Result<(), String> {
             let library = args.get(2).ok_or("plugin needs the library's path")?;
             if args.get(3).map(String::as_str) == Some("allocations") {
                 plugin_allocations(Path::new(library));
+                return Ok(());
+            }
+            if args.get(3).map(String::as_str) == Some("i3") {
+                // The I3 value through the plugin and back, per tick: p50 and p99 of `ticks`.
+                let value: Arc<[u8]> = vec![7u8; handoff::I3_BYTES].into();
+                let mut host = bytes_node(Path::new(library));
+                for _ in 0..WARM_UP {
+                    bytes_tick(&mut host, &value);
+                }
+                let mut times: Vec<u64> = (0..ticks.max(1))
+                    .map(|_| {
+                        let start = std::time::Instant::now();
+                        black_box(bytes_tick(&mut host, &value));
+                        start.elapsed().as_nanos() as u64
+                    })
+                    .collect();
+                times.sort_unstable();
+                let at = |q: usize| times[(times.len() - 1) * q / 100];
+                println!(
+                    "i3_stable_round_tick bytes {} p50_ns {} p99_ns {}",
+                    handoff::I3_BYTES,
+                    at(50),
+                    at(99)
+                );
                 return Ok(());
             }
             if args.get(3).map(String::as_str) == Some("handover") {

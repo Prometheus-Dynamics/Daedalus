@@ -231,6 +231,7 @@ pub(crate) fn serve(host: &Arc<ServiceHost>, mut channel: Channel, refuse: Optio
         let (session, codecs) = (Arc::clone(&session), codecs.clone());
         std::thread::Builder::new()
             .name("daedalus-session-write".into())
+            .stack_size(super::SMALL_STACK)
             .spawn(move || {
                 while let Some(item) = session.next() {
                     let packet = match item {

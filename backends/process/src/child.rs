@@ -170,7 +170,7 @@ impl Worker {
         if let Some(launch) = spec.launch {
             launch(&mut command);
         }
-        let mut child = command.spawn().map_err(|error| ProcessError::Spawn {
+        let child = command.spawn().map_err(|error| ProcessError::Spawn {
             program: spec.program.clone(),
             message: error.to_string(),
         })?;
@@ -180,29 +180,52 @@ impl Worker {
         drop(command);
         let pid = child.id();
         #[cfg(target_os = "linux")]
-        let (input, stdout) = {
-            let reader = socket.try_clone().map_err(spawn_error)?;
-            (Input::Socket(socket), reader)
+        let attached = Self::attach(child, pid, spec, telemetry, socket);
+        #[cfg(not(target_os = "linux"))]
+        let attached = Self::attach(child, pid, spec, telemetry);
+        attached.map_err(|(mut child, error)| {
+            // The worker this call started goes with the failure, by its own handle.
+            let _ = child.kill();
+            let _ = child.wait();
+            error
+        })
+    }
+
+    /// Takes a started worker's pipes and starts the threads that read them. On a failure the
+    /// child is handed back, so the caller stops it.
+    fn attach(
+        mut child: Child,
+        pid: u32,
+        spec: &WorkerSpec,
+        telemetry: &Arc<Telemetry>,
+        #[cfg(target_os = "linux")] socket: std::os::unix::net::UnixStream,
+    ) -> Result<Worker, (Child, ProcessError)> {
+        let failed = |message: String| ProcessError::Spawn {
+            program: spec.program.clone(),
+            message,
+        };
+        #[cfg(target_os = "linux")]
+        let (input, stdout) = match socket.try_clone() {
+            Ok(reader) => (Input::Socket(socket), reader),
+            Err(error) => return Err((child, failed(error.to_string()))),
         };
         #[cfg(not(target_os = "linux"))]
-        let (input, stdout) = {
-            let stdin = child.stdin.take().ok_or_else(|| ProcessError::Spawn {
-                program: spec.program.clone(),
-                message: "no stdin pipe".into(),
-            })?;
-            let stdout = child.stdout.take().ok_or_else(|| ProcessError::Spawn {
-                program: spec.program.clone(),
-                message: "no stdout pipe".into(),
-            })?;
-            (Input::Pipe(stdin), stdout)
+        let (input, stdout) = match (child.stdin.take(), child.stdout.take()) {
+            (Some(stdin), Some(stdout)) => (Input::Pipe(stdin), stdout),
+            _ => return Err((child, failed("no stdin or stdout pipe".into()))),
         };
-        let stderr_pipe = child.stderr.take().ok_or_else(|| ProcessError::Spawn {
-            program: spec.program.clone(),
-            message: "no stderr pipe".into(),
-        })?;
-        let (packets, recycle, reader_thread) = reader::spawn(stdout, spec.packet_cap);
+        let Some(stderr_pipe) = child.stderr.take() else {
+            return Err((child, failed("no stderr pipe".into())));
+        };
+        let (packets, recycle, reader_thread) = match reader::spawn(stdout, spec.packet_cap) {
+            Ok(started) => started,
+            Err(error) => return Err((child, failed(format!("no reader thread: {error}")))),
+        };
         let ring = Arc::new(Mutex::new(Ring::default()));
-        let drain_thread = drain(stderr_pipe, ring.clone(), telemetry.clone());
+        let drain_thread = match drain(stderr_pipe, ring.clone(), telemetry.clone()) {
+            Ok(thread) => thread,
+            Err(error) => return Err((child, failed(format!("no stderr thread: {error}")))),
+        };
         Ok(Worker {
             child: Some(child),
             pid,
@@ -551,21 +574,24 @@ fn drain(
     mut pipe: impl Read + Send + 'static,
     ring: Arc<Mutex<Ring>>,
     telemetry: Arc<Telemetry>,
-) -> JoinHandle<()> {
-    thread::spawn(move || {
-        let mut chunk = [0u8; 4096];
-        loop {
-            match pipe.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(count) => {
-                    telemetry.bump(Count::Stderr(count as u64));
-                    if let Ok(mut ring) = ring.lock() {
-                        ring.push(&chunk[..count]);
+) -> std::io::Result<JoinHandle<()>> {
+    thread::Builder::new()
+        .name("daedalus-worker-stderr".into())
+        .stack_size(reader::PIPE_STACK)
+        .spawn(move || {
+            let mut chunk = [0u8; 4096];
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        telemetry.bump(Count::Stderr(count as u64));
+                        if let Ok(mut ring) = ring.lock() {
+                            ring.push(&chunk[..count]);
+                        }
                     }
+                    Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                    Err(_) => break,
                 }
-                Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                Err(_) => break,
             }
-        }
-    })
+        })
 }

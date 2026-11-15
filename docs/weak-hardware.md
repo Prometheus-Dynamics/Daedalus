@@ -93,11 +93,44 @@ Ideas that were listed here with no measurement behind them, each now done or dr
   ([out-view.md](../testing/board-runs/out-view.md)). What is left on the pipe is small values.
 - **Dropped:** decoding a worker's long output straight into the memory it is handed on in. The
   same: a long output is handed on as the place it is at, and goes back into a worker with no copy.
-- **To do:** smaller stacks for the daemon's connection threads, with the resident memory saved
-  measured.
+- **Done:** smaller stacks for the daemon's connection threads. See Thread stacks, below.
 - **To do:** a host feature that leaves the planner out, for a board that loads a plan made
   elsewhere, with the binary size and resident memory saved measured.
 - **To do:** a query for the offset alignment a device needs to import a dma-buf in place, beside
   `dmabuf_status`, with the refused-for-alignment case named in the status sentence. Today a
   misaligned offset is copied every time and the caller can only find the alignment by trying
   offsets. Asked for by a consumer that lays out a pool of offsets.
+
+## Thread stacks
+
+A thread Rust starts reserves 2 MiB of address space for its stack, and only the pages it touches
+are resident. The threads that move bytes and call nothing deep now ask for less:
+
+| Thread | Stack |
+|---|---|
+| a session's writer, and the acceptor | 64 KiB |
+| a worker's stdout reader and its stderr drain | 64 KiB |
+| a client's reader | 128 KiB |
+
+Each passes every host, daemon, ctl, client and process test with a quarter of that, in a debug
+build, which uses more stack than a release one. A session's own thread, the daemon's stdio
+session and its plugin loader keep the default: a run's ticks run on the session that steps it,
+so node code runs there, and a plugin's registration runs on the loader. The runner's lanes and a
+stream's worker run node code too, and keep it as well.
+
+Measured on the desktop (x86-64, 32 cores), release build, the daemon idle and then with 32
+connections held open by `daedalus-ctl watch all`. `scripts/board/measure-on-board.sh` takes the
+same figures on a board.
+
+| | Idle: address space, resident | 32 connections: address space, resident |
+|---|---|---|
+| Before | 203 MiB, 3.3 MiB | 4,296 MiB, 4.6 MiB |
+| Smaller stacks | 199 MiB, 3.1 MiB | 4,232 MiB, 4.4 MiB |
+| Smaller stacks and `MALLOC_ARENA_MAX=2` | | 137 MiB, 4.3 MiB |
+
+The stacks save 2 MiB of address space a connection and little resident memory, as expected. The
+rest of the address space was glibc's: each thread that allocates gets an arena of its own, up to
+eight a core, with 64 MiB reserved for each. The packaged service sets `MALLOC_ARENA_MAX=2`
+(`service/daedalusd/packaging/daedalusd.service`), which matters on a board with little memory
+and strict overcommit, or a 32-bit one. A run's steady state allocates nothing, so two arenas
+aren't contended.

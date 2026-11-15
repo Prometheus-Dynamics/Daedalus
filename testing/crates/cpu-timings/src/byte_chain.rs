@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(target_os = "linux")]
 use daedalus_dma_sys::{DmaBuf, DmaHeap};
 use daedalus_graph::{GraphBody, NodeDoc, NodeKindDoc};
 use daedalus_host::{LoadOptions, LoadedHost};
@@ -32,6 +33,7 @@ const WARM_UP: usize = 200;
 /// Where the value's bytes live. The payload is held, not read: it keeps the memory alive.
 #[allow(dead_code)]
 enum Backing {
+    #[cfg(target_os = "linux")]
     Dma(DmaBuf),
     Heap(Vec<u8>),
 }
@@ -57,6 +59,16 @@ const NODES: [&NodeRecord; 1] = [&PASS_BYTES_NODE];
 
 /// The value in dma-heap memory if the heap can be opened, else in ordinary memory, with the
 /// reason in the second part of the pair.
+#[cfg(not(target_os = "linux"))]
+fn value() -> (Arc<Bytes>, String) {
+    let pattern = vec![0x5a_u8; BYTES];
+    (
+        ordinary(&pattern),
+        "ordinary memory, dma-heaps are Linux's".to_owned(),
+    )
+}
+
+#[cfg(target_os = "linux")]
 fn value() -> (Arc<Bytes>, String) {
     let pattern = vec![0x5a_u8; BYTES];
     let heap = match DmaHeap::open("system") {
@@ -82,6 +94,7 @@ fn value() -> (Arc<Bytes>, String) {
 }
 
 /// A dma-buf from `heap`, with `pattern` written in, so its pages are touched before timing.
+#[cfg(target_os = "linux")]
 fn fill(heap: &DmaHeap, pattern: &[u8]) -> Result<DmaBuf, daedalus_dma_sys::Error> {
     let buf = heap.allocate(BYTES as u64)?;
     let mapping = buf.as_ref().map()?;

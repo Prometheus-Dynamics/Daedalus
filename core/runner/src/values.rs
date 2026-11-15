@@ -224,6 +224,23 @@ pub fn hand_on(cell: &mut Slot, out: &mut Slot) -> bool {
     true
 }
 
+/// Settles every output a step marked [`daedalus_abi::FORWARD_PENDING`]: each takes the value of
+/// the input its `len` names, by [`hand_on`]. A mark naming no full input leaves the output
+/// empty. `cells` are the step's inputs and then its outputs.
+pub fn settle_forwards(cells: &mut [Slot], inputs: usize) {
+    let (ins, outs) = cells.split_at_mut(inputs.min(cells.len()));
+    for out in outs {
+        if out.state != SlotState::Empty as u32 || out.reserved != daedalus_abi::FORWARD_PENDING {
+            continue;
+        }
+        let from = out.len;
+        *out = Slot::EMPTY;
+        if let Some(input) = ins.get_mut(from) {
+            hand_on(input, out);
+        }
+    }
+}
+
 /// Takes the count a full handed cell holds, and leaves the cell moved, so the runner doesn't
 /// release it again. The count moves into the returned handle, with no copy and no allocation.
 /// From a [`LENT`] cell the handle gets a count of its own, and the cell stays as it is.

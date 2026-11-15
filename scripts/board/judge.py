@@ -91,7 +91,12 @@ MEASURED = {
     "startup.txt": ["startup"],
     "timings.txt": ["probe_off", "probe_every_1", "host_round_trip", "host_idle_step"],
     "worker.txt": ["round_trip", "hand_over"],
-    "daemon.txt": ["daemon_rss_idle_kb", "daemon_rss_after_200_round_trips_kb"],
+    "daemon.txt": [
+        "daemon_rss_idle_kb",
+        "daemon_rss_after_200_round_trips_kb",
+        "daemon_rss_32_connections_kb",
+        "daemon_vmsize_32_connections_kb",
+    ],
 }
 
 
@@ -205,7 +210,8 @@ def self_test():
         "timings.txt": "probe_off median_ns 1.0\nprobe_every_1 median_ns 2.0\n"
         "host_round_trip median_ns 3.0\nhost_idle_step median_ns 4.0\n",
         "worker.txt": "round_trip median_ns 9.0\nhand_over megabytes 1 median_ns 8\n",
-        "daemon.txt": "daemon_rss_idle_kb 900\ndaemon_rss_after_200_round_trips_kb 950\n",
+        "daemon.txt": "daemon_rss_idle_kb 900\ndaemon_rss_after_200_round_trips_kb 950\n"
+        "daemon_rss_32_connections_kb 990\ndaemon_vmsize_32_connections_kb 9000\n",
     }
     expect("measure: a whole run passes", measure(whole), None)
     cut = dict(whole)

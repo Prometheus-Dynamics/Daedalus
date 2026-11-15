@@ -69,6 +69,11 @@ done
 #    test runs its build from the workspace path it was compiled in, which is under /tmp.
 step i3-allocations "$B/daedalus-budget-harness" allocations
 step i3-ticks "$B/ticks-bench" --bench i3_
+# Next's stable row: the same value through the dylib fixture and back, by reference.
+step i3-stable-allocations "$B/daedalus-budget-harness" plugin 0 "$B/libdaedalus_dylib_fixture.so" allocations
+for round in 1 2 3; do
+  step i3-stable "$B/daedalus-budget-harness" plugin 5000 "$B/libdaedalus_dylib_fixture.so" i3
+done
 mkdir -p /tmp/dd-i3dev
 for round in 1 2 3; do
   step i3-ref env I3_PLUGIN="$B/libdaedalus_plugins_stable_abi.so" CARGO="$D/cargo-shim" \
