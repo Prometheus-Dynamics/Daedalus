@@ -128,6 +128,28 @@ pub fn read_items<'a, L: Listed + 'static, C: ConstTable>(
     read(cell, consts, at, kind, hold, wire).map(Listed::items)
 }
 
+/// Reads input `at`, a list, as a [`ListView`](super::ListView): item by item from its wire form
+/// where it is, when it is in `cpu.wire` and its items have a fixed size. Any other is read as
+/// [`read`] reads it, and the view borrows the list.
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn read_list<'a, T: daedalus_types::WireForm + Clone + 'static, C: ConstTable>(
+    cell: &'a Slot,
+    consts: &'a C,
+    at: usize,
+    kind: Kind<alloc::vec::Vec<T>>,
+    hold: &'a mut Option<alloc::vec::Vec<T>>,
+    wire: u32,
+) -> Option<super::ListView<'a, T>> {
+    if wired(wire, at)
+        && is_full(cell)
+        && let Some(view) = cell.bytes().and_then(super::ListView::wire)
+    {
+        return Some(view);
+    }
+    read(cell, consts, at, kind, hold, wire).map(|list| super::ListView::of(list))
+}
+
 /// Takes the handed bytes a full cell holds, by move.
 pub(crate) fn take_handed_bytes(cell: &mut Slot) -> Option<daedalus_abi::SharedBytes> {
     daedalus_runner::take_handed(cell)

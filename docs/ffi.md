@@ -214,5 +214,6 @@ might crash is kept out of the host's process. See [plugins.md](plugins.md).
 
 ## From C, without a worker
 
-A C surface for running a graph from a shared library, and a safe Rust host over it, are
-planned as `G10` and `G11` and are not built yet.
+`core/capi` is a C surface for running a graph from a shared library: `include/daedalus.h`
+declares it, and a host links `libdaedalus_capi`. [`languages/rust-capi`](../languages/rust-capi) is a safe Rust
+host over it, on the sys crate [`languages/rust-capi-sys`](../languages/rust-capi-sys).

@@ -83,18 +83,21 @@ every read, and a value too long for a cell was given new memory every time it c
 worker. A megabyte handed to a worker and back now allocates nothing on the host's thread, and
 `a_steady_run_of_megabyte_values_allocates_nothing_on_the_host_thread` holds that.
 
-## Parked
+## Decided
 
-Ideas with no measurement behind them yet. None is being worked on.
+Ideas that were listed here with no measurement behind them, each now done or dropped:
 
-- A larger pipe to a worker (`F_SETPIPE_SZ`), for values of a megabyte and more: fewer
-  switches between the two processes, for up to a megabyte of kernel memory a pipe.
-- Decoding a worker's long output straight into the memory it is handed on in, which would
-  take one more copy out of a megabyte's way.
-- Smaller stacks for the daemon's connection threads. It would lower address space, not
-  resident memory.
-- A host feature that leaves the planner out for a board that loads a plan made elsewhere.
-- A query for the offset alignment a device needs to import a dma-buf in place, beside
+- **Dropped:** a larger pipe to a worker (`F_SETPIPE_SZ`) for values of a megabyte and more. A
+  value that large no longer goes through the pipe: it goes by reference, through shared memory,
+  and a CPU node's output is written into the worker's lent memory
+  ([out-view.md](../testing/board-runs/out-view.md)). What is left on the pipe is small values.
+- **Dropped:** decoding a worker's long output straight into the memory it is handed on in. The
+  same: a long output is handed on as the place it is at, and goes back into a worker with no copy.
+- **To do:** smaller stacks for the daemon's connection threads, with the resident memory saved
+  measured.
+- **To do:** a host feature that leaves the planner out, for a board that loads a plan made
+  elsewhere, with the binary size and resident memory saved measured.
+- **To do:** a query for the offset alignment a device needs to import a dma-buf in place, beside
   `dmabuf_status`, with the refused-for-alignment case named in the status sentence. Today a
-  misaligned offset is copied every time and the caller can only find the alignment by
-  trying offsets. Asked for by a consumer that lays out a pool of offsets.
+  misaligned offset is copied every time and the caller can only find the alignment by trying
+  offsets. Asked for by a consumer that lays out a pool of offsets.

@@ -8,7 +8,7 @@ examples, why decisions went the way they did, where each `dev` crate goes, and 
 grouped and ordered. If the two ever disagree, `design.md` wins. The PR list and the briefs are in
 [`../TODO.md`](../TODO.md) and [`prs/`](prs/).
 
-Plan for review · read against Daedalus dev 712e7b7 · `next` holds the plan, nothing built on it yet · 2026-11-08 · version 8
+Plan for review · read against Daedalus dev 712e7b7 · 2026-11-08 · version 8. This is the plan as it was reviewed, kept for its reasons and worked examples. Every PR in it has since landed on `next`: [`design.md`](design.md) says what is built, and wins where the two differ.
 
 Daedalus connects and structures. It solves your graph, and hands the pieces to backends that know how to run them. Each backend can merge and optimize what it's given. Daedalus knows no node and no hardware.
 

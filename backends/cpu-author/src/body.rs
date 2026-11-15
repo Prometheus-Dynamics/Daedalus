@@ -320,6 +320,13 @@ macro_rules! __wire_read {
             $crate::__cpu::ViewOf::<$ty>::VIEW.is_some(),
         )
     }};
+    (list_view: $ty:ty) => {{
+        const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
+        $crate::__cpu::WireRead::of(
+            __KIND.wire.is_some(),
+            $crate::__cpu::list_viewed::<<$ty as $crate::__cpu::Listed>::Item>(),
+        )
+    }};
     (out_view: $ty:ty) => {
         $crate::__cpu::WireRead::Refused
     };
@@ -348,6 +355,9 @@ macro_rules! __role {
         $crate::__cpu::Role::Read
     };
     (items) => {
+        $crate::__cpu::Role::Read
+    };
+    (list_view) => {
         $crate::__cpu::Role::Read
     };
     (take) => {
@@ -470,6 +480,7 @@ macro_rules! __is_copy {
 macro_rules! __check {
     (read $at:literal; $fixed:ident, $this:ident) => { $crate::__require!($at; $fixed, $this) };
     (items $at:literal; $fixed:ident, $this:ident) => { $crate::__require!($at; $fixed, $this) };
+    (list_view $at:literal; $fixed:ident, $this:ident) => { $crate::__require!($at; $fixed, $this) };
     (take $at:literal; $fixed:ident, $this:ident) => { $crate::__require!($at; $fixed, $this) };
     (modify $at:literal; $fixed:ident, $this:ident) => { $crate::__require!($at; $fixed, $this) };
     ($other:ident $at:literal; $fixed:ident, $this:ident) => {};
@@ -571,6 +582,30 @@ macro_rules! __bind {
         };
         let $arg = match __items {
             ::core::option::Option::Some(items) => items,
+            ::core::option::Option::None => {
+                return $crate::__cpu::ports::unusable($cx, $this.node);
+            }
+        };
+    };
+    (list_view $at:literal $arg:ident: $ty:ty; $next:ident, $this:ident, $cx:ident, $fan:ident) => {
+        let __cell = $next.next();
+        let mut __hold: ::core::option::Option<$ty> = ::core::option::Option::None;
+        let __view = match __cell {
+            ::core::option::Option::Some(cell) => {
+                const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
+                $crate::__cpu::ports::read_list(
+                    &*cell,
+                    &$this.consts,
+                    $at,
+                    __KIND,
+                    &mut __hold,
+                    $this.wire,
+                )
+            }
+            ::core::option::Option::None => ::core::option::Option::None,
+        };
+        let $arg = match __view {
+            ::core::option::Option::Some(view) => view,
             ::core::option::Option::None => {
                 return $crate::__cpu::ports::unusable($cx, $this.node);
             }

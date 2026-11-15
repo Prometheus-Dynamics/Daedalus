@@ -276,6 +276,14 @@ pub(crate) fn shape(
         let ident = &pattern.ident;
         let ty = fill_type(&param.ty)?;
         shape.params.extend(quote!(#ident: #ty,));
+        // A `ListView<'_, T>` reads a `Vec<T>` input item by item, where its bytes are.
+        let list_view = generic_of(&ty, "ListView")
+            .and_then(|args| args.first().copied())
+            .cloned();
+        let ty: Type = match &list_view {
+            Some(element) => syn::parse_quote!(&::daedalus_registry::__private::Vec<#element>),
+            None => ty,
+        };
         // A slice or a `str` is read out of the list or string that holds it.
         let slice = matches!(&ty, Type::Reference(r) if r.mutability.is_none() && matches!(&*r.elem, Type::Slice(_)));
         let ty = held(ty);
@@ -335,6 +343,9 @@ pub(crate) fn shape(
         // A slice of a list's items, which a backend can view where the list's bytes are.
         if slice {
             role = syn::Ident::new("items", role.span());
+        }
+        if list_view.is_some() {
+            role = syn::Ident::new("list_view", role.span());
         }
         shape
             .bind

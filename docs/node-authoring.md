@@ -124,6 +124,17 @@ struct Tensor { dtype: u8, shape: Vec<u64>, data: Vec<u8> }
 A struct whose one list comes last is an `Array`. Put the fixed fields first. Prefer one list of
 records over several parallel lists.
 
+A type's owner, the crate or repository that declares a type other graphs use, decides how cheaply
+it crosses. Daedalus doesn't change anyone's types. The guidance for an owner is:
+
+- Declare the type as its structure, with `#[derive(Type, WireForm)]` and `#[structural]`, not as
+  `Opaque` bytes from a codec.
+- Make records fixed-size structs of numbers, so a `&[T]` in a worker and a `ListView` on the CPU
+  read them where they are.
+- Put a struct's one list last, after its fixed fields.
+- Treat a change to a published type's fields as a new type: a reader compares the type by its
+  fields, so the producer and every reader change together.
+
 In the Rust SDK:
 - A `&[f32]` parameter (or `&[u32]`, `&[i64]` or any other number) borrows a placed list's items
   where they are, when they are aligned and the machine is little-endian. Otherwise it decodes
@@ -142,7 +153,15 @@ worker wrote, field by field in the order the type declares. Numbers, `bool`, `S
 `Option`, `BTreeMap`, tuples and `Arc` already have one. A type without one that a graph sends to a
 worker, or reads from one, is refused when the plan is built, and the refusal says which type to
 derive it on. A CPU parameter `&[f32]` (or any other number) reads a list from a worker where its
-bytes are. Any other type is decoded once per tick, and `explain_plan` lists each such decode.
+bytes are. A `ListView<'_, T>` parameter reads a list of records whose wire form has a fixed size
+(`#[structural]` structs of numbers, such as a keypoint) where its bytes are too, one record at a
+time: `len`, `get(i)` and `iter()`, with no decode and no allocation. Any other type is decoded once
+per tick, and `explain_plan` lists each such decode.
+
+A `&[T]` of records is decoded instead: viewing records as a slice needs their memory to be their
+wire form and every bit pattern to be a valid value, which only `unsafe` code could promise for a
+type a node author declares. `ListView` needs neither, and reads a list held as a Rust value just
+as well, so a node written with it is right wherever the plan puts its input.
 
 A CPU node can write a list output in place with an `OutView<'_, T>` parameter, instead of
 returning a `Vec<T>`. The parameter is an output port named after it, of type `Vec<T>`, listed
