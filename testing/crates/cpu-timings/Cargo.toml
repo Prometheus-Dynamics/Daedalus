@@ -12,7 +12,6 @@ daedalus-abi = { path = "../../../core/abi" }
 daedalus-budget-harness = { path = "../budget-harness" }
 daedalus-cpu = { path = "../../../backends/cpu" }
 daedalus-cpu-author = { path = "../../../backends/cpu-author" }
-daedalus-dma-sys = { path = "../../../backends/dma-sys" }
 daedalus-graph = { path = "../../../core/graph" }
 daedalus-host = { path = "../../../core/host" }
 daedalus-macros = { path = "../../../core/macros" }
@@ -21,6 +20,9 @@ daedalus-planner = { path = "../../../core/planner" }
 daedalus-registry = { path = "../../../core/registry" }
 daedalus-runner = { path = "../../../core/runner" }
 daedalus-types = { path = "../../../core/types" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+daedalus-dma-sys = { path = "../../../backends/dma-sys" }
 
 [lints]
 workspace = true

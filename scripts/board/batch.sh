@@ -64,6 +64,8 @@ for l in sys.stdin:
   tests daedalus-vk-sys vk-sys
   tests daedalus-wgpu-conformance wgpu-conformance
   tests daedalus-gpu-budgets gpu-budgets
+  (cd testing/fixtures/dylib && cargo build --release --target "$target" 2>>"$out/build.log")
+  cp "$CARGO_TARGET_DIR/$target/release/libdaedalus_dylib_fixture.so" "$out/bundle/bin/"
   zig cc -target aarch64-linux-musl -static -O2 -o "$out/bundle/bin/counters" scripts/board/counters.c
   cp "$ref/examples/frame_chain" "$out/bundle/bin/ref-frame_chain"
   cp "$(ls -t "$ref"/deps/dylib_frames_overhead-* | grep -v '\.d$' | head -1)" "$out/bundle/bin/ref-dylib_frames_overhead"

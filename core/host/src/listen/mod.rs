@@ -57,6 +57,11 @@ use watch::Watchers;
 pub const ACCEPT_BACKOFF_CAP: Duration = Duration::from_secs(8);
 /// The first wait after a failed accept.
 pub(crate) const ACCEPT_BACKOFF_START: Duration = Duration::from_millis(50);
+/// The stack of a session's writer and of the acceptor. They move bytes and call nothing deep,
+/// where Rust's default is 2 MiB of address space a thread. A session's own thread keeps the
+/// default: a run's ticks, and so its nodes' code, run on it (docs/weak-hardware.md, Thread
+/// stacks).
+pub(crate) const SMALL_STACK: usize = 64 * 1024;
 /// How many connections a host serves at once, unless its options say otherwise.
 pub(crate) const DEFAULT_CONNECTION_LIMIT: usize = 64;
 
@@ -376,6 +381,7 @@ impl ServiceHost {
         let host = Arc::clone(self);
         let thread = std::thread::Builder::new()
             .name("daedalus-accept".into())
+            .stack_size(SMALL_STACK)
             .spawn(move || {
                 let mut failures = 0u32;
                 while !host.is_stopping() {

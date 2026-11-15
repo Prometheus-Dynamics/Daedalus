@@ -38,6 +38,8 @@ fn a_plugin_declares_its_nodes_and_backend() {
             "fixture.boom",
             "fixture.abort",
             "fixture.handover",
+            "fixture.pass_bytes",
+            "fixture.copy_cell",
             "fixture.gated"
         ]
     );

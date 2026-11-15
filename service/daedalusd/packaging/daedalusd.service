@@ -14,6 +14,11 @@ Type=simple
 ExecStart=/usr/bin/daedalusd --config /etc/daedalusd/daedalusd.toml
 User=daedalusd
 Group=daedalusd
+# glibc gives each thread that allocates an arena of its own, up to eight a core, and reserves
+# 64 MiB of address space for each on a 64-bit machine: 32 connections held over 4 GiB. Two
+# arenas hold 137 MiB, and less resident memory. A run's steady state allocates nothing, so the
+# arenas aren't contended (docs/weak-hardware.md, Thread stacks).
+Environment=MALLOC_ARENA_MAX=2
 
 # SIGTERM stops the listeners, cancels the runs and releases the plugins. The daemon gives
 # itself 10 s for each, so the manager waits a little longer before it kills.

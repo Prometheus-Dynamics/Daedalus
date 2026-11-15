@@ -58,7 +58,8 @@ pub use foreign::{
 pub use guard::panic_message;
 pub use guard::{guard, guard_or, guard_step};
 pub use handed::{
-    HANDOVER_PENDING, HandedRecord, OWNER_HANDED, SharedBytes, handed_release, handed_retain,
+    FORWARD_PENDING, HANDOVER_PENDING, HandedRecord, OWNER_HANDED, SharedBytes, forward,
+    handed_release, handed_retain,
 };
 pub use handle::Handle;
 #[cfg(feature = "std")]

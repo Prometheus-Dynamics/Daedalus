@@ -280,6 +280,12 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         }
         break end;
     };
+    // An output the body marked to take an input's value as it is gets it now, before the
+    // inputs are committed: the runner alone knows whether that reference is the step's to move.
+    crate::values::settle_forwards(
+        &mut env.parts().0[..port_count(meta)],
+        meta.inputs.len as usize,
+    );
     match end {
         StepEnd::Done => {
             env.health(index).on_success();

@@ -331,6 +331,8 @@ impl Client {
         let thread = Arc::clone(&inner);
         std::thread::Builder::new()
             .name("daedalus-client".to_owned())
+            // It reads and decodes the host's answers; Rust's default of 2 MiB is far more.
+            .stack_size(128 * 1024)
             .spawn(move || read_loop(&thread, reader))
             .map_err(ClientError::Io)?;
         Ok(Client {

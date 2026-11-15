@@ -20,6 +20,22 @@ pub const OWNER_HANDED: u32 = 6;
 /// flag by writing the cell as a record.
 pub const HANDOVER_PENDING: u32 = 1;
 
+/// Set in `reserved` by a step on an empty output cell whose `len` is the index of one of its
+/// inputs: the runner hands that input's value on to the output as it is, by reference, once the
+/// step returns. It is how a plugin's node passes a value it was given on without a copy: only
+/// the runner knows whether the input's reference is the step's to move or another reader's. A
+/// runner that doesn't know the mark sees an empty output.
+pub const FORWARD_PENDING: u32 = 4;
+
+/// Marks `out` to take input `input`'s value as it is, by reference (see [`FORWARD_PENDING`]).
+pub fn forward(out: &mut crate::Slot, input: usize) {
+    *out = crate::Slot {
+        reserved: FORWARD_PENDING,
+        len: input,
+        ..crate::Slot::EMPTY
+    };
+}
+
 /// One hand-over, counted. `refs` is how many cells and values hold it. The bytes stay valid until
 /// the last release, which calls `bytes.release` once, then `recycle`, then `keep_drop`.
 #[repr(C)]

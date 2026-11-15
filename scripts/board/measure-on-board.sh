@@ -122,6 +122,23 @@ answered="$(now_ns)"
   echo "daemon_rss_after_200_round_trips_kb $(rss_kb "$daemon")"
   echo "daemon_rss_peak_kb $(sed -n 's/^VmHWM:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$daemon/status")"
   echo "daemon_threads $(sed -n 's/^Threads:[[:space:]]*//p' "/proc/$daemon/status")"
+  # Connections held open: each is a session thread and its writer. The watchers are stopped by
+  # the pids taken when they were started.
+  vm_kb() { sed -n "s/^$2:[[:space:]]*\([0-9]*\).*/\1/p" "/proc/$1/status"; }
+  echo "daemon_vmsize_0_connections_kb $(vm_kb "$daemon" VmSize)"
+  watchers=""
+  n=0
+  while [ "$n" -lt 32 ]; do
+    ctl watch all > /dev/null 2>&1 &
+    watchers="$watchers $!"
+    n=$((n + 1))
+  done
+  sleep 1
+  echo "daemon_rss_32_connections_kb $(rss_kb "$daemon")"
+  echo "daemon_vmsize_32_connections_kb $(vm_kb "$daemon" VmSize)"
+  echo "daemon_threads_32_connections $(sed -n 's/^Threads:[[:space:]]*//p' "/proc/$daemon/status")"
+  for watcher in $watchers; do kill "$watcher" 2>/dev/null; done
+  for watcher in $watchers; do wait "$watcher" 2>/dev/null; done
 } > "$out/daemon.txt" 2>&1
 # The one process this stops is the daemon it started.
 kill "$daemon" 2>/dev/null
