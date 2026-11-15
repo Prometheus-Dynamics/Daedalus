@@ -40,6 +40,7 @@ fn scalar_add_step(backend: &ProcessBackend) -> daedalus_abi::Step {
         outputs: &outputs,
         incoming: &[],
         placed: &[],
+        read_in: &[],
         rate: RateId(0),
     };
     let bodies = [NodeBody {

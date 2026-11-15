@@ -12,6 +12,8 @@ daedalus-types = { path = "../types" }
 
 [dev-dependencies]
 daedalus-abi = { path = "../abi", features = ["count-alloc"] }
+daedalus-derive = { path = "../derive" }
+daedalus-registry = { path = "../registry" }
 
 [lints]
 workspace = true

@@ -260,6 +260,7 @@ fn blob(region: &Region<'_>) -> Compiled {
             writes: region.outputs.to_vec(),
             absorbed: Vec::new(),
             may_pend: false,
+            decodes: Vec::new(),
         }],
     }
 }

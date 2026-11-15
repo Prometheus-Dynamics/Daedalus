@@ -43,6 +43,7 @@ fn a_steady_state_run_allocates_nothing_on_the_host_thread() {
         outputs: &outputs,
         incoming: &[],
         placed: &[],
+        read_in: &[],
         rate: RateId(0),
     };
     let bodies = [NodeBody {
@@ -140,6 +141,7 @@ fn a_steady_run_of_megabyte_values_allocates_nothing_on_the_host_thread() {
         outputs: &port,
         incoming: &[],
         placed: &[],
+        read_in: &[],
         rate: RateId(0),
     };
     let bodies = [NodeBody {

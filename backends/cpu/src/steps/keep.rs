@@ -23,7 +23,7 @@ use daedalus_abi::Slot;
 /// Most values a pool keeps. A pool that is full drops one of its references, so a consumer that
 /// keeps every value cannot make the producer's pool grow without bound.
 #[cfg(feature = "alloc")]
-const POOL_LIMIT: usize = 8;
+pub(crate) const POOL_LIMIT: usize = 8;
 
 /// What a producer does with an output, from the planner's answer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,6 +32,8 @@ pub enum Keep {
     Fresh,
     Readers,
     Taker,
+    /// The output is placed in `cpu.wire`: its value's wire form is written, for a worker to read.
+    Wire,
 }
 
 /// Picks what an output holds between ticks: nothing for an output written inline, and a
@@ -63,7 +65,19 @@ pub trait Keeper<T> {
     fn publish(&mut self, value: T, keep: Keep, slot: &mut Slot)
     where
         T: Send + Sync + 'static;
+
+    /// The buffers an output placed in `cpu.wire` keeps for its wire form, refilled in place once
+    /// every reader has let go of one. `None` for an output that keeps nothing: its wire form fits
+    /// in its cell.
+    #[cfg(feature = "alloc")]
+    fn wire_buffers(&mut self) -> Option<&mut WireBuffers> {
+        None
+    }
 }
+
+/// The wire forms an output wrote, kept to be written over.
+#[cfg(feature = "alloc")]
+pub type WireBuffers = alloc::vec::Vec<alloc::sync::Arc<[u8]>>;
 
 /// Nothing is kept by an inline output, which never reaches `publish`.
 #[cfg(feature = "alloc")]
@@ -107,6 +121,7 @@ pub use with_alloc::{Spare, take_carried};
 #[cfg(feature = "alloc")]
 mod with_alloc {
     use alloc::sync::Arc;
+    use alloc::vec::Vec;
     use core::mem::replace;
 
     use daedalus_abi::Slot;
@@ -124,6 +139,8 @@ mod with_alloc {
         Readers(Vec<Arc<T>>),
         /// Cells that a single consumer takes its value from.
         Taker(Vec<Arc<Carried<T>>>),
+        /// The wire forms an output in `cpu.wire` wrote.
+        Wire(super::WireBuffers),
     }
 
     // A derive would ask for `T: Default`, which a value need not have.
@@ -135,12 +152,24 @@ mod with_alloc {
     }
 
     impl<T> Keeper<T> for Spare<T> {
+        fn wire_buffers(&mut self) -> Option<&mut super::WireBuffers> {
+            if !matches!(self, Spare::Wire(_)) {
+                *self = Spare::Wire(Vec::new());
+            }
+            match self {
+                Spare::Wire(buffers) => Some(buffers),
+                _ => None,
+            }
+        }
+
         fn publish(&mut self, value: T, keep: Keep, slot: &mut Slot)
         where
             T: Send + Sync + 'static,
         {
             match keep {
-                Keep::Fresh => {
+                // A wire output was written as its wire form before it got here; a type with no
+                // wire form was refused when the step was built.
+                Keep::Fresh | Keep::Wire => {
                     *self = Spare::Empty;
                     put_typed(slot, UNSTAMPED.0, UNSTAMPED.1, Arc::new(value));
                 }

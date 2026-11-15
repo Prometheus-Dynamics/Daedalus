@@ -40,11 +40,12 @@ macro_rules! __daedalus_body {
 
         struct __Run<__K> {
             node: u32,
-            inputs: usize,
+            inputs: u32,
             state: $crate::__or_unit!($($state)?),
             config: $crate::__or_unit!($($config)?),
             consts: __K,
             outs: [[u8; 16]; __OUTPUTS],
+            wire: u32,
             sharing: [$crate::__cpu::Keep; __OUTPUTS],
             keep: ($($crate::__cpu::Keeping<$oty, { __WRITE[$oat] }>,)*),
         }
@@ -61,7 +62,7 @@ macro_rules! __daedalus_body {
             ) -> $crate::__cpu::StepEnd {
                 let __this = self;
                 let __cells = __slots.as_mut_slice();
-                let (__in, __out) = __cells.split_at_mut(__this.inputs);
+                let (__in, __out) = __cells.split_at_mut(__this.inputs as usize);
                 let (__fixed, __fan) = __in.split_at_mut($fixed);
                 $($crate::__check!($role $at; __fixed, __this);)*
                 if __cx.restarting() {
@@ -80,15 +81,21 @@ macro_rules! __daedalus_body {
         fn __make(
             __setup: &$crate::__cpu::Setup<'_>,
         ) -> ::core::result::Result<$crate::__cpu::Step, $crate::__cpu::StepString> {
+            $crate::__cpu::check_wire(__setup, &[$((
+                ::core::stringify!($oname),
+                { const __KIND: $crate::__cpu::Kind<$oty> = $crate::__kind!($oty); __KIND.wire.is_some() },
+                ::core::any::type_name::<$oty>(),
+            )),*])?;
             let mut __consts = $crate::__cpu::consts_for(__setup, $fixed);
             $($crate::__const!($role $at $port: $ty; __setup, __consts);)*
             ::core::result::Result::Ok($crate::__cpu::Step::boxed(__Run {
                 node: __setup.node.0,
-                inputs: __setup.inputs as usize,
+                inputs: u32::from(__setup.inputs),
                 state: ::core::default::Default::default(),
                 config: $crate::__config!(__setup; $($config)?),
                 consts: __consts,
                 outs: [[0; 16]; __OUTPUTS],
+                wire: __setup.wire_inputs,
                 sharing: $crate::__cpu::keep_array::<__OUTPUTS>(__setup.keep),
                 keep: ($($crate::__emit_default!($oty),)*),
             }))
@@ -116,6 +123,7 @@ macro_rules! __daedalus_body {
                         port: $port,
                         ty: ::core::any::type_name::<$ty>,
                         copy: $crate::__is_copy!($ty),
+                        wire: $crate::__wire_read!($role: $ty),
                     },)*],
                     outputs: &[$($crate::__cpu::OutputShape {
                         optional: $crate::__optional!($okind),
@@ -154,11 +162,12 @@ macro_rules! __arena {
             fn fresh(node: u32, inputs: u32) -> Self {
                 __Run {
                     node,
-                    inputs: inputs as usize,
+                    inputs,
                     state: ::core::default::Default::default(),
                     config: (),
                     consts: $crate::__cpu::NoConsts,
                     outs: [[0; 16]; __OUTPUTS],
+                    wire: 0,
                     sharing: [$crate::__cpu::Keep::Fresh; __OUTPUTS],
                     keep: ($($crate::__emit_default!($oty),)*),
                 }
@@ -239,10 +248,44 @@ macro_rules! __port_fits {
     }};
 }
 
+/// How a parameter reads a value in `cpu.wire`.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __wire_read {
+    (items: $ty:ty) => {{
+        #[allow(unused_imports)]
+        use $crate::__cpu::NotView as _;
+        const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
+        $crate::__cpu::WireRead::of(
+            __KIND.wire.is_some(),
+            $crate::__cpu::ViewOf::<$ty>::VIEW.is_some(),
+        )
+    }};
+    (state: $ty:ty) => {
+        $crate::__cpu::WireRead::Refused
+    };
+    (config_ref: $ty:ty) => {
+        $crate::__cpu::WireRead::Refused
+    };
+    (config_val: $ty:ty) => {
+        $crate::__cpu::WireRead::Refused
+    };
+    (ctx: $ty:ty) => {
+        $crate::__cpu::WireRead::Refused
+    };
+    ($role:ident: $ty:ty) => {{
+        const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
+        $crate::__cpu::WireRead::of(__KIND.wire.is_some(), false)
+    }};
+}
+
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __role {
     (read) => {
+        $crate::__cpu::Role::Read
+    };
+    (items) => {
         $crate::__cpu::Role::Read
     };
     (take) => {
@@ -328,7 +371,7 @@ macro_rules! __kind {
     ($ty:ty) => {{
         #[allow(unused_imports)]
         use $crate::__cpu::{
-            NotBytes as _, NotClone as _, NotCopy as _, NotHandle as _, NotLit as _,
+            NotBytes as _, NotClone as _, NotCopy as _, NotHandle as _, NotLit as _, NotWire as _,
         };
         $crate::__cpu::Kind::<$ty> {
             read: $crate::__cpu::CopyOf::<$ty>::READ,
@@ -338,6 +381,7 @@ macro_rules! __kind {
             decode: $crate::__cpu::LitOf::<$ty>::DECODE,
             handle: $crate::__cpu::HandleOf::<$ty>::HANDLE,
             from_bytes: $crate::__cpu::BytesOf::<$ty>::FROM,
+            wire: $crate::__cpu::WireOf::<$ty>::WIRE,
         }
     }};
 }
@@ -357,6 +401,7 @@ macro_rules! __is_copy {
 #[doc(hidden)]
 macro_rules! __check {
     (read $at:literal; $fixed:ident, $this:ident) => { $crate::__require!($at; $fixed, $this) };
+    (items $at:literal; $fixed:ident, $this:ident) => { $crate::__require!($at; $fixed, $this) };
     (take $at:literal; $fixed:ident, $this:ident) => { $crate::__require!($at; $fixed, $this) };
     (modify $at:literal; $fixed:ident, $this:ident) => { $crate::__require!($at; $fixed, $this) };
     ($other:ident $at:literal; $fixed:ident, $this:ident) => {};
@@ -419,7 +464,7 @@ macro_rules! __bind {
     (fanin $at:literal $arg:ident: $ty:ty; $next:ident, $this:ident, $cx:ident, $fan:ident) => {
         let $arg: $crate::__cpu::ports::FanIn<'_, $ty> = {
             const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
-            $crate::__cpu::ports::FanIn::new(&*$fan, __KIND)
+            $crate::__cpu::ports::FanIn::new(&*$fan, __KIND, $this.wire)
         };
     };
     (read $at:literal $arg:ident: $ty:ty; $next:ident, $this:ident, $cx:ident, $fan:ident) => {
@@ -427,6 +472,33 @@ macro_rules! __bind {
         let mut __hold: ::core::option::Option<$ty> = ::core::option::Option::None;
         let $arg: &$ty = match $crate::__read!($at, $ty; __cell, __hold, $this) {
             ::core::option::Option::Some(value) => value,
+            ::core::option::Option::None => {
+                return $crate::__cpu::ports::unusable($cx, $this.node);
+            }
+        };
+    };
+    (items $at:literal $arg:ident: $ty:ty; $next:ident, $this:ident, $cx:ident, $fan:ident) => {
+        let __cell = $next.next();
+        let mut __hold: ::core::option::Option<$ty> = ::core::option::Option::None;
+        let __items: ::core::option::Option<&[<$ty as $crate::__cpu::Listed>::Item]> = match __cell {
+            ::core::option::Option::Some(cell) => {
+                #[allow(unused_imports)]
+                use $crate::__cpu::NotView as _;
+                const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
+                $crate::__cpu::ports::read_items(
+                    &*cell,
+                    &$this.consts,
+                    $at,
+                    __KIND,
+                    $crate::__cpu::ViewOf::<$ty>::VIEW,
+                    &mut __hold,
+                    $this.wire,
+                )
+            }
+            ::core::option::Option::None => ::core::option::Option::None,
+        };
+        let $arg = match __items {
+            ::core::option::Option::Some(items) => items,
             ::core::option::Option::None => {
                 return $crate::__cpu::ports::unusable($cx, $this.node);
             }
@@ -469,9 +541,14 @@ macro_rules! __read {
     ($at:literal, $ty:ty; $cell:ident, $hold:ident, $this:ident) => {{
         const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
         match $cell {
-            ::core::option::Option::Some(cell) => {
-                $crate::__cpu::ports::read(&*cell, &$this.consts, $at, __KIND, &mut $hold)
-            }
+            ::core::option::Option::Some(cell) => $crate::__cpu::ports::read(
+                &*cell,
+                &$this.consts,
+                $at,
+                __KIND,
+                &mut $hold,
+                $this.wire,
+            ),
             ::core::option::Option::None => ::core::option::Option::None,
         }
     }};
@@ -484,7 +561,7 @@ macro_rules! __take {
         const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
         match $next.next() {
             ::core::option::Option::Some(cell) => {
-                $crate::__cpu::ports::take(cell, &$this.consts, $at, __KIND)
+                $crate::__cpu::ports::take(cell, &$this.consts, $at, __KIND, $this.wire)
             }
             ::core::option::Option::None => ::core::option::Option::None,
         }

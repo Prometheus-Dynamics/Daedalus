@@ -83,6 +83,7 @@ impl Scenario {
             outputs: &ports,
             incoming: &[],
             placed: &[],
+            read_in: &[],
             rate: RateId(0),
         };
         let spaces = backend.memory();

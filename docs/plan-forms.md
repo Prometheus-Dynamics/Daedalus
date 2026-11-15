@@ -52,6 +52,10 @@ backend and a plugin's backend give steps only.
   consumer reads the value where it was written: nothing moves it and nothing copies it. That is
   what tells a read in place from an edge with a transfer missing. An edge inside a region a
   backend merged into one step has no value of its own, and both spaces are absent.
+- `decodes` lists each input a step converts as it reads it, with the node, the port, the type
+  read and why. Nothing else in the plan shows that cost. A CPU node reading a value in `cpu.wire`
+  decodes it from its wire form unless it reads a list of numbers as `&[T]`, which it views where
+  the bytes are. The list is left out of the JSON when it is empty.
 - `Config { lints: true, .. }` fills `planned.warnings`.
 - `PlanCache` keeps plans by a key made of the graph, the settings, and each backend's id and
   version. A plan is only reused under the same key.

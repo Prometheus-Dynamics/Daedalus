@@ -39,6 +39,7 @@ fn raw_io_step(backend: &ProcessBackend) -> Step {
         outputs: &ports,
         incoming: &[],
         placed: &[],
+        read_in: &[],
         rate: RateId(0),
     };
     let bodies = [NodeBody {

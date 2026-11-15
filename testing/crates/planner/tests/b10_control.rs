@@ -115,6 +115,7 @@ impl Backend for Test {
             writes: region.outputs.to_vec(),
             absorbed: Vec::new(),
             may_pend: false,
+            decodes: Vec::new(),
         };
         Ok(Compiled::Steps(vec![StepUnit { step, info }]))
     }

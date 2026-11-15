@@ -72,6 +72,9 @@ Without `#[type_key]` the key is `rust:<module path>::<name>`, with the name low
 that defines the type may use. Daedalus has no built-in value types beyond the scalars: a type
 belongs to whoever wrote the nodes that use it.
 
+With `#[structural]` instead, the type has no key and is compared by its fields, in order, the way
+`Vec<T>` and tuples are. A worker's port of the same fields then connects to it.
+
 A value of 16 bytes or less that is `Copy` travels in place. Anything else travels behind a
 handle and is never copied on the way. An output that is not plain data allocates nothing once
 the graph is warm when the nodes that consume it are on the CPU backend, and it reads or takes the
@@ -132,6 +135,23 @@ In the Rust SDK:
 
 A large output of any type with a form is written once into the worker's value buffer, with its
 items aligned, and the host's cell holds it there.
+
+A CPU node's value reaches a worker only as its wire form. Give the type `#[derive(WireForm)]`
+next to `#[derive(Type)]`: the CPU step then writes an output a worker reads, and reads an input a
+worker wrote, field by field in the order the type declares. Numbers, `bool`, `String`, `Vec`,
+`Option`, `BTreeMap`, tuples and `Arc` already have one. A type without one that a graph sends to a
+worker, or reads from one, is refused when the plan is built, and the refusal says which type to
+derive it on. A CPU parameter `&[f32]` (or any other number) reads a list from a worker where its
+bytes are. Any other type is decoded once per tick, and `explain_plan` lists each such decode.
+
+A worker's port declares its type's structure, so the CPU type is compared by its fields too:
+`#[structural]` says so.
+
+```rust
+#[derive(Clone, Type, WireForm)]
+#[structural]
+struct KeyPoint { x: f32, y: f32, size: f32, angle: f32, response: f32, octave: i32, class: i32 }
+```
 
 ## Constants and config
 

@@ -290,6 +290,7 @@ impl Backend for ControlBackend {
             writes: ports(shared.outputs.len()),
             absorbed: Vec::new(),
             may_pend: false,
+            decodes: Vec::new(),
         };
         Ok(Compiled::Steps(vec![StepUnit { step, info }]))
     }

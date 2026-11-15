@@ -339,7 +339,7 @@ impl Backend for ProcessBackend {
     }
 
     fn transfers(&self) -> Vec<Transfer> {
-        Vec::new()
+        crate::wire_space::transfers()
     }
 
     /// Offers every node with a body for this backend. A node no worker serves is refused in
@@ -428,6 +428,7 @@ impl Backend for ProcessBackend {
             writes: region.outputs.to_vec(),
             absorbed: Vec::new(),
             may_pend: false,
+            decodes: Vec::new(),
         };
         let step: Step = Step::boxed(WorkerStep::new(
             shared,

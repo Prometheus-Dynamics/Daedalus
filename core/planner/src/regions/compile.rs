@@ -34,6 +34,7 @@ pub(super) fn compile_region(
     backend: &dyn Backend,
     incoming: &[Incoming<'_>],
     placed: &[&str],
+    read_in: &[&str],
 ) -> Result<Compiled, Refusal> {
     let nodes: Vec<NodeIndex> = formed.nodes.iter().map(|&node| NodeIndex(node)).collect();
     let mut consts = Vec::new();
@@ -78,6 +79,7 @@ pub(super) fn compile_region(
         outputs: &formed.outputs,
         incoming,
         placed,
+        read_in,
         rate: formed.rate,
     };
     backend.compile(

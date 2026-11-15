@@ -98,6 +98,7 @@ impl SimBackend {
             writes: touching(region.outputs),
             absorbed,
             may_pend: self.config.pending,
+            decodes: Vec::new(),
         }
     }
 

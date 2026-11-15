@@ -189,6 +189,28 @@ macro_rules! __worker_call {
         pre = [$($pre:tt)*],
         args = [$($args:tt)*],
         post = [$($post:tt)*],
+        entries = (items $index:literal $port:literal $id:ident : $t:ty , $($rest:tt)*)
+    ) => {
+        // A slice of a list's items reads as the list does.
+        $crate::__worker_call!(
+            inputs = $inputs,
+            cx = $cx,
+            ret = $ret,
+            name = ($($name)*),
+            pre = [$($pre)*],
+            args = [$($args)*],
+            post = [$($post)*],
+            entries = (read $index $port $id : $t , $($rest)*)
+        )
+    };
+    (
+        inputs = $inputs:ident,
+        cx = $cx:ident,
+        ret = $ret:ty,
+        name = ($($name:tt)*),
+        pre = [$($pre:tt)*],
+        args = [$($args:tt)*],
+        post = [$($post:tt)*],
         entries = (modify $index:literal $port:literal $id:ident : $t:ty , $($rest:tt)*)
     ) => {
         $crate::__worker_call!(

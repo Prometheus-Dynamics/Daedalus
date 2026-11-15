@@ -264,6 +264,26 @@ takes a context too. The backend that owns the device builds that context inside
 `bind_transfer`, so the planner never sees it. A failing handler is a fault that names the transfer,
 and the fault names the transfer, not a node.
 
+### A CPU node and a worker
+
+A cell in a wire space holds its type's wire form. Cells in a backend's native host space never
+cross a process.
+
+A CPU node holds Rust values in `cpu.host`: memory laid out the way the compiler chose, with
+padding and fields in its own order, which no other process can read. The CPU backend has a
+second space, `cpu.wire`, which it offers as a placement. The planner puts an output a worker
+reads there, and the CPU step writes that output with its type's `WireForm`: packed, little-endian,
+fields in the order the type declares. The process backend moves values only between `cpu.wire`
+and `process.host`, and both moves are handoffs: the cell goes as it is, and nothing in either
+backend reads it. Nothing goes from `cpu.host` to a worker.
+
+A type with no wire form can't be placed in `cpu.wire`, so a graph that sends one to a worker is
+refused when the plan is built. The refusal names the node, the port and the type, and says
+"add #[derive(WireForm)] to <type>". A CPU node that reads a value in `cpu.wire` decodes it with
+the same trait. A `&[T]` of numbers is viewed where its bytes are, when they are aligned, with no
+decode. Each decode the plan makes is listed in `explain_plan`'s `decodes`, with the type and why,
+so the cost shows.
+
 ### What it costs
 
 | Between two nodes | At run time |

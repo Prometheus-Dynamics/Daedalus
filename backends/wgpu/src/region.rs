@@ -544,6 +544,7 @@ pub(crate) fn compile(
             writes: region.outputs.to_vec(),
             absorbed: Vec::new(),
             may_pend: true,
+            decodes: Vec::new(),
         },
     })
 }

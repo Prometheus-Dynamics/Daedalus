@@ -6,7 +6,8 @@
 //! its inputs' bytes, and a large `bytes` output it returns is written into the value buffer.
 //!
 //! `fixture.dmabuf_probe` is served only with `DAEDALUS_FIXTURE_PROBE` set: it takes a `t:shot`,
-//! a buffer by descriptor, and reports what the worker saw of it.
+//! a buffer by descriptor, and reports what the worker saw of it. So are `fixture.padded_echo`,
+//! `fixture.floats_echo` and `fixture.floats_count`.
 
 use std::collections::BTreeMap;
 
@@ -25,10 +26,53 @@ pub const SHOT: &str = "t:shot";
 
 /// The probe's declarations: `fixture.dmabuf_probe`, and `fixture.dmabuf_fail`, which reads its
 /// shot like the probe and then fails, so a test can see the read's brackets close on a fault too.
-pub fn probes() -> [Declaration; 2] {
+/// And `fixture.padded_echo`, which gives back a struct of a `u8`, a `u32` and a `u16`: seven
+/// bytes on the wire, which a Rust struct of the same fields lays out with padding. And
+/// `fixture.floats_echo`, which gives back a list of `f32`, and `fixture.floats_count`, which
+/// gives back how many there are.
+pub fn probes() -> [Declaration; 5] {
     let mut fail = probe();
     fail.id = "fixture.dmabuf_fail".into();
-    [probe(), fail]
+    let mut count = floats();
+    count.id = "fixture.floats_count".into();
+    count.outputs = vec![PortSpec::new(
+        "count",
+        WireType::Scalar(daedalus_types::Scalar::U32),
+    )];
+    [probe(), fail, padded(), floats(), count]
+}
+
+fn floats() -> Declaration {
+    let list = WireType::List(Box::new(WireType::Scalar(daedalus_types::Scalar::F32)));
+    Declaration {
+        id: "fixture.floats_echo".into(),
+        inputs: vec![PortSpec::new("in", list.clone())],
+        outputs: vec![PortSpec::new("out", list)],
+        config: Vec::new(),
+        state: None,
+        capabilities: Vec::new(),
+    }
+}
+
+/// The struct `fixture.padded_echo` takes and gives back.
+pub fn padded_type() -> WireType {
+    use daedalus_types::Scalar;
+    WireType::Struct(vec![
+        ("a".into(), WireType::Scalar(Scalar::U8)),
+        ("b".into(), WireType::Scalar(Scalar::U32)),
+        ("c".into(), WireType::Scalar(Scalar::U16)),
+    ])
+}
+
+fn padded() -> Declaration {
+    Declaration {
+        id: "fixture.padded_echo".into(),
+        inputs: vec![PortSpec::new("in", padded_type())],
+        outputs: vec![PortSpec::new("out", padded_type())],
+        config: Vec::new(),
+        state: None,
+        capabilities: Vec::new(),
+    }
 }
 
 fn probe() -> Declaration {

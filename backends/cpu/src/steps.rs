@@ -1,9 +1,11 @@
 //! What the body expansion builds on. The expansion is in `daedalus-cpu-author`, and everything it
 //! names lives here.
 
+mod items;
 pub mod keep;
 pub mod ports;
 
+pub use items::{ItemsView, Listed, NotView, ViewOf};
 pub use keep::{Keep, Keeper, Keeping, Kept, keep_array};
 
 use core::marker::PhantomData;
@@ -18,7 +20,7 @@ mod setup;
 #[cfg(feature = "alloc")]
 pub use daedalus_abi::Step;
 #[cfg(feature = "alloc")]
-pub use setup::{Consts, Lit, Setup, StepString, consts_for, field, store_const};
+pub use setup::{Consts, Lit, Setup, StepString, check_wire, consts_for, field, store_const};
 
 /// In a build with no allocator there are no literals, so nothing can be decoded from one.
 #[cfg(not(feature = "alloc"))]
@@ -77,7 +79,7 @@ pub const fn total(counts: &[usize]) -> usize {
 pub use crate::body::CpuBody;
 #[cfg(feature = "alloc")]
 pub use crate::body::CpuStepBody;
-pub use crate::shape::{BodyShape, OutputShape, ParamShape, Role};
+pub use crate::shape::{BodyShape, OutputShape, ParamShape, Role, WireRead};
 pub use daedalus_runner::{ArenaBody, Fresh};
 
 /// How a parameter's concrete type is stored. The expansion knows the type, so it picks each entry
@@ -95,7 +97,43 @@ pub struct Kind<T: 'static> {
     /// Set when `T` can be made from bytes a cell holds, by copying them: a `Vec<u8>` is. A handed
     /// value reaches a parameter of such a type through this, which is the one copy it makes.
     pub from_bytes: Option<FromBytes<T>>,
+    /// Set when `T` has a wire form ([`daedalus_types::WireForm`]): how an output placed in
+    /// `cpu.wire` is written and an input there is read.
+    pub wire: Option<Wire<T>>,
 }
+
+/// How a `T`'s wire form is written into a cell and read from one, by the type's own `WireForm`.
+pub struct Wire<T: 'static> {
+    pub len: fn(&T) -> usize,
+    pub write: fn(&T, &mut [u8]) -> usize,
+    pub read: fn(&[u8]) -> Option<T>,
+}
+
+impl<T> Clone for Wire<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Wire<T> {}
+
+/// Whether `T` has a wire form.
+pub struct WireOf<T>(PhantomData<T>);
+
+impl<T: daedalus_types::WireForm + 'static> WireOf<T> {
+    pub const WIRE: Option<Wire<T>> = Some(Wire {
+        len: T::cell_len,
+        write: T::write_cell,
+        read: T::read_cell,
+    });
+}
+
+/// The answer for a `T` with no wire form.
+pub trait NotWire<T: 'static> {
+    const WIRE: Option<Wire<T>> = None;
+}
+
+impl<T: 'static> NotWire<T> for WireOf<T> {}
 
 /// How a `T` is copied out of bytes a cell holds.
 pub type FromBytes<T> = fn(&[u8]) -> Option<T>;

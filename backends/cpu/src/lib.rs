@@ -24,7 +24,8 @@ pub mod steps;
 pub mod blob;
 #[cfg(feature = "chip")]
 pub mod chip;
-#[cfg(feature = "alloc")]
+// A node made at run time is registered as an owned record, which the registry has with `std`.
+#[cfg(feature = "std")]
 pub mod closure;
 #[cfg(all(feature = "alloc", feature = "merge"))]
 pub(crate) mod merge;

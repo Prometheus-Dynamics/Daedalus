@@ -126,6 +126,8 @@ fn merged_unit(
     cx: &CompileCx<'_>,
 ) -> Result<StepUnit, Refusal> {
     let head = nodes[0];
+    let wiring = crate::backend::Wiring::of(region, cx);
+    let mut decodes = Vec::new();
     let reads = wired_inputs(head, region, cx);
     let locals_at = reads.len() as u32;
     let first_write = locals_at + links.len() as u32;
@@ -164,8 +166,12 @@ fn merged_unit(
                 NO_SLOT
             };
         }
+        // An output that feeds the next node in the chain is a link, never a region output, so it
+        // stays a Rust value.
+        let (step, decoded) = step_of(node, body, cx, &wiring)?;
+        decodes.extend(decoded);
         steps.push(NestedStep {
-            step: step_of(node, body, cx)?,
+            step,
             reads: bound_inputs,
             writes: bound_outputs,
         });
@@ -185,6 +191,7 @@ fn merged_unit(
             writes,
             absorbed: Vec::new(),
             may_pend: false,
+            decodes,
         },
     })
 }
@@ -192,10 +199,11 @@ fn merged_unit(
 /// Compiles a region, merging what can be merged.
 pub(crate) fn compile(region: &Region<'_>, cx: &CompileCx<'_>) -> Result<Vec<StepUnit>, Refusal> {
     let mut units = Vec::new();
+    let wiring = crate::backend::Wiring::of(region, cx);
     for (range, links) in groups(region, cx)? {
         let nodes = &region.nodes[range];
         units.push(if let [node] = nodes {
-            unit(*node, cx)?
+            unit(*node, cx, &wiring)?
         } else {
             merged_unit(nodes, &links, region, cx)?
         });

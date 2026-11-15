@@ -295,6 +295,7 @@ impl Backend for FakeNpu {
                         ),
                         absorbed: Vec::new(),
                         may_pend: false,
+                        decodes: Vec::new(),
                     },
                 }
             })

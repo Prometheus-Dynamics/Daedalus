@@ -21,6 +21,19 @@ pub struct UnitInfo {
     pub absorbed: Vec<u32>,
     /// Whether this unit can return `Pending`. A reader in another region then waits for it.
     pub may_pend: bool,
+    /// Inputs this unit converts as it reads them, which nothing else in the plan shows.
+    pub decodes: Vec<Decode>,
+}
+
+/// An input a unit converts from the form its value arrives in to the one its node reads, as part
+/// of its own work: the plan shows it like a transfer, so a cost the graph doesn't name is seen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Decode {
+    pub input: PortRef,
+    /// The type the input is read as.
+    pub ty: std::borrow::Cow<'static, str>,
+    /// What it is converted from, and why.
+    pub reason: std::borrow::Cow<'static, str>,
 }
 
 #[derive(Debug)]

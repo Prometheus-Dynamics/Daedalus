@@ -87,7 +87,7 @@ stays on the plain path, with the reason. A worker logs that reason as
 worker logs the same line, without a reason, when its first run arrives with no answer, and stays
 plain. Nothing is ignored on either side.
 
-With memory granted, a packet of 64 KiB or more (the worker's threshold; see below) is written into the buffer for its direction and
+With memory granted, a packet of 2 KiB or more (the worker's threshold; see below) is written into the buffer for its direction and
 only a short note (kind `0x08` from the host, `0x4A` from the worker) travels on the socket. Only a
 run goes in the host's buffer and only outputs in the worker's, and the host waits for one run's
 outputs before it writes the next, so neither side ever writes over what the other is reading.
@@ -125,7 +125,9 @@ packed). Whether a value goes as a place depends only on its size, never on its 
 worker's threshold up it goes as a place, below that in the packet. The threshold is 4 KiB for
 a worker that agreed values of any type by reference, where a list read in place takes half the
 socket's time on a CM5 ([testing/board-runs/worker-any-type.md](../testing/board-runs/worker-any-type.md)),
-and 64 KiB otherwise. `WorkerSpec::shared_from` sets it. The host sends it in the grant, and it
+and 2 KiB otherwise: there whole packets in shared memory and `bytes` values by reference are no
+slower than the socket in every round on a CM5, and faster above it
+([testing/board-runs/cpu-wire.md](../testing/board-runs/cpu-wire.md)). `WorkerSpec::shared_from` sets it. The host sends it in the grant, and it
 applies to whole packets too. The host lays out a value whose type has
 fixed fields and then one list of fixed-size items so that the items start on a 64-byte boundary.
 A reader can then take them as a slice where they are. Only a `bytes` or opaque value can be a
