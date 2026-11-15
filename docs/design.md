@@ -558,9 +558,11 @@ documents the patch and refresh JSON.
 - A `#[transfer]` record is bound by the backend that wrote its body, through `bind_transfer`, when
   the plan is made. The body's `backend` names that backend, and the record's payload is passed
   to it as it is. The planner makes one step per move the plan uses, so `LoadedHost::load` runs
-  every move. Only the steps form has steps, so a `#[transfer]` isn't built into the blob or
-  source forms yet. `ConstOf.value` is a `&Lit`, and `Step::discard` frees a step that was compiled
-  and not used.
+  every move. Only the steps form has steps. A blob or source file runs each backend's own code
+  and has no step for a move between backends, so `Planned::blob` and `Planned::source` refuse a
+  plan that moves a value, `#[transfer]` or a backend's own move, with `TransferUnavailable`
+  naming the move. That plan still explains and runs as steps. `ConstOf.value` is a `&Lit`, and
+  `Step::discard` frees a step that was compiled and not used.
 - `core/graph` grew additive fields: `NodeDoc::new`, `host_inputs`, `sync_groups`, the `inputs` and
   `outputs` lists, and `control`. The schema is regenerated with
   `cargo run -p daedalus-graph --bin graph_schema`.

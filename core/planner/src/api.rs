@@ -103,6 +103,7 @@ impl Planned {
     /// The stored encoding. A region whose backend stored it as a whole plan of its own is that
     /// plan, and it has to be the only region.
     pub fn blob(&self) -> Result<Vec<u8>, PlanError> {
+        self.no_moves(Form::Blob)?;
         let whole = self
             .regions
             .regions
@@ -132,6 +133,7 @@ impl Planned {
     /// Regions that name one file can't be joined, so a graph with separate parts fails here
     /// when its backend writes a single module.
     pub fn source(&self) -> Result<String, PlanError> {
+        self.no_moves(Form::Source)?;
         let mut text = String::new();
         let mut files = std::collections::BTreeSet::new();
         for region in &self.regions.regions {
@@ -150,6 +152,21 @@ impl Planned {
             text.push_str(&code.text);
         }
         Ok(text)
+    }
+
+    /// A file form runs each backend's own code and has no step for a move between backends, so
+    /// a plan that moves a value is refused there. It can still be explained and run as steps.
+    fn no_moves(&self, form: Form) -> Result<(), PlanError> {
+        match self.stitched.transfers.first() {
+            Some(used) => Err(PlanError::TransferUnavailable {
+                id: used.id.clone(),
+                reason: format!(
+                    "the {form:?} form has no step for a move between backends; plan this graph \
+                     in the steps form, or keep it on one backend"
+                ),
+            }),
+            None => Ok(()),
+        }
     }
 
     /// Writes the plan in its form. The steps form has no file, so it's refused.
