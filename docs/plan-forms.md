@@ -56,6 +56,8 @@ backend and a plugin's backend give steps only.
   read and why. Nothing else in the plan shows that cost. A CPU node reading a value in `cpu.wire`
   decodes it from its wire form unless it reads a list of numbers as `&[T]`, which it views where
   the bytes are. The list is left out of the JSON when it is empty.
+- An output a CPU node writes into a worker's lent memory (an `OutView`) has `written_in` set to
+  `process.lent` and no transfer: the worker reads it where it was written.
 - `Config { lints: true, .. }` fills `planned.warnings`.
 - `PlanCache` keeps plans by a key made of the graph, the settings, and each backend's id and
   version. A plan is only reused under the same key.

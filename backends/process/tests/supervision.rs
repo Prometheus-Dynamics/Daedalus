@@ -68,6 +68,8 @@ fn scalar_add_step(backend: &ProcessBackend) -> daedalus_abi::Step {
         merge_allowed: false,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     match backend.compile(&region, &cx) {
         Ok(Compiled::Steps(mut units)) => units.pop().expect("a unit").step,

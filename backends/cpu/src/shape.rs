@@ -14,6 +14,8 @@ pub enum Role {
     ConfigVal,
     Context,
     FanIn,
+    /// An output written in place: its position is the output's.
+    OutView,
 }
 
 /// How a parameter reads a value in `cpu.wire`, whose cells hold their type's wire form.

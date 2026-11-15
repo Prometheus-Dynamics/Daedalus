@@ -284,6 +284,23 @@ the same trait. A `&[T]` of numbers is viewed where its bytes are, when they are
 decode. Each decode the plan makes is listed in `explain_plan`'s `decodes`, with the type and why,
 so the cost shows.
 
+A backend may also offer a space of its own to the others: memory it lends, which other backends'
+nodes write into. `Backend::offers()` names such spaces; each must be one of its `memory()` spaces
+and readable. A backend whose `takes_offers()` is true gets the other backends' offered spaces as
+placements too. The process backend offers `process.lent`, its worker's value buffers, and the CPU
+backend takes it: when all of an output's readers are served by one worker, the planner places the
+output in `process.lent`, and at compile time asks the offering backend for the room with
+`bind_offer(space, readers)`, which returns a `Lend`. The CPU step writes the output there, and
+the worker reads it where it was written: no transfer, no copy and no allocation. A worker that
+lends none, or readers on several workers, get no room, and the output is placed in `cpu.wire` as
+before.
+
+A lent room is a run of regions the lender owns. A lease is a range in one region, held until it
+is sealed into a value or dropped. A lease is taken from the front of an idle region first, so a
+producer writes the same pages tick after tick, and the lender never hands out a region a worker
+is reading or writing. A dropped lease, from a node that failed half way, releases its hold; the
+counts of leases sealed and abandoned are kept so a test can see every hold balanced.
+
 ### What it costs
 
 | Between two nodes | At run time |

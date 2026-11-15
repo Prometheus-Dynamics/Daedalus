@@ -6,7 +6,7 @@
 
 use std::any::Any;
 
-use daedalus_abi::Step;
+use daedalus_abi::{Lend, Step};
 
 mod compiled;
 mod memory;
@@ -17,8 +17,8 @@ pub use compiled::{Compiled, Decode, GeneratedCode, Refusal, StepUnit, UnitInfo}
 pub use memory::{MemorySpace, SpaceKind, Transfer, TransferCost, find_transfer};
 pub use offer::{BodyIndex, NodeRef, Offer, OfferNode, PortInfo};
 pub use region::{
-    CompileCx, ConstOf, HostBinding, Incoming, InnerEdge, NO_METADATA, NodeBody, OutputSharing,
-    PortRef, RateId, Region, Sharing,
+    CompileCx, ConstOf, HostBinding, Incoming, InnerEdge, LentRoom, NO_METADATA, NodeBody,
+    OutputSharing, PortRef, RateId, Region, Sharing,
 };
 
 /// Anything that can hold values or run nodes. A backend with no nodes is valid: `can_take`
@@ -43,6 +43,31 @@ pub trait Backend: Send + Sync {
     /// A value written where its reader reads it needs no move at all.
     fn placements(&self) -> Vec<std::borrow::Cow<'static, str>> {
         Vec::new()
+    }
+
+    /// The ids of spaces of its own, listed in [`Backend::memory`] as readable, that another
+    /// backend's nodes may write an output into directly, when that backend
+    /// [takes offers](Backend::takes_offers). A cell there holds its type's wire form, and this
+    /// backend's nodes read it where it is. The planner places an output there when that costs
+    /// its readers least, as it does with [`Backend::placements`].
+    fn offers(&self) -> Vec<std::borrow::Cow<'static, str>> {
+        Vec::new()
+    }
+
+    /// Whether this backend's nodes can write an output into a space another backend
+    /// [offers](Backend::offers), in its type's wire form. Such a space is one more placement,
+    /// after this backend's own.
+    fn takes_offers(&self) -> bool {
+        false
+    }
+
+    /// Room to write values in, for an output placed in `space`, one of this backend's
+    /// [offers](Backend::offers), that the nodes registered as `readers` read: see
+    /// [`CompileCx::lent`]. `None` when it lends none for them, and the writer writes its value as
+    /// it would anywhere else.
+    fn bind_offer(&self, space: &str, readers: &[&str]) -> Option<std::sync::Arc<dyn Lend>> {
+        let _ = (space, readers);
+        None
     }
 
     /// How data can get in and out.

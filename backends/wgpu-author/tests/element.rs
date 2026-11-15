@@ -146,6 +146,8 @@ impl Net {
             merge_allowed: true,
             freeze_params: false,
             sharing: &[],
+            lent: &[],
+            offered: &[],
         };
         let Compiled::Steps(mut units) = backend.compile(&region, &cx).expect("compiles") else {
             panic!("steps");

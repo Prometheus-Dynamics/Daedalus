@@ -88,6 +88,8 @@ fn process_step(backend: &ProcessBackend, node: &'static str) -> Step {
         merge_allowed: false,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     match backend.compile(&region, &cx) {
         Ok(Compiled::Steps(mut units)) => units.pop().expect("a unit").step,

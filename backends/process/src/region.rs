@@ -27,6 +27,10 @@ pub const BACKEND_ID: &str = "process";
 /// The memory this backend's nodes read from. Values reach it through transfers the host owns:
 /// this backend offers none.
 pub const HOST: &str = "process.host";
+/// The workers' lent memory, which this backend offers other backends' nodes to write a worker's
+/// input into: a cell there holds its type's wire form, written in room a worker's value buffers
+/// lend, and the worker reads it where it is (Linux).
+pub const LENT: &str = "process.lent";
 
 /// The workers a backend runs, and which node each one serves.
 pub struct ProcessBackend {
@@ -86,6 +90,17 @@ impl ProcessBackend {
         self.attach(spec, worker, &hello, registry)
     }
 
+    /// The worker that serves every one of `nodes`, when one worker serves them all.
+    fn one_worker(&self, nodes: &[&str]) -> Option<&Arc<Shared>> {
+        let mut workers = nodes
+            .iter()
+            .map(|node| self.served.get(*node).map(|at| at.0));
+        let first = workers.next()??;
+        workers
+            .all(|other| other == Some(first))
+            .then(|| &self.workers[first])
+    }
+
     /// Starts a worker and reads its hello, as [`ProcessBackend::add_worker`] does, and registers
     /// the nodes it declares that `registry` doesn't have yet: a host needn't know a worker's
     /// nodes before it has met the worker. A node the registry already has is checked against it,
@@ -129,7 +144,7 @@ impl ProcessBackend {
     fn attach(
         &mut self,
         spec: WorkerSpec,
-        worker: Worker,
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))] mut worker: Worker,
         hello: &Hello,
         registry: &Registry,
     ) -> Result<(), ProcessError> {
@@ -147,7 +162,13 @@ impl ProcessBackend {
         for (position, node) in nodes.iter().enumerate() {
             self.served.insert(node.id.clone(), (index, position));
         }
+        #[cfg(target_os = "linux")]
+        let rooms = daedalus_process_shm::Rooms::new();
+        #[cfg(target_os = "linux")]
+        worker.point_rooms(&rooms);
         let shared = Shared {
+            #[cfg(target_os = "linux")]
+            rooms,
             spec,
             schema: Schema::from_hello(hello, &[]),
             nodes,
@@ -331,11 +352,43 @@ impl Backend for ProcessBackend {
     }
 
     fn memory(&self) -> Vec<MemorySpace> {
-        vec![MemorySpace {
+        let mut spaces = vec![MemorySpace {
             id: Cow::Borrowed(HOST),
             kind: SpaceKind::Host,
             readable: true,
-        }]
+        }];
+        if cfg!(target_os = "linux") {
+            spaces.push(MemorySpace {
+                id: Cow::Borrowed(LENT),
+                kind: SpaceKind::Shared,
+                readable: true,
+            });
+        }
+        spaces
+    }
+
+    fn offers(&self) -> Vec<Cow<'static, str>> {
+        if cfg!(target_os = "linux") {
+            vec![Cow::Borrowed(LENT)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The rooms of the worker that serves every reader. Readers in more than one worker are lent
+    /// none: one value can't be written in two workers' memory, so it is copied to each.
+    fn bind_offer(&self, space: &str, readers: &[&str]) -> Option<Arc<dyn daedalus_abi::Lend>> {
+        if space != LENT {
+            return None;
+        }
+        let shared = self.one_worker(readers)?;
+        #[cfg(target_os = "linux")]
+        return Some(shared.rooms.clone());
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = shared;
+            None
+        }
     }
 
     fn transfers(&self) -> Vec<Transfer> {

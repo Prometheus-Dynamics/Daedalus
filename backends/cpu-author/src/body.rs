@@ -18,7 +18,7 @@ macro_rules! __daedalus_body {
             state = ($($state:ty)?),
             config = ($($config:ty)?),
             fixed = $fixed:literal,
-            params = ($($role:ident $at:literal $port:literal $arg:ident : $ty:ty,)*),
+            params = ($($role:ident $at:tt $port:literal $arg:ident : $ty:ty,)*),
             returns = (
                 $flow:ident,
                 $pattern:tt,
@@ -47,7 +47,16 @@ macro_rules! __daedalus_body {
             outs: [[u8; 16]; __OUTPUTS],
             wire: u32,
             sharing: [$crate::__cpu::Keep; __OUTPUTS],
-            keep: ($($crate::__cpu::Keeping<$oty, { __WRITE[$oat] }>,)*),
+            keep: ($($crate::__keeping!($okind $oty, { __WRITE[$oat] }),)*),
+        }
+
+        impl<__K> __Run<__K> {
+            /// Lets go of what a failed tick wrote into its output views.
+            #[inline]
+            #[allow(unused)]
+            fn __abandon(&mut self) {
+                $($crate::__abandon!($okind $oat; self);)*
+            }
         }
 
         #[allow(unused_mut, unused_variables, clippy::all)]
@@ -69,10 +78,11 @@ macro_rules! __daedalus_body {
                     __this.state = ::core::default::Default::default();
                 }
                 let mut __next = __fixed.iter_mut();
+                $($crate::__ready!($okind $oat; __out, __this);)*
                 $($crate::__bind!($role $at $arg: $ty; __next, __this, __cx, __fan);)*
                 let __ret = ($($name)*)($($arg),*);
                 let $pattern = $crate::__unfail!($flow; __ret, __this, __cx);
-                $($crate::__emit!($okind $oat $oname: $oty; __out, __this);)*
+                $($crate::__emit!($okind $oat $oname: $oty; __out, __this, __cx);)*
                 $crate::__cpu::StepEnd::Done
             }
         }
@@ -88,7 +98,7 @@ macro_rules! __daedalus_body {
             )),*])?;
             let mut __consts = $crate::__cpu::consts_for(__setup, $fixed);
             $($crate::__const!($role $at $port: $ty; __setup, __consts);)*
-            ::core::result::Result::Ok($crate::__cpu::Step::boxed(__Run {
+            let mut __run = __Run {
                 node: __setup.node.0,
                 inputs: u32::from(__setup.inputs),
                 state: ::core::default::Default::default(),
@@ -98,7 +108,9 @@ macro_rules! __daedalus_body {
                 wire: __setup.wire_inputs,
                 sharing: $crate::__cpu::keep_array::<__OUTPUTS>(__setup.keep),
                 keep: ($($crate::__emit_default!($oty),)*),
-            }))
+            };
+            $($crate::__lend!($role $at $port; __setup, __run);)*
+            ::core::result::Result::Ok($crate::__cpu::Step::boxed(__run))
         }
         }
 
@@ -142,6 +154,49 @@ macro_rules! __daedalus_body {
             text: "",
         }
     }};
+}
+
+/// The memory one output keeps between ticks: an output view's room, or what a returned value
+/// keeps.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __keeping {
+    (view $oty:ty, $write:block) => {
+        $crate::__cpu::OutSlot
+    };
+    ($kind:ident $oty:ty, $write:block) => {
+        $crate::__cpu::Keeping<$oty, $write>
+    };
+}
+
+/// Lets go of a failed tick's output view.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __abandon {
+    (view $at:tt; $this:ident) => {
+        $this.keep.$at.abandon()
+    };
+    ($kind:ident $at:tt; $this:ident) => {};
+}
+
+/// Frees what an output view's cell holds from the tick before, so it can be written again.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ready {
+    (view $at:tt; $out:ident, $this:ident) => {
+        $this.keep.$at.ready(&mut $out[$at])
+    };
+    ($kind:ident $at:tt; $out:ident, $this:ident) => {};
+}
+
+/// Gives an output view the room lent for it.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __lend {
+    (out_view $at:tt $port:literal; $setup:ident, $run:ident) => {
+        $run.keep.$at.lend($setup, $at, $port)
+    };
+    ($role:ident $at:tt $port:literal; $setup:ident, $run:ident) => {};
 }
 
 /// The body as a step that can live in a fixed block of memory, if it can: `__Run` from the calling
@@ -207,6 +262,7 @@ macro_rules! __arena {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __port_size {
+    (out_view $($rest:tt)*) => {};
     (state $($rest:tt)*) => {};
     (config_ref $($rest:tt)*) => {};
     (config_val $($rest:tt)*) => {};
@@ -230,6 +286,9 @@ macro_rules! __fan_size {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __port_fits {
+    (out_view: $ty:ty) => {
+        false
+    };
     (state: $ty:ty) => {
         true
     };
@@ -261,6 +320,9 @@ macro_rules! __wire_read {
             $crate::__cpu::ViewOf::<$ty>::VIEW.is_some(),
         )
     }};
+    (out_view: $ty:ty) => {
+        $crate::__cpu::WireRead::Refused
+    };
     (state: $ty:ty) => {
         $crate::__cpu::WireRead::Refused
     };
@@ -318,6 +380,9 @@ macro_rules! __role {
     (fanin) => {
         $crate::__cpu::Role::FanIn
     };
+    (out_view) => {
+        $crate::__cpu::Role::OutView
+    };
 }
 
 #[macro_export]
@@ -325,6 +390,9 @@ macro_rules! __role {
 macro_rules! __optional {
     (option) => {
         true
+    };
+    (view) => {
+        false
     };
     (value) => {
         false
@@ -421,6 +489,7 @@ macro_rules! __require {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __const {
+    (out_view $($rest:tt)*) => {};
     (state $($rest:tt)*) => {};
     (config_ref $($rest:tt)*) => {};
     (config_val $($rest:tt)*) => {};
@@ -449,6 +518,9 @@ macro_rules! __config {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __bind {
+    (out_view $at:tt $arg:ident: $ty:ty; $next:ident, $this:ident, $cx:ident, $fan:ident) => {
+        let $arg = $crate::__cpu::OutView::<$ty>::new(&mut $this.keep.$at);
+    };
     (state $at:literal $arg:ident: $ty:ty; $next:ident, $this:ident, $cx:ident, $fan:ident) => {
         let $arg: &mut $ty = &mut $this.state;
     };
@@ -579,6 +651,7 @@ macro_rules! __unfail {
         match $ret {
             ::core::result::Result::Ok(value) => value,
             ::core::result::Result::Err(error) => {
+                $this.__abandon();
                 $cx.fail($this.node, &error);
                 return $crate::__cpu::StepEnd::Fault;
             }
@@ -590,7 +663,16 @@ macro_rules! __unfail {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __emit {
-    (value $at:tt $name:ident: $ty:ty; $out:ident, $this:ident) => {{
+    (view $at:tt $name:ident: $ty:ty; $out:ident, $this:ident, $cx:ident) => {{
+        if !$this.keep.$at.emit::<<$ty as $crate::__cpu::Listed>::Item>(
+            &mut $out[$at],
+            $cx,
+            $this.node,
+        ) {
+            return $crate::__cpu::StepEnd::Fault;
+        }
+    }};
+    (value $at:tt $name:ident: $ty:ty; $out:ident, $this:ident, $cx:ident) => {{
         const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
         $crate::__cpu::ports::encode(
             $name,
@@ -601,7 +683,7 @@ macro_rules! __emit {
             &mut $out[$at],
         );
     }};
-    (option $at:tt $name:ident: $ty:ty; $out:ident, $this:ident) => {{
+    (option $at:tt $name:ident: $ty:ty; $out:ident, $this:ident, $cx:ident) => {{
         if let ::core::option::Option::Some(__value) = $name {
             const __KIND: $crate::__cpu::Kind<$ty> = $crate::__kind!($ty);
             $crate::__cpu::ports::encode(

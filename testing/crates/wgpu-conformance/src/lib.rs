@@ -271,6 +271,8 @@ impl Net {
             merge_allowed: true,
             freeze_params: false,
             sharing: &[],
+            lent: &[],
+            offered: &[],
         };
         match backend.compile(&region, &cx)? {
             Compiled::Steps(mut units) if units.len() == 1 => Ok(units.remove(0)),

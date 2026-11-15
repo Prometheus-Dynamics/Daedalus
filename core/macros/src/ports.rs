@@ -256,7 +256,14 @@ pub(crate) fn shape(
         error: None,
         modifies: false,
     };
+    // The bindings in parameter order. An output view's position is the output's, known once the
+    // returned outputs are counted.
+    let mut parts: Vec<Part> = Vec::new();
+    let mut views: Vec<(String, Span, Type)> = Vec::new();
     for param in &signature.inputs {
+        if !shape.bind.is_empty() {
+            parts.push(Part::Tokens(std::mem::take(&mut shape.bind)));
+        }
         let FnArg::Typed(param) = param else {
             return Err(Error::new_spanned(param, "a node can't take self"));
         };
@@ -299,6 +306,11 @@ pub(crate) fn shape(
             shape.bind.extend(quote!(ctx #zero "" #ident: #value,));
             continue;
         }
+        if let Some(element) = generic_of(&ty, "OutView").and_then(|a| a.first().copied()) {
+            parts.push(Part::View(views.len(), ident.clone()));
+            views.push((ident.to_string(), ident.span(), element.clone()));
+            continue;
+        }
         if let Some(element) = generic_of(&ty, "FanIn").and_then(|a| a.first().copied()) {
             let arg = take_arg(&mut names);
             let prefix = arg
@@ -339,16 +351,82 @@ pub(crate) fn shape(
             ));
         }
     }
+    if !shape.bind.is_empty() {
+        parts.push(Part::Tokens(std::mem::take(&mut shape.bind)));
+    }
     shape.fixed = shape.inputs.len();
-    let ReturnType::Type(_, returned) = &signature.output else {
-        if outputs.as_ref().is_some_and(|names| !names.is_empty()) {
-            return Err(Error::new_spanned(
-                &signature.ident,
-                "outputs() on a function with no return",
-            ));
+    let mut written = TokenStream::new();
+    let (mut flow, mut pattern) = (quote!(plain), quote!(()));
+    match &signature.output {
+        ReturnType::Type(_, returned) => {
+            let (f, p) = returned_outputs(
+                &mut shape,
+                outputs,
+                signature,
+                returned,
+                &fill_type,
+                &mut written,
+            )?;
+            (flow, pattern) = (f, p);
         }
-        return Ok(shape);
-    };
+        ReturnType::Default => {
+            if outputs.as_ref().is_some_and(|names| !names.is_empty()) {
+                return Err(Error::new_spanned(
+                    &signature.ident,
+                    "outputs() on a function with no return",
+                ));
+            }
+        }
+    }
+    // Output views come after the returned outputs.
+    let returned = shape.outputs.len();
+    for (index, (name, span, element)) in views.iter().enumerate() {
+        let at = Literal::usize_unsuffixed(returned + index);
+        let list: Type = syn::parse_quote!(::daedalus_registry::__private::Vec<#element>);
+        written.extend(quote!(view #at __view: #list,));
+        shape.outputs.push(Port {
+            name: name.clone(),
+            span: *span,
+            type_ref: key_of(&list),
+            access: access("Read"),
+            optional: false,
+            conditional: false,
+            arg: PortArg::default(),
+        });
+    }
+    for part in parts {
+        match part {
+            Part::Tokens(tokens) => shape.bind.extend(tokens),
+            Part::View(index, ident) => {
+                let (name, _, element) = &views[index];
+                let at = Literal::usize_unsuffixed(returned + index);
+                shape
+                    .bind
+                    .extend(quote!(out_view #at #name #ident: #element,));
+            }
+        }
+    }
+    shape.returns = quote!(#flow, #pattern, [#written]);
+    Ok(shape)
+}
+
+/// One binding, in parameter order.
+enum Part {
+    Tokens(TokenStream),
+    /// The output view with this index among the views, and its parameter.
+    View(usize, syn::Ident),
+}
+
+/// Reads the returned outputs into `shape.outputs`, and their bindings into `written`. Gives the
+/// flow and the pattern the returned value is bound with.
+fn returned_outputs(
+    shape: &mut Shape,
+    outputs: Option<Vec<PortArg>>,
+    signature: &Signature,
+    returned: &Type,
+    fill_type: &dyn Fn(&Type) -> Result<Type>,
+    written: &mut TokenStream,
+) -> Result<(TokenStream, TokenStream)> {
     let returned = fill_type(returned)?;
     shape.ret = returned.to_token_stream();
     let mut value = &returned;
@@ -379,7 +457,6 @@ pub(crate) fn shape(
     }
     let single = types.len() == 1;
     let mut names = outputs.map(Vec::into_iter);
-    let mut written = TokenStream::new();
     let mut bound = Vec::new();
     for (index, ty) in types.into_iter().enumerate() {
         let arg = take_arg(&mut names);
@@ -425,8 +502,7 @@ pub(crate) fn shape(
     } else {
         quote!(plain)
     };
-    shape.returns = quote!(#flow, #pattern, [#written]);
-    Ok(shape)
+    Ok((flow, pattern))
 }
 
 /// A `default = ..` literal as a `Literal` expression.

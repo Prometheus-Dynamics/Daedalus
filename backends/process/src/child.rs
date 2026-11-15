@@ -110,6 +110,8 @@ struct Lent {
     threshold: usize,
     /// The spec's threshold, if it names one.
     shared_from: Option<usize>,
+    /// The generation of the pool the backend's rooms were last pointed at.
+    pointed: u32,
 }
 
 pub(crate) struct Worker {
@@ -208,6 +210,7 @@ impl Worker {
             #[cfg(target_os = "linux")]
             lent: Box::new(Lent {
                 shared_from: spec.shared_from,
+                pointed: 0,
                 ..Lent::default()
             }),
             packets: Some(packets),

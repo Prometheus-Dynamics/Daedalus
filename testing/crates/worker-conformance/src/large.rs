@@ -113,6 +113,8 @@ fn through(
         merge_allowed: false,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     let mut step = match backend.compile(&region, &cx) {
         Ok(Compiled::Steps(mut units)) => units.pop().ok_or("no step")?.step,

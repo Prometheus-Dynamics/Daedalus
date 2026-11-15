@@ -62,8 +62,8 @@ pub use handed::{
 };
 pub use handle::Handle;
 #[cfg(feature = "std")]
-pub use held::{HeldRegions, Regions};
-pub use items::{LeItem, le_items};
+pub use held::{HeldRegions, Lease, LeaseCounts, Lend, Regions, WritableRegions};
+pub use items::{LeItem, le_items, le_items_mut};
 pub use layout::{DESCRIPTORS, FROZEN_HASH, SHAPES, abi_desc, layout_hash};
 pub use message::MessageSink;
 pub use out::{Written, write_out, write_text};

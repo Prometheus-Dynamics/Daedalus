@@ -128,6 +128,12 @@ impl SharedBytes {
         record
     }
 
+    /// The record this holds a count on.
+    #[cfg(feature = "std")]
+    pub(crate) fn record(&self) -> NonNull<HandedRecord> {
+        self.record
+    }
+
     /// The plugin's bytes.
     pub fn bytes(&self) -> &[u8] {
         // SAFETY: this value holds a count, so the record is live, and its bytes are valid.

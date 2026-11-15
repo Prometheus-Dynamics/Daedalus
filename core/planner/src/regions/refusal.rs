@@ -3,7 +3,7 @@
 use daedalus_backend::{Compiled, Refusal};
 use daedalus_types::NodeIndex;
 
-use super::compile::{Compiling, check_contract, compile_region};
+use super::compile::{Compiling, check_contract, compile_region, lent_rooms};
 use super::form::{form, rank};
 use super::{CompiledRegion, Formed, Input, RegionError, Regions, rules};
 use crate::assign::{self, Removed};
@@ -82,6 +82,7 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
         let routing = route(graph, &formed, backends, registry).map_err(RegionError::Stitch)?;
         let cx = Compiling {
             graph,
+            backends,
             registry,
             types,
             assignment: &assignment,
@@ -94,13 +95,16 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
         let mut failure = None;
         for (region, one) in formed.iter().enumerate() {
             let backend = backends[rank(one.backend)];
+            let placed = routing.placed_of(&one.outputs);
+            let lent = lent_rooms(&cx, backends, one, &placed);
             match compile_region(
                 &cx,
                 one,
                 backend,
                 &routing.incoming_of(region),
-                &routing.placed_of(&one.outputs),
+                &placed,
                 &routing.read_in_of(&one.inputs),
+                &lent,
             ) {
                 Ok(compiled) => {
                     if let Err(error) = check_contract(one, region as u32, backend.id(), &compiled)

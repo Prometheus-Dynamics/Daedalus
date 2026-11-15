@@ -98,6 +98,26 @@ impl Worker {
         self.lent.lender.as_ref()?.adopt(place)
     }
 
+    /// The place of a hand-over cell's value, when it is in this worker's value buffers already.
+    pub(crate) fn pass(&self, cell: &daedalus_abi::Slot) -> Option<Place> {
+        let lender = self.lent.lender.as_ref()?;
+        let bytes = daedalus_runner::share_handed(cell)?;
+        lender.pass(&bytes)
+    }
+
+    /// Points `rooms` at the value buffers this worker is lent now, once per pool.
+    pub(crate) fn point_rooms(&mut self, rooms: &daedalus_process_shm::Rooms) {
+        let generation = self.lent.generation;
+        if self.lent.pointed == generation && generation != 0 {
+            return;
+        }
+        match self.lent.lender.as_ref() {
+            Some(lender) => lender.lend_rooms(rooms),
+            None => rooms.clear(),
+        }
+        self.lent.pointed = generation;
+    }
+
     /// Sends a run with its note: in the frame after the note when it is small, in the host's
     /// buffer after its values when it is large.
     pub(super) fn send_run_by_reference(
@@ -167,6 +187,10 @@ impl Worker {
     }
 
     pub(crate) fn adopt(&self, _place: &Place) -> Option<SharedBytes> {
+        None
+    }
+
+    pub(crate) fn pass(&self, _cell: &daedalus_abi::Slot) -> Option<Place> {
         None
     }
 }

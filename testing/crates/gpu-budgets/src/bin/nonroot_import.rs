@@ -252,6 +252,8 @@ mod linux {
             merge_allowed: true,
             freeze_params: false,
             sharing: &[],
+            lent: &[],
+            offered: &[],
         }
     }
 

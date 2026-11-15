@@ -127,6 +127,8 @@ fn run_round(backend: &ProcessBackend, fixture: &Fixture, round: usize) -> Resul
         merge_allowed: false,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     let compiled = backend
         .compile(&region, &cx)

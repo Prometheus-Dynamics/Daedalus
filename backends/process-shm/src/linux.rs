@@ -15,7 +15,7 @@ use shm_ring_buffers::{BufferDesc, BufferIndex, Pool, PoolView};
 
 use crate::THRESHOLD;
 use crate::fds::FdCache;
-use crate::held::Held;
+use crate::held::{Held, Rooms};
 
 /// The buffer the host writes for the worker.
 pub(crate) const TO_WORKER: u32 = 0;
@@ -92,6 +92,8 @@ pub struct Lender {
     threshold: usize,
     /// Where the next value by reference goes in the host's buffer, during a run.
     cursor: usize,
+    /// The value buffer the last run's outputs were to go in, held until the next run's.
+    claimed: Option<u32>,
     fds: FdCache,
     note: Writer,
 }
@@ -116,7 +118,7 @@ impl Lender {
             None
         } else {
             let cells = pool
-                .view()
+                .writable_view()
                 .map_err(|e| fail("the cells' view of the pool", e))?;
             Some(Held::new(cells, FIRST_VALUE, values))
         };
@@ -128,6 +130,7 @@ impl Lender {
             features: 0,
             threshold: THRESHOLD,
             cursor: 0,
+            claimed: None,
             fds: FdCache::new(),
             note: Writer::new(),
         })
@@ -235,18 +238,57 @@ impl Lender {
         self.fds.kept()
     }
 
-    /// A value buffer no cell holds, for the worker to write this run's output values into.
-    pub fn free_out(&self) -> Option<u32> {
-        self.held.as_ref()?.free_buffer()
+    /// A value buffer no cell or lease holds, for the worker to write this run's output values
+    /// into: claimed until the next run's, so no lease is taken in it meanwhile. The last run's
+    /// outputs are held by their cells by then.
+    pub fn free_out(&mut self) -> Option<u32> {
+        let held = self.held.as_ref()?;
+        if let Some(last) = self.claimed.take() {
+            held.unclaim(last);
+        }
+        self.claimed = held.claim();
+        self.claimed
     }
 
     /// An output value the worker wrote at `place`, held by the cell it goes to, with no copy.
-    /// None when the place is not inside a value buffer.
+    /// None when the place is not inside the value buffer this run's outputs were to go in.
     pub fn adopt(&self, place: &Place) -> Option<SharedBytes> {
         let At::Lent(buffer) = place.at else {
             return None;
         };
+        if Some(buffer) != self.claimed {
+            return None;
+        }
         self.held.as_ref()?.adopt(buffer, place.offset, place.len)
+    }
+
+    /// The place of a value a cell holds, when it is already in a value buffer of this pool: an
+    /// output of the worker's, or a value a node on the host wrote in room these buffers lent it.
+    /// The worker reads it there, and nothing is copied. None for any other bytes.
+    pub fn pass(&self, bytes: &SharedBytes) -> Option<Place> {
+        let (buffer, offset) = self.held.as_ref()?.locate(bytes)?;
+        Some(Place {
+            at: At::Lent(buffer),
+            offset,
+            len: bytes.bytes().len() as u64,
+        })
+    }
+
+    /// Points `rooms` at this pool's value buffers, for nodes on the host to write values into.
+    /// Nothing, for a pool with no value buffers.
+    pub fn lend_rooms(&self, rooms: &Rooms) {
+        match &self.held {
+            Some(held) => rooms.point(held, self.threshold),
+            None => rooms.clear(),
+        }
+    }
+
+    /// The leases taken in this pool's value buffers.
+    pub fn lease_counts(&self) -> daedalus_abi::LeaseCounts {
+        self.held
+            .as_ref()
+            .map(Held::lease_counts)
+            .unwrap_or_default()
     }
 
     /// Sends a run: its note, then the packet in the same frame when `packet` is None, with the
@@ -468,6 +510,8 @@ impl Borrower {
             crate::Reads {
                 view: Some(&self.view),
                 to_worker: self.to_worker,
+                values: &self.values,
+                out: self.out,
                 fds: Some(&self.fds),
                 _of: std::marker::PhantomData,
             },

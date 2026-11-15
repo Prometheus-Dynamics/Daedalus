@@ -51,6 +51,8 @@ pub fn one_node(backend: &ProcessBackend, id: &'static str, inputs: u16, outputs
         merge_allowed: false,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     match backend.compile(&region, &cx) {
         Ok(Compiled::Steps(mut units)) => units.pop().expect("a unit").step,

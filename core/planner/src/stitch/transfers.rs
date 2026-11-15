@@ -2,14 +2,15 @@
 
 use std::collections::BTreeMap;
 
-use daedalus_backend::{
-    Backend, Incoming, MemorySpace, PortRef, SpaceKind, Transfer, TransferCost,
-};
+use daedalus_backend::{Backend, Incoming, PortRef, Transfer, TransferCost};
 use daedalus_graph::NodeKindDoc;
 use daedalus_registry::{Registry, TransferClass, TransferRecord};
 use daedalus_types::{NodeIndex, PortIndex, TypeKey};
 
 use super::StitchError;
+use spaces::BackendSpaces;
+
+mod spaces;
 use crate::regions::Formed;
 use crate::solve::convert::key_of;
 use crate::solve::{Graph, Port};
@@ -289,45 +290,6 @@ fn port_of(ports: &[Port], name: &str) -> Option<u16> {
         .iter()
         .position(|port| port.name == name)
         .map(|at| at as u16)
-}
-
-/// One backend's memory, by space index.
-struct BackendSpaces {
-    list: Vec<(MemorySpace, usize)>,
-    /// The other spaces an output can be written in, by index, in the backend's order.
-    placements: Vec<usize>,
-}
-
-impl BackendSpaces {
-    fn home(&self) -> Option<usize> {
-        self.list.first().map(|(_, at)| *at)
-    }
-
-    /// Every space an output of this backend can be written in: its first, then the others.
-    fn writable(&self) -> Vec<usize> {
-        let mut spaces: Vec<usize> = self.home().into_iter().collect();
-        for &at in &self.placements {
-            if !spaces.contains(&at) {
-                spaces.push(at);
-            }
-        }
-        spaces
-    }
-
-    fn readable(&self) -> Vec<usize> {
-        self.list
-            .iter()
-            .filter(|(s, _)| s.readable)
-            .map(|(_, at)| *at)
-            .collect()
-    }
-
-    fn host_kind(&self) -> Option<usize> {
-        self.list
-            .iter()
-            .find(|(s, _)| s.kind == SpaceKind::Host)
-            .map(|(_, at)| *at)
-    }
 }
 
 struct Router<'a> {
@@ -649,27 +611,7 @@ pub fn route(
         incoming: vec![Vec::new(); formed.len()],
         ..Routing::default()
     };
-    let memory: Vec<BackendSpaces> = backends
-        .iter()
-        .map(|backend| {
-            let list: Vec<(MemorySpace, usize)> = backend
-                .memory()
-                .into_iter()
-                .map(|space| {
-                    let at = routing.space(&space.id);
-                    (space, at)
-                })
-                .collect();
-            // A placement has to be one of the backend's own spaces.
-            let placements = backend
-                .placements()
-                .iter()
-                .filter_map(|id| list.iter().find(|(space, _)| space.id == *id))
-                .map(|(_, at)| *at)
-                .collect();
-            BackendSpaces { list, placements }
-        })
-        .collect();
+    let memory = BackendSpaces::all(&mut routing, backends);
     build_table(&mut routing, backends, registry);
     let mut region_of = vec![None; graph.nodes.len()];
     for (region, one) in formed.iter().enumerate() {

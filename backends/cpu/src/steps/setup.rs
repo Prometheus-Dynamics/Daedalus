@@ -28,6 +28,9 @@ pub struct Setup<'a> {
     pub wire_inputs: u32,
     /// The node's id, for a refusal to name.
     pub id: &'a str,
+    /// Room lent for the node's outputs placed in memory another backend offers: see
+    /// [`super::OutView`].
+    pub lent: &'a [daedalus_backend::LentRoom],
 }
 
 impl Setup<'_> {

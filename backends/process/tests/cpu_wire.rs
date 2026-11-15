@@ -1,7 +1,7 @@
 //! A value between a CPU node and a worker crosses as its wire form, written and read by its own
-//! type: the planner puts the CPU node's output in `cpu.wire`, the CPU step writes it there through
-//! the type's `WireForm`, the worker's moves hand the cell on as it is, and the CPU node after the
-//! worker reads it back the same way.
+//! type: the planner puts the CPU node's output in the worker's lent memory (`process.lent`), or
+//! in `cpu.wire`, the CPU step writes it there through the type's `WireForm`, the worker's moves
+//! hand the cell on as it is, and the CPU node after the worker reads it back the same way.
 //!
 //! The struct here has a `u8`, a `u32` and a `u16`: seven bytes on the wire, eight in a Rust
 //! struct's memory, with padding and its fields in another order. Sent as its memory's bytes it
@@ -183,8 +183,9 @@ fn the_plan_shows_where_the_value_is_written_and_decoded() {
         .iter()
         .find(|edge| edge.from_node == 1)
         .expect("the edge to the worker");
-    assert_eq!(to_worker.written_in.as_deref(), Some("cpu.wire"));
-    assert_eq!(to_worker.transfer, ["process.from_cpu_wire"]);
+    // Written where the worker reads it, in its lent memory: no move on the way.
+    assert_eq!(to_worker.written_in.as_deref(), Some("process.lent"));
+    assert!(to_worker.transfer.is_empty(), "{:?}", to_worker.transfer);
     let back = explain
         .edges
         .iter()

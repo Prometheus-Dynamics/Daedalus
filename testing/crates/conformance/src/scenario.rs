@@ -115,6 +115,8 @@ impl Scenario {
             merge_allowed: true,
             freeze_params: false,
             sharing: &[],
+            lent: &[],
+            offered: &[],
         };
         body(&region, &cx)
     }

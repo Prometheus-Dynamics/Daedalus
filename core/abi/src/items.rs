@@ -37,6 +37,23 @@ pub fn le_items<T: LeItem>(bytes: &[u8]) -> Option<&[T]> {
     Some(unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<T>(), bytes.len() / size) })
 }
 
+/// `bytes` as a mutable slice of `T`, with no copy, under the same terms as [`le_items`]: what is
+/// written through it is the items' wire form.
+pub fn le_items_mut<T: LeItem>(bytes: &mut [u8]) -> Option<&mut [T]> {
+    let size = core::mem::size_of::<T>();
+    if cfg!(target_endian = "big")
+        || !bytes.len().is_multiple_of(size)
+        || bytes.as_ptr().align_offset(core::mem::align_of::<T>()) != 0
+    {
+        return None;
+    }
+    // SAFETY: as in `le_items`; the slice borrows `bytes` mutably, so nothing else reads or writes
+    // them while it lives, and any value written is valid bytes.
+    Some(unsafe {
+        core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), bytes.len() / size)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +72,19 @@ mod tests {
         }
         assert_eq!(le_items::<f32>(&buf[at + 1..at + 5]), None, "unaligned");
         assert_eq!(le_items::<f32>(&bytes[..6]), None, "not whole");
+    }
+
+    #[test]
+    fn written_items_are_their_wire_form() {
+        let mut buf = [0u8; 64];
+        let at = buf.as_ptr().align_offset(core::mem::align_of::<u32>());
+        if let Some(items) = le_items_mut::<u32>(&mut buf[at..at + 8]) {
+            items.copy_from_slice(&[7, 0x0102_0304]);
+            assert_eq!(&buf[at..at + 8], &[7, 0, 0, 0, 4, 3, 2, 1]);
+        }
+        assert!(
+            le_items_mut::<u32>(&mut buf[at + 1..at + 5]).is_none(),
+            "unaligned"
+        );
     }
 }

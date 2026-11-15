@@ -76,6 +76,8 @@ fn cx<'a>() -> CompileCx<'a> {
         merge_allowed: true,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     }
 }
 

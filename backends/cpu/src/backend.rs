@@ -23,13 +23,14 @@ pub const HOST_SPACE: &str = "cpu.host";
 /// Cells in [`HOST_SPACE`] hold Rust values in memory and never reach a worker.
 pub const WIRE_SPACE: &str = "cpu.wire";
 
-/// The region's outputs the planner placed in [`WIRE_SPACE`].
-pub(crate) fn wire_outputs(region: &Region<'_>) -> Vec<PortRef> {
+/// The region's outputs written as their wire form: those the planner placed in [`WIRE_SPACE`],
+/// or in a space another backend offers, whose cells hold the wire form too.
+pub(crate) fn wire_outputs(region: &Region<'_>, cx: &CompileCx<'_>) -> Vec<PortRef> {
     region
         .outputs
         .iter()
         .zip(region.placed)
-        .filter(|(_, space)| **space == WIRE_SPACE)
+        .filter(|(_, space)| **space == WIRE_SPACE || cx.offered.contains(space))
         .map(|(port, _)| *port)
         .collect()
 }
@@ -46,7 +47,7 @@ pub(crate) struct Wiring {
 
 impl Wiring {
     pub(crate) fn of(region: &Region<'_>, cx: &CompileCx<'_>) -> Wiring {
-        let outputs = wire_outputs(region);
+        let outputs = wire_outputs(region, cx);
         let from_workers = region
             .inputs
             .iter()
@@ -205,6 +206,7 @@ pub(crate) fn step_of(
         keep: &keep,
         wire_inputs,
         id: body.id,
+        lent: cx.lent,
     };
     let step = match make {
         Make::Function(cpu) => (cpu.make)(&setup),
@@ -286,6 +288,13 @@ impl Backend for CpuBackend {
         vec![Cow::Borrowed(WIRE_SPACE)]
     }
 
+    /// An output can be written as its wire form in memory another backend offers: a worker's
+    /// lent memory, where the worker reads it with no copy. A node that writes it through an
+    /// [`crate::OutView`] writes it there itself.
+    fn takes_offers(&self) -> bool {
+        true
+    }
+
     fn transfers(&self) -> Vec<Transfer> {
         Vec::new()
     }
@@ -331,6 +340,7 @@ impl Backend for CpuBackend {
             keep: &[],
             wire_inputs: 0,
             id: "transfer",
+            lent: cx.lent,
         };
         Some((cpu.make)(&setup).map_err(|reason| Refusal::whole_region(&reason)))
     }

@@ -469,6 +469,12 @@ impl NodeEmit<'_> {
                     ));
                 }
                 Role::FanIn => self.fan_in(out, &name, &mut args),
+                Role::OutView => {
+                    return Err(Refusal::new(
+                        vec![self.node],
+                        "generated code can't pass an output view",
+                    ));
+                }
                 role => self.plain_input(out, param, &name, role, &mut args, &mut checks)?,
             }
         }

@@ -57,6 +57,8 @@ fn by_descriptor(ty: &WireType) -> bool {
 /// One input cell's value, as a run sends it.
 pub(crate) enum Input<'a> {
     Bytes(&'a [u8]),
+    /// A hand-over's bytes, which may be in the worker's lent memory already.
+    Handed(&'a Slot, &'a [u8]),
     #[cfg(target_os = "linux")]
     Fd(std::os::fd::BorrowedFd<'a>, u64, u64),
 }
@@ -75,36 +77,66 @@ pub(crate) fn input_of<'a>(
     }
     #[cfg(not(target_os = "linux"))]
     let _ = ty;
-    cell.bytes().map(Input::Bytes)
+    let bytes = cell.bytes()?;
+    if cell.owner == daedalus_abi::OWNER_HANDED {
+        return Some(Input::Handed(cell, bytes));
+    }
+    Some(Input::Bytes(bytes))
 }
 
-/// Writes an input's form for a worker that agreed values by reference: its place when it is
-/// large and fits, or it is by descriptor, and otherwise the form that says its bytes follow,
-/// which the caller then writes. Returns whether it went as a place.
+/// Writes an input's form for a worker that agreed values by reference: the place it is at when
+/// it is in the worker's lent memory already, its place when it is large and fits, or it is by
+/// descriptor, and otherwise the form that says its bytes follow, which the caller then writes.
+/// Returns whether it went as a place, and whether that place is where the value already was.
 pub(crate) fn put_placed(
     worker: &mut Worker,
     ty: &WireType,
     input: &Input<'_>,
     out: &mut Writer,
-) -> Result<bool, String> {
+) -> Result<Sent, String> {
     match input {
-        Input::Bytes(bytes) => {
-            let items_at = ty.layout().items_at().unwrap_or(0);
-            if bytes.len() >= worker.shared_from()
-                && let Some(place) = worker.place(bytes, items_at)
-            {
+        Input::Handed(cell, bytes) => {
+            if let Some(place) = worker.pass(cell) {
                 place.encode(out);
-                return Ok(true);
+                return Ok(Sent::Passed);
             }
-            out.u8(form::INLINE);
-            Ok(false)
+            put_bytes(worker, ty, bytes, out)
         }
+        Input::Bytes(bytes) => put_bytes(worker, ty, bytes, out),
         #[cfg(target_os = "linux")]
         Input::Fd(fd, offset, len) => {
             worker.fd_place(*fd, *offset, *len)?.encode(out);
-            Ok(true)
+            Ok(Sent::Placed)
         }
     }
+}
+
+/// How [`put_placed`] sent an input.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Sent {
+    /// Its bytes follow.
+    Inline,
+    /// As a place it was copied to, or of its buffer by descriptor.
+    Placed,
+    /// As the place in lent memory it already was at: nothing was copied.
+    Passed,
+}
+
+fn put_bytes(
+    worker: &mut Worker,
+    ty: &WireType,
+    bytes: &[u8],
+    out: &mut Writer,
+) -> Result<Sent, String> {
+    let items_at = ty.layout().items_at().unwrap_or(0);
+    if bytes.len() >= worker.shared_from()
+        && let Some(place) = worker.place(bytes, items_at)
+    {
+        place.encode(out);
+        return Ok(Sent::Placed);
+    }
+    out.u8(form::INLINE);
+    Ok(Sent::Inline)
 }
 
 /// The bytes of a value by descriptor, for a worker that takes no places: copied out of the

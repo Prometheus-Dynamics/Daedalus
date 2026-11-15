@@ -71,6 +71,8 @@ fn a_steady_state_run_allocates_nothing_on_the_host_thread() {
         merge_allowed: false,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     let mut step = match backend.compile(&region, &cx) {
         Ok(Compiled::Steps(mut units)) => units.pop().expect("a unit").step,
@@ -169,6 +171,8 @@ fn a_steady_run_of_megabyte_values_allocates_nothing_on_the_host_thread() {
         merge_allowed: false,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     let mut step = match backend.compile(&region, &cx) {
         Ok(Compiled::Steps(mut units)) => units.pop().expect("a unit").step,
