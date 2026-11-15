@@ -141,6 +141,12 @@ fn hand_plain(value: Arc<Plain>) -> Arc<Plain> {
     value
 }
 
+/// Takes the vector by value and hands the same vector on: no copy by the node.
+#[node(id = "handoff.plain.take", inputs(value), outputs(value))]
+fn take_plain(value: Plain) -> Plain {
+    value
+}
+
 #[node(id = "handoff.frame.read", inputs(value), outputs(sum))]
 fn read_frame(value: &Frame) -> u64 {
     ends(&value.bytes)
@@ -175,7 +181,8 @@ fn total(items: FanIn<'_, u64>) -> u64 {
     items.iter().map(|item| *item).sum()
 }
 
-const NODES: [&NodeRecord; 12] = [
+const NODES: [&NodeRecord; 13] = [
+    &TAKE_PLAIN_NODE,
     &EDIT_FRAME_NODE,
     &PEEK_FRAME_NODE,
     &HAND_FRAME_NODE,
@@ -222,6 +229,16 @@ impl Path {
                 "handoff.shared.read",
             ),
             Path::Vec => ("handoff:plain", "handoff.plain.pass", "handoff.plain.read"),
+        }
+    }
+
+    /// The node a [`RoundTrip`] of this path runs: a handle in and out, the bytes by value, or the
+    /// vector by value.
+    fn round(self) -> &'static str {
+        match self {
+            Path::Handle => "handoff.frame.hand",
+            Path::Shared => "handoff.shared.pass",
+            Path::Vec => "handoff.plain.take",
         }
     }
 
@@ -385,6 +402,16 @@ pub fn value(path: Path, len: usize) -> Fed {
 }
 
 impl Fed {
+    /// A value to feed the host that the kept one is not handed over with: a handle for the
+    /// shared ways, and for a vector a copy, as a host that keeps its vector makes one.
+    pub fn duplicate(&self) -> Fed {
+        match self {
+            Fed::Frame(value) => Fed::Frame(Arc::clone(value)),
+            Fed::Shared(value) => Fed::Shared(Arc::clone(value)),
+            Fed::Plain(value) => Fed::Plain(Arc::new(Plain::clone(value))),
+        }
+    }
+
     /// Another handle to the same value, for a graph whose nodes only read it.
     pub fn again(&self) -> Fed {
         match self {
@@ -452,4 +479,69 @@ pub struct Cost {
     pub allocations: u64,
     pub copies: u64,
     pub retains: u64,
+}
+
+/// The size of the value the I3 rows pass: 3,110,400 bytes.
+pub const I3_BYTES: usize = 3_110_400;
+
+/// One node between the host's `in` and `out`, which hands the value on: the value comes back out
+/// whole, and the host takes it. This is the shape of the I3 rows.
+pub struct RoundTrip {
+    host: LoadedHost,
+    kept: Fed,
+}
+
+impl RoundTrip {
+    /// A round trip of a `len`-byte value of `path`.
+    pub fn new(path: Path, len: usize) -> RoundTrip {
+        let (key, _, _) = path.ids();
+        let mut bridge = NodeDoc::new("host");
+        bridge.kind = NodeKindDoc::HostBridge;
+        bridge.port_types.insert("in".into(), key.into());
+        bridge.port_types.insert("out".into(), key.into());
+        let body = GraphBody {
+            nodes: vec![bridge, NodeDoc::new(path.round())],
+            edges: vec![edge(0, "in", 1, "value"), edge(1, "value", 0, "out")],
+            groups: Vec::new(),
+        };
+        let mut registry = Registry::new();
+        registry.register_all(&NODES).expect("the nodes register");
+        let planned = plan(&body, &registry, &[&CpuBackend], &Config::default())
+            .expect("the round trip plans");
+        RoundTrip {
+            host: LoadedHost::load(planned, LoadOptions::default()).expect("the plan loads"),
+            kept: value(path, len),
+        }
+    }
+
+    /// One tick: the host makes a value for the node (see [`Fed::duplicate`]), the node runs, and
+    /// the host takes the value back out. Returns whether it came out.
+    pub fn tick(&mut self) -> bool {
+        feed(&mut self.host, self.kept.duplicate());
+        let io = self.host.host();
+        io.step().expect("a tick");
+        io.take_value("out").expect("a take").is_some()
+    }
+}
+
+/// What `ticks` steady-state round trips cost each: allocations, copies of the bytes, and
+/// reference counts raised. Counted as [`cost`] counts.
+pub fn round_cost(path: Path, len: usize, ticks: u64) -> Cost {
+    let mut round = RoundTrip::new(path, len);
+    for _ in 0..16 {
+        assert!(round.tick(), "a value came out");
+    }
+    let (copies, retains) = touched();
+    let mut allocations = 0;
+    for _ in 0..ticks {
+        let (came_out, count) = daedalus_abi::counting::counted(|| round.tick());
+        assert!(came_out, "a value came out");
+        allocations += count as u64;
+    }
+    let after = touched();
+    Cost {
+        allocations: allocations / ticks,
+        copies: (after.0 - copies) / ticks,
+        retains: (after.1 - retains) / ticks,
+    }
 }

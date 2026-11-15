@@ -652,6 +652,7 @@ dependencies = [
  "daedalus-budget-harness",
  "daedalus-cpu",
  "daedalus-cpu-author",
+ "daedalus-dma-sys",
  "daedalus-graph",
  "daedalus-host",
  "daedalus-macros",

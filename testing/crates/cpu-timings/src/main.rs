@@ -3,6 +3,8 @@
 //! sections `host_round_trip`, `host_idle_step`, `probe_off`, `probe_on`, `probe_sampled` (with
 //! EVERY as the third argument), `clock_read`, `detector_fused`, `detector_unfused`, `plugin_tick`
 //! and `startup`, which prints the time to a small host's first step and what the process holds.
+//! `byte_chain [TICKS]` is the C1 chain: 1, 4 and 16 stages of a 307,200-byte value, unfused and
+//! fused, with each tick timed on its own (it takes no BATCHES).
 //!
 //! Each section warms up, then times BATCHES batches of operations and prints the median of the
 //! per-operation times of the batches, in nanoseconds. A batch is 1,000 operations, so the clock's
@@ -12,6 +14,8 @@
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Instant;
+
+mod byte_chain;
 
 use daedalus_budget_harness::plugin::{plugin_node, plugin_tick};
 use daedalus_budget_harness::{Stage, chain, chain_tick};
@@ -316,6 +320,7 @@ fn main() {
                 .map_or(1, |text| text.parse().expect("EVERY is a number"));
             probe_every(batches, every);
         }
+        "byte_chain" => byte_chain::run(args.get(1)),
         "startup" => startup(started),
         "daemon_graph" => print!("{}", daemon_graph()),
         "clock_read" => clock_read(batches),

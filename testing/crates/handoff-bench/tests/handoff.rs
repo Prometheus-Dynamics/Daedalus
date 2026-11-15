@@ -158,3 +158,20 @@ fn one_consumer_touches_no_reference_count() {
         );
     }
 }
+
+#[test]
+fn round_trip_hands_the_value_back_and_copies_only_a_vector() {
+    use daedalus_handoff_bench::{I3_BYTES, RoundTrip, round_cost};
+    let _turn = turn();
+    // The handle and the shared bytes come back by reference: nothing is copied. The vector goes
+    // in as the host's copy, once a tick, and comes back by value.
+    let shared = round_cost(Path::Handle, LEN, TICKS);
+    assert_eq!((shared.copies, shared.retains), (0, 0));
+    let bytes = round_cost(Path::Shared, LEN, TICKS);
+    assert_eq!(bytes.copies, 0);
+    let vector = round_cost(Path::Vec, LEN, TICKS);
+    assert_eq!(vector.copies, 1);
+    // The I3 size is the one the rows use, and a round trip at that size returns its value.
+    let mut round = RoundTrip::new(Path::Vec, I3_BYTES);
+    assert!((0..4).all(|_| round.tick()));
+}
