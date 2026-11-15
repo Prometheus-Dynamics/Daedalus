@@ -172,6 +172,8 @@ pub fn transfer(backend: &WgpuBackend, id: &str) -> Step {
         merge_allowed: true,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     let table = backend.transfers();
     let found = table.iter().find(|t| t.id == id).expect("offered");

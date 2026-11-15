@@ -144,6 +144,47 @@ worker, or reads from one, is refused when the plan is built, and the refusal sa
 derive it on. A CPU parameter `&[f32]` (or any other number) reads a list from a worker where its
 bytes are. Any other type is decoded once per tick, and `explain_plan` lists each such decode.
 
+A CPU node can write a list output in place with an `OutView<'_, T>` parameter, instead of
+returning a `Vec<T>`. The parameter is an output port named after it, of type `Vec<T>`, listed
+after the outputs the function returns. Where it is written depends on the plan, not the node:
+
+- Read by one worker that lends memory: into the worker's value buffer, where it reads it. Nothing
+  is copied and nothing is allocated.
+- Read by a worker that lends none: into memory the step keeps from tick to tick, as wire form.
+- Read by CPU nodes alone: into the list itself, one the step keeps and refills once no reader
+  holds it.
+
+```rust
+#[node(id = "demo.ramp", inputs(n))]
+fn ramp(n: u32, mut out: OutView<'_, f32>) -> Result<(), Refused> {
+    for (item, at) in out.items_mut(n as usize)?.iter_mut().zip(0..n) {
+        *item = at as f32;
+    }
+    Ok(())
+}
+
+#[node(id = "demo.points", inputs(n))]
+fn points(n: u32, mut out: OutView<'_, KeyPoint>) -> Result<(), Refused> {
+    out.reserve_bytes(n as usize * 28)?;
+    out.extend((0..n).map(|at| KeyPoint { x: at as f32, ..KeyPoint::default() }))
+}
+```
+
+- `items_mut(n)` gives `n` numbers to write in place, for a list of numbers.
+- `reserve(n)` reserves room for `n` items of a fixed size; `reserve_bytes(b)` reserves `b` bytes.
+- `push(&item)` and `extend(items)` write after the items written so far, through the type's wire
+  form: its size pass first, then its write.
+- A node that doesn't know `n` reserves again as it goes. In a worker's lent memory the room grows
+  in place when the memory after it is free, and otherwise the write is refused. Elsewhere it grows
+  as a list does.
+
+On a CM5 this took a 1 MiB list's hand-over to a worker from 0.238 to 0.054 ms/MB, and the
+allocations per tick from 1 to 0: [testing/board-runs/out-view.md](../testing/board-runs/out-view.md).
+
+A write past what was reserved is refused, with how many bytes past and what to do. So is an item
+whose write doesn't match its size pass. A refusal is the node's failure: the room it held is
+released, and nothing is handed on.
+
 A worker's port declares its type's structure, so the CPU type is compared by its fields too:
 `#[structural]` says so.
 

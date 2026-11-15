@@ -1,5 +1,6 @@
 //! Values by reference (Linux): a large `bytes` input goes as a place in lent memory and the
-//! worker's output is held by its cell where the worker wrote it; a value buffer cells still hold
+//! worker's output is held by its cell where the worker wrote it, and goes back in as the place it
+//! is at, with no copy; a value buffer cells still hold
 //! is not named for the next run; a steady run allocates nothing; and a dma-buf value reaches the
 //! worker's node with no copy, mapped read-only, read inside the kernel's sync brackets, sent once
 //! per buffer, with the buffers a worker keeps bounded.
@@ -80,6 +81,33 @@ fn a_large_input_goes_by_place_and_its_output_is_held_where_the_worker_wrote_it(
         "no value's bytes went in a packet: {telemetry:?}"
     );
     assert_eq!(telemetry.fd_sends, 0, "{telemetry:?}");
+    release(step);
+}
+
+#[test]
+fn a_workers_output_goes_back_in_as_the_place_it_is_at_with_no_copy() {
+    let mut backend = ProcessBackend::new();
+    backend
+        .add_worker(spec(&[]), &registry())
+        .expect("registers");
+    let mut step = step_of(&backend, "fixture.raw_io");
+    let mut bytes = payload(LARGE);
+    for round in 1..=3u64 {
+        // Its output, in a value buffer, is the next run's input: the worker reads it there.
+        let reversed = raw_io(&mut step, &mut bytes);
+        assert_eq!(reversed.owner, OWNER_HANDED);
+        let mut cells = [reversed, Slot::EMPTY];
+        let mut cx = StepCx::new();
+        let end = run_once(&mut step, &mut Slots::of(&mut cells), &mut cx);
+        assert!(matches!(end, StepEnd::Done), "{}", cx.reason());
+        assert_eq!(cells[1].bytes(), Some(&bytes[..]), "reversed twice");
+        let telemetry = backend.telemetry();
+        assert_eq!(telemetry.passed_in, round, "{telemetry:?}");
+        assert_eq!(telemetry.placed_in, round * 2, "{telemetry:?}");
+        for cell in cells {
+            daedalus_runner::drop_owned(cell);
+        }
+    }
     release(step);
 }
 

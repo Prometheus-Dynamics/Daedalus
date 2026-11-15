@@ -158,7 +158,9 @@ type reads its records straight from the place (see
 [node-authoring.md](node-authoring.md#values-that-cross-to-another-process)). A large output of
 any type with a form is copied once into the value buffer instead of into the packet. The
 host's counters: `agreed` (workers that agreed), `placed_in` and `placed_out` (values sent and
-taken by place), `fd_sends` (descriptors sent; 0 in steady state), and `outs_full` (runs with no
+taken by place), `passed_in` (values sent as the place they already were at, with no copy: a
+worker's output going back in, or a CPU node's output written into the worker's lent memory),
+`fd_sends` (descriptors sent; 0 in steady state), and `outs_full` (runs with no
 value buffer free). `daedalus-worker-conformance::large_values` runs any worker through large
 values and gives these counters back, and `large_list` does the same with a long `list<u32>`.
 

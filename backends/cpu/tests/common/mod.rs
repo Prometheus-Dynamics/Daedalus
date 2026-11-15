@@ -19,6 +19,7 @@ pub fn step_with(record: &NodeRecord, inputs: u16, consts: &[ConstOf<'_>]) -> St
         keep: &[],
         wire_inputs: 0,
         id: "test",
+        lent: &[],
     };
     (body.make)(&setup).unwrap()
 }

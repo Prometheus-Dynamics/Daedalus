@@ -143,4 +143,28 @@ pub struct CompileCx<'a> {
     pub freeze_params: bool,
     /// How each output of the region's nodes is consumed. A port that is not listed is `Fresh`.
     pub sharing: &'a [OutputSharing],
+    /// Room another backend lends for outputs placed in a space it offers
+    /// ([`Backend::bind_offer`](crate::Backend::bind_offer)). A node that writes such an output
+    /// into this room writes it where its reader reads it: nothing is copied on the way.
+    pub lent: &'a [LentRoom],
+    /// The spaces other backends offer this one's nodes to write outputs into
+    /// ([`Backend::offers`](crate::Backend::offers)): an output [placed](Region::placed) in one is
+    /// written as its type's wire form.
+    pub offered: &'a [&'a str],
+}
+
+/// Room lent for one output, by the backend whose space it is placed in.
+#[derive(Clone)]
+pub struct LentRoom {
+    pub port: PortRef,
+    pub room: std::sync::Arc<dyn daedalus_abi::Lend>,
+}
+
+impl std::fmt::Debug for LentRoom {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LentRoom")
+            .field("port", &self.port)
+            .field("threshold", &self.room.threshold())
+            .finish()
+    }
 }

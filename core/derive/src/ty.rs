@@ -201,7 +201,9 @@ fn wire_form_impl(input: &DeriveInput) -> TokenStream {
             quote! {
                 impl #w for #name {
                     const FLAT: bool = #p::flat_layout(::core::mem::size_of::<Self>(), &[#(#flat),*]);
+                    #[inline]
                     fn wire_len(&self) -> usize { 0 #(#lens)* }
+                    #[inline]
                     #[allow(unused_mut)]
                     fn write_wire(&self, out: &mut [u8]) -> usize {
                         let mut at = 0;

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use daedalus_backend::{
-    Backend, CompileCx, Compiled, ConstOf, HostBinding, Incoming, InnerEdge, NodeBody,
+    Backend, CompileCx, Compiled, ConstOf, HostBinding, Incoming, InnerEdge, LentRoom, NodeBody,
     OutputSharing, PortRef, Refusal, Region, Sharing, UnitInfo,
 };
 use daedalus_graph::{EdgePolicyDoc, Lit, NodeDoc};
@@ -19,6 +19,7 @@ use crate::solve::{Graph, Port};
 
 pub(super) struct Compiling<'a> {
     pub graph: &'a Graph,
+    pub backends: &'a [&'a dyn Backend],
     pub registry: &'a Registry,
     pub types: &'a TypeTable,
     pub assignment: &'a Assignment,
@@ -35,6 +36,7 @@ pub(super) fn compile_region(
     incoming: &[Incoming<'_>],
     placed: &[&str],
     read_in: &[&str],
+    lent: &[LentRoom],
 ) -> Result<Compiled, Refusal> {
     let nodes: Vec<NodeIndex> = formed.nodes.iter().map(|&node| NodeIndex(node)).collect();
     let mut consts = Vec::new();
@@ -72,6 +74,13 @@ pub(super) fn compile_region(
     let sharing = output_sharing(cx, formed);
     let (host_inputs, host_outputs) = host_bindings(cx.graph, cx.assignment, &formed.nodes);
     let spaces = backend.memory();
+    let offers: Vec<std::borrow::Cow<'static, str>> = cx
+        .backends
+        .iter()
+        .filter(|other| other.id() != backend.id())
+        .flat_map(|other| other.offers())
+        .collect();
+    let offered: Vec<&str> = offers.iter().map(|id| id.as_ref()).collect();
     let region = Region {
         backend: formed.backend,
         nodes: &nodes,
@@ -96,8 +105,48 @@ pub(super) fn compile_region(
             merge_allowed: cx.merge_allowed,
             freeze_params: cx.freeze_params,
             sharing: &sharing,
+            lent,
+            offered: &offered,
         },
     )
+}
+
+/// The room lent for each of the region's outputs placed in a space another backend offers: asked
+/// of that backend, for the nodes of its that read the output.
+pub(super) fn lent_rooms(
+    cx: &Compiling<'_>,
+    backends: &[&dyn Backend],
+    formed: &Formed,
+    placed: &[&str],
+) -> Vec<LentRoom> {
+    let mut rooms = Vec::new();
+    for (port, space) in formed.outputs.iter().zip(placed) {
+        let offering = backends.iter().enumerate().find(|(rank, backend)| {
+            *rank != usize::from(formed.backend.0) && backend.offers().iter().any(|id| id == space)
+        });
+        let Some((rank, backend)) = offering else {
+            continue;
+        };
+        let node = &cx.graph.nodes[port.node.0 as usize];
+        let Some(output) = node.outputs.get(usize::from(port.port.0)) else {
+            continue;
+        };
+        let readers: Vec<&str> = cx
+            .graph
+            .edges
+            .iter()
+            .filter(|edge| edge.from.node == port.node.0 && edge.from.port == output.name)
+            .filter(|edge| {
+                matches!(cx.assignment.placed[edge.to.node as usize],
+                    Placed::Backend(at) if usize::from(at.0) == rank)
+            })
+            .map(|edge| cx.graph.nodes[edge.to.node as usize].doc.id.as_str())
+            .collect();
+        if let Some(room) = backend.bind_offer(space, &readers) {
+            rooms.push(LentRoom { port: *port, room });
+        }
+    }
+    rooms
 }
 
 /// How each output of the region's nodes is consumed. An output with one consumer that takes it by

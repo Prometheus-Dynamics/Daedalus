@@ -20,6 +20,7 @@ pub struct Telemetry {
     agreed: AtomicU64,
     placed_in: AtomicU64,
     placed_out: AtomicU64,
+    passed_in: AtomicU64,
     fd_sends: AtomicU64,
     outs_full: AtomicU64,
 }
@@ -54,6 +55,10 @@ pub struct Snapshot {
     pub placed_in: u64,
     /// Output values a worker wrote into lent memory that a cell then held, with no copy.
     pub placed_out: u64,
+    /// Input values that were in lent memory already, sent as the place they are at with no copy:
+    /// a node on the host wrote them in room the worker's memory lent it, or the worker wrote them
+    /// as an earlier output. Counted in `placed_in` too.
+    pub passed_in: u64,
     /// Descriptors sent to workers. A buffer goes once, so a steady run sends none.
     pub fd_sends: u64,
     /// Runs with every value buffer still held by cells: the worker sent that run's output
@@ -85,6 +90,8 @@ pub(crate) enum Count {
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     PlacedOut,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    PassedIn,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     FdSends(u64),
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     OutsFull,
@@ -108,6 +115,7 @@ impl Telemetry {
             Count::Agree => (&self.agreed, 1),
             Count::PlacedIn => (&self.placed_in, 1),
             Count::PlacedOut => (&self.placed_out, 1),
+            Count::PassedIn => (&self.passed_in, 1),
             Count::FdSends(n) => (&self.fd_sends, n),
             Count::OutsFull => (&self.outs_full, 1),
         };
@@ -131,6 +139,7 @@ impl Telemetry {
             agreed: self.agreed.load(Ordering::Relaxed),
             placed_in: self.placed_in.load(Ordering::Relaxed),
             placed_out: self.placed_out.load(Ordering::Relaxed),
+            passed_in: self.passed_in.load(Ordering::Relaxed),
             fd_sends: self.fd_sends.load(Ordering::Relaxed),
             outs_full: self.outs_full.load(Ordering::Relaxed),
         }

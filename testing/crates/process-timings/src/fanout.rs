@@ -12,6 +12,13 @@
 //! - `fan`: the producer, the CPU reader and the worker's reader.
 //!
 //! The CPU reader's cost is `host - producer` with no worker, and `fan - worker` beside one.
+//!
+//! Each shape is run with two producers: one that returns its list (`vec`), and one that writes it
+//! through an `OutView` (`view`), which the planner places in the worker's lent memory when a
+//! worker reads it, so the producer writes where the worker reads and nothing is copied.
+//!
+//! For a profiler: `DAEDALUS_FAN_ONLY=shape:producer:graph:bytes` runs that one graph alone, and
+//! `DAEDALUS_FAN_WORKER_FIRST=1` puts the worker's reader before the CPU reader in the graph.
 
 use std::path::Path;
 use std::time::Instant;
@@ -20,6 +27,7 @@ use daedalus::layers::planner::explain::explain_plan;
 use daedalus::prelude::*;
 use daedalus_backend_process::{ProcessBackend, WorkerSpec};
 use daedalus_cpu::CpuBackend;
+use daedalus_cpu_author::{OutView, Refused};
 
 use crate::{median, minor_faults, p99};
 use daedalus_abi::counting::counted;
@@ -42,6 +50,14 @@ pub fn floats(n: u32) -> Vec<f32> {
     (0..n).map(|at| at as f32 * 0.5).collect()
 }
 
+#[node(id = "fan.floats_view", inputs(n))]
+pub fn floats_view(n: u32, mut out: OutView<'_, f32>) -> Result<(), Refused> {
+    for (item, at) in out.items_mut(n as usize)?.iter_mut().zip(0..n) {
+        *item = at as f32 * 0.5;
+    }
+    Ok(())
+}
+
 #[node(id = "fan.floats_sum", inputs(items), outputs(sum))]
 pub fn floats_sum(items: &[f32]) -> u32 {
     items
@@ -61,6 +77,17 @@ pub fn points(n: u32) -> Vec<Point> {
         .collect()
 }
 
+#[node(id = "fan.points_view", inputs(n))]
+pub fn points_view(n: u32, mut out: OutView<'_, Point>) -> Result<(), Refused> {
+    out.reserve_bytes(n as usize * 28)?;
+    out.extend((0..n).map(|at| Point {
+        x: at as f32,
+        response: 0.5,
+        class: (at % 7) as i32,
+        ..Point::default()
+    }))
+}
+
 #[node(id = "fan.points_sum", inputs(items), outputs(sum))]
 pub fn points_sum(items: &[Point]) -> u32 {
     items.iter().fold(0u32, |sum, p| {
@@ -74,6 +101,8 @@ struct Shape {
     name: &'static str,
     item: usize,
     producer: &'static str,
+    /// The producer that writes through an `OutView`.
+    view: &'static str,
     reader: &'static str,
     worker: &'static str,
 }
@@ -83,6 +112,7 @@ const SHAPES: [Shape; 2] = [
         name: "f32",
         item: 4,
         producer: "fan.floats",
+        view: "fan.floats_view",
         reader: "fan.floats_sum",
         worker: "sweep.floats_view",
     },
@@ -90,6 +120,7 @@ const SHAPES: [Shape; 2] = [
         name: "point28",
         item: 28,
         producer: "fan.points",
+        view: "fan.points_view",
         reader: "fan.points_sum",
         worker: "sweep.points_view",
     },
@@ -99,15 +130,19 @@ const SIZES: [usize; 3] = [4 << 10, 64 << 10, 1 << 20];
 
 /// The graph: the host feeds `n` to the producer, and takes `y` from the CPU reader and `z` from
 /// the worker's, each when it is there.
-fn graph(shape: &Shape, reader: bool, worker: bool) -> GraphBody {
-    let mut nodes = vec![format!(r#"{{"id": "{}"}}"#, shape.producer)];
+fn graph(shape: &Shape, producer: &str, reader: bool, worker: bool) -> GraphBody {
+    let mut nodes = vec![format!(r#"{{"id": "{producer}"}}"#)];
     let mut edges =
         vec![r#"{"from": {"node": 0, "port": "n"}, "to": {"node": 1, "port": "n"}}"#.to_owned()];
     let mut ports = vec![r#""n": "u32""#];
-    for (on, id, input, output) in [
+    let mut readers = [
         (reader, shape.reader, "items", "y"),
         (worker, shape.worker, "in", "z"),
-    ] {
+    ];
+    if std::env::var_os("DAEDALUS_FAN_WORKER_FIRST").is_some() {
+        readers.reverse();
+    }
+    for (on, id, input, output) in readers {
         if !on {
             continue;
         }
@@ -142,8 +177,10 @@ fn load(program: &Path, graph: &GraphBody) -> (LoadedHost, usize) {
     registry
         .register_all(&[
             &FLOATS_NODE,
+            &FLOATS_VIEW_NODE,
             &FLOATS_SUM_NODE,
             &POINTS_NODE,
+            &POINTS_VIEW_NODE,
             &POINTS_SUM_NODE,
         ])
         .expect("the CPU nodes register");
@@ -206,37 +243,59 @@ fn time(host: &mut LoadedHost, n: u32, outputs: &[&str], runs: usize) -> (f64, f
 
 /// Runs the fan-out with the sweep worker at `program`, `runs` timed ticks per graph.
 pub fn fanout(program: &Path, runs: usize) {
+    let only = std::env::var("DAEDALUS_FAN_ONLY").ok();
     for shape in &SHAPES {
-        let graphs = [
-            ("producer", graph(shape, false, false), &[][..]),
-            ("host", graph(shape, true, false), &["y"][..]),
-            ("worker", graph(shape, false, true), &["z"][..]),
-            ("fan", graph(shape, true, true), &["y", "z"][..]),
-        ];
-        let mut loaded: Vec<(&str, LoadedHost, usize, &[&str])> = graphs
-            .into_iter()
-            .map(|(name, graph, outputs)| {
-                let (host, decodes) = load(program, &graph);
-                (name, host, decodes, outputs)
-            })
-            .collect();
-        for size in SIZES {
-            let n = (size / shape.item) as u32;
-            let mut line = format!("fanout shape {} bytes {size} items {n}", shape.name);
-            let mut medians = [0.0; 4];
-            for (at, (name, host, decodes, outputs)) in loaded.iter_mut().enumerate() {
-                let (ns, tail, faults, allocations) = time(host, n, outputs, runs);
-                medians[at] = ns;
-                line.push_str(&format!(
-                    " {name}_ns {ns:.0} {name}_p99_ns {tail:.0} {name}_decodes {decodes} {name}_faults_per_1000 {faults:.0} {name}_allocs_per_tick {allocations:.2}"
-                ));
+        for (kind, producer) in [("vec", shape.producer), ("view", shape.view)] {
+            let graphs = [
+                ("producer", graph(shape, producer, false, false), &[][..]),
+                ("host", graph(shape, producer, true, false), &["y"][..]),
+                ("worker", graph(shape, producer, false, true), &["z"][..]),
+                ("fan", graph(shape, producer, true, true), &["y", "z"][..]),
+            ];
+            let chosen = |name: &str, size: usize| {
+                only.as_deref()
+                    .is_none_or(|only| only == format!("{}:{kind}:{name}:{size}", shape.name))
+            };
+            let mut loaded: Vec<(&str, LoadedHost, usize, &[&str])> = graphs
+                .into_iter()
+                .filter(|(name, _, _)| SIZES.iter().any(|size| chosen(name, *size)))
+                .map(|(name, graph, outputs)| {
+                    let (host, decodes) = load(program, &graph);
+                    (name, host, decodes, outputs)
+                })
+                .collect();
+            for size in SIZES {
+                let n = (size / shape.item) as u32;
+                let mut line = format!(
+                    "fanout shape {} producer {kind} bytes {size} items {n}",
+                    shape.name
+                );
+                let mut medians = [None; 4];
+                for (name, host, decodes, outputs) in loaded.iter_mut() {
+                    if !chosen(name, size) {
+                        continue;
+                    }
+                    let (ns, tail, faults, allocations) = time(host, n, outputs, runs);
+                    let at = ["producer", "host", "worker", "fan"]
+                        .iter()
+                        .position(|one| one == name)
+                        .unwrap_or(0);
+                    medians[at] = Some(ns);
+                    line.push_str(&format!(
+                        " {name}_ns {ns:.0} {name}_p99_ns {tail:.0} {name}_decodes {decodes} {name}_faults_per_1000 {faults:.0} {name}_allocs_per_tick {allocations:.2}"
+                    ));
+                }
+                if let [Some(producer), Some(host), Some(worker), Some(fan)] = medians {
+                    line.push_str(&format!(
+                        " cpu_reader_alone_ns {:.0} cpu_reader_beside_worker_ns {:.0}",
+                        host - producer,
+                        fan - worker
+                    ));
+                }
+                if medians.iter().any(Option::is_some) {
+                    println!("{line}");
+                }
             }
-            let [producer, host, worker, fan] = medians;
-            println!(
-                "{line} cpu_reader_alone_ns {:.0} cpu_reader_beside_worker_ns {:.0}",
-                host - producer,
-                fan - worker
-            );
         }
     }
 }

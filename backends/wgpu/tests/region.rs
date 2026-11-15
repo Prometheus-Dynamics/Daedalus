@@ -190,6 +190,8 @@ fn compile(backend: &WgpuBackend, chain: &Chain, outputs: &[PortRef]) -> StepUni
         merge_allowed: true,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     let Compiled::Steps(mut units) = backend.compile(&region, &cx).expect("compiles") else {
         panic!("a region of shaders compiles to steps");
@@ -367,6 +369,8 @@ fn what_cannot_run_is_refused_or_faults_and_names_the_node() {
         merge_allowed: true,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     };
     let refused = backend.compile(&region, &cx).expect_err("not a shader");
     assert_eq!(refused.nodes, [NodeIndex(1)]);

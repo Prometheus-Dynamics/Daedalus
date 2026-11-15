@@ -9,6 +9,14 @@
 //!
 //! The records are pooled: one is made the first time no free one is left, and reused after, so
 //! a steady run makes none.
+//!
+//! Regions that can be written ([`WritableRegions`]) are also lent out a range at a time, to be
+//! written before they are handed over: [`HeldRegions::lease`] gives a [`Lease`] of room in one
+//! region, which holds the region as a hand-over does, and becomes one when it is sealed. A lease
+//! starts at the front of a region nothing holds, so a value still read while the next is written
+//! leaves the next to another region; when every other region is held, leases follow one another
+//! in the one region leases are taken in. A region a writer elsewhere is told to write
+//! in is claimed ([`HeldRegions::claim`]), and is never the region leases are taken in.
 
 #![cfg(feature = "std")]
 
@@ -18,16 +26,43 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::{BytesC, HandedRecord, SharedBytes};
 
+mod lease;
+
+use lease::{Counts, Lending};
+pub use lease::{Lease, LeaseCounts, Lend};
+
 /// Regions of memory that stay at the same address, unchanged by anyone but their writer, for as
-/// long as `self` lives. A region read through [`Regions::region`] is handed over as it is.
+/// long as `self` lives, wherever `self` is moved. A region read through [`Regions::region`] is
+/// handed over as it is.
 pub trait Regions: Send + Sync + 'static {
     /// Region `index`, or None when there is no such region.
     fn region(&self, index: usize) -> Option<&[u8]>;
 }
 
+/// [`Regions`] this process may write, through [`HeldRegions::lease`].
+pub trait WritableRegions: Regions {
+    /// Region `index` to write, or None when there is no such region. The same memory as
+    /// [`Regions::region`] gives.
+    fn region_mut(&mut self, index: usize) -> Option<&mut [u8]>;
+}
+
+/// Where a region starts and how long it is, taken once when the regions are held.
+#[derive(Clone, Copy)]
+struct Base {
+    ptr: NonNull<u8>,
+    len: usize,
+}
+
 /// The regions of a [`Regions`], and who holds them.
 pub struct HeldRegions<R: Regions> {
+    /// Kept for its memory, which `bases` points into.
+    #[allow(dead_code)]
     regions: R,
+    bases: Box<[Base]>,
+    /// The regions can be written, so they can be leased.
+    writable: bool,
+    lending: Mutex<Lending>,
+    counts: Counts,
     /// For each region, how many records hold a range of it.
     holds: Box<[AtomicUsize]>,
     /// Records no one holds, ready to be filled again.
@@ -45,12 +80,46 @@ unsafe impl<R: Regions> Sync for HeldRegions<R> {}
 impl<R: Regions> HeldRegions<R> {
     /// Regions `0 .. count` of `regions`.
     pub fn new(regions: R, count: usize) -> Arc<HeldRegions<R>> {
+        let bases = (0..count)
+            .map(|at| {
+                let region = regions.region(at).unwrap_or_default();
+                Base {
+                    ptr: NonNull::from(region).cast(),
+                    len: region.len(),
+                }
+            })
+            .collect();
+        HeldRegions::with_bases(regions, bases, false)
+    }
+
+    fn with_bases(regions: R, bases: Box<[Base]>, writable: bool) -> Arc<HeldRegions<R>> {
         Arc::new(HeldRegions {
+            holds: bases.iter().map(|_| AtomicUsize::new(0)).collect(),
             regions,
-            holds: (0..count).map(|_| AtomicUsize::new(0)).collect(),
+            bases,
+            writable,
+            lending: Mutex::new(Lending::default()),
+            counts: Counts::default(),
             free: Mutex::new(Vec::new()),
             made: Mutex::new(Vec::new()),
         })
+    }
+
+    /// The bytes `offset .. offset + len` of region `region`, if they are inside it.
+    fn range(&self, region: usize, offset: usize, len: usize) -> Option<&[u8]> {
+        let base = self.bases.get(region)?;
+        if offset.checked_add(len)? > base.len {
+            return None;
+        }
+        if len == 0 {
+            return Some(&[]);
+        }
+        // No lease of these bytes is written while they are read: a range is adopted only once
+        // written (`Lease::seal`), or from a claimed region, which leases are never taken in.
+        let start = base.ptr.as_ptr();
+        // SAFETY: the range is inside the region, which stays mapped and in place while `self`
+        // lives (the `Regions` contract), and the slice borrows `self`.
+        Some(unsafe { core::slice::from_raw_parts(start.add(offset), len) })
     }
 
     /// How many regions there are.
@@ -63,6 +132,45 @@ impl<R: Regions> HeldRegions<R> {
         self.holds
             .iter()
             .position(|holds| holds.load(Ordering::Acquire) == 0)
+    }
+
+    /// Claims a region no one holds and leases are not taken in, for a writer elsewhere to write
+    /// in: it is held until [`HeldRegions::unclaim`]. None when every region is held.
+    pub fn claim(&self) -> Option<usize> {
+        let lending = self.lending.lock().unwrap_or_else(PoisonError::into_inner);
+        let at = (0..self.holds.len()).find(|&at| {
+            Some(at) != lending.region && self.holds[at].load(Ordering::Acquire) == 0
+        })?;
+        self.holds[at].fetch_add(1, Ordering::AcqRel);
+        Some(at)
+    }
+
+    /// Lets go of a region [`HeldRegions::claim`] gave.
+    pub fn unclaim(&self, region: usize) {
+        if let Some(holds) = self.holds.get(region) {
+            holds.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+
+    /// How many holders region `region` has: hand-overs, leases and a claim.
+    pub fn holders(&self, region: usize) -> usize {
+        self.holds
+            .get(region)
+            .map_or(0, |holds| holds.load(Ordering::Acquire))
+    }
+
+    /// Where `bytes` are, when they are a hand-over of these regions: the region and the offset
+    /// in it.
+    pub fn locate(self: &Arc<HeldRegions<R>>, bytes: &SharedBytes) -> Option<(usize, usize)> {
+        // SAFETY: `bytes` holds a count, so its record is live.
+        let fields = unsafe { bytes.record().as_ref() };
+        if fields.home != Arc::as_ptr(self).cast() {
+            return None;
+        }
+        let region = fields.bytes.data as usize;
+        let base = self.bases.get(region)?;
+        let offset = (fields.bytes.ptr as usize).checked_sub(base.ptr.as_ptr() as usize)?;
+        (offset.checked_add(fields.bytes.len)? <= base.len).then_some((region, offset))
     }
 
     /// How many records were made: one for each hand-over held at once, at most.
@@ -82,16 +190,8 @@ impl<R: Regions> HeldRegions<R> {
         len: usize,
     ) -> Option<SharedBytes> {
         let holds = self.holds.get(region)?;
-        let bytes = self
-            .regions
-            .region(region)?
-            .get(offset..offset.checked_add(len)?)?;
-        let reused = self
-            .free
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pop();
-        let record = reused.unwrap_or_else(|| self.make());
+        let bytes = self.range(region, offset, len)?;
+        let record = self.record();
         holds.fetch_add(1, Ordering::AcqRel);
         // SAFETY: the record came off the free list or was just made, so nothing else touches it.
         let fields = unsafe { &mut *record.as_ptr() };
@@ -110,6 +210,16 @@ impl<R: Regions> HeldRegions<R> {
         // a region, which stays put while `regions` lives; the record's `keep` holds it alive
         // until the last count is let go.
         Some(unsafe { SharedBytes::from_record(record) })
+    }
+
+    /// A free record, or a new one when none is free.
+    fn record(&self) -> NonNull<HandedRecord> {
+        let reused = self
+            .free
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pop();
+        reused.unwrap_or_else(|| self.make())
     }
 
     /// A new record, kept in `made` so the last holder frees it.

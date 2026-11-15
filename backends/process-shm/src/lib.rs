@@ -42,6 +42,8 @@ mod worker;
 #[cfg(target_os = "linux")]
 pub use fds::SLOTS;
 #[cfg(target_os = "linux")]
+pub use held::Rooms;
+#[cfg(target_os = "linux")]
 pub use linux::{Borrower, Lender, ShmError, is_socket, recv_packet};
 pub use worker::{Inbox, Incoming, Lent, PLAIN_LINE, Reads, View, Writes};
 

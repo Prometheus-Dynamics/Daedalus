@@ -65,6 +65,9 @@ pub(crate) struct Shared {
     pub telemetry: Arc<Telemetry>,
     pub log: Arc<crate::log::LogSink>,
     pub state: Mutex<Supervisor>,
+    /// Room in the worker's value buffers, for nodes on the host that write its inputs.
+    #[cfg(target_os = "linux")]
+    pub rooms: Arc<daedalus_process_shm::Rooms>,
 }
 
 impl Shared {
@@ -165,6 +168,8 @@ fn start(shared: &Shared) -> Result<Worker, String> {
         worker.kill();
         return Err(format!("{}: {reason}", shared.spec.program.display()));
     }
+    #[cfg(target_os = "linux")]
+    worker.point_rooms(&shared.rooms);
     Ok(worker)
 }
 
@@ -258,6 +263,8 @@ impl WorkerStep {
         let features = worker.features();
         if by_reference {
             worker.begin_run(telemetry);
+            #[cfg(target_os = "linux")]
+            worker.point_rooms(&self.shared.rooms);
         }
         out.u8(daedalus_wire::kind::RUN);
         out.u64(run);
@@ -293,12 +300,18 @@ impl WorkerStep {
             let ty = self.port_type(*binding, Dir::Input);
             // Otherwise the form, when there is one, said its bytes follow: they are written as
             // without it.
-            if values::by_place(features, ty) && values::put_placed(worker, ty, &input, out)? {
-                telemetry.bump(Count::PlacedIn);
-                continue;
+            if values::by_place(features, ty) {
+                let how = values::put_placed(worker, ty, &input, out)?;
+                if how == values::Sent::Passed {
+                    telemetry.bump(Count::PassedIn);
+                }
+                if how != values::Sent::Inline {
+                    telemetry.bump(Count::PlacedIn);
+                    continue;
+                }
             }
             match input {
-                values::Input::Bytes(bytes) => {
+                values::Input::Bytes(bytes) | values::Input::Handed(_, bytes) => {
                     put_raw(ty, bytes, out)?;
                     sent += bytes.len();
                 }
@@ -726,6 +739,10 @@ impl WorkerStep {
                     text.push_str(tail.trim_end());
                 }
                 worker.kill();
+                // Nothing reads the memory it was lent: a node on the host writes its values as
+                // it would without it until a worker is lent memory again.
+                #[cfg(target_os = "linux")]
+                shared.rooms.clear();
             }
         }
         say(cx, None, &text);

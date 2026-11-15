@@ -46,6 +46,8 @@ fn cx() -> CompileCx<'static> {
         merge_allowed: true,
         freeze_params: false,
         sharing: &[],
+        lent: &[],
+        offered: &[],
     }
 }
 

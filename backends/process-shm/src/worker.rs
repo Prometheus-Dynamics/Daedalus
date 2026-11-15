@@ -369,6 +369,10 @@ impl View<'_> {
                 #[cfg(target_os = "linux")]
                 to_worker: 0,
                 #[cfg(target_os = "linux")]
+                values: &[],
+                #[cfg(target_os = "linux")]
+                out: None,
+                #[cfg(target_os = "linux")]
                 fds: None,
                 _of: std::marker::PhantomData,
             },
@@ -391,6 +395,12 @@ pub struct Reads<'a> {
     pub(crate) view: Option<&'a shm_ring_buffers::PoolView>,
     #[cfg(target_os = "linux")]
     pub(crate) to_worker: u32,
+    /// The value buffers, which hold values the host wrote there or a worker's earlier outputs.
+    #[cfg(target_os = "linux")]
+    pub(crate) values: &'a [u32],
+    /// The value buffer this run's outputs go in, which is never read as an input.
+    #[cfg(target_os = "linux")]
+    pub(crate) out: Option<u32>,
     #[cfg(target_os = "linux")]
     pub(crate) fds: Option<&'a crate::fds::FdTable>,
     pub(crate) _of: std::marker::PhantomData<&'a ()>,
@@ -405,11 +415,15 @@ impl<'a> Reads<'a> {
             let start = usize::try_from(place.offset).ok()?;
             let end = start.checked_add(usize::try_from(place.len).ok()?)?;
             match place.at {
-                At::Lent(buffer) if buffer == self.to_worker => self
-                    .view?
-                    .read_bytes(shm_ring_buffers::BufferIndex(buffer))
-                    .ok()?
-                    .get(start..end),
+                At::Lent(buffer)
+                    if buffer == self.to_worker
+                        || (self.values.contains(&buffer) && Some(buffer) != self.out) =>
+                {
+                    self.view?
+                        .read_bytes(shm_ring_buffers::BufferIndex(buffer))
+                        .ok()?
+                        .get(start..end)
+                }
                 At::Lent(_) => None,
                 At::Fd(slot) => self.fds?.bytes(slot, place.offset, place.len),
             }
