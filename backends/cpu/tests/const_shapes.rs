@@ -91,6 +91,8 @@ fn refusal(record: &NodeRecord, port: &'static str, literal: &Lit) -> String {
         inputs: 1,
         consts: &consts,
         keep: &[],
+        wire_inputs: 0,
+        id: "test",
     };
     match (body.make)(&setup) {
         Ok(_) => panic!("the constant was taken"),

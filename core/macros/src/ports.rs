@@ -270,6 +270,7 @@ pub(crate) fn shape(
         let ty = fill_type(&param.ty)?;
         shape.params.extend(quote!(#ident: #ty,));
         // A slice or a `str` is read out of the list or string that holds it.
+        let slice = matches!(&ty, Type::Reference(r) if r.mutability.is_none() && matches!(&*r.elem, Type::Slice(_)));
         let ty = held(ty);
         let is_state = matches!(&ty, Type::Reference(r) if r.mutability.is_some())
             && args
@@ -318,7 +319,11 @@ pub(crate) fn shape(
         let port_name = name.clone();
         let inner = generic_of(&ty, "Option").and_then(|a| a.first().copied());
         let value = unref(inner.unwrap_or(&ty)).clone();
-        let (port, modifies, role) = input_port(name, ident.span(), &ty, arg);
+        let (port, modifies, mut role) = input_port(name, ident.span(), &ty, arg);
+        // A slice of a list's items, which a backend can view where the list's bytes are.
+        if slice {
+            role = syn::Ident::new("items", role.span());
+        }
         shape
             .bind
             .extend(quote!(#role #at #port_name #ident: #value,));

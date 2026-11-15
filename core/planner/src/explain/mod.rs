@@ -74,12 +74,26 @@ pub struct UnitExplain {
     pub covers: Vec<u32>,
 }
 
+/// An input a step converts as it reads it: from the form the value arrived in to the type its
+/// node reads. Listed like a transfer, so the cost shows.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DecodeExplain {
+    pub node: u32,
+    pub port: String,
+    /// The type the node reads.
+    pub ty: String,
+    pub reason: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Explain {
     pub nodes: Vec<NodeExplain>,
     pub edges: Vec<EdgeExplain>,
     pub regions: Vec<RegionExplain>,
     pub units: Vec<UnitExplain>,
+    /// Left out when there are none, as in a record written before steps listed them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decodes: Vec<DecodeExplain>,
 }
 
 fn reason(reason: &Reason) -> PlaceReason {
@@ -179,6 +193,20 @@ fn port_name(graph: &Graph, port: &PortRef, inputs: bool) -> PortExplain {
     }
 }
 
+fn decodes(graph: &Graph, compiled: &Compiled, out: &mut Vec<DecodeExplain>) {
+    let Compiled::Steps(units) = compiled else {
+        return;
+    };
+    for decode in units.iter().flat_map(|unit| &unit.info.decodes) {
+        out.push(DecodeExplain {
+            node: decode.input.node.0,
+            port: port_name(graph, &decode.input, true).port,
+            ty: decode.ty.to_string(),
+            reason: decode.reason.to_string(),
+        });
+    }
+}
+
 fn covers(compiled: &Compiled) -> Vec<Vec<u32>> {
     let of = |covers: &[NodeIndex]| covers.iter().map(|n| n.0).collect();
     match compiled {
@@ -215,6 +243,7 @@ pub fn explain_plan(planned: &Planned) -> Explain {
         .map(|edge| edge_explain(planned, edge))
         .collect();
     let mut units = Vec::new();
+    let mut converted = Vec::new();
     let mut described = Vec::new();
     for (at, region) in regions.regions.iter().enumerate() {
         let formed = &region.formed;
@@ -235,6 +264,7 @@ pub fn explain_plan(planned: &Planned) -> Explain {
                 .map(|p| port_name(graph, p, false))
                 .collect(),
         });
+        decodes(graph, &region.compiled, &mut converted);
         for (unit, covers) in covers(&region.compiled).into_iter().enumerate() {
             units.push(UnitExplain {
                 region: at as u32,
@@ -248,5 +278,6 @@ pub fn explain_plan(planned: &Planned) -> Explain {
         edges,
         regions: described,
         units,
+        decodes: converted,
     }
 }

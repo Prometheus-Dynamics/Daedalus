@@ -100,6 +100,7 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
                 backend,
                 &routing.incoming_of(region),
                 &routing.placed_of(&one.outputs),
+                &routing.read_in_of(&one.inputs),
             ) {
                 Ok(compiled) => {
                     if let Err(error) = check_contract(one, region as u32, backend.id(), &compiled)

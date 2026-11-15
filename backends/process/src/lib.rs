@@ -18,6 +18,7 @@ mod region;
 mod spec;
 mod supervise;
 mod telemetry;
+mod wire_space;
 
 pub use backoff::{BASE_DELAY, MAX_DELAY, delay_after};
 pub use daedalus_wire::LogLevel;
@@ -27,3 +28,4 @@ pub use log::WorkerLog;
 pub use region::{BACKEND_ID, HOST, ProcessBackend};
 pub use spec::WorkerSpec;
 pub use telemetry::Snapshot;
+pub use wire_space::{CPU_WIRE, FROM_WORKER, TO_WORKER};

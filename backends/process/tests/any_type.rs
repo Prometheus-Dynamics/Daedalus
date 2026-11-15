@@ -101,15 +101,16 @@ fn a_small_list_stays_in_its_packet() {
 }
 
 /// The threshold follows what the worker agreed: 4 KiB for one that takes any type by reference
-/// (where the board measured a placed list beat the socket), 64 KiB for any other, and what the
-/// spec names over both.
+/// (where the board measured a placed list beat the socket), 2 KiB for any other, and what the
+/// spec names over both. A worker that takes bytes alone by reference never gets a list as a
+/// place, whatever its size.
 #[test]
 fn the_threshold_follows_what_the_worker_agreed() {
     let placed = |worker: daedalus_backend_process::WorkerSpec| {
         let mut backend = ProcessBackend::new();
         backend.add_worker(worker, &registry()).expect("registers");
         let mut step = step_of(&backend, "fixture.list_reverse");
-        // 16 KiB of items: past the any-type threshold, short of the bytes one.
+        // 16 KiB of items: past either threshold.
         let out = reversed_list(&mut step, 4 << 10);
         daedalus_runner::drop_owned(out);
         release(step);

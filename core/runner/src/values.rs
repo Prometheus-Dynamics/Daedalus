@@ -204,6 +204,26 @@ pub fn put_inline(cell: &mut Slot, ty: TypeIndex, space: SpaceIndex, bytes: &[u8
     Some(())
 }
 
+/// Hands a full cell's value on to `out` as it is, whatever owns it: the cell's reference moves,
+/// or from a [`LENT`] cell another reference is taken and the cell stays as it is. Nothing is
+/// copied and nothing is read; an inline value's bytes are copied when the step's outputs are
+/// published, as any inline output's are. Returns false for a cell that isn't full.
+pub fn hand_on(cell: &mut Slot, out: &mut Slot) -> bool {
+    if cell.state != SlotState::Full as u32 {
+        return false;
+    }
+    let mut raw = *cell;
+    if cell.reserved & LENT != 0 {
+        // SAFETY: a full cell owns a live reference, and the output takes one of its own.
+        unsafe { owned::retain(cell) };
+        raw.reserved &= !LENT;
+    } else {
+        cell.state = SlotState::Moved as u32;
+    }
+    put(out, raw);
+    true
+}
+
 /// Takes the count a full handed cell holds, and leaves the cell moved, so the runner doesn't
 /// release it again. The count moves into the returned handle, with no copy and no allocation.
 /// From a [`LENT`] cell the handle gets a count of its own, and the cell stays as it is.

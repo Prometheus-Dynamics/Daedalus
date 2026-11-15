@@ -15,9 +15,12 @@
 
 #![forbid(unsafe_code)]
 
-/// The smallest packet that goes in a buffer, in bytes: the default capacity of a pipe, below
-/// which one write on the socket is one wake-up of the reader.
-pub const THRESHOLD: usize = 64 * 1024;
+/// The smallest packet or value that goes in a buffer, in bytes, for a worker that agreed whole
+/// packets in shared memory, or values by reference for bytes alone. On a CM5 both are no slower
+/// than the socket from 512 bytes to 2 KiB in every round, and faster from there: at 64 KiB a
+/// whole packet takes half the socket's time and a value by reference a sixth
+/// (testing/board-runs/cpu-wire.md).
+pub const THRESHOLD: usize = 2 * 1024;
 
 /// The smallest packet or value that goes in a buffer for a worker that agreed values by reference
 /// of any type, in bytes. On a CM5 a list placed and read where it is beats the socket from about

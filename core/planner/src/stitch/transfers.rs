@@ -128,6 +128,24 @@ impl Routing {
             .collect()
     }
 
+    /// For each of a region's inputs, the space its node reads the value from. Empty when none of
+    /// them has a value to read.
+    pub(crate) fn read_in_of(&self, inputs: &[PortRef]) -> Vec<&str> {
+        let space = |input: &PortRef| {
+            self.readers
+                .get(input)
+                .map(|reader| self.spaces[reader.space].as_str())
+        };
+        let read: Vec<Option<&str>> = inputs.iter().map(space).collect();
+        // An input with nothing on its edge reads nothing, so any space names it.
+        let Some(known) = read.iter().flatten().next().copied() else {
+            return Vec::new();
+        };
+        read.into_iter()
+            .map(|space| space.unwrap_or(known))
+            .collect()
+    }
+
     fn space(&mut self, id: &str) -> usize {
         match self.spaces.iter().position(|known| known == id) {
             Some(at) => at,

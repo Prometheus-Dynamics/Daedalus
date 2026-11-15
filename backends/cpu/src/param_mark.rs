@@ -57,7 +57,8 @@ pub(crate) fn marks<'a>(body: &NodeBody<'a>, cx: &CompileCx<'_>) -> Result<Vec<M
     }
 }
 
-/// What `port` is called outside the module.
+/// What `port` is called outside the module. Only generated source names it.
+#[cfg(feature = "source")]
 pub(crate) fn param_name(body: &NodeBody<'_>, port: &str) -> String {
     format!("{}.{port}", body.label.unwrap_or(body.id))
 }

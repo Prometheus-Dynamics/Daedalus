@@ -84,6 +84,7 @@ impl Backend for Test {
             writes: region.outputs.to_vec(),
             absorbed: Vec::new(),
             may_pend: false,
+            decodes: Vec::new(),
         };
         let step = Step::boxed(AddOne {
             log: Arc::clone(&self.log),

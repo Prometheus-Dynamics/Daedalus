@@ -11,8 +11,9 @@ pub use daedalus_planner::{Config, Planned, plan};
 /// Writing nodes: the one macro, and the derives for config structs and value types. The code
 /// they generate names `daedalus_registry` and the backend's authoring crate, so a crate that
 /// writes nodes depends on those two as well as on this one.
-pub use daedalus_derive::{FromLiteral, NodeConfig, Type};
+pub use daedalus_derive::{FromLiteral, NodeConfig, Type, WireForm};
 pub use daedalus_macros::node;
+pub use daedalus_types::WireForm;
 
 /// Reading a graph document, registering nodes, and reading what a run recorded.
 #[cfg(feature = "std")]

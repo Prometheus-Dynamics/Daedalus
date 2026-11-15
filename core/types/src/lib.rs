@@ -17,6 +17,7 @@ mod key;
 mod literal;
 mod scalar;
 mod typed;
+mod wire_form;
 
 pub use error::{Code, Error};
 pub use expr::{Field, TypeExpr, Variant};
@@ -29,3 +30,4 @@ pub use key::TypeKey;
 pub use literal::{FromLiteral, Literal, literal_field};
 pub use scalar::Scalar;
 pub use typed::{STRUCTURAL_KEY, Typed};
+pub use wire_form::{WireForm, flat_layout};

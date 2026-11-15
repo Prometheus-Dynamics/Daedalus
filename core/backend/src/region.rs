@@ -45,6 +45,10 @@ pub struct Region<'a> {
     /// backend's first, or one of its [`Backend::placements`](crate::Backend::placements).
     /// Empty when every output is in the first.
     pub placed: &'a [&'a str],
+    /// For each of `inputs`, the id of the space its node reads the value from: where the value
+    /// was written, or where the last of its transfers puts it. Empty when every input reads from
+    /// the backend's first space.
+    pub read_in: &'a [&'a str],
     pub rate: RateId,
 }
 

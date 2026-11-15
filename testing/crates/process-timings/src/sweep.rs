@@ -22,10 +22,10 @@ use crate::{median, p99};
 
 /// How much slower than the socket a placed run may be and still count as no slower: the runs'
 /// own spread.
-const TOLERANCE: f64 = 1.05;
+pub(crate) const TOLERANCE: f64 = 1.05;
 
 /// The sizes swept, in bytes of items: 512 bytes to 4 MiB, doubling.
-const SIZES: [usize; 14] = [
+pub(crate) const SIZES: [usize; 14] = [
     512,
     1 << 10,
     2 << 10,
@@ -95,7 +95,7 @@ fn list(count: usize, item: usize) -> Vec<u8> {
 }
 
 /// The median and 99th percentile of `runs` runs of `step` on `value`, in nanoseconds.
-fn time(step: &mut Step, value: &mut [u8], runs: usize) -> (f64, f64) {
+pub(crate) fn time(step: &mut Step, value: &mut [u8], runs: usize) -> (f64, f64) {
     let mut cells = [full(value), Slot::EMPTY];
     let mut cx = StepCx::new();
     let mut run = || {
@@ -162,7 +162,7 @@ pub fn sweep(program: &Path, runs: usize) {
 
 /// The smallest size from which `placed` is no slower than the socket at every larger size, or
 /// `none` when the largest is slower.
-fn threshold(
+pub(crate) fn threshold(
     rows: &[(usize, f64, f64, f64)],
     placed: fn(&(usize, f64, f64, f64)) -> f64,
 ) -> String {

@@ -22,7 +22,10 @@ daedalus-dma-sys = { path = "../dma-sys" }
 daedalus-dmabuf = { path = "../dmabuf" }
 
 [dev-dependencies]
+daedalus = { path = "../../core/daedalus", features = ["std"] }
 daedalus-abi = { path = "../../core/abi", features = ["count-alloc", "test-run"] }
+daedalus-cpu = { path = "../cpu" }
+daedalus-cpu-author = { path = "../cpu-author" }
 daedalus-runner = { path = "../../core/runner" }
 daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance" }
 

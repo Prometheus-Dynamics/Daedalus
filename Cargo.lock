@@ -469,8 +469,11 @@ dependencies = [
 name = "daedalus-backend-process"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus",
  "daedalus-abi",
  "daedalus-backend",
+ "daedalus-cpu",
+ "daedalus-cpu-author",
  "daedalus-dma-sys",
  "daedalus-dmabuf",
  "daedalus-loader",
@@ -1016,9 +1019,12 @@ dependencies = [
 name = "daedalus-process-timings"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus",
  "daedalus-abi",
  "daedalus-backend",
  "daedalus-backend-process",
+ "daedalus-cpu",
+ "daedalus-cpu-author",
  "daedalus-lang-rust",
  "daedalus-macros",
  "daedalus-registry",
@@ -1169,6 +1175,8 @@ name = "daedalus-wire"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-abi",
+ "daedalus-derive",
+ "daedalus-registry",
  "daedalus-types",
 ]
 

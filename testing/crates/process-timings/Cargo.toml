@@ -8,9 +8,12 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+daedalus = { path = "../../../core/daedalus", features = ["std"] }
 daedalus-abi = { path = "../../../core/abi", features = ["count-alloc", "test-run"] }
 daedalus-backend = { path = "../../../core/backend" }
 daedalus-backend-process = { path = "../../../backends/process" }
+daedalus-cpu = { path = "../../../backends/cpu" }
+daedalus-cpu-author = { path = "../../../backends/cpu-author" }
 daedalus-lang-rust = { path = "../../../languages/rust" }
 daedalus-macros = { path = "../../../core/macros" }
 daedalus-registry = { path = "../../../core/registry" }

@@ -22,6 +22,12 @@ pub struct Setup<'a> {
     /// What each output of the node keeps between ticks, by output index. An output not listed
     /// is `Fresh`.
     pub keep: &'a [super::Keep],
+    /// Which inputs read a value in `cpu.wire`, whose cells hold their type's wire form: a bit
+    /// for each fixed input ([`ports::wire_bit`]), and [`ports::FAN_IN_WIRE`] for the fan-in.
+    /// Each is read through its type's `WireForm`.
+    pub wire_inputs: u32,
+    /// The node's id, for a refusal to name.
+    pub id: &'a str,
 }
 
 impl Setup<'_> {
@@ -107,6 +113,20 @@ impl ConstTable for Consts {
 }
 
 /// The empty table for `fixed` inputs. It only takes room if this node has a constant.
+/// Refuses an output placed in `cpu.wire` whose type has no wire form: `outputs` are each output's
+/// name, whether its type has a wire form, and the type's name.
+pub fn check_wire(setup: &Setup<'_>, outputs: &[(&str, bool, &str)]) -> Result<(), String> {
+    for (at, (name, has, ty)) in outputs.iter().enumerate() {
+        if setup.keep.get(at) == Some(&Keep::Wire) && !has {
+            return Err(format!(
+                "output {name} of {} goes to a worker, but {ty} has no wire form: add #[derive(WireForm)] to {ty}",
+                setup.id
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn consts_for(setup: &Setup<'_>, fixed: usize) -> Consts {
     let any = setup.consts.iter().any(|one| one.node == setup.node);
     let mut consts = Vec::new();

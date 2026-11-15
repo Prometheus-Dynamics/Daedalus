@@ -72,6 +72,7 @@ impl Backend for PerNode {
                     writes: ports(outputs),
                     absorbed: Vec::new(),
                     may_pend: false,
+                    decodes: Vec::new(),
                 },
             }
         };

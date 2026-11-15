@@ -12,12 +12,18 @@
 //!
 //! `process-timings sweep SWEEP_WORKER [RUNS]` instead finds where placing a value starts to
 //! pay, with the `daedalus-sweep-worker` binary this crate builds: see [`sweep`].
+//! `process-timings bytes WORKER [RUNS]` does the same for a worker that agreed bytes by
+//! reference alone, or whole packets in shared memory: see [`bytes`].
+//! `process-timings fanout SWEEP_WORKER [RUNS]` times a CPU reader beside a worker: see
+//! [`fanout`].
 //!
 //! It warms up, then times BATCHES batches of 1,000 operations and prints the median, minimum and
 //! maximum of the per-operation times, in nanoseconds. It then counts the allocations of 200 more
 //! runs on this thread, which must be zero.
 #![allow(clippy::print_stdout, clippy::print_stderr)] // the measurements and usage are this program's output
 
+mod bytes;
+mod fanout;
 mod step;
 mod sweep;
 
@@ -39,11 +45,26 @@ const WARM_UP: usize = 10_000;
 fn usage() -> ! {
     eprintln!("usage: process-timings WORKER [BATCHES] [MEGABYTES]");
     eprintln!("       process-timings sweep SWEEP_WORKER [RUNS]");
+    eprintln!("       process-timings bytes WORKER [RUNS]");
+    eprintln!("       process-timings fanout SWEEP_WORKER [RUNS]");
     std::process::exit(2);
 }
 
 fn median(sorted: &[f64]) -> f64 {
     sorted[sorted.len() / 2]
+}
+
+/// This process's minor page faults so far: memory touched for the first time. Zero on a system
+/// with no `/proc`.
+fn minor_faults() -> u64 {
+    let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
+    // The command is in parentheses and may hold spaces; minflt is the 8th field after it.
+    let after = stat.rsplit_once(')').map_or("", |(_, rest)| rest);
+    after
+        .split_whitespace()
+        .nth(7)
+        .and_then(|field| field.parse().ok())
+        .unwrap_or(0)
 }
 
 /// The 99th percentile of sorted times: the slowest with fewer than 100 runs.
@@ -54,12 +75,17 @@ fn p99(sorted: &[f64]) -> f64 {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(worker) = args.first() else { usage() };
-    if worker == "sweep" {
+    if let mode @ ("sweep" | "bytes" | "fanout") = worker.as_str() {
         let Some(program) = args.get(1) else { usage() };
         let runs = args
             .get(2)
             .map_or(101, |text| text.parse().expect("RUNS is a number"));
-        sweep::sweep(Path::new(program), runs);
+        let program = Path::new(program);
+        match mode {
+            "sweep" => sweep::sweep(program, runs),
+            "bytes" => bytes::sweep(program, runs),
+            _ => fanout::fanout(program, runs),
+        }
         return;
     }
     let batches: usize = args

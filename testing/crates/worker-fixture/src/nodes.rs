@@ -52,7 +52,17 @@ pub fn execute(
         | "fixture.optional_value"
         | "fixture.tuple_pair"
         | "fixture.map_pairs"
-        | "fixture.custom_type_key" => identity("in", "out"),
+        | "fixture.custom_type_key"
+        | "fixture.padded_echo"
+        | "fixture.floats_echo" => identity("in", "out"),
+        "fixture.floats_count" => match get("in")? {
+            WireValue::List(items) => Ok(vec![output(
+                node,
+                "count",
+                WireValue::U32(items.len() as u32),
+            )]),
+            _ => Err((FaultCode::BadInput, "floats_count wants a list".into())),
+        },
         "fixture.list_reverse" => match get("in")? {
             WireValue::List(mut items) => {
                 items.reverse();

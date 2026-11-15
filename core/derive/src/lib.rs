@@ -22,11 +22,23 @@ pub fn derive_node_config(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Generates `Typed` for a struct or enum.
-#[proc_macro_derive(Type, attributes(type_key))]
+/// Generates `Typed` for a struct or enum. The type is named by its path, or by `#[type_key]`.
+/// With `#[structural]` it has no name and is compared by what it is made of, as a worker's port of
+/// the same fields is.
+#[proc_macro_derive(Type, attributes(type_key, structural))]
 pub fn derive_type(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
     ty::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Generates `WireForm` for a struct or enum: its value's wire form, written and read field by field
+/// in the order its type expression lists them, so it can cross a process.
+#[proc_macro_derive(WireForm)]
+pub fn derive_wire_form(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    ty::wire_form(&input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

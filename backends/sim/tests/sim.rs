@@ -46,6 +46,7 @@ fn compile(
         outputs: &outputs,
         incoming: &[],
         placed: &[],
+        read_in: &[],
         rate: RateId(0),
     };
     let cx = CompileCx {
@@ -114,6 +115,7 @@ fn merging_is_off_when_the_planner_says_so() {
         outputs: &[],
         incoming: &[],
         placed: &[],
+        read_in: &[],
         rate: RateId(0),
     };
     let cx = CompileCx {
@@ -266,6 +268,7 @@ fn an_import_is_absorbed_by_the_step_that_reads_it() {
         outputs: &[],
         incoming: &incoming,
         placed: &[],
+        read_in: &[],
         rate: RateId(0),
     };
     let cx = CompileCx {

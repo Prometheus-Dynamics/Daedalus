@@ -11,8 +11,39 @@ use daedalus_runner::{UNSTAMPED, put_typed, take_typed, typed_view};
 
 use daedalus_value::OwnerKind;
 
+#[cfg(feature = "alloc")]
+use super::Wire;
 use super::keep::{Keep, Keeper, take_carried};
-use super::{ConstTable, Kind};
+use super::{ConstTable, ItemsView, Kind, Listed};
+
+/// Whether the wire mask says fixed input `at` reads `cpu.wire`. Never, in a build with no
+/// allocator: it has no `cpu.wire`, and the check folds away.
+#[inline]
+fn wired(wire: u32, at: usize) -> bool {
+    cfg!(feature = "alloc") && wire & wire_bit(at) != 0
+}
+
+/// The bit of a step's wire mask for its fan-in ports, all of which read `cpu.wire` or none.
+pub const FAN_IN_WIRE: u32 = 1 << 31;
+
+/// The bit of a step's wire mask for fixed input `at`: set when the plan has the input read a
+/// value in `cpu.wire`, whose cells hold their type's wire form. Decided at compile time, so a
+/// cell's stamp is never consulted.
+#[inline]
+pub const fn wire_bit(at: usize) -> u32 {
+    match at {
+        0..31 => 1 << at,
+        _ => 0,
+    }
+}
+
+/// A value read from a `cpu.wire` cell by its type's `WireForm`. `None` for a type with no wire
+/// form, or bytes that aren't one.
+#[inline]
+fn read_wire<T>(slot: &Slot, kind: Kind<T>) -> Option<T> {
+    let wire = kind.wire?;
+    (wire.read)(slot.bytes()?)
+}
 
 const INLINE: u32 = OwnerKind::Inline as u32;
 
@@ -41,12 +72,18 @@ pub fn read<'a, T: 'static, C: ConstTable>(
     at: usize,
     kind: Kind<T>,
     hold: &'a mut Option<T>,
+    wire: u32,
 ) -> Option<&'a T> {
     let slot = if is_full(cell) {
         cell
     } else {
         consts.slot(at)?
     };
+    // A constant is never a wire form.
+    if wired(wire, at) && is_full(cell) {
+        *hold = read_wire(slot, kind);
+        return hold.as_ref();
+    }
     if slot.owner == INLINE {
         *hold = (kind.read?)(slot);
         return hold.as_ref();
@@ -61,6 +98,34 @@ pub fn read<'a, T: 'static, C: ConstTable>(
         return hold.as_ref();
     }
     typed_view::<T>(slot)
+}
+
+/// Borrows input `at`, a list, as a slice of its items. A list in `cpu.wire` whose items are
+/// numbers is viewed where its bytes are, when they are aligned on this machine: `view` says how.
+/// Any other is read as [`read`] reads it.
+#[inline]
+pub fn read_items<'a, L: Listed + 'static, C: ConstTable>(
+    cell: &'a Slot,
+    consts: &'a C,
+    at: usize,
+    kind: Kind<L>,
+    view: ItemsView<L::Item>,
+    hold: &'a mut Option<L>,
+    wire: u32,
+) -> Option<&'a [L::Item]> {
+    let slot = if is_full(cell) {
+        cell
+    } else {
+        consts.slot(at)?
+    };
+    if wired(wire, at)
+        && is_full(cell)
+        && let Some(view) = view
+        && let Some(items) = slot.bytes().and_then(view)
+    {
+        return Some(items);
+    }
+    read(cell, consts, at, kind, hold, wire).map(Listed::items)
 }
 
 /// Takes the handed bytes a full cell holds, by move.
@@ -99,7 +164,11 @@ pub fn take<T: 'static, C: ConstTable>(
     consts: &C,
     at: usize,
     kind: Kind<T>,
+    wire: u32,
 ) -> Option<T> {
+    if is_full(cell) && wired(wire, at) {
+        return read_wire(cell, kind);
+    }
     if let Some(handle) = kind.handle {
         // A constant stays for the next tick, so it is shared. An edge's handle is taken as it
         // is: nothing is unwrapped and nothing is made.
@@ -160,6 +229,12 @@ pub fn encode<T: Send + Sync + 'static, S: Keeper<T>>(
     buf: &mut InlineCell,
     slot: &mut Slot,
 ) {
+    #[cfg(feature = "alloc")]
+    if keep == Keep::Wire
+        && let Some(wire) = kind.wire
+    {
+        return write_wire(&value, wire, held.wire_buffers(), buf, slot);
+    }
     if let Some(handle) = kind.handle {
         return (handle.put)(value, slot);
     }
@@ -167,6 +242,48 @@ pub fn encode<T: Send + Sync + 'static, S: Keeper<T>>(
         Some(write) => write(&value, buf, slot),
         None => held.publish(value, keep, slot),
     }
+}
+
+/// Writes `value`'s wire form, for an output placed in `cpu.wire`: in the cell's own bytes when it
+/// fits, and in shared bytes otherwise. Shared bytes come from `buffers` when one of the same
+/// length is no longer read by anyone, so a stream of values of one size allocates nothing once
+/// warm. Otherwise they are allocated once, and kept.
+#[cfg(feature = "alloc")]
+fn write_wire<T>(
+    value: &T,
+    wire: Wire<T>,
+    mut buffers: Option<&mut super::keep::WireBuffers>,
+    buf: &mut InlineCell,
+    slot: &mut Slot,
+) {
+    let len = (wire.len)(value);
+    if let Some(room) = buf.get_mut(..len) {
+        let written = (wire.write)(value, room);
+        let _ = daedalus_runner::put_inline(slot, UNSTAMPED.0, UNSTAMPED.1, &buf[..written]);
+        return;
+    }
+    let free = buffers.as_deref_mut().and_then(|buffers| {
+        let at = buffers
+            .iter()
+            .position(|held| held.len() == len && Arc::strong_count(held) == 1)?;
+        Some(buffers.swap_remove(at))
+    });
+    let mut bytes: Arc<[u8]> = free.unwrap_or_else(|| core::iter::repeat_n(0, len).collect());
+    let Some(room) = Arc::get_mut(&mut bytes) else {
+        return;
+    };
+    let written = (wire.write)(value, room);
+    // A wire form is as long as its type said it would be. One that isn't is kept to its length.
+    if written != len {
+        bytes = Arc::from(&room[..written]);
+    }
+    if let Some(buffers) = buffers {
+        buffers.push(bytes.clone());
+        if buffers.len() > super::keep::POOL_LIMIT {
+            buffers.swap_remove(0);
+        }
+    }
+    daedalus_runner::put_shared(slot, UNSTAMPED.0, UNSTAMPED.1, bytes);
 }
 
 /// Takes the handle a cell holds. A value kept in a carrier is moved into a new handle.
@@ -203,7 +320,8 @@ pub struct FanIn<'a, T: 'static> {
 }
 
 enum Fan<'a, T: 'static> {
-    Cells(&'a [Slot], Kind<T>),
+    /// The cells, how their type is held, and whether they are in `cpu.wire`.
+    Cells(&'a [Slot], Kind<T>, bool),
     Values(&'a [Option<T>]),
 }
 
@@ -226,9 +344,13 @@ impl<T> Deref for FanItem<'_, T> {
 
 impl<'a, T: 'static> FanIn<'a, T> {
     #[doc(hidden)]
-    pub fn new(cells: &'a [Slot], kind: Kind<T>) -> FanIn<'a, T> {
+    pub fn new(cells: &'a [Slot], kind: Kind<T>, wire: u32) -> FanIn<'a, T> {
         FanIn {
-            from: Fan::Cells(cells, kind),
+            from: Fan::Cells(
+                cells,
+                kind,
+                cfg!(feature = "alloc") && wire & FAN_IN_WIRE != 0,
+            ),
         }
     }
 
@@ -242,7 +364,7 @@ impl<'a, T: 'static> FanIn<'a, T> {
     /// How many ports this fan-in has in this graph, with or without a value this tick.
     pub fn len(&self) -> usize {
         match self.from {
-            Fan::Cells(cells, _) => cells.len(),
+            Fan::Cells(cells, ..) => cells.len(),
             Fan::Values(values) => values.len(),
         }
     }
@@ -254,7 +376,7 @@ impl<'a, T: 'static> FanIn<'a, T> {
     /// The value on port `index`, if there is one.
     pub fn get(&self, index: usize) -> Option<FanItem<'a, T>> {
         match self.from {
-            Fan::Cells(cells, kind) => item(cells.get(index)?, kind),
+            Fan::Cells(cells, kind, wire) => item(cells.get(index)?, kind, wire),
             Fan::Values(values) => values.get(index)?.as_ref().map(FanItem::Borrowed),
         }
     }
@@ -265,12 +387,55 @@ impl<'a, T: 'static> FanIn<'a, T> {
     }
 }
 
-fn item<'a, T: 'static>(cell: &'a Slot, kind: Kind<T>) -> Option<FanItem<'a, T>> {
+fn item<'a, T: 'static>(cell: &'a Slot, kind: Kind<T>, wire: bool) -> Option<FanItem<'a, T>> {
     if !is_full(cell) {
         return None;
+    }
+    if wire {
+        return read_wire(cell, kind).map(FanItem::Copied);
     }
     if cell.owner == INLINE {
         return (kind.read?)(cell).map(FanItem::Copied);
     }
     typed_view::<T>(cell).map(FanItem::Borrowed)
+}
+
+#[cfg(all(test, feature = "alloc"))]
+mod tests {
+    use super::*;
+    use crate::steps::WireOf;
+
+    #[test]
+    fn a_wire_buffer_is_written_over_once_nobody_reads_it() {
+        let wire = WireOf::<Vec<f32>>::WIRE.expect("a list has a wire form");
+        let value = alloc::vec![1.5f32; 64];
+        let (mut buffers, mut buf) = (Vec::new(), [0u8; daedalus_runner::INLINE_BYTES]);
+        let mut first = Slot::EMPTY;
+        write_wire(&value, wire, Some(&mut buffers), &mut buf, &mut first);
+        assert_eq!(first.bytes().map(<[u8]>::len), Some(4 + 64 * 4));
+        // Still read: the next value gets a buffer of its own.
+        let mut second = Slot::EMPTY;
+        write_wire(&value, wire, Some(&mut buffers), &mut buf, &mut second);
+        assert_ne!(first.data, second.data);
+        // Let go of: the next value is written over it.
+        let at = first.data;
+        daedalus_runner::drop_owned(first);
+        let mut third = Slot::EMPTY;
+        write_wire(&value, wire, Some(&mut buffers), &mut buf, &mut third);
+        assert_eq!(third.data, at);
+        assert_eq!(third.bytes(), second.bytes());
+        // A value of another length gets a buffer of its own.
+        let mut other = Slot::EMPTY;
+        write_wire(
+            &alloc::vec![2.0f32; 65],
+            wire,
+            Some(&mut buffers),
+            &mut buf,
+            &mut other,
+        );
+        assert_eq!(other.bytes().map(<[u8]>::len), Some(4 + 65 * 4));
+        for slot in [second, third, other] {
+            daedalus_runner::drop_owned(slot);
+        }
+    }
 }

@@ -23,6 +23,7 @@ pub fn one_node(backend: &ProcessBackend, id: &'static str, inputs: u16, outputs
         outputs: &outs,
         incoming: &[],
         placed: &[],
+        read_in: &[],
         rate: RateId(0),
     };
     let bodies = [NodeBody {
