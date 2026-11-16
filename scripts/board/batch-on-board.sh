@@ -3,6 +3,9 @@
 # scripts/board/batch.sh. Each step writes results/<step>.txt; results/done is written last.
 # It writes nothing outside its directory, starts no service, and kills only what it started.
 # The caller holds the board's GPU locks for the whole run.
+# Two switches are for a rehearsal on another machine (batch.sh rehearse) and are never set on a
+# board: BATCH_REHEARSAL=1 lets a reference program or the validation layer be missing, and the
+# steps that need it record that; BATCH_SKIP_E11=1 skips the E11 block entirely.
 D=$(cd "$(dirname "$0")" && pwd)
 cd "$D" || exit 1
 echo $$ > "$D/run.pid"
@@ -26,6 +29,15 @@ run_step() { # name, bounded's options..., --, command...
 }
 step() { name="$1"; shift; run_step "$name" -- "$@"; }          # name, command...: bounded, logged
 pinned() { name="$1"; shift; run_step "$name" -c 2 -- "$@"; }   # the same, on core 2
+# A step that needs reference files the bundle may lack (a rehearsal; the preflight required them on
+# a board): the files it needs are named, space-separated, and a missing one is recorded instead.
+ref_step() { # name, files needed, command...
+  name="$1"; need="$2"; shift 2
+  for n in $need; do
+    [ -e "$B/$n" ] || { echo "not in the rehearsal bundle: $n" >> "$R/$name.txt"; return 0; }
+  done
+  step "$name" "$@"
+}
 
 # Before anything is measured: every command this script names is on the board, and every
 # program in the bundle starts. A miss ends the run here, with nothing else touched.
@@ -55,6 +67,13 @@ preflight() {
     echo "$n: exit $code"
     # 124 is a hang, 125 to 127 a program that cannot start, above that a signal.
     [ "$code" -lt 124 ] || { echo "does not start: $n"; bad=1; }
+  done
+  # The reference programs and their library. A board has them all. A rehearsal may not: the
+  # steps that need one then say so, and nothing else changes.
+  for n in ref-frame_chain ref-dylib_frames_overhead libdaedalus_plugins_stable_abi.so; do
+    [ -e "$B/$n" ] && continue
+    if [ "${BATCH_REHEARSAL:-}" = 1 ]; then echo "not in the rehearsal bundle: $n"
+    else echo "missing program: $n"; bad=1; fi
   done
   [ "$bad" = 0 ] && echo "preflight ok" || echo "preflight failed"
   return "$bad"
@@ -96,8 +115,8 @@ resets_start=$(dmesg 2>/dev/null | grep -c "Resetting GPU")
 # 1. C1: next's byte chain against the reference frame chain (C1.md), pinned to core 2.
 for round in 1 2 3; do
   pinned c1-byte-chain "$B/daedalus-cpu-timings" byte_chain 5000
-  step c1-ref-fused env FRAME_CHAIN_TICKS=5000 FRAME_BENCH_CPU=2 "$B/ref-frame_chain"
-  step c1-ref-unfused env DAEDALUS_NODE_FUSION=0 FRAME_CHAIN_TICKS=5000 FRAME_BENCH_CPU=2 "$B/ref-frame_chain"
+  ref_step c1-ref-fused ref-frame_chain env FRAME_CHAIN_TICKS=5000 FRAME_BENCH_CPU=2 "$B/ref-frame_chain"
+  ref_step c1-ref-unfused ref-frame_chain env DAEDALUS_NODE_FUSION=0 FRAME_CHAIN_TICKS=5000 FRAME_BENCH_CPU=2 "$B/ref-frame_chain"
 done
 
 # 2. C1/D2: per-stage and idle tick; D2/I2: instructions per tick from the counters, as the
@@ -126,7 +145,8 @@ for round in 1 2 3; do
 done
 mkdir -p "$I3_DIR"
 for round in 1 2 3; do
-  step i3-ref env I3_PLUGIN="$B/libdaedalus_plugins_stable_abi.so" CARGO="$D/cargo-shim" \
+  ref_step i3-ref "ref-dylib_frames_overhead libdaedalus_plugins_stable_abi.so" env \
+    I3_PLUGIN="$B/libdaedalus_plugins_stable_abi.so" CARGO="$D/cargo-shim" \
     "$B/ref-dylib_frames_overhead" frame_handoff_overhead --ignored --nocapture
 done
 rmdir "$I3_DIR" 2>/dev/null
@@ -156,6 +176,7 @@ for round in 1 2 3; do
 done
 
 # 6. Vulkan validation with synchronization validation (E7, E13), through the layer in ./vvl.
+if [ -e "$D/vvl/VkLayer_khronos_validation.json" ] || [ "${BATCH_REHEARSAL:-}" != 1 ]; then
 export VK_LAYER_PATH="$D/vvl" VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
 export VK_KHRONOS_VALIDATION_VALIDATE_SYNC=1 VK_LAYER_VALIDATE_SYNC=1
 step validation-vk-sys "$B/vk-sys.lib" --nocapture --test-threads=1
@@ -163,11 +184,19 @@ step validation-fragment "$B/wgpu.fragment" --nocapture --test-threads=1
 step validation-region "$B/wgpu.region" --nocapture --test-threads=1
 step validation-raw-submit "$B/daedalus-gpu-budgets" raw-submit fragment-pass
 unset VK_LAYER_PATH VK_INSTANCE_LAYERS VK_KHRONOS_VALIDATION_VALIDATE_SYNC VK_LAYER_VALIDATE_SYNC
+else
+  for n in validation-vk-sys validation-fragment validation-region validation-raw-submit; do
+    echo "no layer in the rehearsal" > "$R/$n.txt"
+  done
+fi
 kernel_log gpu
 
 # 7. E11 last: a real GPU timeout on V3D, ramped from short work up, and only when a hardware
 #    watchdog is armed and fed by systemd, so a wedged kernel returns the board by itself.
 armed=no
+if [ "${BATCH_SKIP_E11:-}" = 1 ]; then
+  echo "skipped: rehearsal" > "$R/e11-gate.txt"
+else
 for w in /sys/class/watchdog/watchdog*; do
   [ "$(cat "$w/state" 2>/dev/null)" = active ] && armed=yes
 done
@@ -191,6 +220,7 @@ if [ "$armed" = yes ]; then
   kernel_log e11
 else
   echo "E11 on V3D not run: no armed hardware watchdog fed by systemd" >> "$R/e11-gate.txt"
+fi
 fi
 
 # A V3D wedged while the kernel lives is not the watchdog's. The GPU is checked at the end of

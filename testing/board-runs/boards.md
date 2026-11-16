@@ -20,6 +20,11 @@ it reads only the files a run left, so a run can be judged again later.
 - A board is somebody's. Ask its keeper, and wait for their word: `--go` says you have it.
   Without `--go` the script touches no board.
 - Build from NVMe. Set `CARGO_TARGET_DIR` as for any build here.
+- The batched session is rehearsed before it goes to a board. Run `scripts/board/batch.sh rehearse`
+  and get a pass before `go`. It builds the same programs for this machine, runs the whole
+  on-board script here with only the board's commands on PATH, with the GPU pinned to lavapipe
+  and E11 skipped, and judges the result. It touches no board and never reaches the real GPU.
+  What it cannot show is the board's own timing, its GPU, or its kernel.
 - For a Linux board, set `BOARD_SSH` to where it is, as `ssh` takes it. The connection is your
   own ssh configuration's: the script passes `BatchMode=yes` and nothing that weakens a host-key
   or login check. If the board asks for a password, or its host key has changed, stop and tell

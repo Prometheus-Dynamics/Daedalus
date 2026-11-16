@@ -105,6 +105,11 @@ fn board(name: &str, gpu: &str) -> Board {
 
 impl Board {
     fn run(&self) -> Option<i32> {
+        self.run_with(&[])
+    }
+
+    /// Runs the script with `extra` set on top of the board's own environment.
+    fn run_with(&self, extra: &[(&str, &str)]) -> Option<i32> {
         Command::new(self.root.join("path/sh"))
             .arg(self.root.join("run/batch-on-board.sh"))
             .env_clear()
@@ -112,6 +117,7 @@ impl Board {
             .env("BATCH_I3_DIR", self.root.join("i3"))
             .env("BATCH_SECONDS", "20")
             .env("BATCH_HEALTH_SECONDS", "1")
+            .envs(extra.iter().copied())
             .output()
             .expect("the script runs")
             .status
@@ -244,4 +250,74 @@ fn only_a_gpu_call_past_its_bound_or_a_reset_reads_as_wedged() {
         board_cannot.result("gpu-health.txt").lines().last(),
         Some("gpu check could not run")
     );
+}
+
+#[test]
+fn a_reference_program_is_required_on_a_board_and_only_skipped_in_a_rehearsal() {
+    let on_board = board("refs-board", GPU_ANSWERS);
+    fs::remove_file(on_board.root.join("run/bin/ref-frame_chain")).expect("removed");
+    assert_eq!(on_board.run(), Some(3));
+    let preflight = on_board.result("preflight.txt");
+    assert!(
+        preflight.contains("missing program: ref-frame_chain"),
+        "{preflight}"
+    );
+    assert!(
+        on_board.result("c1-byte-chain.txt").is_empty(),
+        "nothing is measured"
+    );
+
+    let rehearsal = board("refs-rehearsal", GPU_ANSWERS);
+    fs::remove_file(rehearsal.root.join("run/bin/ref-frame_chain")).expect("removed");
+    assert_eq!(rehearsal.run_with(&[("BATCH_REHEARSAL", "1")]), Some(0));
+    let preflight = rehearsal.result("preflight.txt");
+    assert_eq!(
+        preflight.lines().last(),
+        Some("preflight ok"),
+        "{preflight}"
+    );
+    assert!(
+        preflight.contains("not in the rehearsal bundle: ref-frame_chain"),
+        "{preflight}"
+    );
+    let step = rehearsal.result("c1-ref-fused.txt");
+    assert!(
+        step.contains("not in the rehearsal bundle: ref-frame_chain"),
+        "{step}"
+    );
+    assert!(!step.contains("== exit"), "the step did not run: {step}");
+    assert!(
+        !rehearsal.result("c1-ref-unfused.txt").contains("== exit"),
+        "the unfused step did not run either"
+    );
+    assert!(
+        rehearsal.result("c1-byte-chain.txt").contains("== exit 0"),
+        "the rest still runs"
+    );
+}
+
+#[test]
+fn a_rehearsal_without_a_validation_layer_records_it_and_runs_the_rest() {
+    let rehearsal = board("layer", GPU_ANSWERS);
+    assert_eq!(rehearsal.run_with(&[("BATCH_REHEARSAL", "1")]), Some(0));
+    assert_eq!(
+        rehearsal.result("validation-vk-sys.txt").trim(),
+        "no layer in the rehearsal"
+    );
+    assert_eq!(
+        rehearsal.result("validation-raw-submit.txt").trim(),
+        "no layer in the rehearsal"
+    );
+    assert_eq!(
+        rehearsal.result("gpu-health.txt").lines().last(),
+        Some("gpu ok")
+    );
+}
+
+#[test]
+fn a_rehearsal_never_reaches_the_e11_block() {
+    let board = board("e11", GPU_ANSWERS);
+    assert_eq!(board.run_with(&[("BATCH_SKIP_E11", "1")]), Some(0));
+    assert_eq!(board.result("e11-gate.txt").trim(), "skipped: rehearsal");
+    assert!(board.result("e11-ramp.txt").is_empty(), "no grind ran");
 }
