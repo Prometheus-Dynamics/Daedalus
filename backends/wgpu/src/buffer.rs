@@ -432,8 +432,15 @@ impl Storage {
     /// A dma-heap buffer on `context`'s device. See [`Storage::new_dma_heap`].
     #[cfg(target_os = "linux")]
     pub(crate) fn dma_heap_on(context: Arc<Context>, size: u64) -> Result<Storage, StorageError> {
+        use crate::import_state::{Untried, WhyCopied};
         use daedalus_vk_sys::Error;
         check_size(&context, size)?;
+        // A device the host said imports nothing gets no dma-buf by this door either.
+        if context.untried == Untried::Copies(WhyCopied::TurnedOff) {
+            return Err(StorageError::Unsupported(
+                "the host turned dma-buf imports off",
+            ));
+        }
         let failed = |error: daedalus_dma_sys::Error| StorageError::Device(error.to_string());
         let heap = daedalus_dma_sys::DmaHeap::open("system")
             .map_err(|_| StorageError::Unsupported("no /dev/dma_heap/system to allocate from"))?;

@@ -404,6 +404,14 @@ fn a_process_with_no_heap_is_told_what_happens_and_nothing_fails() {
             .to_string()
             .contains("the host turned dma-buf imports off")
     );
+    // No dma-buf by the storage door either, so a host-cached buffer there is not heap memory.
+    assert!(matches!(
+        Storage::new_dma_heap(&off, 4096),
+        Err(daedalus_wgpu::StorageError::Unsupported(why)) if why.contains("turned dma-buf imports off")
+    ));
+    if let Ok(cached) = Storage::new_host_cached(&off, 4096) {
+        assert_ne!(cached.space().to_string(), "wgpu.dmaheap");
+    }
 }
 
 /// `bytes` given to the device as a value with no dma-buf, by whichever move is planned for it:

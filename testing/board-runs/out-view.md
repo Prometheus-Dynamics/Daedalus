@@ -1,6 +1,6 @@
 # Board run: output views into a worker's lent memory
 
-Status: run on CM5 2026-11-14.
+Status: run on CM5 2026-11-14 (fan-out tables and the counter section). The fan-out rows were run again 2026-11-16 in the batched session; the counter section is still the 2026-11-14 run, because the batch does not run `counters`.
 
 ## Check
 
@@ -123,3 +123,72 @@ alternated between two lists because the output's cell still held the last one. 
 releases the cell before the node runs, and `items_mut` leaves the numbers to the node. Writing
 records one `push` at a time also cost more than the list; `extend` now writes them into the room in
 one pass. The tables above are from the second run.
+
+## Result, 2026-11-16 (batched session)
+
+Run at `next` 748ef3cc on the CM5, `process-timings fanout daedalus-sweep-worker 301`, three rounds. Each
+figure is the median of the three rounds' figures. The counter section above is the 2026-11-14 run.
+
+Allocations per tick, at every size (the same in every round):
+
+| Graph | vec | view |
+| --- | --- | --- |
+| producer alone, either shape | 2 | 0 |
+| producer, CPU reader | 1 | 0 |
+| producer, worker | 1 | 0 |
+| fan, either shape | 1 | 0 |
+
+The 2026-11-14 table had 2 allocations per tick for the records' fan with vec and 1 with view, with a
+note that the one left was the CPU reader's decode. This run has 1 with vec and none with view.
+
+`list<f32>`, µs per tick, median:
+
+| Bytes | Graph | vec | view |
+| --- | --- | --- | --- |
+| 4096 | producer | 0.5 | 0.5 |
+| 4096 | host | 0.9 | 0.9 |
+| 4096 | worker | 18.8 | 16.2 |
+| 4096 | fan | 18.9 | 15.4 |
+| 65536 | producer | 3.8 | 3.9 |
+| 65536 | host | 5.7 | 5.6 |
+| 65536 | worker | 28.8 | 21.5 |
+| 65536 | fan | 31.2 | 25.2 |
+| 1048576 | producer | 56.4 | 59.6 |
+| 1048576 | host | 94.3 | 86.9 |
+| 1048576 | worker | 288.4 | 109.3 |
+| 1048576 | fan | 405.8 | 164.5 |
+
+Records (28-byte), µs per tick, median:
+
+| Bytes | Graph | vec | view |
+| --- | --- | --- | --- |
+| 4096 | producer | 0.6 | 0.6 |
+| 4096 | host | 0.9 | 0.9 |
+| 4096 | worker | 49.1 | 45.2 |
+| 4096 | fan | 47.0 | 46.6 |
+| 65536 | producer | 4.4 | 4.3 |
+| 65536 | host | 6.5 | 6.4 |
+| 65536 | worker | 48.5 | 33.3 |
+| 65536 | fan | 60.8 | 49.6 |
+| 1048576 | producer | 63.5 | 62.8 |
+| 1048576 | host | 103.3 | 95.9 |
+| 1048576 | worker | 559.2 | 291.8 |
+| 1048576 | fan | 771.9 | 518.0 |
+
+The cost of handing 1 MiB on, with the producer's median taken out, in ms/MB:
+
+| Path | `list<f32>` vec | `list<f32>` view | Records vec | Records view |
+| --- | --- | --- | --- | --- |
+| to a CPU reader | 0.038 | 0.027 | 0.040 | 0.033 |
+| to a worker | 0.232 | 0.050 | 0.496 | 0.229 |
+| to a CPU reader and a worker | 0.349 | 0.105 | 0.708 | 0.455 |
+
+Observations:
+
+- At 64 KiB and 1 MiB, view is lower than vec in every worker and fan graph, for both shapes.
+- For `list<f32>` at 1 MiB the producer alone is slower with view (59.6 µs against 56.4 µs, medians;
+  rounds 56.4, 59.6 and 70.3). Not diagnosed.
+- `cpu_reader_beside_worker_ns` is negative in some rounds (the lowest is -3,277 ns), and
+  `cpu_reader_alone_ns` is -2,796 ns in one round (records, view, 1 MiB). The tables do not use these
+  fields. Not diagnosed.
+- Decodes and faults are 0 in every run.

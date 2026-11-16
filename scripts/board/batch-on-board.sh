@@ -85,6 +85,8 @@ kernel_log() { # name: what the kernel said since the mark, when the board lets 
   cat /proc/sys/kernel/panic /proc/sys/kernel/hung_task_panic /proc/sys/kernel/softlockup_panic 2>/dev/null |
     paste -sd' ' | sed 's/^/panic hung_task_panic softlockup_panic: /'
   vulkaninfo --summary 2>/dev/null | head -40
+  # The device extensions and the feature the import and fence paths need (E13).
+  vulkaninfo 2>/dev/null | grep -E "external_memory_dma_buf|external_fence_fd|storageBuffer8BitAccess" | sort -u
 } > "$R/probe.txt" 2>&1
 systemctl list-units --type=service --state=active --no-legend --plain 2>/dev/null |
   awk '{print $1}' | sort > "$R/services-before.txt"
@@ -116,10 +118,10 @@ done
 #    builds its plugin with $CARGO; the shim answers with the plugin built beside it, and the
 #    test runs its build from the workspace path it was compiled in, which is under /tmp.
 step i3-allocations "$B/daedalus-budget-harness" allocations
-step i3-ticks "$B/ticks-bench" --bench i3_
 # Next's stable row: the same value through the dylib fixture and back, by reference.
 step i3-stable-allocations "$B/daedalus-budget-harness" plugin 0 "$B/libdaedalus_dylib_fixture.so" allocations
 for round in 1 2 3; do
+  step i3-ticks "$B/ticks-bench" --bench i3_
   step i3-stable "$B/daedalus-budget-harness" plugin 5000 "$B/libdaedalus_dylib_fixture.so" i3
 done
 mkdir -p "$I3_DIR"
@@ -149,7 +151,7 @@ for t in "$B"/wgpu-conformance.* "$B"/gpu-budgets.*; do
 done
 for round in 1 2 3; do
   step gpu-budgets "$B/daedalus-gpu-budgets" limits alloc16 transfers cached region-batch raw-submit \
-    fragment-pass fences timer-source busy dma-1mib heap-read batching allocation dispatch-floor readback
+    fragment-pass fences timer-source busy dma-1mib heap-read batching allocation dispatch-floor readback elements
 done
 
 # 6. Vulkan validation with synchronization validation (E7, E13), through the layer in ./vvl.
@@ -178,6 +180,12 @@ if [ "$armed" = yes ]; then
   done
   if ! grep -q "the wait failed" "$R/e11-ramp.txt"; then
     step e11-ramp env DAEDALUS_GRIND_REPEAT=4 "$B/daedalus-gpu-budgets" grind
+  fi
+  # V3D's driver resets a hung job after about half a second, before a 5 s bound. A bound under
+  # that reaches the wait's own timeout path on the device.
+  if ! grep -q "the wait failed" "$R/e11-ramp.txt"; then
+    step e11-short-bound env DAEDALUS_GRIND_BOUND_MS=100 DAEDALUS_GRIND_ROUNDS=4000000000 \
+      DAEDALUS_GRIND_REPEAT=1 "$B/daedalus-gpu-budgets" grind
   fi
   kernel_log e11
 else

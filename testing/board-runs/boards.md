@@ -93,10 +93,11 @@ board, the revision, the judge's lines, and what was not run.
   - 2026-11-14, written up in `scorecard/2026-11-14-cm5.md`.
   - 2026-11-15, a second CM5 (2 GB, the same image), `next` at 7448193c: `cm5 --go` passed (57
     test binaries, 245 tests, none failed), and `cm5-measure --go` passed the judge.
-- The batched session (`scripts/board/batch.sh`) has not measured anything yet. Its first run, on
-  2026-11-15, failed at every step: the image has no `timeout` and no `taskset`, and the script
-  used both. Its end-of-run GPU check failed the same way, was read as a wedged GPU, and the
-  board was rebooted for nothing. It came back clean. Since then:
+- The batched session (`scripts/board/batch.sh`, which runs `batch-on-board.sh`) ran on 2026-11-16 at
+  `next` 748ef3cc: 80 steps, all exit 0, preflight ok, end-of-run GPU check `gpu ok`, no reboot. Its
+  results are in the records C1, D2, I2, I3, out-view, E2, E3, E5, E7, E8, E9, E11, E12 and E13, under
+  the 2026-11-16 sections. The board's clock read 2026-11-08 during the run (step timestamps); the session date is 2026-11-16. Its first attempt, on 2026-11-15, failed at
+  every step: the image has no `timeout` and no `taskset`, and the script used both. Since then:
   - The bundle brings `bounded` (the `daedalus-counters` crate), which bounds a step and pins it.
   - The script starts with a preflight: every command it names and every program in the bundle
     must run, or the run ends there.
@@ -104,6 +105,7 @@ board, the revision, the judge's lines, and what was not run.
     the board.
   - `testing/crates/counters/tests/batch_script.rs` runs the whole script at home with only the
     image's commands (`cm5-commands.txt`) on PATH.
+- The five `Resetting GPU for hang` kernel lines in `dmesg-e11.txt` came from the E11 ramp, on purpose: the ramp is built to hang the GPU. They are not a fault.
 - No Luckfox or Pico run has been made with these scripts yet.
 - `local` and `local-measure` pass on the development machine, and `luckfox-build`, `cm5-build`
   and `cm5-measure-build` build there.
