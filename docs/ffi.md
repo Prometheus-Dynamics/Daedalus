@@ -69,6 +69,22 @@ let planned = plan(&graph, &registry, &[&workers, &CpuBackend], &Config::default
 - The example `examples/08_ffi_rust_worker` runs a graph whose node is served by a Rust worker,
   with the host feeding it, reading its progress, and cancelling a run.
 
+## Checking a worker's files
+
+Under `locked` (see [plugins.md](plugins.md#integrity-and-the-lock)) the program of a worker is
+opened and hashed before each start, and started from that file. What is named with
+`WorkerSpec::also_check` is checked before each start too. Under `record` the same files are written
+into the lock.
+
+What that proves depends on the language. A worker's program is its interpreter for Python, Node
+and Java. Hashing `python3` proves the interpreter, not the worker's script or the modules it
+imports. For those, name each file with `also_check`, and the check is before the start, which is
+not a binding: the interpreter reads the file by its path after the check.
+
+A program that starts with `#!` is refused under `locked`. Name its interpreter as the program, and
+add the script with `also_check`. A native worker, such as a C or C++ worker or a Rust worker, is its
+own program, and its one file is the whole check.
+
 ## The wire
 
 Host and worker talk in packets: a length, then a body. A value is encoded by its port's type,

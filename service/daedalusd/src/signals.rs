@@ -31,9 +31,4 @@ impl Stop {
     pub fn ask(&self) {
         self.asked.store(true, Ordering::SeqCst);
     }
-
-    /// The flag itself, for a thread that only needs to see it.
-    pub fn flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.asked)
-    }
 }

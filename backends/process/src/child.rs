@@ -20,6 +20,8 @@ use std::time::{Duration, Instant};
 use daedalus_wire::codec::Writer;
 use daedalus_wire::{PacketError, write_packet};
 
+use daedalus_integrity::Checked;
+
 use crate::ProcessError;
 use crate::reader::{self, Packets};
 use crate::spec::WorkerSpec;
@@ -129,11 +131,23 @@ pub(crate) struct Worker {
 }
 
 impl Worker {
+    /// Starts the worker. A checked program runs from its open file, by the number of that
+    /// file, and is given the path it was named by as `argv[0]`: an interpreter finds its
+    /// prefix from that. Without one the program runs by its name, as it always has.
     pub(crate) fn spawn(
         spec: &WorkerSpec,
+        checked: Option<&Checked>,
         telemetry: &Arc<Telemetry>,
     ) -> Result<Worker, ProcessError> {
-        let mut command = Command::new(&spec.program);
+        let mut command = match checked {
+            Some(checked) => Command::new(checked.exec_path()),
+            None => Command::new(&spec.program),
+        };
+        #[cfg(unix)]
+        if let Some(checked) = checked {
+            use std::os::unix::process::CommandExt;
+            command.arg0(checked.path());
+        }
         // What the worker doesn't inherit is taken away first, so a variable the spec also sets
         // is set.
         if spec.env_clear {

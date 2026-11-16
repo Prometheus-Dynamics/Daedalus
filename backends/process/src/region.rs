@@ -11,6 +11,7 @@ use daedalus_backend::{
     Backend, CompileCx, Compiled, MemorySpace, NodeRef, Offer, Refusal, Region, SpaceKind,
     StepUnit, Transfer, UnitInfo,
 };
+use daedalus_integrity::Integrity;
 use daedalus_registry::{Registry, TypeRef};
 use daedalus_types::NodeIndex;
 use daedalus_types::TypeKey;
@@ -22,6 +23,7 @@ use crate::child::Worker;
 use crate::spec::WorkerSpec;
 use crate::supervise::{Binding, Link, NodePorts, Shared, Supervisor, WorkerStep, read_hello};
 use crate::telemetry::{Snapshot, Telemetry};
+use crate::vet::vet;
 
 pub const BACKEND_ID: &str = "process";
 /// The memory this backend's nodes read from. Values reach it through transfers the host owns:
@@ -34,6 +36,8 @@ pub const LENT: &str = "process.lent";
 
 /// The workers a backend runs, and which node each one serves.
 pub struct ProcessBackend {
+    /// What each worker's files are checked under, from the time the worker is added.
+    integrity: Integrity,
     workers: Vec<Arc<Shared>>,
     /// Node id to (worker index, node index inside that worker).
     served: BTreeMap<String, (usize, usize)>,
@@ -53,6 +57,7 @@ impl Default for ProcessBackend {
 impl ProcessBackend {
     pub fn new() -> ProcessBackend {
         ProcessBackend {
+            integrity: Integrity::off(),
             workers: Vec::new(),
             served: BTreeMap::new(),
             telemetry: Arc::new(Telemetry::default()),
@@ -60,6 +65,14 @@ impl ProcessBackend {
             #[cfg(target_os = "linux")]
             dmabufs: Vec::new(),
         }
+    }
+
+    /// Sets how the workers this backend starts check their files. Set it before adding workers:
+    /// a worker keeps the mode it was added under. The default is Off.
+    #[must_use]
+    pub fn with_integrity(mut self, integrity: Integrity) -> ProcessBackend {
+        self.integrity = integrity;
+        self
     }
 
     /// Lists `T` as a type whose values are a dma-buf (`daedalus_dmabuf::DmaBufBacked`). A `T`
@@ -122,7 +135,8 @@ impl ProcessBackend {
 
     /// Starts the worker of `spec` and reads its hello.
     fn greet(&self, spec: &WorkerSpec) -> Result<(Worker, Hello), ProcessError> {
-        let mut worker = Worker::spawn(spec, &self.telemetry)?;
+        let vetted = vet(&self.integrity, spec)?;
+        let mut worker = Worker::spawn(spec, vetted.program.as_ref(), &self.telemetry)?;
         let hello = read_hello(&worker, spec.startup).map_err(|reason| ProcessError::Startup {
             program: spec.program.clone(),
             reason,
@@ -137,6 +151,7 @@ impl ProcessBackend {
                 program: spec.program.clone(),
                 reason,
             })?;
+        vetted.record()?;
         Ok((worker, hello))
     }
 
@@ -169,6 +184,7 @@ impl ProcessBackend {
         let shared = Shared {
             #[cfg(target_os = "linux")]
             rooms,
+            integrity: self.integrity.clone(),
             spec,
             schema: Schema::from_hello(hello, &[]),
             nodes,
@@ -213,7 +229,7 @@ impl ProcessBackend {
         let (worker, _) = *self.served.get(node)?;
         match &self.workers[worker].lock().link {
             Link::Up(worker) => Some(worker.pid()),
-            Link::Down { .. } => None,
+            Link::Checking(_) | Link::Down { .. } => None,
         }
     }
 
@@ -224,7 +240,7 @@ impl ProcessBackend {
                 let sup = self.workers[*worker].lock();
                 match &sup.link {
                     Link::Up(worker) => worker.stderr_tail(usize::MAX).len(),
-                    Link::Down { .. } => 0,
+                    Link::Checking(_) | Link::Down { .. } => 0,
                 }
             }
             None => 0,

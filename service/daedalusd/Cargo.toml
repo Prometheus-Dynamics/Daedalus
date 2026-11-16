@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 daedalus-backend = { path = "../../core/backend" }
 daedalus-host = { path = "../../core/host", default-features = false, features = ["listen"] }
+daedalus-integrity = { path = "../../core/integrity" }
 daedalus-loader = { path = "../../core/loader" }
 daedalus-registry = { path = "../../core/registry" }
 daedalus-types = { path = "../../core/types" }

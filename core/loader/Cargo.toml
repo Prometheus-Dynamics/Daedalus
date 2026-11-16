@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 daedalus-abi = { path = "../abi" }
 daedalus-backend = { path = "../backend" }
+daedalus-integrity = { path = "../integrity" }
 daedalus-registry = { path = "../registry" }
 daedalus-types = { path = "../types" }
 libloading = { workspace = true }

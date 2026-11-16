@@ -12,6 +12,7 @@ use daedalus_abi::{
     Text, UnitOut,
 };
 use daedalus_backend::{PortRef, StepUnit, UnitInfo};
+use daedalus_integrity::{Checked, Integrity};
 use daedalus_registry::{OwnedDecl, Registry};
 use daedalus_types::{NodeIndex, PortIndex};
 
@@ -32,29 +33,52 @@ pub struct RegionIn<'a> {
 #[derive(Default)]
 pub struct Loader {
     numbers: BTreeMap<String, u64>,
+    integrity: Integrity,
 }
 
 impl Loader {
+    /// A loader that checks nothing. See [`Loader::with_integrity`].
     pub fn new() -> Loader {
         Loader::default()
     }
 
+    /// A loader that checks the files it opens under `integrity`: each is opened once, hashed,
+    /// and loaded from that open file, so the bytes checked are the bytes loaded.
+    pub fn with_integrity(integrity: Integrity) -> Loader {
+        Loader {
+            numbers: BTreeMap::new(),
+            integrity,
+        }
+    }
+
     /// Opens the library at `path`, checks its layout, and copies out what it declares.
     pub fn open(&mut self, path: impl AsRef<Path>) -> Result<Plugin, LoadError> {
-        let path: PathBuf = path.as_ref().to_path_buf();
+        let checked = self.integrity.open(path).map_err(LoadError::from)?;
+        self.open_checked(checked)
+    }
+
+    /// Opens a file that was already checked. The loader keeps the file open for the life of the
+    /// generation it makes. In Record mode it writes the file's entry into the lock once it has
+    /// loaded.
+    pub fn open_checked(&mut self, mut checked: Checked) -> Result<Plugin, LoadError> {
+        let path: PathBuf = checked.path().to_path_buf();
         // SAFETY: the caller names a trusted plugin library, as `open` documents.
-        let opened = unsafe { open_library(&path)? };
+        let opened = unsafe { open_library(&checked.dlopen_path(), &path, &checked)? };
         let name = {
             // SAFETY: the library is loaded and the entry's name is valid text for it.
             unsafe { opened.entry.name.as_str() }.to_owned()
         };
         let number = self.numbers.get(&name).map_or(1, |last| last + 1);
         self.numbers.insert(name.clone(), number);
+        let digest = checked.digest().copied();
+        let file = checked.take_file();
         let generation = Arc::new(Generation::new(
             name.clone(),
             number,
             path.clone(),
             opened.library,
+            file,
+            digest,
         ));
 
         TABLES_HELD.fetch_add(1, Ordering::Relaxed);
@@ -68,6 +92,7 @@ impl Loader {
         release_tables(&opened.entry);
         let (nodes, backends) = read?;
         let (codecs, conversions) = codec_read?;
+        checked.record().map_err(LoadError::from)?;
         let holder = Holder::new(generation.clone(), 0);
         Ok(Plugin {
             name,

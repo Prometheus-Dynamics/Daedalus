@@ -20,3 +20,11 @@ connections = 64
 
 # error, warn, info or debug.
 log_level = "info"
+
+# Plugin integrity: "off" (the default), "locked", or "record". Under "locked" a plugin library or
+# a worker program loads only when the lock at lock_file approves its sha256; one that is changed,
+# or not in the lock, is refused and tried again. "record" writes each library that loads into the
+# lock, and needs a directory the daemon can write: the packaged unit is read-only, so record with
+# daedalus-lock instead. Needs Linux. See docs/plugins.md.
+# integrity = "off"
+# lock_file = "/etc/daedalusd/daedalus.lock"
