@@ -13,6 +13,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
 
+use daedalus_vk_sys::adapters::{Policy, filter};
+
 static BUSY: Mutex<bool> = Mutex::new(false);
 static FREED: Condvar = Condvar::new();
 static DEVICES: AtomicU64 = AtomicU64::new(0);
@@ -69,8 +71,17 @@ impl<'g> LockedInstance<'g> {
         }
     }
 
-    pub(crate) fn adapters(&self, backends: wgpu::Backends) -> Vec<wgpu::Adapter> {
-        pollster::block_on(self.instance.enumerate_adapters(backends))
+    /// The adapters of `backends` that `policy` keeps, and how many it hid. This is the only
+    /// enumeration in the backend: the rule is on the device type, whatever API reaches it.
+    pub(crate) fn adapters(
+        &self,
+        backends: wgpu::Backends,
+        policy: Policy,
+    ) -> (Vec<wgpu::Adapter>, usize) {
+        let found = pollster::block_on(self.instance.enumerate_adapters(backends));
+        filter(policy, found, |adapter| {
+            adapter.get_info().device_type == wgpu::DeviceType::Cpu
+        })
     }
 }
 

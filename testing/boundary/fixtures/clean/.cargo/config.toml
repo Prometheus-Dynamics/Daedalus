@@ -1,0 +1,2 @@
+[env]
+DAEDALUS_GPU_ADAPTERS = "software"

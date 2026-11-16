@@ -96,7 +96,8 @@ board, the revision, the judge's lines, and what was not run.
 
 - CM5: two runs.
   - 2026-11-14, written up in `scorecard/2026-11-14-cm5.md`.
-  - 2026-11-15, a second CM5 (2 GB, the same image), `next` at 7448193c: `cm5 --go` passed (57
+  - 2026-11-17, the daemon with and without the planner, written up in `lean-daemon.md`.
+  - 2026-11-15, a second CM5 (4 GB, the same image), `next` at 7448193c: `cm5 --go` passed (57
     test binaries, 245 tests, none failed), and `cm5-measure --go` passed the judge.
 - The batched session (`scripts/board/batch.sh`, which runs `batch-on-board.sh`) ran on 2026-11-16 at
   `next` 748ef3cc: 80 steps, all exit 0, preflight ok, end-of-run GPU check `gpu ok`, no reboot. Its

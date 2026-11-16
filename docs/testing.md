@@ -18,9 +18,32 @@ cargo test -p daedalus-cpu --all-features   # the CPU backend
 cargo test -p daedalus-host --features listen --test listen
 scripts/ci.sh budgets                       # the budget table
 scripts/ci.sh smoke                         # the examples
-scripts/gpu.sh                              # the GPU backend, on this machine's adapter
+scripts/gpu.sh                              # the GPU backend, on a software adapter unless told otherwise
 scripts/gpu-lavapipe.sh                     # the GPU lane, on Mesa's software Vulkan
 ```
+
+## GPU adapters
+
+Tests, benches and `cargo run` see only software adapters by default. The repo's
+`.cargo/config.toml` sets `DAEDALUS_GPU_ADAPTERS=software`, so a plain `cargo test --workspace` on
+a machine with a GPU does not run on that GPU. A software adapter is one whose device type is CPU:
+lavapipe, llvmpipe and SwiftShader are examples.
+
+To run on the GPU on purpose, set the variable in your shell:
+
+```sh
+DAEDALUS_GPU_ADAPTERS=hardware cargo test -p daedalus-wgpu
+```
+
+`hardware` keeps every adapter that is not a CPU one. `any` keeps all of them, and unset means
+`any` for a program run directly. A shell setting overrides the repo's default, because cargo does
+not replace a variable that is already set. Any other value is an error that names the variable.
+When the rule hides every adapter, the open fails and says how many it hid, so a skipped test
+explains itself.
+
+The board scripts set the variable themselves. `scripts/board/batch-on-board.sh` sets `hardware`,
+and `scripts/board/batch.sh rehearse` sets `software` on lavapipe. A binary built for a board is run
+directly, not through cargo, so the repo's default does not reach it.
 
 ## Where tests live
 
