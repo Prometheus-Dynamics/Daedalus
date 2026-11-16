@@ -1,0 +1,12 @@
+# Cancel: the run is told to stop, its watch is told why, and a stopped run is no longer there.
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+watch 1 all
+start pass
+feed 1 in u32:5
+cancel 1
+next 1
+inspect run 1
+step 1 1
+stop 1 drain
+stop 1 drain

@@ -14,8 +14,8 @@ use daedalus_client::protocol::{
     StartConfig, StepSummary, StopMode, TelemetryEvent, TypedValue, WatchTarget,
 };
 use daedalus_client::{
-    BACKOFF_CAP, Backoff, Client, ClientError, Clock, Endpoint, Options, WireError, WireType,
-    WireValue,
+    BACKOFF_CAP, Backoff, Client, ClientError, Clock, Endpoint, Options, WatchPoll, WireError,
+    WireType, WireValue,
 };
 use daedalus_wire::{DEFAULT_CAP, Schema, read_packet, write_packet};
 
@@ -447,6 +447,43 @@ fn a_watch_is_a_stream_that_ends_on_ended() {
     assert_eq!(events[0].body, tick(1));
     assert_eq!(events[1].body, tick(2));
     assert!(matches!(events[2].body, EventBody::Ended { run: 7, .. }));
+}
+
+#[test]
+fn a_timed_pull_gives_the_event_or_times_out_and_says_when_the_watch_ended() {
+    let server = Server::start();
+    let client = Client::connect(server.endpoint(), Options::default()).expect("connect");
+    let watch = client.watch(WatchTarget::Run(7), EventKinds::ALL).unwrap();
+    // Nothing yet: the wait comes back in time, and the watch is still open.
+    assert_eq!(
+        watch.next_event_timeout(Duration::from_millis(20)),
+        WatchPoll::Timeout
+    );
+    server.emit(tick(1));
+    assert_eq!(
+        watch.next_event_timeout(Duration::from_secs(10)),
+        WatchPoll::Event(Event {
+            sub: watch.id(),
+            body: tick(1),
+        })
+    );
+    server.emit(EventBody::Ended {
+        run: 7,
+        reason: EndReason::Stopped,
+    });
+    assert!(matches!(
+        watch.next_event_timeout(Duration::from_secs(10)),
+        WatchPoll::Event(Event {
+            body: EventBody::Ended { run: 7, .. },
+            ..
+        })
+    ));
+    // The stream ends when the client drops its side: here, when the connection is lost.
+    server.kill();
+    assert_eq!(
+        watch.next_event_timeout(Duration::from_secs(10)),
+        WatchPoll::Ended
+    );
 }
 
 #[test]

@@ -1,0 +1,16 @@
+plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+graph name="boom" diagnostics=[]
+watching 1
+watching 2
+started run=1
+fed woke=1 dropped=false
+stepped ticks=1 tick=1 step_calls=1 faults=1 skipped=0 idle=false
+event 1 fault run=1 tick=1 step=0 node="io" covers=["work"] consecutive=1 reason="panicked: boom: the node panicked on purpose" reason_cut=false detail="boom: what led up to it, in 2 pieces" detail_cut=false code=1 own_code=true
+event 2 fault run=1 tick=1 step=0 node="io" covers=["work"] consecutive=1 reason="panicked: boom: the node panicked on purpose" reason_cut=false detail="boom: what led up to it, in 2 pieces" detail_cut=false code=1 own_code=true
+event 2 telemetry run=1 tick=1 step_calls=1 faults=1 skipped=0
+stopped tick=1 dropped=0
+event 1 ended run=1 reason=stopped
+event 2 ended run=1 reason=stopped
+unwatched 1
+stream 1 ended
+unwatched 2

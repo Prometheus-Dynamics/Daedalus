@@ -1,0 +1,13 @@
+# A plan made from a graph is stored under a name and started with no planner: the made bytes are
+# the same plan the planner gave.
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+make_plan pass p1
+blob junk 00
+put_plan junk junk
+put_plan frozen p1
+start frozen
+feed 1 in u32:6
+step 1 1
+take 1 out
+make_plan nope p2

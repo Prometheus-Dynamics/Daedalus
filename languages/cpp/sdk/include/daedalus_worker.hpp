@@ -1,11 +1,11 @@
-// The Daedalus worker SDK for C++17: header-only builders over the C API in daedalus.h.
+// The Daedalus worker SDK for C++17: header-only builders over the C API in daedalus_worker.h.
 //
 // A type is built once, with static storage, and passed by pointer:
 //   static const dd_type* const pair[] = {dd::scalar(DD_STRING), dd::scalar(DD_BOOL)};
 //   dd::tuple(pair, 2)
 // A node is a dd_node in a table, with a function written as a C++ lambda without captures.
-#ifndef DAEDALUS_HPP
-#define DAEDALUS_HPP
+#ifndef DAEDALUS_WORKER_HPP
+#define DAEDALUS_WORKER_HPP
 
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "daedalus.h"
+#include "daedalus_worker.h"
 
 namespace dd {
 
@@ -68,4 +68,4 @@ inline dd_port port(const char* name, const dd_type* type) { return dd_port{name
 
 }  // namespace dd
 
-#endif  // DAEDALUS_HPP
+#endif  // DAEDALUS_WORKER_HPP

@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-lang-cpp-sdk"
-description = "The C worker SDK's API, in Rust: the functions of daedalus.h, built as a static library that a C or C++ worker links."
+description = "The C worker SDK's API, in Rust: the functions of daedalus_worker.h, built as a static library that a C or C++ worker links."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,6 +14,7 @@ crate-type = ["staticlib", "rlib"]
 daedalus-types = { path = "../../core/types" }
 daedalus-wire = { path = "../../core/wire" }
 libc = { workspace = true }
+daedalus-worker-io = { path = "../worker-io" }
 
 # This crate is the C boundary, so it carries its own lint table.
 [lints.rust]

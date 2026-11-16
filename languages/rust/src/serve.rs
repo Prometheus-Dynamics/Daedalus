@@ -234,8 +234,8 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
     let (mut served, hello, keys) = served(nodes).map_err(io::Error::other)?;
     let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
     let mut schema = Schema::from_hello(&hello, &keys);
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
+    // The packets go to a copy of stdout. After this, stdout is stderr: a node that prints goes there.
+    let mut out = daedalus_worker_io::packet_stream()?;
     send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).map_err(io::Error::other)?;
     let lent = Lent::default();
     // Until the host answers, a run means it never will: it is an older host.

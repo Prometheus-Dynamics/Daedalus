@@ -1,0 +1,21 @@
+event fault	{"code":42,"consecutive":1,"covers":["work","io"],"detail":"in 2 pieces","detail_cut":true,"event":"fault","node":"work","own_code":false,"reason":"boom","reason_cut":false,"run":4,"step":2,"sub":9,"tick":3}
+event telemetry	{"event":"telemetry","faults":0,"run":1,"skipped":2,"step_calls":16,"sub":1,"tick":8}
+event lagged	{"dropped":5,"event":"lagged","run":null,"sub":2}
+event ended	{"event":"ended","reason":"stopped","run":1,"sub":3}
+event unknown	{"event":"unknown","kind":200,"run":null,"sub":4}
+inspect run	{"faults":1,"graph":"g","nodes":["io","work"],"ports":[{"input":true,"name":"in","type":"u32"},{"input":false,"name":"out","type":"u32"}],"run":3,"session":"default","state":"running","tick":12}
+inspect graph	{"graph":{"format":"daedalus.graph"},"name":"g"}
+inspect graph text	{"graph":"not json","name":"h"}
+inspect cache	{"entries":2,"hits":5,"misses":3}
+inspect telemetry	{"faults":0,"level":"detailed","rows":[{"auto_off":true,"backing_off":false,"bytes":64,"calls":4,"disabled":false,"failures":0,"nodes":["work"],"step":0,"time_ns":900,"timed_runs":3}],"run":1,"skipped":1,"step_calls":8,"tick":4}
+inspect host	{"graphs":["g"],"plugins":["dylib-fixture"],"runs":[{"graph":"g","run":1,"session":"default","state":"stopped"}],"sessions":["default"]}
+plan with explanation	{"cached":false,"diagnostics":[{"code":"W1","message":"an unused port","node":"io","port":"in","severity":"warning"},{"code":"E2","message":"a cycle","node":null,"port":null,"severity":"error"}],"edges":1,"explain":{"edges":[]},"form":"steps","graph":"g","hash":"0x123456789abcdef0","nodes":2,"regions":1,"steps":2}
+plan with text explanation	{"cached":true,"diagnostics":[],"edges":0,"explain":"plain words","form":"source","graph":"h","hash":"0x0000000000000001","nodes":0,"regions":0,"steps":0}
+diagnostics	[{"code":"W1","message":"an unused port","node":"io","port":"in","severity":"warning"},{"code":"E2","message":"a cycle","node":null,"port":null,"severity":"error"}]
+plugin	{"backends":["fixture.cpu"],"generation":2,"name":"dylib-fixture","nodes":["fixture.pass"]}
+stepped	{"faults":1,"idle":true,"skipped":0,"step_calls":6,"tick":9,"ticks":3}
+carry	{"added":{"names":["new"],"total":1},"carried":{"names":["io"],"total":1},"dropped_values":2,"fresh":{"names":[],"total":0},"removed":{"names":["old"],"total":1},"removed_ports":{"names":["gone"],"total":1}}
+trace	{"entries":[{"error":null,"id":3,"op":"inspect","seq":7,"session":"default","target":"run 1"},{"error":"unknown_run","id":4,"op":"feed","seq":8,"session":"default","target":"run 9"}]}
+typed scalar	{"value":{"type":"u32","value":41}}
+typed compound	{"value":{"type":"struct","value":{"count":-5,"map":[[7,"01ff"]],"maybe":null,"mode":{"payload":2.25,"variant":"scaled"},"pair":[true,0.5],"tags":["a","b\"c"]}}}
+typed none	{"value":null}

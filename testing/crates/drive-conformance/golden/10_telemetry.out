@@ -1,0 +1,12 @@
+plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+graph name="pass" diagnostics=[]
+started run=1
+fed woke=1 dropped=false
+stepped ticks=1 tick=1 step_calls=1 faults=0 skipped=0 idle=false
+inspect telemetry run=1 level=detailed tick=1 step_calls=1 faults=0 skipped=0 rows=["0|work|1|0|false|false|false"]
+started run=2
+inspect telemetry run=2 level=off tick=0 step_calls=0 faults=0 skipped=0 rows=[]
+started run=3
+fed woke=1 dropped=false
+stepped ticks=1 tick=1 step_calls=1 faults=0 skipped=0 idle=false
+inspect telemetry run=3 level=detailed tick=1 step_calls=1 faults=0 skipped=0 rows=["0|work|1|0|false|false|false"]

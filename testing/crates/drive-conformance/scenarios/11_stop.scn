@@ -1,0 +1,11 @@
+# A FIFO of one value: a feed while it is full is refused as busy, and an immediate stop throws
+# away what is waiting.
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+start pass fifo=1
+feed 1 in u32:1
+feed 1 in u32:2
+feed 1 in u32:3
+inspect run 1
+stop 1 immediate
+stop 1 immediate

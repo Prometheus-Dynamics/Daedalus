@@ -319,3 +319,24 @@ fn record_writes_the_library_and_a_lock_flag_needs_its_file() {
     assert_eq!(code, Some(2), "--record alone is a usage error: {stderr}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_plugin_node_that_prints_does_not_corrupt_the_worker_stream() {
+    let library = fixture_library();
+    let mut loader = Loader::new();
+    let plugin = loader.open(&library).expect("opens");
+    let mut registry = Registry::new();
+    plugin.join(&mut registry).expect("joins");
+    let mut process = ProcessBackend::new();
+    let spec = WorkerSpec::new(env!("CARGO_BIN_EXE_daedalus-plugin-worker"))
+        .arg(library.display().to_string());
+    process.add_worker(spec, &registry).expect("registers");
+
+    // The node prints a line to stdout, then passes its input on: the run's answer is intact.
+    let mut step = process_step(&process, "fixture.chatty");
+    let (end, reason, out) = run_u32(&mut step, 4243);
+    assert!(matches!(end, StepEnd::Done), "{reason}");
+    assert_eq!(out, Some(4243u32.to_le_bytes().to_vec()));
+    release(step);
+    assert_eq!(process.telemetry().faults, 0);
+}

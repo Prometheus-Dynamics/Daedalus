@@ -1,0 +1,5 @@
+pong version=1
+error unsupported
+graph name="pass" diagnostics=["error|node_missing"]
+error planning_failed
+inspect host sessions=["default"] graphs=["pass"] runs=[] plugins=[]

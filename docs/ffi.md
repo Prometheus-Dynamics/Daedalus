@@ -24,11 +24,18 @@ declarations, and each is run against the same thirteen canonical fixtures:
 | Python | `languages/python/sdk` | all thirteen fixtures |
 | JavaScript (Node) | `languages/node/sdk` | all thirteen fixtures |
 | Java | `languages/java/sdk` | all thirteen fixtures |
-| C and C++ | `languages/cpp/sdk` (the header and CMake build) over `languages/cpp-sdk` (the C API, in Rust) | all thirteen fixtures |
+| C and C++ | `languages/cpp/sdk` (`daedalus_worker.h`, and the CMake build) over `languages/cpp-sdk` (the C API, in Rust) | all thirteen fixtures |
 | Rust | `languages/rust` | all thirteen fixtures |
 
 The Status section of each language's brief in [`prs/`](prs) (`G5` to `G9`) says exactly what is
 served and what is not.
+
+A behaviour suite holds a worker to what the thirteen fixtures do not cover: a cancel seen during a
+run ends it as cancelled, progress, log and detail arrive in order before the outputs, a state
+exports and imports and an unset state is a fault, a print in a node body leaves the packet stream
+clean, a malformed packet is answered and the next one works, and a 1 MiB value round-trips. Each
+case is named and can be run alone (`daedalus-worker-conformance`, `behaviour.rs`), and the case
+lists what the worker must do.
 
 ## How a worker is run
 
@@ -90,7 +97,7 @@ own program, and its one file is the whole check.
 Host and worker talk in packets: a length, then a body. A value is encoded by its port's type,
 which the worker declared, so nothing on the wire names a type. There is no JSON and no base64
 on this path. The first message each way carries a protocol version and a layout hash, and a
-mismatch is refused. `core/wire` is the Rust implementation, and each SDK has its own.
+mismatch is refused. `core/wire` is the Rust implementation. The C and C++ SDKs use it through `languages/cpp-sdk`; Python, Node and Java each have their own.
 
 ### Large values in shared memory
 
@@ -212,9 +219,10 @@ ends the host.
 
 ## What a worker says
 
-A worker's stdout is the protocol, so it can't print there. It has two other ways to say
-something. What it writes to stderr is drained and its last 64 KiB kept. A `Log` message on the
-protocol carries a level and a line of text: the host counts it (`ProcessBackend::telemetry().logs`),
+A worker's packets travel on a copy of its stdout, and stdout then points at stderr,
+so a print from a node is stderr text and the stream stays clean. It has two ways to say something on
+purpose. What it writes to stderr, a print included, is drained and its last 64 KiB kept. A `Log`
+message on the protocol carries a level and a line of text: the host counts it (`ProcessBackend::telemetry().logs`),
 keeps it with the stderr tail as `[level] text`, and hands it to the handler set with
 `ProcessBackend::on_log`, with the worker's program and pid. A fault report ends with the tail,
 so it has the worker's last lines either way.
@@ -233,3 +241,46 @@ might crash is kept out of the host's process. See [plugins.md](plugins.md).
 `core/capi` is a C surface for running a graph from a shared library: `include/daedalus.h`
 declares it, and a host links `libdaedalus_capi`. [`languages/rust-capi`](../languages/rust-capi) is a safe Rust
 host over it, on the sys crate [`languages/rust-capi-sys`](../languages/rust-capi-sys).
+
+## Driving the daemon from C
+
+`languages/client-capi` is a C surface over the daemon client. `include/daedalus_client.h`
+declares it, and a program links `libdaedalus_client_capi`. A client handle is one connection to
+a running `daedalusd`, over a unix socket (`unix:/path`) or loopback TCP (`tcp:127.0.0.1:4100`).
+The daemon runs the graph, so the program needs no plugin of its own.
+
+```c
+#include "daedalus_client.h"
+
+daedalus_client_handle_t client = 0;
+daedalus_client_connect((const uint8_t *)"tcp:127.0.0.1:4100", 18, 0, &client);
+daedalus_client_put_graph(client, (const uint8_t *)"g", 1, graph, graph_len);
+daedalus_client_config_t config = {0};
+config.telemetry = DAEDALUS_CLIENT_TELEMETRY_BASIC;
+uint64_t run = 0;
+daedalus_client_start(client, (const uint8_t *)"g", 1, &config, &run);
+daedalus_client_feed_i64(client, run, (const uint8_t *)"in", 2, 41, NULL);
+daedalus_client_step(client, run, 1, NULL);
+int64_t out = 0;
+uint8_t present = 0;
+daedalus_client_take_i64(client, run, (const uint8_t *)"out", 3, &out, &present);
+daedalus_client_close(client);
+```
+
+A call returns a status. `DAEDALUS_CLIENT_OK` is zero. After a failure,
+`daedalus_client_last_error` gives the reason, and `daedalus_client_last_error_code` gives the
+daemon's error code when the daemon refused the call. Text comes back through a buffer: ask
+with a null buffer for the size, then call again with a buffer that large. A value that does not
+fit, or does not have the type asked for, is kept for the next take of its port.
+
+Watches are pulled. `daedalus_client_watch_next` waits up to a timeout and returns the event as
+JSON, so no callback or struct layout is needed. An event is `fault`, `telemetry`, `lagged`,
+`ended` or `unknown`, with the same fields `daedalus-ctl` prints.
+
+Compound values use the wire encoding of a typed value with `daedalus_client_feed_wire` and
+`daedalus_client_take_wire`. The header gives the bytes. A binding that already has the protocol's
+codec produces them.
+
+The header and this library grow only by new functions and new statuses. A program built
+against an older header keeps working. To check that the library has a newer function, look it
+up with `dlsym` and test for null.

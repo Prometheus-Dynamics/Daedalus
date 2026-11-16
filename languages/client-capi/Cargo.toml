@@ -1,0 +1,36 @@
+[package]
+name = "daedalus-client-capi"
+description = "The client's C surface: connect to the daemon, feed, step, take and watch, from any language that calls C."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+daedalus-abi = { path = "../../core/abi" }
+daedalus-client = { path = "../../core/client", features = ["json"] }
+daedalus-types = { path = "../../core/types" }
+daedalus-wire = { path = "../../core/wire" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+daedalus-backend = { path = "../../core/backend" }
+daedalus-host = { path = "../../core/host", features = ["listen"] }
+daedalus-loader = { path = "../../core/loader" }
+daedalus-registry = { path = "../../core/registry" }
+
+# This crate may use unsafe, so it carries its own lint table.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "deny"
+unused_attributes = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"

@@ -1,0 +1,8 @@
+# Plugins: a library that cannot load, the fixture, the fixture again (a new generation), and what
+# the host lists.
+ping
+load_plugin /no/such/library.so
+load_plugin {plugin}
+load_plugin {plugin}
+inspect host
+trace 0

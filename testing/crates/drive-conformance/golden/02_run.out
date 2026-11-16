@@ -1,0 +1,18 @@
+plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+graph name="pass" diagnostics=[]
+plan graph="pass" hash=190687686841387128 form=steps nodes=2 edges=2 regions=1 steps=1 cached=false diagnostics=[] explain=none
+plan graph="pass" hash=10813084218361626251 form=blob nodes=2 edges=2 regions=1 steps=1 cached=false diagnostics=[] explain=none
+plan graph="pass" hash=190687686841387128 form=steps nodes=2 edges=2 regions=1 steps=1 cached=false diagnostics=[] explain="{\n  \"nodes\": [\n    {\n      \"node\": 0,\n      \"id\": \"host\",\n      \"backend\": null,\n      \"reason\": {\n        \"kind\": \"host_bridge\"\n      }\n    },\n    {\n      \"node\": 1,\n      \"id\": \"fixture.pass\",\n      \"backend\": \"fixture.cpu\",\n      \"reason\": {\n        \"kind\": \"only_candidate\"\n      }\n    }\n  ],\n  \"edges\": [\n    {\n      \"from_node\": 0,\n      \"from_port\": \"in\",\n      \"to_node\": 1,\n      \"to_port\": \"in\",\n      \"conversion\": [],\n      \"transfer\": [],\n      \"written_in\": \"plugin.host\",\n      \"read_in\": \"plugin.host\",\n      \"in_place\": true\n    },\n    {\n      \"from_node\": 1,\n      \"from_port\": \"out\",\n      \"to_node\": 0,\n      \"to_port\": \"out\",\n      \"conversion\": [],\n      \"transfer\": [],\n      \"written_in\": \"plugin.host\",\n      \"read_in\": \"plugin.host\",\n      \"in_place\": true\n    }\n  ],\n  \"regions\": [\n    {\n      \"region\": 0,\n      \"backend\": \"fixture.cpu\",\n      \"nodes\": [\n        1\n      ],\n      \"rate\": [\n        [\n          1,\n          1\n        ],\n        [\n          1,\n          1\n        ]\n      ],\n      \"inputs\": [\n        {\n          \"node\": 1,\n          \"port\": \"in\"\n        }\n      ],\n      \"outputs\": [\n        {\n          \"node\": 1,\n          \"port\": \"out\"\n        }\n      ]\n    }\n  ],\n  \"units\": [\n    {\n      \"region\": 0,\n      \"unit\": 0,\n      \"covers\": [\n        1\n      ]\n    }\n  ]\n}\n"
+error planning_failed
+started run=1
+fed woke=1 dropped=false
+value none
+stepped ticks=1 tick=1 step_calls=1 faults=0 skipped=0 idle=false
+value u32:41
+value none
+fed woke=1 dropped=false
+stepped ticks=2 tick=3 step_calls=1 faults=0 skipped=0 idle=true
+value u32:7
+inspect run run=1 session="default" graph="pass" state=running tick=3 faults=0 ports=["in|input|u32","out|output|u32"] nodes=["io","work"]
+inspect graph name="pass" json="{\n  \"format\": \"daedalus.graph\",\n  \"schema_version\": 1,\n  \"graph\": {\n    \"nodes\": [\n      {\n        \"id\": \"host\",\n        \"kind\": \"host_bridge\",\n        \"label\": \"io\",\n        \"port_types\": {\n          \"in\": \"u32\",\n          \"out\": \"u32\"\n        }\n      },\n      {\n        \"id\": \"fixture.pass\",\n        \"label\": \"work\"\n      }\n    ],\n    \"edges\": [\n      {\n        \"from\": {\n          \"node\": 0,\n          \"port\": \"in\"\n        },\n        \"to\": {\n          \"node\": 1,\n          \"port\": \"in\"\n        },\n        \"policy\": {\n          \"kind\": \"fifo\"\n        }\n      },\n      {\n        \"from\": {\n          \"node\": 1,\n          \"port\": \"out\"\n        },\n        \"to\": {\n          \"node\": 0,\n          \"port\": \"out\"\n        },\n        \"policy\": {\n          \"kind\": \"fifo\"\n        }\n      }\n    ]\n  }\n}\n"
+stopped tick=4 dropped=0

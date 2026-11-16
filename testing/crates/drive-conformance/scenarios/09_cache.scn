@@ -1,0 +1,10 @@
+# The plan cache: a second plan of the same graph comes from it, and clearing it empties it.
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+inspect cache
+plan pass steps
+plan pass steps priority=fixture.cpu
+inspect cache
+cache clear
+inspect cache
+plan pass steps

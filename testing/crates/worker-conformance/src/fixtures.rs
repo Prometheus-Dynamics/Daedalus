@@ -429,3 +429,41 @@ pub fn declarations() -> Vec<Declaration> {
 pub fn hello(packet_cap: u32) -> Hello {
     Hello::new("daedalus-worker-fixture", packet_cap, declarations())
 }
+
+/// The node ids of the behaviour suite's fixture nodes. Each is declared by
+/// [`behaviour_declarations`]. A worker serves one only when it opts in to the behaviour that
+/// uses it (see `behaviour.rs`).
+pub const WAIT_CANCEL: &str = "fixture.wait_cancel";
+pub const EVENTS: &str = "fixture.events";
+pub const CHATTY: &str = "fixture.chatty";
+pub const STATEFUL_LABEL: &str = "fixture.stateful_label";
+
+/// The declarations of the behaviour suite's fixture nodes. They are kept apart from
+/// [`declarations`], so the thirteen value fixtures are unchanged.
+///
+/// `fixture.wait_cancel`, `fixture.events` and `fixture.chatty` take an integer `x` and give an
+/// integer `y`. `fixture.stateful_label` takes a string `in`, gives a string `out`, and keeps a
+/// string as its state.
+pub fn behaviour_declarations() -> Vec<Declaration> {
+    let int_node = |id: &str| Declaration {
+        id: id.to_owned(),
+        inputs: vec![PortSpec::new("x", scalar(Scalar::Int))],
+        outputs: vec![PortSpec::new("y", scalar(Scalar::Int))],
+        config: Vec::new(),
+        state: None,
+        capabilities: Vec::new(),
+    };
+    vec![
+        int_node(WAIT_CANCEL),
+        int_node(EVENTS),
+        int_node(CHATTY),
+        Declaration {
+            id: STATEFUL_LABEL.to_owned(),
+            inputs: vec![PortSpec::new("in", string())],
+            outputs: vec![PortSpec::new("out", string())],
+            config: Vec::new(),
+            state: Some(string()),
+            capabilities: Vec::new(),
+        },
+    ]
+}

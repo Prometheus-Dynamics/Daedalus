@@ -1,4 +1,4 @@
-//! The C layouts of the surface in `daedalus.h`. A type, a value, a port and a node are the same
+//! The C layouts of the surface in `daedalus_worker.h`. A type, a value, a port and a node are the same
 //! bytes on both sides: a C table is read where it lies, and a C value is written where the C side
 //! reads it.
 

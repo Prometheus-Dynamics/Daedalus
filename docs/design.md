@@ -52,11 +52,11 @@ Planning allocates. Running does not. Everything needed to run a solved graph wo
 
 ```text
 core/        abi, types, value, graph, backend, registry, plan, planner, runner, macros, derive,
-             host, wire, client, loader, capi, daedalus (the facade)
-backends/    cpu, cpu-author, wgpu, wgpu-author, process, sim, and *-sys crates
-languages/   python, node, java, cpp, rust: SDKs for writing nodes run by the process backend
+             host, wire, client, loader, capi, made, integrity, daedalus (the facade)
+backends/    cpu, cpu-author, dmabuf, process, process-shm, sim, wgpu, wgpu-author, and *-sys crates
+languages/   python, node, java, cpp, cpp-sdk, rust: SDKs for writing nodes run by the process backend
              rust-capi (a safe Rust host over the C surface) and rust-capi-sys (its loader)
-service/     daedalusd, daedalus-ctl
+service/     daedalusd, daedalus-ctl, daedalus-lock
 testing/     crates/* (conformance suite, benches, budgets), board-runs/, fixtures/ (outside the
              workspace globs)
 examples/    each directory directly inside is a crate

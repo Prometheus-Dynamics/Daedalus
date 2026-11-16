@@ -16,8 +16,12 @@ UNSAFE_ALLOWED = (
     "examples/chip_board",
     # The C worker SDK's API: the C boundary, every dd_* function of daedalus.h.
     "languages/cpp-sdk",
+    # The worker side's packet stream: the one copy of stdout a worker takes, and its descriptor calls.
+    "languages/worker-io",
     # perf_event_open, fork and exec: the board's counter tool, Linux only.
     "testing/crates/counters",
+    # The client's C surface: the C ABI over the daemon client, with its own header.
+    "languages/client-capi",
 )
 HEAP_FREE_TARGETS = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"]
 PRODUCT_NAMES = re.compile(r"\b(lemnos|eidos|ariadne|gaia|orion|helios)\b", re.I)

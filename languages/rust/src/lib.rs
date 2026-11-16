@@ -1,7 +1,8 @@
 //! The Rust worker SDK. A node is an ordinary function declared with `#[node]`, with
 //! `backend = daedalus_lang_rust`. [`serve`] runs the worker loop on stdin and stdout: it builds the
 //! hello from the nodes' registry records, runs each node under a panic guard, and answers the wire
-//! protocol. Output from node bodies goes through [`Context::log`], never to stdout.
+//! protocol. The packets go on a copy of stdout, so a node body that prints writes to stderr instead
+//! of corrupting the stream.
 
 #![forbid(unsafe_code)]
 

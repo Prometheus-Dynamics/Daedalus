@@ -1,4 +1,4 @@
-//! The C worker SDK's API, in Rust. Every `dd_*` function of `languages/cpp/sdk/include/daedalus.h`
+//! The C worker SDK's API, in Rust. Every `dd_*` function of `languages/cpp/sdk/include/daedalus_worker.h`
 //! is exported from this crate, built as a static library that a C or C++ worker links. The wire
 //! codec and the worker messages are `daedalus-wire`'s; this crate converts between the C layouts
 //! and the wire's typed values, and runs the loop over them.

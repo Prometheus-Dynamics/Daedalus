@@ -1,0 +1,7 @@
+# A patch edits a stored graph: here node 1 becomes the fault node. A patch that is not a patch is
+# refused.
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+patch_graph pass {graphs}/patch.json
+inspect graph pass
+patch_graph pass {graphs}/broken.json

@@ -1,0 +1,17 @@
+# The watch of 03, of every kind, read through the additive proxy: the host sends bytes this client does not
+# know at the end of each message, an op it does not have, an event of a kind it does not have
+# after each event, and an error code it does not have.
+@proxy newer
+ping
+load_plugin {plugin}
+put_graph boom {graphs}/boom.json
+watch 1 all
+start boom
+feed 1 in u32:1
+step 1 1
+next 1
+next 1
+next 1
+next 1
+take 9 out
+trace 2

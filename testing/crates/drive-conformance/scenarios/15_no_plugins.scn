@@ -1,0 +1,8 @@
+# A host with no plugin loader: loading a plugin is unsupported, and a graph of nodes it does not
+# have does not plan.
+@host none
+ping
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+plan pass steps
+inspect host

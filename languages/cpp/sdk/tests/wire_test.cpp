@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdio>
 
-#include "daedalus.hpp"
+#include "daedalus_worker.hpp"
 
 extern "C" {
 int dd_internal_encode(const dd_type* ty, const dd_value* v, unsigned char** out, size_t* len);
