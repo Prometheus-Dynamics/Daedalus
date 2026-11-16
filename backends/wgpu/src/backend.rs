@@ -332,6 +332,46 @@ impl WgpuBackend {
         }
     }
 
+    /// The alignment a dma-buf's value has to start at to be imported in place: its offset in the
+    /// dma-buf has to be a multiple of it. This is the number the import is checked against, so a
+    /// value at another offset is copied, and [`dmabuf_offset_status`](Self::dmabuf_offset_status)
+    /// says so. `None` while no device is open, and when the open device can't import a dma-buf
+    /// of either kind.
+    pub fn dmabuf_offset_alignment(&self) -> Option<u64> {
+        // Off Linux no dma-buf is imported, so there is no alignment to give.
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let context = self.open_context()?;
+            if context.imports.get(false) == Some(false) && context.imports.get(true) == Some(false)
+            {
+                return None;
+            }
+            daedalus_vk_sys::memory::dma_buf_offset_alignment(&context.device).ok()
+        }
+    }
+
+    /// What a value that is a dma-buf of this kind does on the open device when it starts `offset`
+    /// bytes into its dma-buf. As [`dmabuf_status`](Self::dmabuf_status), except that a value at an
+    /// offset that isn't a multiple of [`dmabuf_offset_alignment`](Self::dmabuf_offset_alignment)
+    /// is copied for that reason, and the status says which offset and alignment.
+    pub fn dmabuf_offset_status(&self, offset: u64, read_only: bool) -> crate::DmaBufStatus {
+        use crate::{DmaBufStatus, WhyCopied};
+        let status = self.dmabuf_status(read_only);
+        if !matches!(status, DmaBufStatus::Imports | DmaBufStatus::Undecided(_)) {
+            return status;
+        }
+        match self.dmabuf_offset_alignment() {
+            Some(alignment) if !offset.is_multiple_of(alignment) => {
+                DmaBufStatus::Copies(WhyCopied::Misaligned { offset, alignment })
+            }
+            _ => status,
+        }
+    }
+
     /// Says whether the device imports a dma-buf of this kind, for a host that knows: a process
     /// that can't allocate from a dma-heap can't find out by itself until it is handed one. It
     /// applies to the device this backend has open and to any it opens later. Said wrongly, an

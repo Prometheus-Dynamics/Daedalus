@@ -65,6 +65,10 @@ fn ms(time: Duration) -> f64 {
 fn limits(backend: &WgpuBackend) {
     let Some(record) = backend.caps() else { return };
     println!("adapter: {}", record.adapter.name);
+    match backend.dmabuf_offset_alignment() {
+        Some(alignment) => println!("dma-buf offset alignment: {alignment}"),
+        None => println!("dma-buf offset alignment: none (no device, or no dma-buf import)"),
+    }
     println!("{:#?}", record.compute);
 }
 
