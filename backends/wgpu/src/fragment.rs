@@ -29,11 +29,10 @@ const RECT_VERTEX: &str = "
     @location(0) rect: vec4<u32>,
     @location(1) size: vec2<u32>,
 ) -> @builtin(position) vec4<f32> {
-    var corners = array<vec2<u32>, 6>(
-        vec2<u32>(0u, 0u), vec2<u32>(1u, 0u), vec2<u32>(0u, 1u),
-        vec2<u32>(0u, 1u), vec2<u32>(1u, 0u), vec2<u32>(1u, 1u),
-    );
-    let px = vec2<f32>(rect.xy + corners[v] * rect.zw);
+    // The six corners of two triangles, as bits of the vertex index: x is set for vertices 1, 4
+    // and 5, y for 2, 3 and 5. A local array here is refused by SPIR-V validation.
+    let corner = vec2<u32>((0x32u >> v) & 1u, (0x2Cu >> v) & 1u);
+    let px = vec2<f32>(rect.xy + corner * rect.zw);
     let extent = vec2<f32>(size);
     return vec4<f32>(px.x / extent.x * 2.0 - 1.0, 1.0 - px.y / extent.y * 2.0, 0.0, 1.0);
 }
