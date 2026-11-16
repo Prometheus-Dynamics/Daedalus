@@ -49,7 +49,7 @@ fn kind_of(key: &str) -> Option<Kind> {
 
 /// A port, by what the caller gave: its name, or its index.
 #[derive(Clone, Copy)]
-enum Port<'a> {
+pub(crate) enum Port<'a> {
     Name(&'a str),
     Index(usize),
 }
@@ -74,7 +74,7 @@ fn resolve(
 
 /// A value a caller pushes.
 #[derive(Clone, Copy)]
-enum Pushed<'a> {
+pub(crate) enum Pushed<'a> {
     I64(i64),
     F64(f64),
     Bool(bool),
@@ -123,7 +123,7 @@ fn encode(value: Pushed<'_>, kind: Option<Kind>) -> Result<([u8; 8], usize), Sta
 }
 
 /// Checks one push without making it.
-fn check(host: &Host<'static>, port: Port<'_>, value: Pushed<'_>) -> Result<(), Status> {
+pub(crate) fn check(host: &Host<'static>, port: Port<'_>, value: Pushed<'_>) -> Result<(), Status> {
     let (_, _, kind) = resolve(host, port, Dir::Input)?;
     match (value, kind) {
         (Pushed::Bytes(_), Some(Kind::Bytes)) => Ok(()),
@@ -132,7 +132,7 @@ fn check(host: &Host<'static>, port: Port<'_>, value: Pushed<'_>) -> Result<(), 
     }
 }
 
-fn push(entry: &mut GraphEntry, port: Port<'_>, value: Pushed<'_>) -> Status {
+pub(crate) fn push(entry: &mut GraphEntry, port: Port<'_>, value: Pushed<'_>) -> Status {
     let host = entry.loaded.host();
     let (_, name, kind) = match resolve(host, port, Dir::Input) {
         Ok(found) => found,
@@ -201,6 +201,17 @@ enum Taken {
 /// Takes the next value of the output `port` and reads it as `want`. A value that can't be
 /// read that way stays where it is, for a take of the right kind.
 fn take(entry: &mut GraphEntry, port: Port<'_>, want: Kind) -> Result<Option<Taken>, Status> {
+    take_in(entry, port, want, (i64::MIN, i64::MAX))
+}
+
+/// As `take`, but an integer outside `range` (both ends included) is refused, and stays in the
+/// port for the next take.
+fn take_in(
+    entry: &mut GraphEntry,
+    port: Port<'_>,
+    want: Kind,
+    range: (i64, i64),
+) -> Result<Option<Taken>, Status> {
     let (index, name, kind) = resolve(entry.loaded.host(), port, Dir::Output)?;
     let fits = matches!(
         (want, kind),
@@ -222,8 +233,10 @@ fn take(entry: &mut GraphEntry, port: Port<'_>, want: Kind) -> Result<Option<Tak
     let read = match kind {
         Some(Kind::Int { bytes, signed }) => match int_of(&value, bytes, signed) {
             Some(wide) => i64::try_from(wide)
+                .ok()
+                .filter(|held| (range.0..=range.1).contains(held))
                 .map(Taken::I64)
-                .map_err(|_| Status::OUT_OF_RANGE),
+                .ok_or(Status::OUT_OF_RANGE),
             None => Err(Status::TYPE_MISMATCH),
         },
         Some(Kind::Float { bytes }) => float_of(&value, bytes)
@@ -315,10 +328,23 @@ const INT: Kind = Kind::Int {
 const FLOAT: Kind = Kind::Float { bytes: 8 };
 
 fn take_i64(entry: &mut GraphEntry, port: Port<'_>) -> Result<Option<i64>, Status> {
-    Ok(take(entry, port, INT)?.and_then(|taken| match taken {
-        Taken::I64(value) => Some(value),
-        _ => None,
-    }))
+    take_i64_within(entry, port, i64::MIN, i64::MAX)
+}
+
+/// Takes an integer if it lies in `low` to `high`, both included. Outside that range it is refused
+/// and stays in the port.
+fn take_i64_within(
+    entry: &mut GraphEntry,
+    port: Port<'_>,
+    low: i64,
+    high: i64,
+) -> Result<Option<i64>, Status> {
+    Ok(
+        take_in(entry, port, INT, (low, high))?.and_then(|taken| match taken {
+            Taken::I64(value) => Some(value),
+            _ => None,
+        }),
+    )
 }
 
 fn take_f64(entry: &mut GraphEntry, port: Port<'_>) -> Result<Option<f64>, Status> {
@@ -436,7 +462,7 @@ push_calls! {
 ///
 /// # Safety
 /// `bytes` is null or points to `len` readable bytes.
-unsafe fn caller_bytes<'a>(bytes: *const u8, len: usize) -> Result<&'a [u8], Status> {
+pub(crate) unsafe fn caller_bytes<'a>(bytes: *const u8, len: usize) -> Result<&'a [u8], Status> {
     match (bytes.is_null(), len) {
         (_, 0) => Ok(&[]),
         (true, _) => Err(Status::NULL_POINTER),
@@ -539,6 +565,52 @@ take_calls! {
     daedalus_take_bool, daedalus_take_bool_at, u8, take_bool;
 }
 
+/// Takes the oldest value of an integer output port if it lies in `low` to `high`, both included.
+/// A number outside that range gives `DAEDALUS_OUT_OF_RANGE` and stays in the port: a take
+/// that is refused loses nothing. `present` is set to 1 and `out` written when the port had a
+/// value, and `present` is set to 0 when it had none.
+///
+/// # Safety
+/// `name` points to `len` bytes of UTF-8, and `out` and `present` to their types.
+// SAFETY: the name is this library's own, with its prefix: no other symbol has it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_take_i64_within(
+    graph: Handle,
+    name: *const u8,
+    len: usize,
+    low: i64,
+    high: i64,
+    out: *mut i64,
+    present: *mut u8,
+) -> Status {
+    // SAFETY: the caller's contract is this function's.
+    unsafe {
+        named(graph, name, len, |entry, port| {
+            give(take_i64_within(entry, port, low, high), out, present)
+        })
+    }
+}
+
+/// As `daedalus_take_i64_within`, with the port given by its index.
+///
+/// # Safety
+/// `out` and `present` point to their types.
+// SAFETY: the name is this library's own, with its prefix: no other symbol has it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_take_i64_within_at(
+    graph: Handle,
+    index: usize,
+    low: i64,
+    high: i64,
+    out: *mut i64,
+    present: *mut u8,
+) -> Status {
+    // SAFETY: the caller's contract is this function's.
+    indexed(graph, index, |entry, port| unsafe {
+        give(take_i64_within(entry, port, low, high), out, present)
+    })
+}
+
 /// Takes the oldest value of an output port of type `bytes` into `buf`, and writes its length
 /// to `len`. When `buf` is null or too small the value waits: the length it needs is written,
 /// the status is `DAEDALUS_BUFFER_TOO_SMALL`, and the next take of the port gets the same
@@ -583,116 +655,6 @@ pub unsafe extern "C" fn daedalus_take_bytes_at(
     // SAFETY: the caller's contract is this function's.
     indexed(graph, index, |entry, port| unsafe {
         take_bytes(entry, port, buf, cap, len, present)
-    })
-}
-
-/// The kinds of value a batch entry holds.
-pub const KIND_I64: u32 = 0;
-pub const KIND_F64: u32 = 1;
-pub const KIND_BOOL: u32 = 2;
-pub const KIND_BYTES: u32 = 3;
-
-/// Bytes a caller owns.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct ByteSpan {
-    pub data: *const u8,
-    pub len: usize,
-}
-
-/// One entry's value. Which member is read is the entry's `kind`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union PushValue {
-    pub i64_value: i64,
-    pub f64_value: f64,
-    pub bool_value: u8,
-    pub bytes: ByteSpan,
-}
-
-/// One push of a batch: a port by its index, and a value.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct Push {
-    pub port: usize,
-    pub kind: u32,
-    pub value: PushValue,
-}
-
-/// What an entry pushes.
-///
-/// # Safety
-/// The member `kind` names was written, and a `bytes` member's pointer is null or readable.
-unsafe fn pushed<'a>(entry: &Push) -> Result<Pushed<'a>, Status> {
-    // SAFETY: the caller wrote the member its `kind` names.
-    unsafe {
-        match entry.kind {
-            KIND_I64 => Ok(Pushed::I64(entry.value.i64_value)),
-            KIND_F64 => Ok(Pushed::F64(entry.value.f64_value)),
-            KIND_BOOL => Ok(Pushed::Bool(entry.value.bool_value != 0)),
-            KIND_BYTES => {
-                caller_bytes(entry.value.bytes.data, entry.value.bytes.len).map(Pushed::Bytes)
-            }
-            _ => Err(Status::TYPE_MISMATCH),
-        }
-    }
-}
-
-/// Pushes `count` values, or none of them. Every entry is checked first: its port, its
-/// direction, its type, its range. If one can't be pushed nothing is, the status is
-/// `DAEDALUS_BAD_BATCH`, and `bad`, when not null, gets the first such entry's position.
-///
-/// # Safety
-/// `pushes` points to `count` entries, each with the member its `kind` names written, and
-/// `bad` is null or points to a `size_t`.
-// SAFETY: the name is this library\'s own, with its prefix: no other symbol has it.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn daedalus_push_batch(
-    graph: Handle,
-    pushes: *const Push,
-    count: usize,
-    bad: *mut usize,
-) -> Status {
-    guard(|| {
-        if count == 0 {
-            return Status::OK;
-        }
-        if pushes.is_null() {
-            return Status::NULL_POINTER;
-        }
-        // SAFETY: not null, and the caller says `count` entries are readable for the call.
-        let pushes = unsafe { std::slice::from_raw_parts(pushes, count) };
-        let entry = match GRAPHS.get(graph) {
-            Ok(entry) => entry,
-            Err(status) => return status,
-        };
-        let mut entry = lock(&entry);
-        for (at, one) in pushes.iter().enumerate() {
-            // SAFETY: the caller wrote each entry as its `kind` says.
-            let checked = unsafe { pushed(one) }
-                .and_then(|value| check(entry.loaded.host(), Port::Index(one.port), value));
-            if let Err(status) = checked {
-                if !bad.is_null() {
-                    // SAFETY: not null, and the caller says it points to a `size_t`.
-                    unsafe { bad.write(at) };
-                }
-                return fail(
-                    Status::BAD_BATCH,
-                    format!("entry {at}: {}", status.name().trim_end_matches('\0')),
-                );
-            }
-        }
-        for one in pushes {
-            // SAFETY: checked above, under the same contract.
-            let status = match unsafe { pushed(one) } {
-                Ok(value) => push(&mut entry, Port::Index(one.port), value),
-                Err(status) => status,
-            };
-            if status != Status::OK {
-                return status;
-            }
-        }
-        Status::OK
     })
 }
 

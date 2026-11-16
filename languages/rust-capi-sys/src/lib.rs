@@ -21,6 +21,7 @@ pub type Handle = u64;
 
 pub const OK: Code = 0;
 pub const BUFFER_TOO_SMALL: Code = 6;
+pub const OUT_OF_RANGE: Code = 10;
 
 /// `daedalus_version_t`.
 #[repr(C)]
@@ -134,6 +135,21 @@ impl std::error::Error for LoadError {}
 
 type Name = *const u8;
 
+/// A function a newer surface has and an older one may not: `daedalus_take_i64_within`, and its
+/// index form.
+type TakeI64Within = unsafe extern "C" fn(Handle, Name, usize, i64, i64, *mut i64, *mut u8) -> Code;
+type TakeI64WithinAt = unsafe extern "C" fn(Handle, usize, i64, i64, *mut i64, *mut u8) -> Code;
+
+/// Looks up a symbol that may be missing, which is not an error: an older library lacks it.
+///
+/// # Safety
+/// When `name` (with its NUL) is in `library`, it has the type `T`.
+unsafe fn optional<T: Copy>(library: &Library, name: &[u8]) -> Option<T> {
+    // SAFETY: the caller says the symbol, when present, has this type.
+    let found = unsafe { library.get::<T>(name) }.ok()?;
+    Some(*found)
+}
+
 /// Declares the function table: each field, the symbol it is, and its C type.
 macro_rules! table {
     ($($field:ident = $symbol:literal: $ty:ty;)*) => {
@@ -206,6 +222,10 @@ pub enum At<'a> {
 /// The loaded surface. Every method is one call of the library, made as the header says.
 pub struct Api {
     table: Table,
+    /// Newer than the table: absent from an older library, which then can't take a narrow
+    /// integer without losing it.
+    within: Option<TakeI64Within>,
+    within_at: Option<TakeI64WithinAt>,
     /// Declared after the table, so the functions are dropped before the library closes.
     _library: Library,
 }
@@ -227,8 +247,15 @@ impl Api {
         // SAFETY: the library is the surface, whose symbols have the types the table gives.
         // A library that isn't lacks one of the 33 names and is refused.
         let table = unsafe { Table::load(&library)? };
+        // SAFETY: the library is the surface, whose symbols have the types given here when present.
+        let within = unsafe { optional::<TakeI64Within>(&library, b"daedalus_take_i64_within\0") };
+        // SAFETY: as above.
+        let within_at =
+            unsafe { optional::<TakeI64WithinAt>(&library, b"daedalus_take_i64_within_at\0") };
         Ok(Api {
             table,
+            within,
+            within_at,
             _library: library,
         })
     }
@@ -469,6 +496,46 @@ impl Api {
                 At::Index(index) => (self.table.take_i64_at)(graph, index, &mut out, &mut present),
             }
         })?;
+        Ok((present != 0).then_some(out))
+    }
+
+    /// Takes the oldest integer of an output port if it lies in `low` to `high`, both included.
+    /// A number outside that range is refused with `OUT_OF_RANGE` and stays in the port.
+    ///
+    /// A library older than the range-checked take has no way to refuse a number once it is
+    /// taken. So there, the full range is taken as `take_i64` takes it, and a narrower range is
+    /// refused before anything is taken: the number stays, and nothing is lost.
+    pub fn take_i64_within(
+        &self,
+        graph: Handle,
+        port: At<'_>,
+        low: i64,
+        high: i64,
+    ) -> Result<Option<i64>, Code> {
+        let (mut out, mut present) = (0, 0);
+        let code = match (port, self.within, self.within_at) {
+            (At::Name(name), Some(within), _) => {
+                // SAFETY: a name is `len` bytes of UTF-8, and the rest are values to write.
+                unsafe {
+                    within(
+                        graph,
+                        name.as_ptr(),
+                        name.len(),
+                        low,
+                        high,
+                        &mut out,
+                        &mut present,
+                    )
+                }
+            }
+            (At::Index(index), _, Some(within_at)) => {
+                // SAFETY: the rest are values to write.
+                unsafe { within_at(graph, index, low, high, &mut out, &mut present) }
+            }
+            _ if (low, high) == (i64::MIN, i64::MAX) => return self.take_i64(graph, port),
+            _ => return Err(OUT_OF_RANGE),
+        };
+        done(code)?;
         Ok((present != 0).then_some(out))
     }
 

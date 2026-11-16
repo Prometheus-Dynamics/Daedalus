@@ -187,7 +187,7 @@ impl Worker {
             // The worker this call started goes with the failure, by its own handle.
             let _ = child.kill();
             let _ = child.wait();
-            error
+            *error
         })
     }
 
@@ -199,10 +199,12 @@ impl Worker {
         spec: &WorkerSpec,
         telemetry: &Arc<Telemetry>,
         #[cfg(target_os = "linux")] socket: std::os::unix::net::UnixStream,
-    ) -> Result<Worker, (Child, ProcessError)> {
-        let failed = |message: String| ProcessError::Spawn {
-            program: spec.program.clone(),
-            message,
+    ) -> Result<Worker, (Child, Box<ProcessError>)> {
+        let failed = |message: String| {
+            Box::new(ProcessError::Spawn {
+                program: spec.program.clone(),
+                message,
+            })
         };
         #[cfg(target_os = "linux")]
         let (input, stdout) = match socket.try_clone() {

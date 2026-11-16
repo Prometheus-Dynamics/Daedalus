@@ -1,0 +1,29 @@
+[package]
+name = "daedalus-lang-cpp-sdk"
+description = "The C worker SDK's API, in Rust: the functions of daedalus.h, built as a static library that a C or C++ worker links."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# The staticlib is what a C or C++ worker links. The rlib is what the Rust tests use.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+daedalus-types = { path = "../../core/types" }
+daedalus-wire = { path = "../../core/wire" }
+libc = { workspace = true }
+
+# This crate is the C boundary, so it carries its own lint table.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "deny"
+unused_attributes = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"

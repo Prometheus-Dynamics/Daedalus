@@ -80,6 +80,10 @@ surface! {
         => "daedalus_status_t daedalus_take_i64(daedalus_handle_t graph, const uint8_t *name, size_t len, int64_t *out, uint8_t *present);";
     daedalus_take_i64_at: unsafe extern "C" fn(H, usize, *mut i64, *mut u8) -> S
         => "daedalus_status_t daedalus_take_i64_at(daedalus_handle_t graph, size_t index, int64_t *out, uint8_t *present);";
+    daedalus_take_i64_within: unsafe extern "C" fn(H, Name, usize, i64, i64, *mut i64, *mut u8) -> S
+        => "daedalus_status_t daedalus_take_i64_within(daedalus_handle_t graph, const uint8_t *name, size_t len, int64_t low, int64_t high, int64_t *out, uint8_t *present);";
+    daedalus_take_i64_within_at: unsafe extern "C" fn(H, usize, i64, i64, *mut i64, *mut u8) -> S
+        => "daedalus_status_t daedalus_take_i64_within_at(daedalus_handle_t graph, size_t index, int64_t low, int64_t high, int64_t *out, uint8_t *present);";
     daedalus_take_f64: unsafe extern "C" fn(H, Name, usize, *mut f64, *mut u8) -> S
         => "daedalus_status_t daedalus_take_f64(daedalus_handle_t graph, const uint8_t *name, size_t len, double *out, uint8_t *present);";
     daedalus_take_f64_at: unsafe extern "C" fn(H, usize, *mut f64, *mut u8) -> S

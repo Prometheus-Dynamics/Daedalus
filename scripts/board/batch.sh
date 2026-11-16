@@ -66,7 +66,11 @@ for l in sys.stdin:
   tests daedalus-gpu-budgets gpu-budgets
   (cd testing/fixtures/dylib && cargo build --release --target "$target" 2>>"$out/build.log")
   cp "$CARGO_TARGET_DIR/$target/release/libdaedalus_dylib_fixture.so" "$out/bundle/bin/"
-  zig cc -target aarch64-linux-musl -static -O2 -o "$out/bundle/bin/counters" scripts/board/counters.c
+  # The counters and the step runner: static musl builds. zig links it and brings its own C runtime, as run.sh does.
+  CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="$PWD/scripts/board/zigcc.sh" ZIG_TARGET=aarch64-linux-musl \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS=-Clink-self-contained=no \
+    cargo build --release --target aarch64-unknown-linux-musl -p daedalus-counters 2>>"$out/build.log"
+  cp "$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/counters" "$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/bounded" "$out/bundle/bin/"
   cp "$ref/examples/frame_chain" "$out/bundle/bin/ref-frame_chain"
   cp "$(ls -t "$ref"/deps/dylib_frames_overhead-* | grep -v '\.d$' | head -1)" "$out/bundle/bin/ref-dylib_frames_overhead"
   cp "$ref/libdaedalus_plugins_stable_abi.so" "$out/bundle/bin/"
@@ -83,8 +87,8 @@ for l in sys.stdin:
 gpu_check() { # after a reset or a reboot: the GPU answers, from a directory of its own
   local health=/tmp/dd-health
   on_board "test ! -e $health" || die "$health is already on the board: look before removing it"
-  tar -C "$out/bundle/bin" -cf - daedalus-gpu-budgets | on_board "mkdir -p $health && tar -C $health -xf -"
-  on_board "vulkaninfo --summary 2>&1 | head -20; timeout -k 5 60 $health/daedalus-gpu-budgets dispatch-floor" \
+  tar -C "$out/bundle/bin" -cf - daedalus-gpu-budgets bounded | on_board "mkdir -p $health && tar -C $health -xf -"
+  on_board "vulkaninfo --summary 2>&1 | head -20; $health/bounded 60 $health/daedalus-gpu-budgets dispatch-floor" \
     > "$out/results/gpu-after-reset.txt" 2>&1 && echo "batch: the GPU answers after the reset" ||
     echo "batch: the GPU does NOT answer after the reset: tell its keeper"
   on_board "rm -rf $health; test ! -e $health" || die "couldn't remove $health from the board"
@@ -118,8 +122,18 @@ go() {
     die "couldn't remove $dir from the board: remove it by hand"
   # A GPU left wedged (the kernel lives, so no watchdog fires) is never left behind: the board is
   # rebooted and the GPU checked again. A reboot also clears what a non-tmpfs /tmp kept.
-  if grep -q "gpu wedged" "$out/results/gpu-health.txt" 2>/dev/null || [[ "${restarted:-no}" = yes ]]; then
-    if grep -q "gpu wedged" "$out/results/gpu-health.txt" 2>/dev/null; then
+  # The board's own last line decides it: "gpu wedged" is a GPU call past its bound, or a failed
+  # one with a V3D reset in the kernel log. A check that could not run reboots nothing.
+  local verdict
+  verdict=$(tail -n 1 "$out/results/gpu-health.txt" 2>/dev/null || true)
+  if grep -q "preflight failed" "$out/results/preflight.txt" 2>/dev/null; then
+    echo "batch: the preflight failed and nothing was measured:"
+    grep -E "^(missing command|does not start|unreadable|bounded does not run)" "$out/results/preflight.txt" || true
+  elif [[ "$verdict" != "gpu ok" && "$verdict" != "gpu wedged" ]]; then
+    echo "batch: the GPU check gave no answer (${verdict:-no result}); the board is not rebooted for that"
+  fi
+  if [[ "$verdict" = "gpu wedged" || "${restarted:-no}" = yes ]]; then
+    if [[ "$verdict" = "gpu wedged" ]]; then
       echo "batch: the GPU is wedged; rebooting the board"
       on_board "systemctl reboot" || true
       sleep 60

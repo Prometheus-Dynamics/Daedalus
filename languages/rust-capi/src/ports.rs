@@ -48,7 +48,11 @@ macro_rules! integers {
             }
 
             fn take(api: &Api, graph: Handle, port: At<'_>) -> Result<Option<Self>, Code> {
-                match api.take_i64(graph, port)? {
+                // The surface checks the range before it takes: a number too big for this type
+                // is refused and stays in the port.
+                let low = i64::try_from(<$ty>::MIN).unwrap_or(i64::MIN);
+                let high = i64::try_from(<$ty>::MAX).unwrap_or(i64::MAX);
+                match api.take_i64_within(graph, port, low, high)? {
                     Some(wide) => <$ty>::try_from(wide).map(Some).map_err(|_| OUT_OF_RANGE),
                     None => Ok(None),
                 }

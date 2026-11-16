@@ -17,7 +17,8 @@ Four graphs per shape and size: `producer` alone, `host` (producer and CPU reade
 (producer and the worker's reader), and `fan` (producer, CPU reader and worker). Three rounds;
 each figure is the median of the three rounds' medians.
 
-The f32 graphs at 1 MiB were also run under `scripts/board/counters.c`, a static helper that counts
+The f32 graphs at 1 MiB were also run under `counters`, a static helper (the `daedalus-counters`
+crate in `testing/crates/counters`) that counts
 user-space cycles, instructions, cache misses, and last-level-cache loads and misses through
 `perf_event_open` over the program and its worker. The image has no `perf`, and
 `perf_event_paranoid` is 2, which allows counting one's own processes in user space. Each graph was
