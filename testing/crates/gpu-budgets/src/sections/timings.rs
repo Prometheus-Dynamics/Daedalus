@@ -12,8 +12,8 @@ use daedalus_wgpu_conformance::{COPY, In, Net, Op, filled, port, run};
 
 use super::region_batch::TRIPLE;
 #[cfg(target_os = "linux")]
-use super::{MIB, pattern};
-use super::{RUNS, WARM, line_ms, measure, median, median_of, ms, summary, us};
+use super::{MIB, measure, pattern};
+use super::{RUNS, WARM, line_ms, median, median_of, ms, summary, us};
 
 /// The raw submit timings: 20 warm-up runs, then the median of 200.
 const SUBMIT_WARM: usize = 20;
