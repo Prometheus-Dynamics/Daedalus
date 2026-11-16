@@ -2,7 +2,7 @@
 //! region, then run for both rounds, and its outputs compared with the expected bytes.
 
 use daedalus_abi::testing::{release, run_once};
-use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
+use daedalus_abi::{Slot, SlotState, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::BodyIndex;
 use daedalus_backend::{
     Backend, CompileCx, Compiled, NO_METADATA, NodeBody, PortRef, RateId, Region,
@@ -12,7 +12,7 @@ use daedalus_registry::{OwnedBody, OwnedDecl, OwnedPort, Registry, TypeRef};
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
 use daedalus_wire::WireType;
 
-use crate::fixtures::{Expect, Fixture, declarations, fixtures};
+use crate::fixtures::{Expect, Fixture, behaviour_declarations, declarations, fixtures};
 
 /// A round that did not produce what it should.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,10 +22,10 @@ pub struct Failure {
     pub reason: String,
 }
 
-/// A registry holding the canonical nodes, as a compiled-in record would.
+/// A registry holding the canonical nodes and the behaviour suite's, as a compiled-in record would.
 pub fn registry() -> Registry {
     let mut registry = Registry::new();
-    for decl in declarations() {
+    for decl in declarations().into_iter().chain(behaviour_declarations()) {
         let port = |name: &str, ty: &WireType| OwnedPort {
             name: name.to_owned(),
             ty: TypeRef::Expr(type_expr(ty).expect("a fixture type is valid")),
@@ -230,5 +230,69 @@ fn end_name(end: &StepEnd) -> &'static str {
         StepEnd::Pending(_) => "pending",
         StepEnd::Skipped => "skipped",
         StepEnd::Fault => "fault",
+    }
+}
+
+/// Compiles one node, with `inputs` and `outputs` ports, as a region of its own in `backend`, and
+/// gives its step. The step is released by the caller.
+pub(crate) fn compile_node(
+    backend: &ProcessBackend,
+    id: &'static str,
+    inputs: usize,
+    outputs: usize,
+) -> Result<Step, String> {
+    let port_refs = |count: usize| -> Vec<PortRef> {
+        (0..count)
+            .map(|port| PortRef {
+                node: NodeIndex(0),
+                port: PortIndex(port as u16),
+            })
+            .collect()
+    };
+    let ins = port_refs(inputs);
+    let outs = port_refs(outputs);
+    let nodes = [NodeIndex(0)];
+    let region = Region {
+        backend: BackendIndex(0),
+        nodes: &nodes,
+        inputs: &ins,
+        outputs: &outs,
+        incoming: &[],
+        placed: &[],
+        read_in: &[],
+        rate: RateId(0),
+    };
+    let bodies = [NodeBody {
+        node: NodeIndex(0),
+        id,
+        body: BodyIndex(0),
+        inputs: inputs as u16,
+        outputs: outputs as u16,
+        merges: false,
+        fire_all: false,
+        label: None,
+        metadata: &NO_METADATA,
+        code: &(),
+        text: id,
+    }];
+    let cx = CompileCx {
+        types: &[],
+        consts: &[],
+        spaces: &[],
+        bodies: &bodies,
+        edges: &[],
+        host_inputs: &[],
+        host_outputs: &[],
+        fifo_capacity: 64,
+        merge_allowed: false,
+        freeze_params: false,
+        sharing: &[],
+        lent: &[],
+        offered: &[],
+    };
+    match backend.compile(&region, &cx) {
+        Ok(Compiled::Steps(mut units)) => Ok(units.pop().ok_or("no step")?.step),
+        Ok(_) => Err("the backend gave a form other than steps".into()),
+        Err(refusal) => Err(format!("refused: {}", refusal.reason)),
     }
 }

@@ -1,0 +1,26 @@
+# Found by find_package(daedalus CONFIG). Defines daedalus::daedalus (the worker SDK's headers, and the
+# libraries they need) and daedalus::rust (the Rust library behind the C API), both at the install
+# prefix this file was installed under.
+#
+# A worker built with MSVC must use the release DLL C runtime, as the Rust library does. CMake's
+# default there is that runtime, so a consumer keeps the default or sets
+# CMAKE_MSVC_RUNTIME_LIBRARY to MultiThreadedDLL.
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+
+if(NOT TARGET daedalus::rust)
+  add_library(daedalus::rust STATIC IMPORTED)
+  set_target_properties(daedalus::rust PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@DAEDALUS_RUST_INSTALL_PATH@")
+endif()
+
+if(NOT TARGET daedalus::daedalus)
+  add_library(daedalus::daedalus INTERFACE IMPORTED)
+  set_target_properties(daedalus::daedalus PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@DAEDALUS_INCLUDE_INSTALL_DIR@"
+    INTERFACE_LINK_LIBRARIES "daedalus::rust;@DAEDALUS_PLATFORM_LINK_LIBS@")
+endif()
+
+check_required_components(daedalus)

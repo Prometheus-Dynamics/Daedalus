@@ -75,6 +75,14 @@ fn pass(slots: &mut Slots, _cx: &mut StepCx) -> StepEnd {
     }
 }
 
+// Prints a line to stdout, then passes its input on. The worker keeps its packets off stdout, so
+// the line cannot reach them.
+fn chatty(slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
+    use std::io::Write;
+    let _ = std::io::stdout().write_all(b"a plugin node line on stdout\n");
+    pass(slots, cx)
+}
+
 fn boom(_slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
     // More than the reason holds goes to the host's detail, when it keeps one.
     cx.detail("boom: what led up to it, ");
@@ -151,7 +159,7 @@ static HANDED_OUT: [PortDef; 1] = [PortDef {
     optional: false,
 }];
 
-static NODES: [NodeDef; 7] = [
+static NODES: [NodeDef; 8] = [
     NodeDef {
         id: "fixture.pass",
         source: "dylib-fixture",
@@ -216,6 +224,15 @@ static NODES: [NodeDef; 7] = [
         inputs: &PASS_IN,
         outputs: &PASS_OUT,
         run: gated,
+    },
+    NodeDef {
+        id: "fixture.chatty",
+        source: "dylib-fixture",
+        backend: "fixture.cpu",
+        text: "chatty",
+        inputs: &PASS_IN,
+        outputs: &PASS_OUT,
+        run: chatty,
     },
 ];
 

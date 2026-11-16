@@ -1,0 +1,28 @@
+# Refusals: each one names its code. A graph that does not plan, a port that is not there, a value
+# of the wrong type, and names that are not in the host.
+load_plugin {plugin}
+start nope
+put_graph broken {graphs}/broken.json
+put_graph missing {graphs}/missing.json
+start missing
+put_graph pass {graphs}/pass.json
+start pass
+feed 1 nope u32:1
+feed 1 out u32:1
+feed 1 in bool:true
+take 1 in
+take 1 nope
+feed 9 in u32:1
+step 9 1
+take 9 out
+cancel 9
+stop 9 drain
+inspect run 9
+inspect graph nope
+patch_graph nope {graphs}/patch.json
+patch_graph pass {graphs}/broken.json
+plan nope steps
+reload 9 pass
+watch 4 9 all
+inspect host
+trace 0

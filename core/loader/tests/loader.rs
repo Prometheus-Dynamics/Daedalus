@@ -40,7 +40,8 @@ fn a_plugin_declares_its_nodes_and_backend() {
             "fixture.handover",
             "fixture.pass_bytes",
             "fixture.copy_cell",
-            "fixture.gated"
+            "fixture.gated",
+            "fixture.chatty"
         ]
     );
     assert_eq!(plugin.backends().len(), 1);

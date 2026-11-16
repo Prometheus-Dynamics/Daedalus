@@ -1,0 +1,23 @@
+[package]
+name = "daedalus-worker-io"
+description = "The worker side's I/O: the packet stream a worker's protocol travels on, which node output cannot reach."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+libc = { workspace = true }
+
+# This crate is a worker's OS boundary, so it carries its own lint table, as its neighbours do.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "deny"
+unused_attributes = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"

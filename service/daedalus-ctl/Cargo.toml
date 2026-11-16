@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-daedalus-client = { path = "../../core/client" }
+daedalus-client = { path = "../../core/client", features = ["json"] }
 daedalus-types = { path = "../../core/types" }
 serde_json = { workspace = true, features = ["std"] }
 

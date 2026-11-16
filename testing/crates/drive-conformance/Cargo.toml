@@ -1,0 +1,20 @@
+[package]
+name = "daedalus-drive-conformance"
+description = "The drive conformance suite: scenarios run against a driver program for each language's service client, with golden transcripts."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+daedalus-backend = { path = "../../../core/backend" }
+daedalus-client = { path = "../../../core/client" }
+daedalus-host = { path = "../../../core/host", features = ["listen"] }
+daedalus-loader = { path = "../../../core/loader" }
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-types = { path = "../../../core/types" }
+daedalus-wire = { path = "../../../core/wire" }
+
+[lints]
+workspace = true

@@ -3,8 +3,8 @@
 
 #include <cstdint>
 
-#include "daedalus.h"
-#include "daedalus.hpp"
+#include "daedalus_worker.h"
+#include "daedalus_worker.hpp"
 
 namespace {
 

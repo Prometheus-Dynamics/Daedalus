@@ -1,0 +1,11 @@
+plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+graph name="pass" diagnostics=[]
+session name="other"
+error unknown_graph
+graph name="pass" diagnostics=[]
+started run=1
+session name="default"
+started run=2
+inspect host sessions=["default","other"] graphs=["pass"] runs=["1|other|pass|running","2|default|pass|running"] plugins=["dylib-fixture"]
+session name="other"
+inspect host sessions=["default","other"] graphs=["pass"] runs=["1|other|pass|running","2|default|pass|running"] plugins=["dylib-fixture"]

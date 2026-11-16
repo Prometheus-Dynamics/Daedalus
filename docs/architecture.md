@@ -414,18 +414,21 @@ daedalus/
     runner/       walks the step list: slots, queues, state, failure rule (no heap)
     host/         backend set, plan cache, instances, listeners
     wire/  client/  loader/  capi/
+    made/         a plan as a host reads it, without the planner
+    integrity/    which plugin and worker files a host approves (daedalus.lock)
     daedalus/     the Rust facade, re-exports only
   backends/
     cpu/  cpu-author/     typed calls, Blob and Source forms, chips
     wgpu/  wgpu-author/   shader merging, one submit
-    process/              the worker protocol and its host
+    dmabuf/               a memory backend: no nodes
+    process/  process-shm/  the worker protocol and its host, and shared memory for it
     sim/                  a fake backend for testing the core
     vk-sys/ and other *-sys crates: the unsafe parts
   languages/
-    python/  node/  java/  cpp/  rust/  SDKs for writing nodes run by the process backend
+    python/  node/  java/  cpp/  cpp-sdk/  rust/  SDKs for writing nodes run by the process backend
     rust-capi/  rust-capi-sys/  a safe Rust host over the C surface, and its loader
   service/
-    daedalusd/  daedalus-ctl/
+    daedalusd/  daedalus-ctl/  daedalus-lock/
   testing/
     crates/*      conformance suite, benches, budgets
     board-runs/   checks a local session runs on real boards

@@ -9,7 +9,8 @@ use daedalus_lang_rust::{Ctx, Fault, Pair, Wire};
 use daedalus_macros::node;
 use daedalus_registry::NodeRecord;
 use daedalus_types::{Field, Scalar, TypeExpr, TypeKey, Typed, Variant};
-use daedalus_wire::{FaultCode, WireValue};
+use daedalus_wire::{FaultCode, LogLevel, WireValue};
+use std::time::Duration;
 
 /// The key of the fixture's custom type, as the conformance fixtures name it.
 const CUSTOM_KEY: &str = "fixture.custom";
@@ -232,7 +233,59 @@ pub fn failure_diagnostic(value: i64, cx: &Ctx) -> Result<i64, Fault> {
     })
 }
 
-/// The nodes this worker serves: the thirteen canonical fixtures.
+/// Waits until the host cancels the run, then gives its input back.
+#[node(id = "fixture.wait_cancel", inputs(x), outputs(y), backend = daedalus_lang_rust)]
+pub fn wait_cancel(x: i64, cx: &Ctx) -> i64 {
+    while !cx.cancelled() {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    x
+}
+
+/// Reports progress, a log line and a detail, in that order, then gives its input back.
+#[node(id = "fixture.events", inputs(x), outputs(y), backend = daedalus_lang_rust)]
+pub fn events(x: i64, cx: &Ctx) -> i64 {
+    cx.progress(0.5, "half");
+    cx.log(LogLevel::Info, "after the progress");
+    cx.detail("a detail line");
+    cx.progress(1.0, "done");
+    x
+}
+
+/// Prints a line to stdout, then gives its input plus one. The SDK keeps stdout for the protocol.
+#[allow(clippy::print_stdout)]
+#[node(id = "fixture.chatty", inputs(x), outputs(y), backend = daedalus_lang_rust)]
+pub fn chatty(x: i64) -> i64 {
+    println!("a node line on stdout");
+    x + 1
+}
+
+/// The string state the label node keeps: its state type is a string.
+#[derive(Default)]
+pub struct Label(pub String);
+
+impl Typed for Label {
+    const KEY: TypeKey = Scalar::String.key();
+    const EXPR: TypeExpr = TypeExpr::Scalar(Scalar::String);
+}
+
+impl Wire for Label {
+    fn to_wire(&self) -> WireValue {
+        self.0.to_wire()
+    }
+    fn from_wire(value: &WireValue) -> Option<Label> {
+        String::from_wire(value).map(Label)
+    }
+}
+
+/// Appends its input to its state, and gives the state.
+#[node(id = "fixture.stateful_label", inputs("in"), outputs("out"), state(Label), backend = daedalus_lang_rust)]
+pub fn stateful_label(r#in: String, state: &mut Label) -> String {
+    state.0.push_str(&r#in);
+    state.0.clone()
+}
+
+/// The nodes this worker serves: the thirteen canonical fixtures, and the behaviour suite's.
 pub const NODES: &[&NodeRecord] = &[
     &SCALAR_ADD_NODE,
     &MULTI_OUTPUT_NODE,
@@ -247,4 +300,8 @@ pub const NODES: &[&NodeRecord] = &[
     &CUSTOM_TYPE_KEY_NODE,
     &FAILURE_DIAGNOSTIC_NODE,
     &STATEFUL_COUNTER_NODE,
+    &WAIT_CANCEL_NODE,
+    &EVENTS_NODE,
+    &CHATTY_NODE,
+    &STATEFUL_LABEL_NODE,
 ];

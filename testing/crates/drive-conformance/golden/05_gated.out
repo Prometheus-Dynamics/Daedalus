@@ -1,0 +1,15 @@
+plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+graph name="gated" diagnostics=[]
+started run=1
+fed woke=1 dropped=false
+stepped ticks=1 tick=1 step_calls=1 faults=0 skipped=0 idle=false
+value none
+stepped ticks=1 tick=2 step_calls=0 faults=0 skipped=0 idle=false
+value none
+stepped ticks=1 tick=3 step_calls=0 faults=0 skipped=0 idle=false
+value none
+stepped ticks=1 tick=4 step_calls=0 faults=0 skipped=0 idle=false
+value u32:9
+stepped ticks=1 tick=5 step_calls=0 faults=0 skipped=0 idle=true
+value none
+inspect run run=1 session="default" graph="gated" state=running tick=5 faults=0 ports=["in|input|u32","out|output|u32"] nodes=["io","work"]

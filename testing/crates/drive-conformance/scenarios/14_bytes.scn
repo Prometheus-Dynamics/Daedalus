@@ -1,0 +1,11 @@
+# A port of bytes: the value is handed over as bytes, and a number is refused for it.
+load_plugin {plugin}
+put_graph bytes {graphs}/bytes.json
+start bytes
+feed 1 in bytes:00ff10
+step 1 1
+take 1 out
+feed 1 in u32:1
+feed 1 in bytes:
+step 1 1
+take 1 out

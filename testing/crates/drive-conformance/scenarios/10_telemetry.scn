@@ -1,0 +1,14 @@
+# Telemetry levels and the start options: the level a run was started with is what its telemetry
+# reports.
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+start pass telemetry=detailed
+feed 1 in u32:1
+step 1 1
+inspect telemetry 1
+start pass telemetry=off
+inspect telemetry 2
+start pass unmerged priority=fixture.cpu faults=4 telemetry=detailed
+feed 3 in u32:4
+step 3 1
+inspect telemetry 3

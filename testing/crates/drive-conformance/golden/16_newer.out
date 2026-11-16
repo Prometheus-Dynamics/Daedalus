@@ -1,0 +1,13 @@
+pong version=1
+plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+graph name="boom" diagnostics=[]
+watching 1
+started run=1
+fed woke=1 dropped=false
+stepped ticks=1 tick=1 step_calls=1 faults=1 skipped=0 idle=false
+event 1 fault run=1 tick=1 step=0 node="io" covers=["work"] consecutive=1 reason="panicked: boom: the node panicked on purpose" reason_cut=false detail="boom: what led up to it, in 2 pieces" detail_cut=false code=1 own_code=true
+event 1 unknown kind=77
+event 1 telemetry run=1 tick=1 step_calls=1 faults=1 skipped=0
+event 1 unknown kind=77
+error other
+trace entries=["6|step|1|none","7|take|9:out|unknown_run"]

@@ -1,0 +1,11 @@
+plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+graph name="pass" diagnostics=[]
+made hash=7279629515710266566 bytes=704
+blob name="junk" bytes=1
+error invalid_request
+ack
+started run=1
+fed woke=1 dropped=false
+stepped ticks=1 tick=1 step_calls=1 faults=0 skipped=0 idle=false
+value u32:6
+error unknown_graph

@@ -11,7 +11,7 @@ use daedalus_client::{Client, ClientError, WireType, WireValue};
 use daedalus_types::Scalar;
 use serde_json::{Value, json};
 
-use crate::output;
+use daedalus_client::json;
 
 pub(crate) const COMMANDS: &str = "\
 commands:
@@ -212,12 +212,12 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 /// A scalar value written as `TYPE:VALUE`.
 pub(crate) fn parse_value(text: &str) -> Result<TypedValue, String> {
     let (name, rest) = text.split_once(':').unwrap_or((text, ""));
-    let scalar = output::SCALAR_NAMES
+    let scalar = json::SCALAR_NAMES
         .iter()
         .find(|(known, _)| *known == name)
         .map(|(_, scalar)| *scalar)
         .ok_or_else(|| {
-            let names: Vec<&str> = output::SCALAR_NAMES.iter().map(|(name, _)| *name).collect();
+            let names: Vec<&str> = json::SCALAR_NAMES.iter().map(|(name, _)| *name).collect();
             format!(
                 "a value is TYPE:VALUE, and `{name}` is not one of {}",
                 names.join(", ")
@@ -481,10 +481,10 @@ fn read(file: &str) -> Result<String, Failure> {
 pub fn execute(command: &Command, client: &Client) -> Result<Value, Failure> {
     let sent = match command {
         Command::Ping => client.ping().map(|version| json!({ "version": version })),
-        Command::LoadPlugin { path } => client.load_plugin(path).map(|info| output::plugin(&info)),
+        Command::LoadPlugin { path } => client.load_plugin(path).map(|info| json::plugin(&info)),
         Command::PutGraph { name, file } => client
             .put_graph(name, &read(file)?)
-            .map(|found| json!({ "graph": name, "diagnostics": output::diagnostics(&found) })),
+            .map(|found| json!({ "graph": name, "diagnostics": json::diagnostics(&found) })),
         Command::MakePlan { graph, out, config } => {
             let (hash, bytes) = client
                 .make_plan(graph, config.clone())
@@ -502,10 +502,10 @@ pub fn execute(command: &Command, client: &Client) -> Result<Value, Failure> {
         }
         Command::PatchGraph { graph, file } => client
             .patch_graph(graph, &read(file)?)
-            .map(|found| json!({ "graph": graph, "diagnostics": output::diagnostics(&found) })),
+            .map(|found| json!({ "graph": graph, "diagnostics": json::diagnostics(&found) })),
         Command::Plan { graph, options } => client
             .plan(graph, options.clone())
-            .map(|summary| output::plan(&summary)),
+            .map(|summary| json::plan(&summary)),
         Command::Start { graph, config } => client
             .start(graph, config.clone())
             .map(|run| json!({ "run": run })),
@@ -514,19 +514,19 @@ pub fn execute(command: &Command, client: &Client) -> Result<Value, Failure> {
             .map(|fed| json!({ "woke": fed.woke, "dropped": fed.dropped })),
         Command::Step { run, count } => client
             .step(*run, *count)
-            .map(|summary| output::stepped(&summary)),
-        Command::Take { run, port } => client.take(*run, port).map(|value| output::typed(&value)),
+            .map(|summary| json::stepped(&summary)),
+        Command::Take { run, port } => client.take(*run, port).map(|value| json::typed(&value)),
         Command::Reload { run, graph } => client
             .reload(*run, graph)
-            .map(|report| output::carry(&report)),
+            .map(|report| json::carry(&report)),
         Command::Cancel { run } => client.cancel(*run).map(|()| json!({})),
         Command::Stop { run, mode } => client
             .stop(*run, *mode)
             .map(|stopped| json!({ "run": run, "tick": stopped.tick, "dropped": stopped.dropped })),
         Command::Inspect { target } => client
             .inspect(target.clone())
-            .map(|found| output::inspection(&found)),
-        Command::Trace { limit } => client.trace(*limit).map(|entries| output::trace(&entries)),
+            .map(|found| json::inspection(&found)),
+        Command::Trace { limit } => client.trace(*limit).map(|entries| json::trace(&entries)),
         Command::CacheInspect => client.cache_inspect().map(
             |info| json!({ "entries": info.entries, "hits": info.hits, "misses": info.misses }),
         ),
@@ -564,7 +564,7 @@ pub fn watch(
             (EventBody::Ended { .. }, WatchTarget::Run(_))
                 | (EventBody::Ended { run: 0, .. }, WatchTarget::All)
         );
-        show(out, &output::event(&event));
+        show(out, &json::event(&event));
         if ended {
             break;
         }

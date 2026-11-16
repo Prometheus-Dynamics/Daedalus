@@ -1,0 +1,26 @@
+plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+error unknown_graph
+error invalid_request
+graph name="missing" diagnostics=["error|node_missing"]
+error planning_failed
+graph name="pass" diagnostics=[]
+started run=1
+error unknown_port
+error unknown_port
+error value_type
+error unknown_port
+error unknown_port
+error unknown_run
+error unknown_run
+error unknown_run
+error unknown_run
+error unknown_run
+error unknown_run
+error unknown_graph
+error unknown_graph
+error invalid_request
+error unknown_graph
+error unknown_run
+error unknown_run
+inspect host sessions=["default"] graphs=["missing","pass"] runs=["1|default|pass|running"] plugins=["dylib-fixture"]
+trace entries=["0|load_plugin|{plugin}|none","1|start|nope|unknown_graph","2|put_graph|broken|invalid_request","3|put_graph|missing|none","4|start|missing|planning_failed","5|put_graph|pass|none","6|start|pass|none","7|feed|1:nope|unknown_port","8|feed|1:out|unknown_port","9|feed|1:in|value_type","10|take|1:in|unknown_port","11|take|1:nope|unknown_port","12|feed|9:in|unknown_run","13|step|9|unknown_run","14|take|9:out|unknown_run","15|cancel|9|unknown_run","16|stop|9|unknown_run","17|inspect|run:9|unknown_run","18|inspect|graph:nope|unknown_graph","19|patch_graph|nope|unknown_graph","20|patch_graph|pass|invalid_request","21|plan|nope|unknown_graph","22|reload|9:pass|unknown_run","23|watch|9|unknown_run","24|inspect|host|none"]

@@ -18,3 +18,8 @@ daedalus-wire = { path = "../../../core/wire" }
 
 [lints]
 workspace = true
+
+# The self-check worker: wrong in one named way when DAEDALUS_SABOTAGE names a behaviour.
+[[bin]]
+name = "daedalus-worker-sabotage"
+path = "src/bin/sabotage.rs"

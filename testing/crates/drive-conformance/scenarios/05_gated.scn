@@ -1,0 +1,17 @@
+# A node whose work is still running on a device: its output comes a few ticks later, one tick at a
+# time.
+load_plugin {plugin}
+put_graph gated {graphs}/gated.json
+start gated
+feed 1 in u32:9
+step 1 1
+take 1 out
+step 1 1
+take 1 out
+step 1 1
+take 1 out
+step 1 1
+take 1 out
+step 1 1
+take 1 out
+inspect run 1

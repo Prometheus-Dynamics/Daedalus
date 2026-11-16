@@ -17,6 +17,7 @@ daedalus-types = { path = "../../core/types" }
 daedalus-value = { path = "../../core/value" }
 daedalus-wire = { path = "../../core/wire" }
 daedalus-process-shm = { path = "../process-shm" }
+daedalus-worker-io = { path = "../../languages/worker-io" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 daedalus-dma-sys = { path = "../dma-sys" }

@@ -1,0 +1,18 @@
+# A node that panics is a fault: the step gives the fault to every watch that asked for faults, then
+# the run ends and each watch is told why.
+load_plugin {plugin}
+put_graph boom {graphs}/boom.json
+watch 1 all fault
+watch 2 all
+start boom
+feed 1 in u32:1
+step 1 1
+next 1
+next 2
+next 2
+stop 1 immediate
+next 1
+next 2
+unwatch 1
+next 1
+unwatch 2

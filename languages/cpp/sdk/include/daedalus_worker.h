@@ -7,8 +7,8 @@
  * A type is a dd_type; a value is a dd_value built in an arena that the loop resets after each
  * run. Unsigned integers are exact: a u64 is a uint64_t, and a range check is explicit.
  */
-#ifndef DAEDALUS_H
-#define DAEDALUS_H
+#ifndef DAEDALUS_WORKER_H
+#define DAEDALUS_WORKER_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -152,4 +152,4 @@ int dd_serve(const dd_node *nodes, size_t count, const char *worker_name);
 }
 #endif
 
-#endif /* DAEDALUS_H */
+#endif /* DAEDALUS_WORKER_H */

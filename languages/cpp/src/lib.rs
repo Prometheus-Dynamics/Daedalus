@@ -105,3 +105,75 @@ pub fn run_native_tests(build_dir: &Path) -> io::Result<()> {
         Err(io::Error::other("a native C or C++ test failed"))
     }
 }
+
+/// The configuration a multi-configuration generator put the build in (Visual Studio's), or `None`
+/// for a single-configuration build.
+fn configuration(build_dir: &Path) -> Option<&'static str> {
+    build_dir
+        .join("bin")
+        .join("Debug")
+        .is_dir()
+        .then_some("Debug")
+}
+
+/// Runs a CMake command, and names `what` when it fails.
+fn run_cmake(mut command: Command, what: &str) -> io::Result<()> {
+    if command.status()?.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(what.to_owned()))
+    }
+}
+
+/// Installs the SDK that [`build`] made in `build_dir` into `prefix`, then configures and builds the
+/// consumer in `sdk/tests/consumer` in `consumer_build`. The consumer finds the installed package
+/// with `find_package`, and links the Rust library through it. Returns the consumer's path.
+pub fn install_and_build_consumer(
+    build_dir: &Path,
+    prefix: &Path,
+    consumer_build: &Path,
+) -> io::Result<PathBuf> {
+    let configuration = configuration(build_dir);
+    // A stale prefix from an earlier run would hide a file the install no longer writes.
+    std::fs::remove_dir_all(prefix).or_else(|error| match error.kind() {
+        io::ErrorKind::NotFound => Ok(()),
+        _ => Err(error),
+    })?;
+    let mut install = Command::new("cmake");
+    install
+        .arg("--install")
+        .arg(build_dir)
+        .arg("--prefix")
+        .arg(prefix);
+    if let Some(configuration) = configuration {
+        install.args(["--config", configuration]);
+    }
+    run_cmake(install, "cmake --install failed")?;
+
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("sdk")
+        .join("tests")
+        .join("consumer");
+    let mut configure = Command::new("cmake");
+    configure
+        .arg("-S")
+        .arg(&source)
+        .arg("-B")
+        .arg(consumer_build)
+        .arg(format!("-DCMAKE_PREFIX_PATH={}", prefix.display()));
+    run_cmake(configure, "cmake configure of the consumer failed")?;
+
+    let mut build = Command::new("cmake");
+    build.arg("--build").arg(consumer_build);
+    if let Some(configuration) = configuration {
+        build.args(["--config", configuration]);
+    }
+    run_cmake(build, "cmake build of the consumer failed")?;
+
+    let name = format!("consumer{}", std::env::consts::EXE_SUFFIX);
+    ["", "Debug", "Release", "RelWithDebInfo", "MinSizeRel"]
+        .iter()
+        .map(|configuration| consumer_build.join(configuration).join(&name))
+        .find(|consumer| consumer.is_file())
+        .ok_or_else(|| io::Error::other("cmake built no consumer binary"))
+}

@@ -4,13 +4,15 @@
 
 ```text
 core/        abi, types, value, graph, backend, registry, plan, planner, runner, macros, derive,
-             host, wire, client, loader, capi, daedalus (the facade)
-backends/    cpu, cpu-author, wgpu, wgpu-author, process, sim, and *-sys crates
-languages/   python, node, java, cpp, rust: SDKs for nodes run by the process backend
+             host, wire, client, loader, capi, made, integrity, daedalus (the facade)
+backends/    cpu, cpu-author, dmabuf, process, process-shm, sim, wgpu, wgpu-author, and *-sys crates
+languages/   python, node, java, cpp, cpp-sdk, rust: SDKs for nodes run by the process backend
              rust-capi (a safe Rust host over the C surface) and rust-capi-sys (its loader)
-service/     daedalusd, daedalus-ctl
-testing/     testing/crates/ (conformance suites, the budget harness), fixtures/, board-runs/,
-             budgets/
+service/     daedalusd, daedalus-ctl, daedalus-lock
+testing/     testing/crates/ (author-fixture, budget-harness, conformance, counters, cpu-timings,
+             fake-npu, fake-npu-author, fake-npu-plugin, gpu-budgets, handoff-bench, planner,
+             process-timings, wgpu-conformance, worker-conformance, worker-fixture), fixtures/,
+             board-runs/, budgets/
 examples/    each directory directly inside is a crate
 ```
 

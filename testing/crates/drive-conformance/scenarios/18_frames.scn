@@ -1,0 +1,10 @@
+# The client announces a packet cap of 512 bytes. The host answers with its own cap in mind, so an
+# answer bigger than 512 bytes is refused as frame_too_large, under the id of the request; the
+# connection stays up, and the next request is answered.
+@proxy frames 512
+ping
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+plan pass steps
+inspect graph pass
+ping

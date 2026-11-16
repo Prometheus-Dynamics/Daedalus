@@ -6,11 +6,22 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# The JSON of the service's values, for a tool that prints or returns them as text. Off, the
+# client depends only on daedalus-wire.
+json = ["dep:serde_json", "dep:daedalus-types"]
+
 [dependencies]
 daedalus-wire = { path = "../wire" }
+daedalus-types = { path = "../types", optional = true }
+serde_json = { workspace = true, features = ["std"], optional = true }
 
 [dev-dependencies]
 daedalus-types = { path = "../types" }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "json"
+required-features = ["json"]

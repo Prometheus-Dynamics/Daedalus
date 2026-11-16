@@ -1,10 +1,22 @@
 //! A watch: the events of one subscription, as a stream.
 
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::time::Duration;
 
 use daedalus_wire::service::Event;
 
 use crate::connect::Client;
+
+/// What a timed wait for the next event found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WatchPoll {
+    /// The next event, in order.
+    Event(Event),
+    /// Nothing came in time. The watch is still open.
+    Timeout,
+    /// The stream has ended, and no event will come.
+    Ended,
+}
 
 /// The events of one watch, in order. The stream ends when the run it follows ends, when the
 /// watch is closed, or when the connection drops and the client was not asked to reconnect. A
@@ -25,6 +37,15 @@ impl Watch {
     /// Waits for the next event. `None` when the stream has ended.
     pub fn next_event(&self) -> Option<Event> {
         self.events.recv().ok()
+    }
+
+    /// Waits up to `timeout` for the next event.
+    pub fn next_event_timeout(&self, timeout: Duration) -> WatchPoll {
+        match self.events.recv_timeout(timeout) {
+            Ok(event) => WatchPoll::Event(event),
+            Err(RecvTimeoutError::Timeout) => WatchPoll::Timeout,
+            Err(RecvTimeoutError::Disconnected) => WatchPoll::Ended,
+        }
     }
 
     /// Ends the watch on the server. Events already queued can still be read.

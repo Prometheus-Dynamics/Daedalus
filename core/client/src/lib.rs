@@ -18,7 +18,11 @@ mod watch;
 pub use connect::{Client, ClientError, Endpoint, Options, Pending};
 pub use reconnect::{BACKOFF_CAP, BACKOFF_START, Backoff, Clock, SystemClock};
 pub use session::{Fed, Stopped};
-pub use watch::Watch;
+pub use watch::{Watch, WatchPoll};
+
+/// The JSON of the service's values. Needs the `json` feature.
+#[cfg(feature = "json")]
+pub mod json;
 
 /// The protocol's own names: ops, replies, events and errors.
 pub use daedalus_wire::service as protocol;

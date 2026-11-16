@@ -1,17 +1,14 @@
 //! Large values through a worker: `fixture.raw_io` with a value well past the shared-memory
-//! threshold, and `fixture.list_reverse` with a long list, run several times, each answer checked. What the host's counters say about how the
-//! values travelled is given back, so each language's worker can show it takes values by
-//! reference: inputs as places, outputs held where the worker wrote them.
+//! threshold, and `fixture.list_reverse` with a long list, run several times, each answer checked.
+//! What the host's counters say about how the values travelled is given back, so each language's
+//! worker can show it takes values by reference: inputs as places, outputs held where the worker
+//! wrote them.
 
 use daedalus_abi::testing::{release, run_once};
 use daedalus_abi::{OWNER_HANDED, Slot, SlotState, Slots, StepCx, StepEnd};
-use daedalus_backend::{
-    Backend, BodyIndex, CompileCx, Compiled, NO_METADATA, NodeBody, PortRef, RateId, Region,
-};
 use daedalus_backend_process::{ProcessBackend, Snapshot, WorkerSpec};
-use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
 
-use crate::runner::registry;
+use crate::runner::{compile_node, registry};
 
 /// What a run of large values showed.
 #[derive(Clone, Debug)]
@@ -22,6 +19,29 @@ pub struct Large {
     pub held: usize,
     /// How many outputs had their items on a 64-byte boundary where the host's cell holds them.
     pub aligned: usize,
+}
+
+/// The way a large value went between the host and a worker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Transport {
+    /// Through the worker's stream, as bytes in the packets.
+    Plain,
+    /// By reference: the values sit in memory lent to the worker (shared memory), and the packets
+    /// carry only their places.
+    ByReference,
+}
+
+impl Large {
+    /// Which transport the host's counters say carried the values. `None` when they say neither.
+    pub fn transport(&self) -> Option<Transport> {
+        if self.telemetry.agreed > 0 {
+            Some(Transport::ByReference)
+        } else if self.telemetry.plain_workers > 0 {
+            Some(Transport::Plain)
+        } else {
+            None
+        }
+    }
 }
 
 /// Runs `fixture.raw_io` `runs` times with `len` bytes through a worker started from `spec`, and
@@ -73,54 +93,7 @@ fn through(
     backend
         .add_worker(spec, &registry())
         .map_err(|error| format!("the worker registers: {error}"))?;
-    let ports = [PortRef {
-        node: NodeIndex(0),
-        port: PortIndex(0),
-    }];
-    let nodes = [NodeIndex(0)];
-    let region = Region {
-        backend: BackendIndex(0),
-        nodes: &nodes,
-        inputs: &ports,
-        outputs: &ports,
-        incoming: &[],
-        placed: &[],
-        read_in: &[],
-        rate: RateId(0),
-    };
-    let bodies = [NodeBody {
-        node: NodeIndex(0),
-        id,
-        body: BodyIndex(0),
-        inputs: 1,
-        outputs: 1,
-        merges: false,
-        fire_all: false,
-        label: None,
-        metadata: &NO_METADATA,
-        code: &(),
-        text: id,
-    }];
-    let cx = CompileCx {
-        types: &[],
-        consts: &[],
-        spaces: &[],
-        bodies: &bodies,
-        edges: &[],
-        host_inputs: &[],
-        host_outputs: &[],
-        fifo_capacity: 64,
-        merge_allowed: false,
-        freeze_params: false,
-        sharing: &[],
-        lent: &[],
-        offered: &[],
-    };
-    let mut step = match backend.compile(&region, &cx) {
-        Ok(Compiled::Steps(mut units)) => units.pop().ok_or("no step")?.step,
-        Ok(_) => return Err("the backend gave a form other than steps".into()),
-        Err(refusal) => return Err(format!("refused: {}", refusal.reason)),
-    };
+    let mut step = compile_node(&backend, id, 1, 1)?;
     let mut held = 0;
     let mut aligned = 0;
     let mut result = Ok(());

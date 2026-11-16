@@ -1,0 +1,13 @@
+# Sessions: a graph name is known only in the session it was stored in, and a run is shared by
+# every session.
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+session other
+start pass
+put_graph pass {graphs}/pass.json
+start pass
+session
+start pass
+inspect host
+session other
+inspect host

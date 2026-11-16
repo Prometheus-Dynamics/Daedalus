@@ -141,8 +141,14 @@ fn main() {
     }
     let mut schema = Schema::from_hello(&hello, &[CUSTOM_KEY, by_reference::SHOT]);
     schema.codec(CUSTOM_KEY);
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
+    // The packets go to a copy of stdout, so a print in a fixture node cannot corrupt them.
+    let mut out = match daedalus_worker_io::packet_stream() {
+        Ok(out) => out,
+        Err(error) => {
+            let _ = writeln!(io::stderr(), "{error}");
+            return;
+        }
+    };
     if send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).is_err() {
         return;
     }

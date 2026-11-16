@@ -1,0 +1,1 @@
+{ "version": 1, "ops": [ { "type": "replace_node_id", "node": { "index": 1 }, "new_id": "fixture.boom" } ] }

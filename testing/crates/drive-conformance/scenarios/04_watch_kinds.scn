@@ -1,0 +1,15 @@
+# A watch on one run, and a watch that asks for telemetry only. Each step call is one telemetry
+# event. A fault-only watch still hears the end of its run.
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+watch 1 all telemetry
+start pass
+watch 2 1 fault
+feed 1 in u32:3
+step 1 2
+next 1
+watch 3 9 all
+unwatch 1
+next 1
+stop 1 drain
+next 2

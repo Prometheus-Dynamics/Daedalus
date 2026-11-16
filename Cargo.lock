@@ -518,6 +518,7 @@ dependencies = [
  "daedalus-value",
  "daedalus-wire",
  "daedalus-worker-conformance",
+ "daedalus-worker-io",
 ]
 
 [[package]]
@@ -634,6 +635,22 @@ version = "3.0.1-dev"
 dependencies = [
  "daedalus-types",
  "daedalus-wire",
+ "serde_json",
+]
+
+[[package]]
+name = "daedalus-client-capi"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-abi",
+ "daedalus-backend",
+ "daedalus-client",
+ "daedalus-host",
+ "daedalus-loader",
+ "daedalus-registry",
+ "daedalus-types",
+ "daedalus-wire",
+ "serde_json",
 ]
 
 [[package]]
@@ -745,6 +762,19 @@ dependencies = [
  "daedalus-backend",
  "daedalus-runner",
  "daedalus-types",
+]
+
+[[package]]
+name = "daedalus-drive-conformance"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-backend",
+ "daedalus-client",
+ "daedalus-host",
+ "daedalus-loader",
+ "daedalus-registry",
+ "daedalus-types",
+ "daedalus-wire",
 ]
 
 [[package]]
@@ -941,6 +971,7 @@ version = "3.0.1-dev"
 dependencies = [
  "daedalus-types",
  "daedalus-wire",
+ "daedalus-worker-io",
  "libc",
 ]
 
@@ -982,6 +1013,7 @@ dependencies = [
  "daedalus-types",
  "daedalus-wire",
  "daedalus-worker-conformance",
+ "daedalus-worker-io",
 ]
 
 [[package]]
@@ -1288,6 +1320,14 @@ dependencies = [
  "daedalus-types",
  "daedalus-wire",
  "daedalus-worker-conformance",
+ "daedalus-worker-io",
+]
+
+[[package]]
+name = "daedalus-worker-io"
+version = "3.0.1-dev"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

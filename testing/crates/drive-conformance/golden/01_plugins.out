@@ -1,0 +1,6 @@
+pong version=1
+error plugin_error
+plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+plugin name="dylib-fixture" generation=2 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
+inspect host sessions=[] graphs=[] runs=[] plugins=["dylib-fixture"]
+trace entries=["0|ping||none","1|load_plugin|/no/such/library.so|plugin_error","2|load_plugin|{plugin}|none","3|load_plugin|{plugin}|none","4|inspect|host|none"]

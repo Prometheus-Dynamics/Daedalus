@@ -249,8 +249,14 @@ fn main() {
     };
     let (hello, mut served) = describe(&plugin);
     let schema = Schema::from_hello(&hello, &[]);
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
+    // The packets go to a copy of stdout, so a plugin node that prints cannot corrupt them.
+    let mut out = match daedalus_worker_io::packet_stream() {
+        Ok(out) => out,
+        Err(error) => {
+            let _ = writeln!(io::stderr(), "{error}");
+            process::exit(2);
+        }
+    };
     if send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).is_err() {
         return;
     }

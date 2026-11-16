@@ -1,0 +1,20 @@
+{
+  "format": "daedalus.graph",
+  "schema_version": 1,
+  "graph": {
+    "nodes": [
+      {
+        "id": "host",
+        "kind": "host_bridge",
+        "label": "io",
+        "port_types": { "in": "u32", "out": "u32" }
+      },
+      { "id": "fixture.gated", "label": "work" }
+    ],
+    "edges": [
+      { "from": { "node": 0, "port": "in" }, "to": { "node": 1, "port": "in" } },
+      { "from": { "node": 1, "port": "out" }, "to": { "node": 0, "port": "out" } }
+    ],
+    "groups": []
+  }
+}

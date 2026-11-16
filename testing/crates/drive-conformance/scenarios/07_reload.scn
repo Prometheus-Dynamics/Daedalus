@@ -1,0 +1,12 @@
+# A reload to a graph of the same nodes keeps the state of each node that did not change.
+load_plugin {plugin}
+put_graph pass {graphs}/pass.json
+put_graph pass_again {graphs}/pass.json
+start pass
+feed 1 in u32:2
+step 1 1
+take 1 out
+reload 1 pass_again
+inspect run 1
+reload 1 nope
+reload 9 pass
