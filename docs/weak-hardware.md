@@ -55,6 +55,48 @@ What the daemon's code is made of, by crate (x86-64, the same proportions elsewh
 
 The runner, which is what runs a graph, is under 2 % of it: 41 KiB.
 
+## Worker programs
+
+The `workers` feature of the daemon adds the process backend, which runs the worker programs the
+config names (see [ffi.md](ffi.md#workers-in-the-daemon)). It is off by default: a board that
+runs the planner-only daemon should not pay for a backend it does not use. The three builds, in
+bytes, the aarch64 musl release, stripped, measured on the development machine with the same
+linker as the board build (`scripts/board/zigcc.sh`), before this change (`HEAD`) and after it:
+
+| Daemon, aarch64 musl release | Bytes | `.text` |
+|---|---|---|
+| Before (`HEAD`), lean (`--no-default-features`) | 1 391 448 | 1 108 004 |
+| Before (`HEAD`), with the planner (the default) | 2 503 568 | 2 056 100 |
+| After, lean | 1 437 728 | 1 147 684 |
+| After, with the planner (the default) | 2 550 360 | 2 096 308 |
+| After, with the planner and `workers` | 2 840 008 | 2 338 292 |
+
+The `workers` feature adds 289 648 bytes (241 984 of `.text`) to the planner build, 11% of it. The
+lean and planner builds grow by about 46 KB each over `HEAD`: the worker table in the config, and
+its parsing, which the lean daemon needs so that it can refuse a config that names a worker. Its
+share of that growth was not measured on its own.
+
+Resident memory, in kB, from `scripts/board/run.sh local-measure` on the development machine
+(x86-64, release build, the same procedure as the board's). The workers daemon has one Rust
+fixture worker configured and runs one node of it, in a graph of two inputs and one output. The
+worker's figure is the resident memory of its own process, read from the daemon's threads:
+
+| Measured | Full (planner), no workers | Lean (made plans) | Workers daemon | Its worker process |
+|---|---|---|---|---|
+| Idle | 4 108 | 3 888 | 4 084 | 2 168 |
+| After the first step | 5 244 (one run) | 4 004 | 5 280 | 2 168 |
+| After 200 round trips | 5 368 | 4 164 | 5 412 | 2 168 |
+
+The full daemon's idle figure is with its plugin loaded and no graph stored, and its graph
+planned figure is 5 172. At the same points, the workers daemon is within the noise of the
+planner-only daemon: the process backend adds nothing measurable to the daemon at idle, and the
+worker's own process is about 2.2 MB. The worker's resident memory is the same at every point: a
+worker that runs its node does not grow, and 200 round trips add nothing to it.
+
+The earlier figures in this section, for a worker of 2.2 to 3.8 MB, came from two procedures.
+One of them read the daemon's own memory as the worker's, because a background job was started
+as part of a `&&` chain. The figures above are the only ones for the workers daemon.
+
 ## Knobs for size
 
 | Knob | What it saves | What it costs |

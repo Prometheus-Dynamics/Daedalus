@@ -34,6 +34,68 @@ pub const HOST: &str = "process.host";
 /// lend, and the worker reads it where it is (Linux).
 pub const LENT: &str = "process.lent";
 
+/// One worker as its backend holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkerStatus {
+    /// The nodes the worker declared in its hello.
+    pub nodes: Vec<String>,
+    /// Whether the worker is up now.
+    pub running: bool,
+}
+
+/// Starts workers and reads their hellos, with what a backend needs to do so and nothing else.
+#[derive(Clone)]
+pub struct Greeter {
+    integrity: Integrity,
+    telemetry: Arc<Telemetry>,
+}
+
+impl Greeter {
+    /// Starts the worker of `spec` and reads its hello. This waits on the worker, for up to its
+    /// startup time, so it should run without any lock another request needs.
+    pub fn greet(&self, spec: &WorkerSpec) -> Result<Greeted, ProcessError> {
+        let (worker, hello) = greet_with(&self.integrity, &self.telemetry, spec)?;
+        Ok(Greeted {
+            spec: spec.clone(),
+            worker,
+            hello,
+        })
+    }
+}
+
+/// A worker that has said hello, and is not yet in a backend. Dropping it stops the worker.
+pub struct Greeted {
+    spec: WorkerSpec,
+    worker: Worker,
+    hello: Hello,
+}
+
+/// Starts the worker of `spec` under `integrity`, reads its hello, and checks what it offers.
+fn greet_with(
+    integrity: &Integrity,
+    telemetry: &Arc<Telemetry>,
+    spec: &WorkerSpec,
+) -> Result<(Worker, Hello), ProcessError> {
+    let vetted = vet(integrity, spec)?;
+    let mut worker = Worker::spawn(spec, vetted.program.as_ref(), telemetry)?;
+    let hello = read_hello(&worker, spec.startup).map_err(|reason| ProcessError::Startup {
+        program: spec.program.clone(),
+        reason,
+    })?;
+    hello.check().map_err(|error| ProcessError::Hello {
+        program: spec.program.clone(),
+        error,
+    })?;
+    worker
+        .offer(spec.startup, telemetry)
+        .map_err(|reason| ProcessError::Startup {
+            program: spec.program.clone(),
+            reason,
+        })?;
+    vetted.record()?;
+    Ok((worker, hello))
+}
+
 /// The workers a backend runs, and which node each one serves.
 pub struct ProcessBackend {
     /// What each worker's files are checked under, from the time the worker is added.
@@ -135,24 +197,34 @@ impl ProcessBackend {
 
     /// Starts the worker of `spec` and reads its hello.
     fn greet(&self, spec: &WorkerSpec) -> Result<(Worker, Hello), ProcessError> {
-        let vetted = vet(&self.integrity, spec)?;
-        let mut worker = Worker::spawn(spec, vetted.program.as_ref(), &self.telemetry)?;
-        let hello = read_hello(&worker, spec.startup).map_err(|reason| ProcessError::Startup {
-            program: spec.program.clone(),
-            reason,
-        })?;
-        hello.check().map_err(|error| ProcessError::Hello {
-            program: spec.program.clone(),
-            error,
-        })?;
-        worker
-            .offer(spec.startup, &self.telemetry)
-            .map_err(|reason| ProcessError::Startup {
-                program: spec.program.clone(),
-                reason,
-            })?;
-        vetted.record()?;
-        Ok((worker, hello))
+        greet_with(&self.integrity, &self.telemetry, spec)
+    }
+
+    /// A handle that starts workers and reads their hellos without the backend: a host can greet a
+    /// worker on a thread of its own, and then [`ProcessBackend::install`] it under its lock.
+    pub fn greeter(&self) -> Greeter {
+        Greeter {
+            integrity: self.integrity.clone(),
+            telemetry: Arc::clone(&self.telemetry),
+        }
+    }
+
+    /// Takes a worker [`Greeter::greet`] started: registers the nodes it declares that `registry`
+    /// doesn't have, and attaches it. Returns the ids of the nodes this registered. This does no
+    /// waiting, so it is the part to do under a lock.
+    pub fn install(
+        &mut self,
+        greeted: Greeted,
+        registry: &mut Registry,
+    ) -> Result<Vec<String>, ProcessError> {
+        let Greeted {
+            spec,
+            worker,
+            hello,
+        } = greeted;
+        let added = crate::declare::register_new(&spec.program, &hello, registry)?;
+        self.attach(spec, worker, &hello, registry)?;
+        Ok(added)
     }
 
     /// Checks a started worker's nodes against the registry, and takes it on.
@@ -222,6 +294,21 @@ impl ProcessBackend {
 
     pub fn telemetry(&self) -> Snapshot {
         self.telemetry.snapshot()
+    }
+
+    /// What this backend holds for the worker started from `spec`: the nodes it serves, and whether
+    /// it is up now. `None` when no worker was started from that spec. A worker that crashed is
+    /// down until a step needs it, when it starts again.
+    pub fn worker_status(&self, spec: &WorkerSpec) -> Option<WorkerStatus> {
+        let shared = self
+            .workers
+            .iter()
+            .find(|shared| shared.spec.same_as(spec))?;
+        let running = matches!(shared.lock().link, Link::Up(_));
+        Some(WorkerStatus {
+            nodes: shared.nodes.iter().map(|node| node.id.clone()).collect(),
+            running,
+        })
     }
 
     /// The pid of the worker that serves `node`, while it is running.

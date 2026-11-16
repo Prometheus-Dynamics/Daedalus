@@ -26,7 +26,7 @@ pub use daedalus_wire::LogLevel;
 pub use declare::{owned_decl, type_expr};
 pub use error::ProcessError;
 pub use log::WorkerLog;
-pub use region::{BACKEND_ID, HOST, LENT, ProcessBackend};
+pub use region::{BACKEND_ID, Greeted, Greeter, HOST, LENT, ProcessBackend, WorkerStatus};
 pub use spec::WorkerSpec;
 pub use telemetry::Snapshot;
 pub use wire_space::{CPU_WIRE, FROM_WORKER, LENT_TO_CPU, TO_WORKER};

@@ -119,6 +119,24 @@ pub trait PluginLoader: Send {
         registry: &mut Registry,
         backends: &mut Vec<Arc<dyn Backend>>,
     ) -> Result<PluginInfo, String>;
+
+    /// The lines `inspect host` lists after the loaded plugins, for what the loader holds that a
+    /// plugin's name does not say (the state of each worker, for one). None by default.
+    fn listing(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// What the loader has that is not running yet, named. A planning error appends it, so the
+    /// answer says which worker a graph is waiting for. None by default.
+    fn not_running(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Why a backend a made plan needs is missing, when the loader knows the reason. None by default.
+    fn missing_backend(&self, backend: &str) -> Option<String> {
+        let _ = backend;
+        None
+    }
 }
 
 /// Waits until `acceptor` has a connection waiting (true) or `stop` is signalled (false).
@@ -279,7 +297,36 @@ impl Listener {
     }
 }
 
+impl Engine {
+    /// A planning error's text, with what the loader has not got running named after it.
+    pub(crate) fn planning_text(&self, text: String) -> String {
+        let waiting = self
+            .plugins
+            .as_ref()
+            .map(|plugins| plugins.not_running())
+            .unwrap_or_default();
+        if waiting.is_empty() {
+            text
+        } else {
+            format!("{text}; not running: {}", waiting.join(", "))
+        }
+    }
+}
+
 impl ServiceHost {
+    /// Runs `f` with the host's registry and backends, under the lock planning takes. An embedder
+    /// that adds nodes or backends outside a plugin's load uses this; nothing else is locked then.
+    pub fn with_engine<T>(
+        &self,
+        f: impl FnOnce(&mut Registry, &mut Vec<Arc<dyn Backend>>) -> T,
+    ) -> T {
+        let mut engine = lock(&self.engine);
+        let Engine {
+            registry, backends, ..
+        } = &mut *engine;
+        f(registry, backends)
+    }
+
     /// A host that plans against `registry`.
     pub fn builder(registry: Registry) -> ServiceHostBuilder {
         ServiceHostBuilder {

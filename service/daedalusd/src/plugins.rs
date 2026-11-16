@@ -1,42 +1,32 @@
 //! Plugins: libraries opened through the loader. Each backend a plugin brings is wrapped so the
-//! planner can use it, and a library that fails to load is tried again, with a backoff capped at
-//! 8 s, for as long as its file is there. A plugin never stops the daemon.
+//! planner can use it. A library that fails to load is tried again by the retry thread, and a
+//! plugin never stops the daemon.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, Weak};
-use std::thread::JoinHandle;
-use std::time::Instant;
 
 use daedalus_backend::Backend;
 use daedalus_host::listen::{PluginLoader, ServiceHost};
 use daedalus_integrity::Integrity;
-use daedalus_loader::{Generation, LoadError, Loader, PluginBackend, Retry};
+use daedalus_loader::{Generation, LoadError, Loader, PluginBackend};
 use daedalus_registry::{RegError, Registry};
 use daedalus_wire::service::PluginInfo;
 
-use crate::logging::{debug, info, warning};
+use crate::logging::{info, warning};
+use crate::retry::{Attempt, Note};
 
 /// The generations opened so far, for checking at shutdown that each one was retired.
 pub(crate) type Probes = Arc<Mutex<Vec<(String, Weak<Generation>)>>>;
-
-/// What the plugins tell the retry thread.
-pub(crate) enum Note {
-    /// A library the integrity check refused. It is tried again, as a library that failed at start
-    /// is, until its file is removed.
-    Refused { path: PathBuf, reason: String },
-    /// A library loaded, by a request or a retry. Nothing is tried again for it.
-    Loaded(PathBuf),
-    /// The daemon is stopping, and the retry thread ends.
-    Stop,
-}
 
 /// Loads plugins for the host.
 pub struct Plugins {
     loader: Loader,
     probes: Probes,
     notes: Sender<Note>,
+    /// The workers, when the daemon runs them: their state is listed beside the plugins.
+    #[cfg(feature = "workers")]
+    workers: Option<Arc<crate::workers::Workers>>,
 }
 
 impl Plugins {
@@ -45,7 +35,16 @@ impl Plugins {
             loader: Loader::with_integrity(integrity),
             probes,
             notes,
+            #[cfg(feature = "workers")]
+            workers: None,
         }
+    }
+
+    /// Lists the workers in `workers` beside the plugins, and answers for them.
+    #[cfg(feature = "workers")]
+    pub fn with_workers(mut self, workers: Arc<crate::workers::Workers>) -> Plugins {
+        self.workers = Some(workers);
+        self
     }
 }
 
@@ -61,7 +60,9 @@ impl PluginLoader for Plugins {
             Err(error) => {
                 if matches!(error, LoadError::Integrity(_)) {
                     let _ = self.notes.send(Note::Refused {
-                        path: PathBuf::from(path),
+                        attempt: Box::new(PluginAttempt {
+                            path: PathBuf::from(path),
+                        }),
                         reason: error.to_string(),
                     });
                 }
@@ -102,12 +103,40 @@ impl PluginLoader for Plugins {
                 format!("{} generation {}", info.name, info.generation),
                 plugin.generation_probe(),
             ));
-        let _ = self.notes.send(Note::Loaded(PathBuf::from(path)));
+        let _ = self.notes.send(Note::Loaded(path.to_owned()));
         Ok(info)
+    }
+
+    fn listing(&self) -> Vec<String> {
+        #[cfg(feature = "workers")]
+        if let Some(workers) = &self.workers {
+            return workers.listing();
+        }
+        Vec::new()
+    }
+
+    fn not_running(&self) -> Vec<String> {
+        #[cfg(feature = "workers")]
+        if let Some(workers) = &self.workers {
+            return workers.not_running();
+        }
+        Vec::new()
+    }
+
+    fn missing_backend(&self, backend: &str) -> Option<String> {
+        #[cfg(not(feature = "workers"))]
+        if backend == "process" {
+            return Some(
+                "the daemon was built without `workers`, so it runs no worker programs".to_owned(),
+            );
+        }
+        let _ = backend;
+        None
     }
 }
 
-/// The libraries in `dir`, in name order. A directory that cannot be read has none.
+/// The scan of a plugin directory: the libraries in it, in name order. A directory that cannot be
+/// read has none.
 pub fn scan(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         warning!("plugin directory {} cannot be read", dir.display());
@@ -127,9 +156,41 @@ pub fn scan(dir: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// A library the retry thread tries again: a plugin that failed to load, or was refused.
+pub(crate) struct PluginAttempt {
+    pub(crate) path: PathBuf,
+}
+
+impl Attempt for PluginAttempt {
+    fn kind(&self) -> &'static str {
+        "plugin"
+    }
+
+    fn name(&self) -> String {
+        self.path.to_string_lossy().into_owned()
+    }
+
+    fn gone(&self) -> bool {
+        // A removed file is how an operator stops the retries for a plugin by hand.
+        !self.path.exists()
+    }
+
+    fn retry(&mut self, host: &ServiceHost) -> Result<String, String> {
+        match host.load_plugin(&self.name()) {
+            Ok(plugin) => Ok(format!(
+                "loaded plugin {} generation {} from {} after retrying",
+                plugin.name,
+                plugin.generation,
+                self.path.display()
+            )),
+            Err(error) => Err(error.message),
+        }
+    }
+}
+
 /// Loads every library in `paths` once. The ones that failed are returned, to be tried again.
-pub(crate) fn load_all(host: &ServiceHost, paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut failed = Vec::new();
+pub(crate) fn load_all(host: &ServiceHost, paths: Vec<PathBuf>) -> Vec<Box<dyn Attempt>> {
+    let mut failed: Vec<Box<dyn Attempt>> = Vec::new();
     for path in paths {
         match host.load_plugin(&path.to_string_lossy()) {
             Ok(plugin) => info!(
@@ -142,135 +203,11 @@ pub(crate) fn load_all(host: &ServiceHost, paths: Vec<PathBuf>) -> Vec<PathBuf> 
             ),
             Err(error) => {
                 warning!("plugin {} did not load: {}", path.display(), error.message);
-                failed.push(path);
+                failed.push(Box::new(PluginAttempt { path }));
             }
         }
     }
     failed
-}
-
-/// A library waiting to be tried again.
-struct Waiting {
-    retry: Retry,
-    due: Instant,
-    /// The last reason it did not load. A repeat of it is logged at debug, a new one at warning.
-    reason: String,
-}
-
-/// Keeps trying the libraries that failed to load. Each has its own backoff, capped at 8 s. A
-/// library is given up on only when its file is removed, which is how an operator stops the
-/// retries by hand, or when the daemon stops. The thread waits on `notes` between tries, so it
-/// costs nothing while there is nothing to try.
-pub(crate) fn retry_in_background(
-    host: Arc<ServiceHost>,
-    failed: Vec<PathBuf>,
-    notes: Receiver<Note>,
-) -> Option<JoinHandle<()>> {
-    let body = move || {
-        let mut waiting: BTreeMap<PathBuf, Waiting> = BTreeMap::new();
-        for path in failed {
-            let mut retry = Retry::new();
-            let due = Instant::now() + retry.failed();
-            waiting.insert(
-                path,
-                Waiting {
-                    retry,
-                    due,
-                    reason: String::new(),
-                },
-            );
-        }
-        loop {
-            // Wait for the next due try, or for a note, whichever is first.
-            let note = match waiting.values().map(|waiting| waiting.due).min() {
-                None => match notes.recv() {
-                    Ok(note) => Some(note),
-                    Err(_) => return,
-                },
-                Some(due) => {
-                    match notes.recv_timeout(due.saturating_duration_since(Instant::now())) {
-                        Ok(note) => Some(note),
-                        Err(RecvTimeoutError::Timeout) => None,
-                        Err(RecvTimeoutError::Disconnected) => return,
-                    }
-                }
-            };
-            match note {
-                Some(Note::Stop) => return,
-                Some(Note::Loaded(path)) => {
-                    waiting.remove(&path);
-                }
-                // A refusal the thread already waits on is its own failed try coming back.
-                Some(Note::Refused { path, reason }) if !waiting.contains_key(&path) => {
-                    let mut retry = Retry::new();
-                    let delay = retry.failed();
-                    warning!(
-                        "plugin {} is refused: {reason}; what is loaded keeps running; next try in {delay:?}",
-                        path.display()
-                    );
-                    waiting.insert(
-                        path,
-                        Waiting {
-                            retry,
-                            due: Instant::now() + delay,
-                            reason,
-                        },
-                    );
-                }
-                None | Some(Note::Refused { .. }) => {}
-            }
-            let now = Instant::now();
-            let due: Vec<PathBuf> = waiting
-                .iter()
-                .filter(|(_, waiting)| waiting.due <= now)
-                .map(|(path, _)| path.clone())
-                .collect();
-            for path in due {
-                if !path.exists() {
-                    info!("plugin {} was removed: no longer retried", path.display());
-                    waiting.remove(&path);
-                    continue;
-                }
-                match host.load_plugin(&path.to_string_lossy()) {
-                    Ok(plugin) => {
-                        info!(
-                            "loaded plugin {} generation {} from {} after retrying",
-                            plugin.name,
-                            plugin.generation,
-                            path.display()
-                        );
-                        waiting.remove(&path);
-                    }
-                    Err(error) => {
-                        if let Some(waiting) = waiting.get_mut(&path) {
-                            let delay = waiting.retry.failed();
-                            waiting.due = Instant::now() + delay;
-                            if waiting.reason == error.message {
-                                debug!(
-                                    "plugin {} still does not load ({}), next try in {:?}",
-                                    path.display(),
-                                    error.message,
-                                    delay
-                                );
-                            } else {
-                                warning!(
-                                    "plugin {} is refused: {}; what is loaded keeps running; next try in {:?}",
-                                    path.display(),
-                                    error.message,
-                                    delay
-                                );
-                            }
-                            waiting.reason = error.message;
-                        }
-                    }
-                }
-            }
-        }
-    };
-    std::thread::Builder::new()
-        .name("daedalusd-plugins".to_owned())
-        .spawn(body)
-        .ok()
 }
 
 /// The generations that are still open: a step compiled from each is still held somewhere.

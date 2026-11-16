@@ -97,6 +97,16 @@ MEASURED = {
         "daemon_rss_32_connections_kb",
         "daemon_vmsize_32_connections_kb",
     ],
+    # The daemon with the workers feature, which starts one Rust fixture worker from its config: its
+    # own resident memory and the worker's, at the same points.
+    "daemon-workers.txt": [
+        "daemon_rss_idle_kb",
+        "worker_rss_idle_kb",
+        "daemon_rss_after_first_step_kb",
+        "worker_rss_after_first_step_kb",
+        "daemon_rss_after_200_round_trips_kb",
+        "worker_rss_after_200_round_trips_kb",
+    ],
     # The daemon built without the planner, loading the plan the full daemon made: the same
     # figures at the same points.
     "daemon-lean.txt": [
@@ -224,6 +234,9 @@ def self_test():
         "daemon-lean.txt": "daemon_rss_idle_kb 700\ndaemon_rss_graph_planned_kb 720\n"
         "daemon_rss_after_200_round_trips_kb 760\ndaemon_rss_32_connections_kb 800\n"
         "daemon_vmsize_32_connections_kb 8000\n",
+        "daemon-workers.txt": "daemon_rss_idle_kb 3600\nworker_rss_idle_kb 2300\n"
+        "daemon_rss_after_first_step_kb 3700\nworker_rss_after_first_step_kb 2300\n"
+        "daemon_rss_after_200_round_trips_kb 3800\nworker_rss_after_200_round_trips_kb 2300\n",
     }
     expect("measure: a whole run passes", measure(whole), None)
     cut = dict(whole)
@@ -234,6 +247,11 @@ def self_test():
     expect("measure: a missing file fails", measure(gone), "worker.txt is missing")
     empty = dict(whole, **{"daemon.txt": "daemon_rss_idle_kb \n"})
     expect("measure: a figure with no number fails", measure(empty), "no number")
+    workers_gone = dict(whole)
+    del workers_gone["daemon-workers.txt"]
+    expect("measure: a run without the workers daemon's figures fails", measure(workers_gone), "daemon-workers.txt is missing")
+    no_worker = dict(whole, **{"daemon-workers.txt": "the bundle carries no workers daemon, no worker or no graph\n"})
+    expect("measure: a workers run without a worker's figures fails", measure(no_worker), "worker_rss_idle_kb")
     lean_gone = dict(whole)
     del lean_gone["daemon-lean.txt"]
     expect("measure: a run without the lean daemon's figures fails", measure(lean_gone), "daemon-lean.txt is missing")
