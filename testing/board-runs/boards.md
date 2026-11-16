@@ -114,3 +114,15 @@ board, the revision, the judge's lines, and what was not run.
 - No Luckfox or Pico run has been made with these scripts yet.
 - `local` and `local-measure` pass on the development machine, and `luckfox-build`, `cm5-build`
   and `cm5-measure-build` build there.
+- The second batched session ran on 2026-11-17 at `next` b365d832 on the same CM5: 83 steps, all exit 0, preflight ok, GPU check `gpu ok`, no reboot. The board's clock read 2026-11-09 during the run; the session date is 2026-11-17. Its results are in the 2026-11-17 sections of C1, D2, E2, E3, E5, E6, E7, E9, E11, E12, E13, I3 and J6. The first session's files are in `batch/results-2026-11-16/`.
+- Before it, `scripts/board/batch.sh rehearse` passed at the same revision: 62 step runs on the development machine with the software GPU driver. This is as the coordinator reports; the rehearsal's files are not in these records.
+- The kernel logged five `Resetting GPU for hang` lines in the first session and six more in the second, all from the E11 tests, which are built to hang the GPU, on purpose. They are not a fault.
+- Nothing asked of the batch is unmeasured except these, which need a command or code that does not exist yet, or a board that is not this one:
+  - E14: the steady-state import allocations and the fence-wait timings of the dma-buf buffer import. No command in the tree times them; a harness is needed.
+  - E9: `export_fence` on a dma-buf that V3D has just written, and whether the fence is a sync_file. `daedalus-gpu-budgets dma-1mib` times the fence but does not write first.
+  - E2: whether host-mapped and host-cached buffers report as mapped. The storage test prints nothing about it.
+  - E7 and E13: the planted validation error, with the layer on. Run `DAEDALUS_PLANT_VALIDATION_ERROR=1 DAEDALUS_GPU_REQUIRED=1 vk-sys-lib planted --nocapture` under the layer environment, from the board's `batch-on-board.sh` step 6. Not run in either session.
+  - E11: the driver's own lost callback message. The 100 ms bound run's output does not record one.
+  - E6: an unmerged figure in the fragment form. The tool times unmerged nodes as compute regions only.
+  - E12: the RX 6800 XT row. It is not a board run.
+- Subjects gone, not counted as unmeasured: the E7 box timings, the E14 image imports, E15, E16, and the E17 pool.

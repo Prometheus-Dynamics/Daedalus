@@ -258,7 +258,9 @@ go() {
   # Detached, so a dropped connection doesn't end it; both GPU locks for the whole run.
   local lock locked=""
   for lock in ${BOARD_LOCKS:-/run/lock/board-gpu.lock}; do locked="$locked flock $lock"; done
-  on_board "cd $dir && nohup$locked sh ./batch-on-board.sh > $dir/nohup.txt 2>&1 < /dev/null & echo started"
+  # wait.pid is the launcher, which becomes the flock chain: it is alive while the run waits for
+  # a lock somebody else holds, before the script writes run.pid.
+  on_board "cd $dir && nohup sh -c 'echo \$\$ > $dir/wait.pid; exec$locked sh ./batch-on-board.sh' > $dir/nohup.txt 2>&1 < /dev/null & echo started"
   local boot answered=yes restarted=no
   boot=$(on_board "cat /proc/sys/kernel/random/boot_id")
   while :; do
@@ -268,12 +270,14 @@ go() {
     if [[ "$(on_board "cat /proc/sys/kernel/random/boot_id")" != "$boot" ]]; then
       echo "batch: the board restarted during the run (a watchdog reset)"; restarted=yes; break
     fi
-    on_board "test -e $dir/run.pid && kill -0 \$(cat $dir/run.pid)" 2>/dev/null || { echo "batch: the run ended without finishing"; break; }
+    # Alive is the script itself, or, before it has a lock, the launcher waiting for one.
+    on_board "if [ -e $dir/run.pid ]; then kill -0 \$(cat $dir/run.pid); else kill -0 \$(cat $dir/wait.pid); fi" 2>/dev/null ||
+      { echo "batch: the run ended without finishing"; break; }
   done
   [[ $answered = yes ]] || echo "batch: the board went away during the run and came back"
   on_board "test -d $dir/results && tar -C $dir/results -cf - ." | tar -C "$out/results" -xf - ||
     echo "batch: no results on the board (a restart clears /tmp)"
-  on_board "if [ -f $dir/run.pid ]; then kill \$(cat $dir/run.pid) 2>/dev/null; fi; rm -rf $dir /tmp/dd-i3dev; test ! -e $dir" ||
+  on_board "for p in $dir/run.pid $dir/wait.pid; do if [ -f \$p ]; then kill \$(cat \$p) 2>/dev/null; fi; done; rm -rf $dir /tmp/dd-i3dev; test ! -e $dir" ||
     die "couldn't remove $dir from the board: remove it by hand"
   # A GPU left wedged (the kernel lives, so no watchdog fires) is never left behind: the board is
   # rebooted and the GPU checked again. A reboot also clears what a non-tmpfs /tmp kept.
