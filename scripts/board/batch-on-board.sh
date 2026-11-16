@@ -151,7 +151,8 @@ for t in "$B"/wgpu-conformance.* "$B"/gpu-budgets.*; do
 done
 for round in 1 2 3; do
   step gpu-budgets "$B/daedalus-gpu-budgets" limits alloc16 transfers cached region-batch raw-submit \
-    fragment-pass fences timer-source busy dma-1mib heap-read batching allocation dispatch-floor readback elements
+    fragment-pass fences timer-source busy dma-1mib heap-read batching allocation dispatch-floor readback elements \
+    baselines
 done
 
 # 6. Vulkan validation with synchronization validation (E7, E13), through the layer in ./vvl.

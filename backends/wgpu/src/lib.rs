@@ -65,7 +65,7 @@ pub use memory::{
 pub use pool::TempPoolLimits;
 pub use profile::{DeviceProfile, Family, vendor_ids};
 #[cfg(target_os = "linux")]
-pub use raw::{Arg, Chain, RawError};
+pub use raw::{Arg, Chain, RawBlock, RawError, RawPlacement, raw_copy};
 pub use staging::{StagingConfig, StagingStats};
 pub use storage_pool::{StoragePool, StoragePoolStats};
 pub use texture::{Format, Texture, TextureDesc, TextureError};

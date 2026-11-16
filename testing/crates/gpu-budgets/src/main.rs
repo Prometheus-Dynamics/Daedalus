@@ -41,6 +41,7 @@ const SECTIONS: &[&str] = &[
     "timer-source",
     "dma-1mib",
     "region-batch",
+    "baselines",
     "grind",
 ];
 /// Sections that run only when named: a run with no section named leaves them out.
@@ -217,6 +218,12 @@ fn main() -> std::process::ExitCode {
             "busy" => sections::gaps::busy(&backend),
             "cached" => sections::gaps::host_cached(),
             "region-batch" => sections::region_batch::region_batch(&backend),
+            #[cfg(target_os = "linux")]
+            "baselines" => sections::baselines::run(&backend),
+            #[cfg(not(target_os = "linux"))]
+            "baselines" => {
+                println!("baselines: skipped, the raw baselines are Linux and Vulkan only")
+            }
             "grind" => sections::grind::run(),
             #[cfg(target_os = "linux")]
             "heap-read" => sections::gaps::heap_read(&backend),

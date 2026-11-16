@@ -94,3 +94,32 @@ impl Storage {
         self.buffer()
     }
 }
+
+/// Device memory the raw calls make and free on a backend's device, with no wgpu buffer on it. It
+/// is placed the way a [`Storage`] of the same size and placement is, and nothing else of wgpu's
+/// touches it: the baselines the timed budgets are compared with. See `daedalus_vk_sys::block`.
+pub use daedalus_vk_sys::block::Block as RawBlock;
+/// Where a raw block is placed, by the names [`Storage`] places by.
+pub use daedalus_vk_sys::memory::Placement as RawPlacement;
+
+impl WgpuBackend {
+    /// A raw block of `size` bytes in `placement`, made on this backend's device. Its memory is
+    /// freed when it drops.
+    pub fn raw_block(&self, size: u64, placement: RawPlacement) -> Result<RawBlock, RawError> {
+        let context = self.context().map_err(RawError::Open)?;
+        RawBlock::new(&context.device, size, placement)
+            .map_err(|error| RawError::Vulkan(error.to_string()))
+    }
+}
+
+/// Copies the first `bytes` of `source` into `block`, in a raw submit of its own on `submitter`,
+/// and waits for the copy. The submitter, the storage and the block all come from one backend.
+pub fn raw_copy(
+    submitter: &Submitter,
+    source: &Storage,
+    block: &RawBlock,
+    bytes: u64,
+) -> Result<(), RawError> {
+    daedalus_vk_sys::block::copy_into(submitter, source.wgpu_buffer(), block, bytes)
+        .map_err(|error| RawError::Vulkan(error.to_string()))
+}

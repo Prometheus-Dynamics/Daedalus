@@ -169,21 +169,27 @@ fn buffer_info(size: u64) -> vk::BufferCreateInfo<'static> {
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
 }
 
-/// A storage buffer of `size` bytes in `placement`, and its mapping unless it's device memory.
-/// `size` is a non-zero multiple of 4.
-pub fn storage_buffer(
-    device: &wgpu::Device,
-    size: u64,
-    placement: Placement,
-    label: Option<&str>,
-) -> Result<(wgpu::Buffer, Option<HostMapping>), Error> {
-    if size == 0 || !size.is_multiple_of(4) || usize::try_from(size).is_err() {
-        return Err(Error::Range);
-    }
-    let raw = Raw::of(device).ok_or(Error::NotVulkan)?;
+/// A buffer bound to memory of its own, and the memory's mapping where the placement maps it.
+pub(crate) struct Placed {
+    pub(crate) buffer: vk::Buffer,
+    pub(crate) memory: vk::DeviceMemory,
+    /// The size of the memory, which the device may make larger than the buffer.
+    pub(crate) allocated: u64,
+    /// The memory's mapping, for a placement that maps it.
+    pub(crate) ptr: Option<*mut u8>,
+    /// The memory type the memory was allocated in, and that type's flags.
+    pub(crate) type_index: u32,
+    pub(crate) flags: vk::MemoryPropertyFlags,
+}
+
+/// Makes a buffer of `size` bytes in `placement`, and binds memory of its own to it, mapped where
+/// the placement says. Every buffer this crate places goes through here, whether wgpu wraps it or
+/// not, so one placement gives the same memory type and usage everywhere. `size` is a non-zero
+/// multiple of 4.
+pub(crate) fn place(raw: &Raw, size: u64, placement: Placement) -> Result<Placed, Error> {
     let vk_device = &raw.device;
     // SAFETY: a valid create info on a live device. The buffer is destroyed on every error path
-    // below, and owned by wgpu after `from_raw_managed`.
+    // below, and bound to its memory or destroyed after that.
     let buffer = unsafe { vk_device.create_buffer(&buffer_info(size), None) }?;
     // SAFETY: queries on the buffer just made and the device's physical device.
     let (needs, memory) = unsafe {
@@ -249,15 +255,15 @@ pub fn storage_buffer(
         undo();
         return Err(error.into());
     }
-    let mut mapped = None;
-    let visible = types
+    let flags = types
         .get(index)
-        .is_some_and(|ty| ty.property_flags.contains(host));
+        .map_or(vk::MemoryPropertyFlags::empty(), |ty| ty.property_flags);
     let map = match placement {
         Placement::Device => false,
-        Placement::DeviceReachable => shared && visible,
+        Placement::DeviceReachable => shared && flags.contains(host),
         Placement::HostMapped | Placement::HostCached => true,
     };
+    let mut mapped = None;
     if map {
         // SAFETY: host-visible memory, mapped once and never unmapped before it is freed.
         let map =
@@ -270,8 +276,39 @@ pub fn storage_buffer(
             }
         }
     }
-    let buffer = wrap(device, buffer, memory, 0, needs.size, size, label);
-    let mapping = mapped.map(|ptr| HostMapping {
+    Ok(Placed {
+        buffer,
+        memory,
+        allocated: needs.size,
+        ptr: mapped,
+        type_index: index as u32,
+        flags,
+    })
+}
+
+/// A storage buffer of `size` bytes in `placement`, and its mapping unless it's device memory.
+/// `size` is a non-zero multiple of 4.
+pub fn storage_buffer(
+    device: &wgpu::Device,
+    size: u64,
+    placement: Placement,
+    label: Option<&str>,
+) -> Result<(wgpu::Buffer, Option<HostMapping>), Error> {
+    if size == 0 || !size.is_multiple_of(4) || usize::try_from(size).is_err() {
+        return Err(Error::Range);
+    }
+    let raw = Raw::of(device).ok_or(Error::NotVulkan)?;
+    let placed = place(&raw, size, placement)?;
+    let buffer = wrap(
+        device,
+        placed.buffer,
+        placed.memory,
+        0,
+        placed.allocated,
+        size,
+        label,
+    );
+    let mapping = placed.ptr.map(|ptr| HostMapping {
         ptr,
         len: size as usize,
         access: Mutex::new(()),
