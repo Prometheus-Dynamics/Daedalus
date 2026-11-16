@@ -183,9 +183,17 @@ step validation-vk-sys "$B/vk-sys.lib" --nocapture --test-threads=1
 step validation-fragment "$B/wgpu.fragment" --nocapture --test-threads=1
 step validation-region "$B/wgpu.region" --nocapture --test-threads=1
 step validation-raw-submit "$B/daedalus-gpu-budgets" raw-submit fragment-pass
+# A clean log means nothing unless an error would have been in it: one call that is wrong on
+# purpose, and the layer has to name a rule for it.
+step validation-planted env DAEDALUS_PLANT_VALIDATION_ERROR=1 "$B/vk-sys.lib" planted --nocapture --test-threads=1
+if grep -q "VUID-" "$R/validation-planted.txt"; then
+  echo "the layer is active: it named the planted call's rule" > "$R/validation-layer.txt"
+else
+  echo "the layer is NOT active: the planted call went unnamed, so a clean log proves nothing" > "$R/validation-layer.txt"
+fi
 unset VK_LAYER_PATH VK_INSTANCE_LAYERS VK_KHRONOS_VALIDATION_VALIDATE_SYNC VK_LAYER_VALIDATE_SYNC
 else
-  for n in validation-vk-sys validation-fragment validation-region validation-raw-submit; do
+  for n in validation-vk-sys validation-fragment validation-region validation-raw-submit validation-layer; do
     echo "no layer in the rehearsal" > "$R/$n.txt"
   done
 fi
