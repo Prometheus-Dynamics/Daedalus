@@ -23,6 +23,7 @@ pub struct Telemetry {
     passed_in: AtomicU64,
     fd_sends: AtomicU64,
     outs_full: AtomicU64,
+    refused: AtomicU64,
 }
 
 /// A copy of the counts at one time.
@@ -64,6 +65,8 @@ pub struct Snapshot {
     /// Runs with every value buffer still held by cells: the worker sent that run's output
     /// values in its packet.
     pub outs_full: u64,
+    /// Starts refused because the worker's files did not pass the check against the lock.
+    pub refused: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -95,6 +98,7 @@ pub(crate) enum Count {
     FdSends(u64),
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     OutsFull,
+    Refused,
 }
 
 impl Telemetry {
@@ -118,6 +122,7 @@ impl Telemetry {
             Count::PassedIn => (&self.passed_in, 1),
             Count::FdSends(n) => (&self.fd_sends, n),
             Count::OutsFull => (&self.outs_full, 1),
+            Count::Refused => (&self.refused, 1),
         };
         field.fetch_add(by, Ordering::Relaxed);
     }
@@ -142,6 +147,7 @@ impl Telemetry {
             passed_in: self.passed_in.load(Ordering::Relaxed),
             fd_sends: self.fd_sends.load(Ordering::Relaxed),
             outs_full: self.outs_full.load(Ordering::Relaxed),
+            refused: self.refused.load(Ordering::Relaxed),
         }
     }
 }

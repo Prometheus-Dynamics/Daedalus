@@ -224,3 +224,98 @@ fn what_a_plugins_node_gives_as_detail_reaches_the_host_through_its_worker() {
     );
     release(boom);
 }
+
+/// Runs the plugin worker binary with `args`, its stdin closed, and gives its exit code and stderr.
+#[cfg(target_os = "linux")]
+fn run_worker_binary(args: &[&std::ffi::OsStr]) -> (Option<i32>, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_daedalus-plugin-worker"))
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run the plugin worker");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_lock_refuses_a_changed_library_and_loads_the_approved_one() {
+    use daedalus_integrity::{Digest, Lock};
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("plugin-worker-lock");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("tmp dir");
+    let library = dir.join(format!("fixture{}", std::env::consts::DLL_SUFFIX));
+    std::fs::copy(fixture_library(), &library).expect("copy the fixture");
+    let lock_path = dir.join("daedalus.lock");
+    let approved = Digest::of(&std::fs::read(&library).unwrap());
+    let mut lock = Lock::new();
+    lock.set(
+        library.file_name().unwrap().to_str().unwrap().to_string(),
+        approved,
+    );
+    std::fs::write(&lock_path, lock.render()).unwrap();
+
+    let (code, stderr) = run_worker_binary(&[
+        "--lock".as_ref(),
+        lock_path.as_os_str(),
+        library.as_os_str(),
+    ]);
+    assert!(
+        !stderr.contains("is not the file the lock approves"),
+        "{stderr}"
+    );
+    assert_ne!(
+        code,
+        Some(2),
+        "the approved library is not refused: {stderr}"
+    );
+
+    let mut bytes = std::fs::read(&library).unwrap();
+    let middle = bytes.len() / 2;
+    bytes[middle] ^= 0x01;
+    std::fs::write(&library, &bytes).unwrap();
+    let (code, stderr) = run_worker_binary(&[
+        "--lock".as_ref(),
+        lock_path.as_os_str(),
+        library.as_os_str(),
+    ]);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("is not the file the lock approves"),
+        "{stderr}"
+    );
+    assert!(stderr.contains(&approved.to_string()), "{stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn record_writes_the_library_and_a_lock_flag_needs_its_file() {
+    use daedalus_integrity::{Digest, read_lock};
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("plugin-worker-record");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("tmp dir");
+    let library = dir.join(format!("fixture{}", std::env::consts::DLL_SUFFIX));
+    std::fs::copy(fixture_library(), &library).expect("copy the fixture");
+    let lock_path = dir.join("daedalus.lock");
+
+    let (code, stderr) = run_worker_binary(&[
+        "--lock".as_ref(),
+        lock_path.as_os_str(),
+        "--record".as_ref(),
+        library.as_os_str(),
+    ]);
+    assert_ne!(code, Some(2), "{stderr}");
+    let name = library.file_name().unwrap().to_str().unwrap().to_string();
+    let recorded = read_lock(&lock_path).expect("the lock was written");
+    assert_eq!(
+        recorded.get(&name),
+        Some(&Digest::of(&std::fs::read(&library).unwrap()))
+    );
+
+    let (code, stderr) = run_worker_binary(&["--record".as_ref(), library.as_os_str()]);
+    assert_eq!(code, Some(2), "--record alone is a usage error: {stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

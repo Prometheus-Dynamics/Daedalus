@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use daedalus_abi::{OwnedStep, Slot, Slots, StepCx, StepEnd};
+use daedalus_integrity::Integrity;
 use daedalus_value::OwnerKind;
 use daedalus_wire::codec::{Reader, Writer};
-use daedalus_wire::{Dir, Hello, Schema, WireError, WireType, WorkerMsg};
+use daedalus_wire::{Dir, Schema, WireError, WireType, WorkerMsg};
 use raw::{put_raw, read_raw};
 
 use crate::backoff::delay_after;
@@ -18,8 +19,11 @@ use crate::child::{Got, Worker};
 use crate::spec::WorkerSpec;
 use crate::telemetry::{Count, Telemetry};
 
+mod link;
 mod raw;
 pub(crate) mod values;
+
+pub(crate) use link::{Link, NotUp, ensure_up, read_hello};
 
 /// The stderr bytes a fault report carries.
 const STDERR_REPORT: usize = 512;
@@ -33,15 +37,6 @@ pub(crate) struct NodePorts {
     pub id: String,
     pub inputs: Vec<(String, WireType)>,
     pub outputs: Vec<(String, WireType)>,
-}
-
-/// What the link is doing right now.
-pub(crate) enum Link {
-    Up(Worker),
-    /// Down until the backoff has passed. Nothing runs before then.
-    Down {
-        until: Instant,
-    },
 }
 
 pub(crate) struct Supervisor {
@@ -60,6 +55,8 @@ pub(crate) struct Supervisor {
 /// A worker, its declarations and its state. Shared by every step that runs in it.
 pub(crate) struct Shared {
     pub spec: WorkerSpec,
+    /// The host's mode, which says how the worker's files are checked before each start.
+    pub integrity: Integrity,
     pub schema: Schema,
     pub nodes: Vec<NodePorts>,
     pub telemetry: Arc<Telemetry>,
@@ -104,14 +101,6 @@ pub(crate) enum RunStatus {
     Fault,
 }
 
-/// Why a link is not up.
-pub(crate) enum NotUp {
-    /// The worker failed a moment ago and its next start isn't due. Not a new failure.
-    BackingOff(String),
-    /// The worker was started and didn't come up.
-    Start(String),
-}
-
 /// What a fault does to the worker's link.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Blame {
@@ -122,72 +111,6 @@ enum Blame {
     /// The host stopped the worker itself, at a deadline or a cancel it didn't answer. It is
     /// started again on the next run, with no wait: nothing here says the next start would fail.
     Host,
-}
-
-/// Brings the link up. A down link waits for its backoff, then starts the worker again.
-pub(crate) fn ensure_up(shared: &Shared, sup: &mut Supervisor) -> Result<(), NotUp> {
-    let until = match &sup.link {
-        Link::Up(_) => return Ok(()),
-        Link::Down { until } => *until,
-    };
-    let now = Instant::now();
-    if now < until {
-        return Err(NotUp::BackingOff(format!(
-            "worker {} is backing off for {:?}",
-            shared.spec.program.display(),
-            until - now
-        )));
-    }
-    match start(shared) {
-        Ok(worker) => {
-            shared.telemetry.bump(Count::Restart);
-            sup.link = Link::Up(worker);
-            Ok(())
-        }
-        Err(reason) => {
-            sup.failures = sup.failures.saturating_add(1);
-            sup.link = Link::Down {
-                until: Instant::now() + delay_after(sup.failures),
-            };
-            Err(NotUp::Start(reason))
-        }
-    }
-}
-
-/// Starts a worker and reads its hello. A hello with another layout is refused.
-fn start(shared: &Shared) -> Result<Worker, String> {
-    let mut worker =
-        Worker::spawn(&shared.spec, &shared.telemetry).map_err(|error| error.to_string())?;
-    let hello = read_hello(&worker, shared.spec.startup)?;
-    if let Err(error) = hello.check() {
-        worker.kill();
-        return Err(format!("{}: {error}", shared.spec.program.display()));
-    }
-    // A worker started again after one died or was killed is lent memory anew.
-    if let Err(reason) = worker.offer(shared.spec.startup, &shared.telemetry) {
-        worker.kill();
-        return Err(format!("{}: {reason}", shared.spec.program.display()));
-    }
-    #[cfg(target_os = "linux")]
-    worker.point_rooms(&shared.rooms);
-    Ok(worker)
-}
-
-pub(crate) fn read_hello(worker: &Worker, startup: Duration) -> Result<Hello, String> {
-    match worker.receive(Some(startup)) {
-        Got::Packet(buf) => {
-            let decoded = WorkerMsg::decode(&buf, &Schema::new());
-            worker.give_back(buf);
-            match decoded {
-                Ok(WorkerMsg::Hello(hello)) => Ok(hello),
-                Ok(_) => Err("the worker's first message was not a hello".into()),
-                Err(error) => Err(format!("the worker's hello did not decode: {error}")),
-            }
-        }
-        Got::InBuffer(_) => Err("the worker's first message was not a hello".into()),
-        Got::Broken(error) => Err(format!("the worker closed before its hello: {error}")),
-        Got::Timeout => Err(format!("no hello within {startup:?}")),
-    }
 }
 
 /// The step that runs a region in a worker.
@@ -453,7 +376,7 @@ impl OwnedStep for WorkerStep {
             // The failure that started the backoff was reported when it happened. Until the next
             // start is due the run is skipped, with the reason: not another fault, so a host that
             // stops on faults isn't stopped by the wait, and nothing sleeps on the tick.
-            Err(NotUp::BackingOff(reason)) => {
+            Err(NotUp::BackingOff(reason) | NotUp::Checking(reason)) => {
                 cx.fault(None, &reason);
                 return StepEnd::Skipped;
             }

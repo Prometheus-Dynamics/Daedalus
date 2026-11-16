@@ -4,14 +4,15 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use daedalus_backend::Backend;
 use daedalus_host::listen::{PluginLoader, ServiceHost};
-use daedalus_loader::{Generation, Loader, PluginBackend, Retry};
+use daedalus_integrity::Integrity;
+use daedalus_loader::{Generation, LoadError, Loader, PluginBackend, Retry};
 use daedalus_registry::{RegError, Registry};
 use daedalus_wire::service::PluginInfo;
 
@@ -20,17 +21,30 @@ use crate::logging::{debug, info, warning};
 /// The generations opened so far, for checking at shutdown that each one was retired.
 pub(crate) type Probes = Arc<Mutex<Vec<(String, Weak<Generation>)>>>;
 
+/// What the plugins tell the retry thread.
+pub(crate) enum Note {
+    /// A library the integrity check refused. It is tried again, as a library that failed at start
+    /// is, until its file is removed.
+    Refused { path: PathBuf, reason: String },
+    /// A library loaded, by a request or a retry. Nothing is tried again for it.
+    Loaded(PathBuf),
+    /// The daemon is stopping, and the retry thread ends.
+    Stop,
+}
+
 /// Loads plugins for the host.
 pub struct Plugins {
     loader: Loader,
     probes: Probes,
+    notes: Sender<Note>,
 }
 
 impl Plugins {
-    pub fn new(probes: Probes) -> Plugins {
+    pub fn new(probes: Probes, integrity: Integrity, notes: Sender<Note>) -> Plugins {
         Plugins {
-            loader: Loader::new(),
+            loader: Loader::with_integrity(integrity),
             probes,
+            notes,
         }
     }
 }
@@ -42,7 +56,18 @@ impl PluginLoader for Plugins {
         registry: &mut Registry,
         backends: &mut Vec<Arc<dyn Backend>>,
     ) -> Result<PluginInfo, String> {
-        let plugin = self.loader.open(path).map_err(|error| error.to_string())?;
+        let plugin = match self.loader.open(path) {
+            Ok(plugin) => plugin,
+            Err(error) => {
+                if matches!(error, LoadError::Integrity(_)) {
+                    let _ = self.notes.send(Note::Refused {
+                        path: PathBuf::from(path),
+                        reason: error.to_string(),
+                    });
+                }
+                return Err(error.to_string());
+            }
+        };
         // A node this plugin's earlier generation already registered is the same node: its body
         // now runs from the new library. Anything else that does not join is an error.
         for decl in plugin.nodes() {
@@ -77,6 +102,7 @@ impl PluginLoader for Plugins {
                 format!("{} generation {}", info.name, info.generation),
                 plugin.generation_probe(),
             ));
+        let _ = self.notes.send(Note::Loaded(PathBuf::from(path)));
         Ok(info)
     }
 }
@@ -123,36 +149,80 @@ pub(crate) fn load_all(host: &ServiceHost, paths: Vec<PathBuf>) -> Vec<PathBuf> 
     failed
 }
 
-/// How often the retry thread looks at the stop flag while it waits.
-const RETRY_POLL: Duration = Duration::from_millis(50);
+/// A library waiting to be tried again.
+struct Waiting {
+    retry: Retry,
+    due: Instant,
+    /// The last reason it did not load. A repeat of it is logged at debug, a new one at warning.
+    reason: String,
+}
 
 /// Keeps trying the libraries that failed to load. Each has its own backoff, capped at 8 s. A
 /// library is given up on only when its file is removed, which is how an operator stops the
-/// retries by hand, or when the daemon stops.
+/// retries by hand, or when the daemon stops. The thread waits on `notes` between tries, so it
+/// costs nothing while there is nothing to try.
 pub(crate) fn retry_in_background(
     host: Arc<ServiceHost>,
     failed: Vec<PathBuf>,
-    stop: Arc<AtomicBool>,
+    notes: Receiver<Note>,
 ) -> Option<JoinHandle<()>> {
-    if failed.is_empty() {
-        return None;
-    }
     let body = move || {
-        let now = Instant::now();
-        let mut waiting: BTreeMap<PathBuf, (Retry, Instant)> = failed
-            .into_iter()
-            .map(|path| {
-                let mut retry = Retry::new();
-                let due = now + retry.failed();
-                (path, (retry, due))
-            })
-            .collect();
-        while !waiting.is_empty() && !stop.load(Ordering::SeqCst) {
-            std::thread::sleep(RETRY_POLL);
+        let mut waiting: BTreeMap<PathBuf, Waiting> = BTreeMap::new();
+        for path in failed {
+            let mut retry = Retry::new();
+            let due = Instant::now() + retry.failed();
+            waiting.insert(
+                path,
+                Waiting {
+                    retry,
+                    due,
+                    reason: String::new(),
+                },
+            );
+        }
+        loop {
+            // Wait for the next due try, or for a note, whichever is first.
+            let note = match waiting.values().map(|waiting| waiting.due).min() {
+                None => match notes.recv() {
+                    Ok(note) => Some(note),
+                    Err(_) => return,
+                },
+                Some(due) => {
+                    match notes.recv_timeout(due.saturating_duration_since(Instant::now())) {
+                        Ok(note) => Some(note),
+                        Err(RecvTimeoutError::Timeout) => None,
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+            };
+            match note {
+                Some(Note::Stop) => return,
+                Some(Note::Loaded(path)) => {
+                    waiting.remove(&path);
+                }
+                // A refusal the thread already waits on is its own failed try coming back.
+                Some(Note::Refused { path, reason }) if !waiting.contains_key(&path) => {
+                    let mut retry = Retry::new();
+                    let delay = retry.failed();
+                    warning!(
+                        "plugin {} is refused: {reason}; what is loaded keeps running; next try in {delay:?}",
+                        path.display()
+                    );
+                    waiting.insert(
+                        path,
+                        Waiting {
+                            retry,
+                            due: Instant::now() + delay,
+                            reason,
+                        },
+                    );
+                }
+                None | Some(Note::Refused { .. }) => {}
+            }
             let now = Instant::now();
             let due: Vec<PathBuf> = waiting
                 .iter()
-                .filter(|(_, (_, due))| *due <= now)
+                .filter(|(_, waiting)| waiting.due <= now)
                 .map(|(path, _)| path.clone())
                 .collect();
             for path in due {
@@ -164,22 +234,33 @@ pub(crate) fn retry_in_background(
                 match host.load_plugin(&path.to_string_lossy()) {
                     Ok(plugin) => {
                         info!(
-                            "loaded plugin {} from {} after retrying",
+                            "loaded plugin {} generation {} from {} after retrying",
                             plugin.name,
+                            plugin.generation,
                             path.display()
                         );
                         waiting.remove(&path);
                     }
                     Err(error) => {
-                        if let Some((retry, due)) = waiting.get_mut(&path) {
-                            let delay = retry.failed();
-                            *due = Instant::now() + delay;
-                            debug!(
-                                "plugin {} still does not load ({}), next try in {:?}",
-                                path.display(),
-                                error.message,
-                                delay
-                            );
+                        if let Some(waiting) = waiting.get_mut(&path) {
+                            let delay = waiting.retry.failed();
+                            waiting.due = Instant::now() + delay;
+                            if waiting.reason == error.message {
+                                debug!(
+                                    "plugin {} still does not load ({}), next try in {:?}",
+                                    path.display(),
+                                    error.message,
+                                    delay
+                                );
+                            } else {
+                                warning!(
+                                    "plugin {} is refused: {}; what is loaded keeps running; next try in {:?}",
+                                    path.display(),
+                                    error.message,
+                                    delay
+                                );
+                            }
+                            waiting.reason = error.message;
                         }
                     }
                 }

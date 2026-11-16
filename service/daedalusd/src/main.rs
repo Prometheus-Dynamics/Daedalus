@@ -21,7 +21,7 @@ use daedalus_registry::Registry;
 
 use config::{Config, DEFAULT_CONFIG, Listen};
 use logging::{error, info, warning};
-use plugins::{Plugins, Probes};
+use plugins::{Note, Plugins, Probes};
 use signals::Stop;
 
 const USAGE: &str = "\
@@ -170,9 +170,42 @@ fn store_plans(host: &ServiceHost, dir: &std::path::Path) {
     }
 }
 
+/// Warns when the lock, or the directory it is in, can be written by someone other than its owner:
+/// then anyone who can write it can approve a file.
+#[cfg(unix)]
+fn warn_if_open(lock: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = match lock.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    for (what, path) in [("lock", lock), ("lock directory", dir)] {
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.permissions().mode() & 0o022 != 0
+        {
+            warning!(
+                "{what} {} is writable by its group or others",
+                path.display()
+            );
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn warn_if_open(_: &Path) {}
+
 fn run(args: &Args, config: &Config) -> Result<bool, String> {
     let stop = Stop::install().map_err(|error| format!("signal handlers: {error}"))?;
     let probes: Probes = Arc::new(Mutex::new(Vec::new()));
+    let integrity = config.integrity().map_err(|error| error.to_string())?;
+    if let Some(lock) = integrity.lock_path() {
+        info!(
+            "integrity: checking plugins and workers against {}",
+            lock.display()
+        );
+        warn_if_open(lock);
+    }
+    let (notes_tx, notes_rx) = std::sync::mpsc::channel::<Note>();
     let options = ListenOptions {
         max_runs: config.max_runs,
         connections: match config.connections {
@@ -182,7 +215,11 @@ fn run(args: &Args, config: &Config) -> Result<bool, String> {
         ..ListenOptions::default()
     };
     let host = ServiceHost::builder(Registry::new())
-        .plugins(Box::new(Plugins::new(Arc::clone(&probes))))
+        .plugins(Box::new(Plugins::new(
+            Arc::clone(&probes),
+            integrity,
+            notes_tx.clone(),
+        )))
         // Every backend here is a plugin's, and a plugin reads a cell's bytes.
         .codecs(WireCodecs::byte_form())
         .options(options)
@@ -194,7 +231,7 @@ fn run(args: &Args, config: &Config) -> Result<bool, String> {
         Some(dir) => plugins::load_all(&host, plugins::scan(dir)),
         None => Vec::new(),
     };
-    let retrying = plugins::retry_in_background(Arc::clone(&host), failed, stop.flag());
+    let retrying = plugins::retry_in_background(Arc::clone(&host), failed, notes_rx);
 
     // Made plans next. A file that doesn't read or bind is logged and skipped; nothing starts.
     if let Some(dir) = &config.plan_dir {
@@ -235,6 +272,7 @@ fn run(args: &Args, config: &Config) -> Result<bool, String> {
     for listener in listeners {
         listener.join();
     }
+    let _ = notes_tx.send(Note::Stop);
     if let Some(retrying) = retrying {
         let _ = retrying.join();
     }
@@ -277,8 +315,16 @@ fn main() -> ExitCode {
                     .plugin_dir
                     .as_ref()
                     .map_or("(none)".to_owned(), |dir| dir.display().to_string());
+                let integrity = match (
+                    config.integrity.as_deref().unwrap_or("off"),
+                    &config.lock_file,
+                ) {
+                    ("off", _) => "off".to_owned(),
+                    (mode, Some(lock)) => format!("{mode} ({})", lock.display()),
+                    (mode, None) => mode.to_owned(),
+                };
                 out(&format!(
-                    "config ok: {source}\nlisten: {}\nplugin_dir: {plugins}\nmax_runs: {}\nlog_level: {}\n",
+                    "config ok: {source}\nlisten: {}\nplugin_dir: {plugins}\nintegrity: {integrity}\nmax_runs: {}\nlog_level: {}\n",
                     addresses.join(", "),
                     config.max_runs,
                     logging::Level::NAMES[level as usize],

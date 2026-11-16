@@ -1,0 +1,13 @@
+[package]
+name = "daedalus-integrity"
+description = "Plugin integrity: the daedalus.lock file of SHA-256 hashes, and opening a file so that the bytes hashed are the bytes loaded."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sha2 = { workspace = true }
+
+[lints]
+workspace = true

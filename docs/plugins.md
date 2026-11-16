@@ -146,9 +146,83 @@ its nodes start fresh.
 
 A plugin's node runs in the host's process. To keep a crash out of the host, run the plugin in
 a worker: `daedalus-plugin-worker <library>` serves the plugin's nodes over the worker protocol,
-and the process backend supervises it like any other worker. See [ffi.md](ffi.md).
+and the process backend supervises it like any other worker. See [ffi.md](ffi.md). With
+`--lock FILE`, the worker checks the library against the lock first, as the daemon does. See
+[Integrity and the lock](#integrity-and-the-lock).
 
 ## A backend in a plugin
 
 A plugin's backend takes regions and returns one step a node. It produces steps only: the blob
 and source forms need a backend that is linked in.
+
+## Integrity and the lock
+
+A host can approve the files it loads. The approval is a file named `daedalus.lock`. It lists the
+SHA-256 digest of each approved file:
+
+```text
+# daedalus.lock 1
+2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae  libfoo.so
+9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08  /opt/daedalus/bin/worker
+```
+
+The header line is required. Each entry is 64 lowercase hex digits, two spaces, and a key. Entries
+are sorted by key, and a key is listed once. The format is the one `sha256sum` writes, so
+`sha256sum -c daedalus.lock` checks the files from the lock's directory.
+
+The key is the file's name as the file is named, not resolved through symbolic links: `libfoo.so`
+matches any path whose file name is `libfoo.so`. A key with a `/` is an absolute path and matches
+that path exactly, so two different files with one name can be told apart. The digest decides what
+is approved. The key only picks the digest to compare with. A lock made on a build machine is valid
+under any install prefix.
+
+The mode is the daemon's `integrity` key, and the worker's `--lock` and `--record` flags:
+
+| Mode | What it does |
+|---|---|
+| `off` | Checks nothing. The default. |
+| `locked` | Loads a file only if the lock approves its digest. The file is opened once, hashed through that open file, and loaded from it, so the bytes checked are the bytes loaded. |
+| `record` | Loads files as `off` does, and writes each one that loads into the lock. A file whose entry is already in the lock under another digest is refused. Approve the change with `daedalus-lock update`. |
+
+`locked` and `record` need Linux, where `/proc/self/fd` exists. Elsewhere a host refuses them at
+start, with the reason. `off` works everywhere.
+
+The daemon's `daedalus-lock` tool records, checks and updates the lock. `record PATH...` adds files,
+`check` compares them with the lock (or every entry, with no path), and `update` approves the
+current file for an entry and shows the old and new digest. Its exit codes are 0 for ok, 1 for a
+file that does not match or has no entry, 2 for a usage error, and 3 for a lock or file that cannot
+be read.
+
+A library that is refused is not loaded, and the loaded ones keep running. The daemon logs the
+refusal, with both digests. A `LoadPlugin` request for a refused library returns the same message
+on the wire. The daemon tries a refused library again, with a delay that doubles from 250 ms and is
+never more than 8 s, until the lock approves the file or the file is removed. The retry never stops
+on its own, and the daemon never turns it off. Removing the file is how an operator stops it.
+
+A worker's program is checked before each start, including each restart. A program named by a bare
+name is found on `PATH` first, and the file found is the one checked. A program that starts with
+`#!` is refused under `locked`, because the kernel would run its interpreter, not the file. Name the
+interpreter as the program, and add the script with `also_check`. A refused worker stays down: a run
+faults with the reason, and later runs are skipped with it, until a restart passes the check. Each
+restart checks the files again, and the retries never stop on their own.
+
+A check at a restart runs on a thread of its own. Nothing hashes a file on a run's tick.
+
+After a library loads, the host checks that the mapped file is the hashed one. It compares the inode of the mapping with the inode of the hashed descriptor, not the device number: on a filesystem with subvolumes, such as btrfs, the mapping and the descriptor report different devices for one file.
+
+The threat model, as the design states it:
+
+1. Locked mode stops a file that was swapped by rename, corrupted, stale, or never approved from
+   being loaded or executed, including a path a wire client names in `LoadPlugin`.
+2. It closes the check-then-open race, but not an in-place write to the same inode between hash and
+   map by someone who can write the file itself (sealing a memfd copy would; it is not proposed).
+3. Anyone who can write the lockfile, the daemon config, or the host binary defeats it, and there
+   are no signatures.
+4. It says nothing about code that is in the lock: a malicious or buggy approved plugin runs with
+   the host's full rights, and nothing is checked after load.
+5. It covers only the named file: not shared-library dependencies, not `ld.so`, and for interpreted
+   workers only the interpreter (scripts under `also_check` are checked before start, not bound to
+   what the interpreter reads).
+
+A daemon that starts with a lock, or a lock directory, that its group or others can write says so
+in its log. Keep the lock owned by the account that runs the daemon, and writable by no one else.

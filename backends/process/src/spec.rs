@@ -33,6 +33,10 @@ pub struct WorkerSpec {
     /// [`daedalus_process_shm::ANY_TYPE_THRESHOLD`] for a worker that takes values of any type by
     /// reference, [`daedalus_process_shm::THRESHOLD`] for any other.
     pub shared_from: Option<usize>,
+    /// Files the worker reads by path, besides its program: an interpreter's script, for one. Under
+    /// Locked and Record each is checked against the lock before each start. The worker
+    /// reads them after the check, so this is check-then-use, not a binding.
+    pub checked_files: Vec<PathBuf>,
 }
 
 impl WorkerSpec {
@@ -50,7 +54,14 @@ impl WorkerSpec {
             packet_cap: DEFAULT_CAP,
             launch: None,
             shared_from: None,
+            checked_files: Vec::new(),
         }
+    }
+
+    /// Checks `path` against the lock before each start of this worker, under Locked and Record.
+    pub fn also_check(mut self, path: impl Into<PathBuf>) -> WorkerSpec {
+        self.checked_files.push(path.into());
+        self
     }
 
     pub fn arg(mut self, arg: impl Into<String>) -> WorkerSpec {
@@ -114,5 +125,6 @@ impl WorkerSpec {
             && self.grace == other.grace
             && self.packet_cap == other.packet_cap
             && self.shared_from == other.shared_from
+            && self.checked_files == other.checked_files
     }
 }

@@ -8,10 +8,12 @@ use daedalus_abi::{
     AbiDesc, ENTRY_SYMBOL, EntryFn, Grown, Mismatch, OLD_ENTRY_SYMBOL, PluginEntry, SHAPES,
     SHAPES_SYMBOL, ShapeDesc, ShapesFn, Status,
 };
+use daedalus_integrity::{Checked, IntegrityError};
 use libloading::Library;
 
 /// Why a plugin could not be loaded. Each variant names the file.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum LoadError {
     /// The file could not be opened as a library.
     Open { path: PathBuf, message: String },
@@ -39,6 +41,9 @@ pub enum LoadError {
     Codec { key: String, status: Status },
     /// A plugin could not make the bytes asked for, or does not make any.
     Produce { plugin: String, status: Status },
+    /// The file is not one the lock approves, or it could not be checked against the lock.
+    /// Boxed, so a load's error stays the size it was.
+    Integrity(Box<IntegrityError>),
 }
 
 impl fmt::Display for LoadError {
@@ -79,7 +84,14 @@ impl fmt::Display for LoadError {
             LoadError::Produce { plugin, status } => {
                 write!(f, "plugin {plugin} made no bytes: status {}", status.0)
             }
+            LoadError::Integrity(error) => write!(f, "{error}"),
         }
+    }
+}
+
+impl From<IntegrityError> for LoadError {
+    fn from(error: IntegrityError) -> LoadError {
+        LoadError::Integrity(Box::new(error))
     }
 }
 
@@ -96,15 +108,21 @@ pub(crate) struct Opened {
 /// The most shapes a plugin may describe. This build has a few dozen.
 const MAX_SHAPES: u32 = 4096;
 
-/// Opens `path`, reads the plugin's shapes and checks they fit this host's, and only then calls
-/// its entry.
+/// Opens the library at `load`, which names the file `checked` holds, reads the plugin's shapes
+/// and checks they fit this host's, and only then calls its entry. `shown` is the path the errors
+/// name.
 ///
 /// # Safety
 /// Loading runs the library's initialisers, and its symbols are trusted to have the signatures
 /// [`ShapesFn`] and [`EntryFn`]. The caller must name a trusted Daedalus plugin.
-pub(crate) unsafe fn open_library(path: &Path) -> Result<Opened, LoadError> {
+pub(crate) unsafe fn open_library(
+    load: &Path,
+    shown: &Path,
+    checked: &Checked,
+) -> Result<Opened, LoadError> {
+    let path = shown;
     // SAFETY: the caller names a trusted plugin, as this function's contract says.
-    let library = unsafe { Library::new(path) }.map_err(|error| LoadError::Open {
+    let library = unsafe { Library::new(load) }.map_err(|error| LoadError::Open {
         path: path.to_path_buf(),
         message: error.to_string(),
     })?;
@@ -130,6 +148,9 @@ pub(crate) unsafe fn open_library(path: &Path) -> Result<Opened, LoadError> {
                 });
             }
         };
+        // Before any of the plugin's code runs: the library mapped must be the file that was
+        // checked. The check is a no-op unless the file is held.
+        checked.confirm_mapped(*describe as usize)?;
         let mut desc = AbiDesc {
             shapes: core::ptr::null(),
             count: 0,

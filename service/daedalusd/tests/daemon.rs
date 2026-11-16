@@ -118,6 +118,59 @@ impl Drop for Running {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn check_config_names_the_integrity_mode_and_refuses_a_bad_one() {
+    let dir = scratch("integrity-check");
+    let lock = dir.join("daedalus.lock");
+    let lock_text = lock.display().to_string();
+
+    let locked = check(
+        &dir,
+        "locked.toml",
+        &format!("integrity = \"locked\"\nlock_file = '{lock_text}'\n"),
+    );
+    assert!(locked.status.success(), "{locked:?}");
+    let shown = String::from_utf8_lossy(&locked.stdout);
+    assert!(
+        shown.contains(&format!("integrity: locked ({lock_text})")),
+        "{shown}"
+    );
+
+    let off = check(&dir, "off.toml", "integrity = \"off\"\n");
+    assert!(off.status.success(), "{off:?}");
+    assert!(String::from_utf8_lossy(&off.stdout).contains("integrity: off"));
+
+    let defaults = check(&dir, "defaults.toml", "max_runs = 1\n");
+    assert!(String::from_utf8_lossy(&defaults.stdout).contains("integrity: off"));
+
+    let cases = [
+        (
+            "integrity = \"loud\"\n",
+            "integrity: `loud` is not one of off, locked, record",
+        ),
+        (
+            "integrity = \"locked\"\n",
+            "lock_file: needed when integrity is `locked`",
+        ),
+        (
+            "integrity = \"record\"\n",
+            "lock_file: needed when integrity is `record`",
+        ),
+        (
+            "integrity = \"locked\"\nlock_file = \"daedalus.lock\"\n",
+            "lock_file: `daedalus.lock` is not an absolute path",
+        ),
+    ];
+    for (text, expected) in cases {
+        let bad = check(&dir, "bad-integrity.toml", text);
+        assert_eq!(bad.status.code(), Some(1), "{text}: {bad:?}");
+        let message = String::from_utf8_lossy(&bad.stderr);
+        assert!(message.contains(expected), "{text}: {message}");
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn a_stdio_session_is_served_and_the_daemon_exits_when_stdin_closes() {
     let dir = scratch("stdio");
@@ -168,13 +221,16 @@ mod unix {
     use std::time::{Duration, Instant};
 
     use daedalus_client::{Client, Endpoint, Options};
+    #[cfg(feature = "planner")]
     use daedalus_graph::{
         EdgeDoc, EdgePolicyDoc, GraphBody, GraphDoc, NodeDoc, NodeKindDoc, PortRefDoc,
     };
-    use daedalus_wire::service::{
-        EventBody, EventKinds, InspectTarget, Inspection, StartConfig, StopMode, TypedValue,
-        WatchTarget,
-    };
+    #[cfg(feature = "planner")]
+    use daedalus_wire::service::TypedValue;
+    #[cfg(feature = "planner")]
+    use daedalus_wire::service::{EventBody, EventKinds, StartConfig, StopMode, WatchTarget};
+    use daedalus_wire::service::{InspectTarget, Inspection};
+    #[cfg(feature = "planner")]
     use daedalus_wire::{WireType, WireValue};
 
     use super::*;
@@ -203,6 +259,7 @@ mod unix {
         })
     }
 
+    #[cfg(feature = "planner")]
     fn u32_value(value: u32) -> TypedValue {
         TypedValue::new(
             WireType::Scalar(daedalus_types::Scalar::U32),
@@ -211,6 +268,7 @@ mod unix {
     }
 
     /// A host bridge with ports `in` and `out` around one plugin node.
+    #[cfg(feature = "planner")]
     fn graph(node: &str) -> String {
         let mut bridge = NodeDoc::new("host");
         bridge.kind = NodeKindDoc::HostBridge;
@@ -259,12 +317,17 @@ mod unix {
     impl Daemon {
         /// Starts the daemon in `dir` with the plugins in `dir/plugins`.
         fn start(dir: &Path) -> Daemon {
+            Daemon::start_with(dir, "")
+        }
+
+        /// [`Daemon::start`], with `extra` config lines added.
+        fn start_with(dir: &Path, extra: &str) -> Daemon {
             let socket = dir.join("d.sock");
             let config = dir.join("daedalusd.toml");
             std::fs::write(
                 &config,
                 format!(
-                    "listen = [\"unix:{}\"]\nplugin_dir = \"{}\"\nlog_level = \"debug\"\n",
+                    "listen = [\"unix:{}\"]\nplugin_dir = \"{}\"\nlog_level = \"debug\"\n{extra}",
                     socket.display(),
                     dir.join("plugins").display()
                 ),
@@ -321,6 +384,7 @@ mod unix {
     }
 
     #[test]
+    #[cfg(feature = "planner")]
     fn a_daemon_on_a_unix_socket_runs_a_plugin_graph_and_sigterm_exits_0() {
         let dir = scratch("run");
         std::fs::create_dir_all(dir.join("plugins")).unwrap();
@@ -445,15 +509,170 @@ mod unix {
             daemon.log().contains("was removed: no longer retried")
         });
 
-        client.put_graph("g", &graph("fixture.pass")).unwrap();
-        let run = client.start("g", StartConfig::default()).unwrap();
-        client.feed(run, "in", u32_value(9)).unwrap();
-        client.step(run, 1).unwrap();
-        assert_eq!(client.take(run, "out").unwrap(), Some(u32_value(9)));
-        client.stop(run, StopMode::Immediate).unwrap();
+        #[cfg(feature = "planner")]
+        {
+            client.put_graph("g", &graph("fixture.pass")).unwrap();
+            let run = client.start("g", StartConfig::default()).unwrap();
+            client.feed(run, "in", u32_value(9)).unwrap();
+            client.step(run, 1).unwrap();
+            assert_eq!(client.take(run, "out").unwrap(), Some(u32_value(9)));
+            client.stop(run, StopMode::Immediate).unwrap();
+        }
         // SIGINT stops it the same way.
         let (code, log) = daemon.signal("-INT");
         assert_eq!(code, Some(0), "{log}");
+    }
+
+    /// The lock text that approves `file` under its file name, with `digest`.
+    fn lock_for(file: &Path, digest: daedalus_integrity::Digest) -> String {
+        let mut lock = daedalus_integrity::Lock::new();
+        lock.set(
+            file.file_name().unwrap().to_str().unwrap().to_string(),
+            digest,
+        );
+        lock.render()
+    }
+
+    /// The fixture with bytes added at its end. It is still a library, but it is not the file
+    /// the lock approves, so a load of it is refused before the library is opened.
+    fn changed_fixture(dir: &Path) -> PathBuf {
+        let changed = dir.join("changed");
+        std::fs::copy(fixture(), &changed).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&changed)
+            .unwrap();
+        file.write_all(&[0u8; 32]).unwrap();
+        changed
+    }
+
+    #[test]
+    fn a_locked_daemon_refuses_a_changed_plugin_on_the_wire_and_loads_it_once_the_lock_approves_it()
+    {
+        let dir = scratch("integrity-locked");
+        let plugin_dir = dir.join("plugins");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        let library = plugin_dir.join(format!("plugin{}", std::env::consts::DLL_SUFFIX));
+        std::fs::copy(fixture(), &library).unwrap();
+        let lock = dir.join("daedalus.lock");
+        let approved = daedalus_integrity::Digest::of(&std::fs::read(&library).unwrap());
+        std::fs::write(&lock, lock_for(&library, approved)).unwrap();
+        let extra = format!("integrity = \"locked\"\nlock_file = '{}'\n", lock.display());
+        let mut daemon = Daemon::start_with(&dir, &extra);
+        let client = daemon.client();
+
+        // The approved library loads at start.
+        until("the approved plugin to load", || {
+            plugins(&client) == ["dylib-fixture"]
+        });
+        assert!(
+            daemon
+                .log()
+                .contains("checking plugins and workers against"),
+            "{}",
+            daemon.log()
+        );
+
+        // A changed library is refused on the wire, with both digests in the message.
+        let changed = changed_fixture(&dir);
+        let found = daedalus_integrity::Digest::of(&std::fs::read(&changed).unwrap());
+        std::fs::rename(&changed, &library).unwrap();
+        let error = client
+            .load_plugin(&library.to_string_lossy())
+            .expect_err("the changed library is refused");
+        match error {
+            daedalus_client::ClientError::Service(service) => {
+                assert_eq!(service.code, daedalus_wire::service::ErrorCode::PluginError);
+                assert!(
+                    service.message.contains(&approved.to_string()),
+                    "{}",
+                    service.message
+                );
+                assert!(
+                    service.message.contains(&found.to_string()),
+                    "{}",
+                    service.message
+                );
+            }
+            other => panic!("expected a refusal from the daemon, got {other:?}"),
+        }
+        assert_eq!(client.ping().unwrap(), 1, "the daemon keeps answering");
+        until("the refusal to be logged", || {
+            daemon.log().contains("is refused")
+        });
+
+        // The generation that loaded keeps running a graph while the reload is refused.
+        #[cfg(feature = "planner")]
+        {
+            client.put_graph("g", &graph("fixture.pass")).unwrap();
+            let run = client.start("g", StartConfig::default()).unwrap();
+            client.feed(run, "in", u32_value(5)).unwrap();
+            client.step(run, 1).unwrap();
+            assert_eq!(client.take(run, "out").unwrap(), Some(u32_value(5)));
+            client.stop(run, StopMode::Immediate).unwrap();
+        }
+
+        // The owner approves the new file. The daemon's own retry loads it, as generation 2.
+        let approved_now = daedalus_integrity::Digest::of(&std::fs::read(&library).unwrap());
+        std::fs::write(&lock, lock_for(&library, approved_now)).unwrap();
+        until("the retry to load the approved file", || {
+            daemon.log().contains("generation 2") && daemon.log().contains("after retrying")
+        });
+
+        let (code, log) = daemon.signal("-INT");
+        assert_eq!(code, Some(0), "{log}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_locked_daemon_with_no_lock_serves_and_refuses_its_plugins() {
+        let dir = scratch("integrity-nolock");
+        let plugin_dir = dir.join("plugins");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::copy(
+            fixture(),
+            plugin_dir.join(format!("plugin{}", std::env::consts::DLL_SUFFIX)),
+        )
+        .unwrap();
+        let lock = dir.join("absent.lock");
+        let extra = format!("integrity = \"locked\"\nlock_file = '{}'\n", lock.display());
+        let mut daemon = Daemon::start_with(&dir, &extra);
+        let client = daemon.client();
+        assert_eq!(
+            client.ping().unwrap(),
+            1,
+            "a missing lock does not stop the daemon"
+        );
+        assert!(plugins(&client).is_empty(), "no plugin is approved");
+        until("the refusal to be logged", || {
+            daemon.log().contains("is refused")
+        });
+        assert!(
+            daemon.log().contains("cannot read the lock"),
+            "{}",
+            daemon.log()
+        );
+        let (code, log) = daemon.signal("-TERM");
+        assert_eq!(code, Some(0), "{log}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_lock_that_others_can_write_is_named_at_start() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("integrity-open-lock");
+        let lock = dir.join("daedalus.lock");
+        std::fs::write(&lock, daedalus_integrity::Lock::new().render()).unwrap();
+        std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let extra = format!("integrity = \"locked\"\nlock_file = '{}'\n", lock.display());
+        let mut daemon = Daemon::start_with(&dir, &extra);
+        let _client = daemon.client();
+        until("the warning to be logged", || {
+            daemon.log().contains("is writable by its group or others")
+        });
+        let (code, _) = daemon.signal("-TERM");
+        assert_eq!(code, Some(0));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

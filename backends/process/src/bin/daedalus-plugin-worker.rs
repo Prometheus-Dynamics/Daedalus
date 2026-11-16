@@ -1,7 +1,9 @@
 //! Serves one plugin library's nodes over the wire protocol. A plugin's crash ends only this
 //! process, and the host's supervisor reports and respawns it.
 //!
-//! Usage: `daedalus-plugin-worker <plugin library>`.
+//! Usage: `daedalus-plugin-worker [--lock FILE [--record]] <plugin library>`. With `--lock`, the
+//! library loads only if the lock approves its digest; with `--record`, it is written into the lock
+//! once it has loaded.
 
 #![forbid(unsafe_code)]
 
@@ -11,6 +13,7 @@ use std::path::PathBuf;
 use std::process;
 
 use daedalus_abi::{BoundaryPort, Slot, SlotState, Slots, Step, StepCx, StepEnd};
+use daedalus_integrity::Integrity;
 use daedalus_loader::{Loader, Plugin, RegionIn, run_step};
 use daedalus_process_shm::{Inbox, Incoming, Lent, PLAIN_LINE};
 use daedalus_types::{Scalar, TypeKey};
@@ -198,15 +201,45 @@ fn execute(
     Ok(outputs)
 }
 
-fn main() {
-    let Some(path) = std::env::args().nth(1).map(PathBuf::from) else {
-        let _ = writeln!(
-            io::stderr(),
-            "usage: daedalus-plugin-worker <plugin library>"
-        );
-        process::exit(2);
+const USAGE: &str = "usage: daedalus-plugin-worker [--lock FILE [--record]] <plugin library>";
+
+/// The integrity mode and the library, from the arguments.
+fn arguments(args: &[String]) -> Result<(Integrity, PathBuf), String> {
+    let mut lock = None;
+    let mut record = false;
+    let mut library = None;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--lock" => {
+                let file = rest.next().ok_or("--lock needs a file")?;
+                lock = Some(PathBuf::from(file));
+            }
+            "--record" => record = true,
+            _ if library.is_none() => library = Some(PathBuf::from(arg)),
+            _ => return Err("one plugin library at a time".into()),
+        }
+    }
+    let library = library.ok_or("no plugin library given")?;
+    let integrity = match (lock, record) {
+        (None, false) => Integrity::off(),
+        (None, true) => return Err("--record needs --lock".into()),
+        (Some(lock), false) => Integrity::locked(lock).map_err(|error| error.to_string())?,
+        (Some(lock), true) => Integrity::record(lock).map_err(|error| error.to_string())?,
     };
-    let mut loader = Loader::new();
+    Ok((integrity, library))
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (integrity, path) = match arguments(&args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            let _ = writeln!(io::stderr(), "{message}\n{USAGE}");
+            process::exit(2);
+        }
+    };
+    let mut loader = Loader::with_integrity(integrity);
     let plugin: Plugin = match loader.open(&path) {
         Ok(plugin) => plugin,
         Err(error) => {

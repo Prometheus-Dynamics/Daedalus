@@ -46,6 +46,7 @@ pub fn worker_binary() -> PathBuf {
 }
 
 /// A spec that starts the fixture worker, with extra arguments.
+#[allow(dead_code)] // not every test binary compiles a spec
 pub fn spec(args: &[&str]) -> WorkerSpec {
     let mut spec = WorkerSpec::new(worker_binary());
     for arg in args {

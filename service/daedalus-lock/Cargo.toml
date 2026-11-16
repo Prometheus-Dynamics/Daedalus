@@ -1,0 +1,13 @@
+[package]
+name = "daedalus-lock"
+description = "Records, checks and updates the daedalus.lock file of approved plugins and workers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-integrity = { path = "../../core/integrity" }
+
+[lints]
+workspace = true

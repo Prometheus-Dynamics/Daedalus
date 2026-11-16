@@ -538,7 +538,6 @@ Everything else dev does has a PR. I6 keeps the checklist, and the last PR walks
 | Stable-ABI versions 4 to 7, frame v1 and v2, the Rust-ABI install path | One ABI on `next`, with no compatibility layer. |
 | The separate MCU macro and its types | A chip uses the same `#[node]`. |
 | Adaptive serial or parallel, config from environment variables | Small features the design doesn't need. |
-| Plugin package integrity and lockfiles | No place in the design yet. |
 | Frames, colorimetry, pixel conversions | Daedalus has no frame type. These belong to whoever owns the type. |
 | Raw Vulkan handles for plugins | Raw access stays inside `backends/vk-sys`. |
 

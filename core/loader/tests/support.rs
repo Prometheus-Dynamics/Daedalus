@@ -86,6 +86,7 @@ pub fn old_library() -> PathBuf {
 
 /// A copy of the fixture at `name` in the test tmp directory. Each copy is a separate library to
 /// the loader, which is what a reload needs.
+#[allow(dead_code)] // not every test binary copies a fixture
 pub fn copy_fixture(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("loader-copies");
     std::fs::create_dir_all(&dir).expect("tmp dir");

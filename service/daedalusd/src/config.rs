@@ -5,6 +5,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
+use daedalus_integrity::Integrity;
 use serde::Deserialize;
 
 use crate::logging::Level;
@@ -34,6 +35,11 @@ pub struct Config {
     pub connections: usize,
     /// `error`, `warn`, `info` or `debug`.
     pub log_level: Option<String>,
+    /// `off` (the default), `locked`, or `record`: whether plugin libraries and worker programs
+    /// are checked against the lock.
+    pub integrity: Option<String>,
+    /// The lock file, as an absolute path. Needed under `locked` and `record`.
+    pub lock_file: Option<PathBuf>,
 }
 
 /// One place to listen.
@@ -141,7 +147,39 @@ impl Config {
                 dir.display()
             )));
         }
+        if let Some(lock) = &self.lock_file
+            && !lock.is_absolute()
+        {
+            return Err(ConfigError(format!(
+                "lock_file: `{}` is not an absolute path",
+                lock.display()
+            )));
+        }
+        self.integrity()?;
         Ok(())
+    }
+
+    /// The integrity mode the config names. Refused when the mode is not one of its three names,
+    /// when it needs a lock and none is named, or when this platform cannot check files.
+    pub fn integrity(&self) -> Result<Integrity, ConfigError> {
+        let name = self.integrity.as_deref().unwrap_or("off");
+        match name {
+            "off" => Ok(Integrity::off()),
+            "locked" | "record" => {
+                let lock = self.lock_file.as_ref().ok_or_else(|| {
+                    ConfigError(format!("lock_file: needed when integrity is `{name}`"))
+                })?;
+                let made = if name == "locked" {
+                    Integrity::locked(lock)
+                } else {
+                    Integrity::record(lock)
+                };
+                made.map_err(|error| ConfigError(format!("integrity: {error}")))
+            }
+            other => Err(ConfigError(format!(
+                "integrity: `{other}` is not one of off, locked, record"
+            ))),
+        }
     }
 
     pub fn level(&self) -> Result<Level, ConfigError> {

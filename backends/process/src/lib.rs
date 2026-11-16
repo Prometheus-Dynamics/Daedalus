@@ -18,6 +18,7 @@ mod region;
 mod spec;
 mod supervise;
 mod telemetry;
+mod vet;
 mod wire_space;
 
 pub use backoff::{BASE_DELAY, MAX_DELAY, delay_after};

@@ -101,6 +101,13 @@ every read, and a value too long for a cell was given new memory every time it c
 worker. A megabyte handed to a worker and back now allocates nothing on the host's thread, and
 `a_steady_run_of_megabyte_values_allocates_nothing_on_the_host_thread` holds that.
 
+## Integrity checks
+
+A host that checks its plugins against a lock hashes each file when the file loads or a worker
+starts. Nothing is cached, so an unchanged file is hashed again at each start. The cost has not
+been measured on a board, and a cache would be one more thing to trust. Nothing hashes on a run's
+tick.
+
 ## Decided
 
 Ideas that were listed here with no measurement behind them, each now done or dropped:
