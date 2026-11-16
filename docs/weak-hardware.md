@@ -96,10 +96,10 @@ Ideas that were listed here with no measurement behind them, each now done or dr
 - **Done:** smaller stacks for the daemon's connection threads. See Thread stacks, below.
 - **To do:** a host feature that leaves the planner out, for a board that loads a plan made
   elsewhere, with the binary size and resident memory saved measured.
-- **To do:** a query for the offset alignment a device needs to import a dma-buf in place, beside
-  `dmabuf_status`, with the refused-for-alignment case named in the status sentence. Today a
-  misaligned offset is copied every time and the caller can only find the alignment by trying
-  offsets. Asked for by a consumer that lays out a pool of offsets.
+- **Done:** a query for the offset alignment a device needs to import a dma-buf in place,
+  `dmabuf_offset_alignment`, beside `dmabuf_status`. `dmabuf_offset_status` says, for one offset,
+  when a value is copied for being misaligned, and names the offset and the alignment. See
+  [gpu-nodes.md](gpu-nodes.md).
 
 ## Thread stacks
 

@@ -403,6 +403,37 @@ fn file_of(fd: std::os::fd::RawFd) -> Option<(u64, u64)> {
     Some((named.dev(), named.ino()))
 }
 
+/// The buffer an import of `size` bytes is made as, and what Vulkan asks of it. This is the only
+/// place that makes one, so an import's alignment and [`dma_buf_offset_alignment`] are the same
+/// question. The caller destroys the buffer.
+fn dma_buf_buffer(raw: &Raw, size: u64) -> Result<(vk::Buffer, vk::MemoryRequirements), Error> {
+    if !raw.has(khr::external_memory_fd::NAME) || !raw.has(ash::ext::external_memory_dma_buf::NAME)
+    {
+        return Err(Error::NoDmaBufImport);
+    }
+    let handle = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
+    let mut external = vk::ExternalMemoryBufferCreateInfo::default().handle_types(handle);
+    let info = buffer_info(size).push_next(&mut external);
+    // SAFETY: a valid create info on a live device. The caller destroys the buffer.
+    let buffer = unsafe { raw.device.create_buffer(&info, None) }?;
+    // SAFETY: a query on the buffer just made.
+    let needs = unsafe { raw.device.get_buffer_memory_requirements(buffer) };
+    Ok((buffer, needs))
+}
+
+/// The alignment a dma-buf import binds its value at: the offset of the value in the dma-buf has
+/// to be a multiple of it, or the import is refused with [`Error::Offset`]. It is the alignment
+/// Vulkan gives the buffer an import makes, which depends on how the buffer is made and not on its
+/// size, so it is read from a buffer of the smallest size an import takes. An error when the device
+/// can't import a dma-buf at all.
+pub fn dma_buf_offset_alignment(device: &wgpu::Device) -> Result<u64, Error> {
+    let raw = Raw::of(device).ok_or(Error::NotVulkan)?;
+    let (buffer, needs) = dma_buf_buffer(&raw, 4)?;
+    // SAFETY: made above, and nothing else has it.
+    unsafe { raw.device.destroy_buffer(buffer, None) };
+    Ok(needs.alignment.max(1))
+}
+
 /// A storage buffer whose memory is the dma-buf behind `fd`, with no copy. `size` is a non-zero
 /// multiple of 4, and `have` is the dma-buf's own length, which has to cover what
 /// [`dma_buf_bytes_needed`] says for `size`. The buffer owns the fd from here.
@@ -433,18 +464,10 @@ pub fn import_dma_buf_at(
         return Err(Error::Range);
     }
     let raw = Raw::of(device).ok_or(Error::NotVulkan)?;
-    if !raw.has(khr::external_memory_fd::NAME) || !raw.has(ash::ext::external_memory_dma_buf::NAME)
-    {
-        return Err(Error::NoDmaBufImport);
-    }
     let vk_device = &raw.device;
     let handle = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
-    let mut external = vk::ExternalMemoryBufferCreateInfo::default().handle_types(handle);
-    let info = buffer_info(size).push_next(&mut external);
-    // SAFETY: a valid create info on a live device. Destroyed on every error path below.
-    let buffer = unsafe { vk_device.create_buffer(&info, None) }?;
-    // SAFETY: a query on the buffer just made.
-    let needs = unsafe { vk_device.get_buffer_memory_requirements(buffer) };
+    // Destroyed on every error path below.
+    let (buffer, needs) = dma_buf_buffer(&raw, size)?;
     // Checked before the driver is asked about the fd: it would refuse a short one without
     // saying why.
     // The memory imported is the dma-buf from its start to the end of what this buffer needs.

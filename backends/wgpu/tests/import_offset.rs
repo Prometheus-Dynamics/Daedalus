@@ -12,7 +12,7 @@ use daedalus_backend::{Backend, CompileCx};
 use daedalus_dma_sys::{Access, DmaBuf, DmaHeap};
 use daedalus_runner::{drop_owned, put_typed, take_typed};
 use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey, Typed};
-use daedalus_wgpu::{DmaBufBacked, Options, Storage, WgpuBackend};
+use daedalus_wgpu::{DmaBufBacked, DmaBufStatus, Options, Storage, WgpuBackend};
 
 /// One value's length, and how far apart the values are in the buffer: a page multiple, which
 /// every device here binds at.
@@ -274,8 +274,32 @@ fn values_at_offsets_in_one_dma_buf_are_imported_where_they_are() {
             other => panic!("{name}: an odd offset gave {other:?}"),
         };
         assert_eq!(backend.dmabuf_import(false), Some(true), "{name}");
+        // The query and the import agree: a value is imported exactly when its offset is a
+        // multiple of the alignment, and the status says so for that offset.
+        let alignment = backend
+            .dmabuf_offset_alignment()
+            .expect("a device that imports has an alignment");
+        let at = (FRAMES * PITCH + 4) as u64;
+        let aligned = at.is_multiple_of(alignment);
+        assert_eq!(
+            how == "imported",
+            aligned,
+            "{name}: offset {at} with alignment {alignment}"
+        );
+        let status = backend.dmabuf_offset_status(at, false);
+        if aligned {
+            assert_eq!(status, DmaBufStatus::Imports, "{name}");
+        } else {
+            let said = status.to_string();
+            assert!(
+                said.contains(&format!("byte {at} of its dma-buf")),
+                "{said}"
+            );
+            assert!(said.contains(&format!("multiple of {alignment}")), "{said}");
+        }
         eprintln!(
-            "offsets on {name}: three values imported in place, found again; +4 bytes: {how}"
+            "offsets on {name}: three values imported in place, found again; +4 bytes: {how}, \
+             alignment {alignment}"
         );
         release(step);
         past_the_bound(index, &heap);

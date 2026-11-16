@@ -22,8 +22,11 @@ pub enum NoTrial {
     NotAsked,
 }
 
-/// Why a device copies a dma-buf's bytes when it could have had the buffer in place.
+/// Why a device copies a dma-buf's bytes when it could have had the buffer in place. Only
+/// [`WgpuBackend::dmabuf_offset_status`](crate::WgpuBackend::dmabuf_offset_status) gives
+/// [`Misaligned`](Self::Misaligned): a value at an offset the device doesn't bind at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WhyCopied {
     /// The device has no way to import a dma-buf: its driver lacks the extensions, or this
     /// isn't Linux.
@@ -32,6 +35,9 @@ pub enum WhyCopied {
     Refused,
     /// The host turned imports off ([`Options::no_dma_heap`](crate::Options)).
     TurnedOff,
+    /// The value starts `offset` bytes into its dma-buf, which isn't a multiple of the
+    /// `alignment` the device binds a buffer at. A value at a multiple of it is imported.
+    Misaligned { offset: u64, alignment: u64 },
 }
 
 /// What a device does with a value that is a dma-buf, and why. A host prints it to say what to
@@ -57,17 +63,23 @@ impl fmt::Display for DmaBufStatus {
             }
             DmaBufStatus::Copies(why) => {
                 f.write_str("a dma-buf's bytes are copied to the device, because ")?;
-                f.write_str(match why {
-                    WhyCopied::DeviceCant => {
+                match why {
+                    WhyCopied::DeviceCant => f.write_str(
                         "the device has no dma-buf import. Nothing here can change that: \
-                         another driver or device is what would"
-                    }
-                    WhyCopied::Refused => {
+                         another driver or device is what would",
+                    ),
+                    WhyCopied::Refused => f.write_str(
                         "the device refused one of this kind when it was tried, or the host \
-                         said it would"
-                    }
-                    WhyCopied::TurnedOff => "the host turned dma-buf imports off",
-                })
+                         said it would",
+                    ),
+                    WhyCopied::TurnedOff => f.write_str("the host turned dma-buf imports off"),
+                    WhyCopied::Misaligned { offset, alignment } => write!(
+                        f,
+                        "the value starts at byte {offset} of its dma-buf, and the device \
+                         binds a buffer only at a multiple of {alignment}. Move the value to \
+                         such an offset to have it imported in place"
+                    ),
+                }
             }
             DmaBufStatus::Undecided(why) => {
                 f.write_str("not known yet, because ")?;
