@@ -12,8 +12,8 @@ use daedalus_backend::{
     StepUnit, Transfer, UnitInfo,
 };
 use daedalus_graph::{ControlDoc, ControlOp, EdgeDoc, GraphBody, NodeDoc, NodeKindDoc};
+use daedalus_made::Item;
 use daedalus_planner::control::{BODY, ELSE, THEN};
-use daedalus_planner::stitch::Item;
 use daedalus_planner::{Config, PlanError, Planned, plan};
 use daedalus_planner_tests::{decl, edge, node, u32_ty};
 use daedalus_registry::{Registry, TypeRef};

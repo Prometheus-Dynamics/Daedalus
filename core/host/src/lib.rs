@@ -36,6 +36,7 @@ mod intern;
 mod introspect;
 mod io;
 mod label;
+mod lay_out;
 #[cfg(feature = "listen")]
 pub mod listen;
 #[cfg(feature = "std")]

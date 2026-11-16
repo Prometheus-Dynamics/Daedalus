@@ -1,3 +1,6 @@
+// Without the planner, the tests that plan are left out and their imports are not used.
+#![cfg_attr(not(feature = "planner"), allow(unused_imports, dead_code))]
+
 //! The listener at the level of packets: a stdio session, accept errors, malformed input and a
 //! writer that fails.
 
@@ -18,6 +21,7 @@ use daedalus_wire::service::{
 use daedalus_wire::{DEFAULT_CAP, Schema, read_packet, write_packet};
 use listen_support::{graph, host, raw, request, serving, u32_value, until};
 
+#[cfg(feature = "planner")]
 #[test]
 fn a_stdio_session_round_trips_a_graph() {
     let host = host(ListenOptions::default());

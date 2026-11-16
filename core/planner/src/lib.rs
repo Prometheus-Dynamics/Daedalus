@@ -15,6 +15,7 @@ pub mod explain;
 pub mod form;
 pub mod hash;
 pub mod lint;
+pub mod made;
 pub mod pipeline;
 pub mod regions;
 pub mod share;

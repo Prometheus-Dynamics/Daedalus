@@ -457,6 +457,11 @@ pub enum Reply {
     },
     Inspection(Inspection),
     Trace(Vec<TraceEntry>),
+    /// A made plan, as the bytes a host loads, and a hash of them that names the plan.
+    Made {
+        hash: u64,
+        bytes: Vec<u8>,
+    },
 }
 
 fn put_diagnostics(out: &mut Writer, items: &[Diagnostic]) -> Result<(), WireError> {
@@ -555,6 +560,11 @@ impl Reply {
                 out.u8(13);
                 put_list(out, entries, |out, entry| entry.encode(out))?;
             }
+            Reply::Made { hash, bytes } => {
+                out.u8(14);
+                out.u64(*hash);
+                out.bytes(bytes)?;
+            }
         }
         Ok(())
     }
@@ -620,6 +630,10 @@ impl Reply {
             },
             12 => Reply::Inspection(Inspection::decode(input)?),
             13 => Reply::Trace(get_list(input, TraceEntry::decode)?),
+            14 => Reply::Made {
+                hash: input.u64()?,
+                bytes: input.bytes()?,
+            },
             tag => return Err(bad("reply", u32::from(tag))),
         })
     }

@@ -10,10 +10,11 @@ use daedalus_backend::{
     Transfer, TransferCost, UnitInfo,
 };
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, NodeDoc, PortRefDoc};
+use daedalus_made::Stitched;
 use daedalus_planner::assign::ASSIGN_BUDGET;
 use daedalus_planner::regions::{Input, RegionError, Regions, build};
 use daedalus_planner::solve::type_table::TypeTable;
-use daedalus_planner::stitch::{Stitched, stitch};
+use daedalus_planner::stitch::stitch;
 use daedalus_registry::{
     BodyRecord, ConfigDecl, Conversion, Fire, NoCode, NodeDecl, NodeRecord, PortDecl, Registry,
     SourceAt, TypeRef,
@@ -149,6 +150,12 @@ impl Decl {
     /// A body whose `text` is the node id, as the sim backend expects.
     pub fn body(mut self, backend: &str) -> Decl {
         self.bodies.push((leak_str(backend), self.id, &[]));
+        self
+    }
+
+    /// A body whose `text` is `text`, for a backend whose text names an op (fake NPU's `scale2`).
+    pub fn body_with_text(mut self, backend: &str, text: &'static str) -> Decl {
+        self.bodies.push((leak_str(backend), text, &[]));
         self
     }
 

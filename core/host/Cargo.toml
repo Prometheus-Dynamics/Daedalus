@@ -7,9 +7,11 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["std"]
-# Snapshots of the state store, which need std.
-std = ["daedalus-runner/std", "daedalus-value/std", "dep:serde", "dep:serde_json", "dep:daedalus-planner", "dep:daedalus-backend", "dep:daedalus-graph", "dep:daedalus-abi", "dep:daedalus-plan", "dep:daedalus-registry"]
+default = ["std", "planner"]
+# Snapshots of the state store, which need std. A host needs no planner to load a made plan.
+std = ["daedalus-runner/std", "daedalus-value/std", "dep:serde", "dep:serde_json", "dep:daedalus-backend", "dep:daedalus-graph", "dep:daedalus-abi", "dep:daedalus-plan", "dep:daedalus-registry", "dep:daedalus-made"]
+# Planning: a host plans a graph it is given. Off, the host loads only made plans.
+planner = ["std", "dep:daedalus-planner"]
 # The service listener: one host shared by many clients over a unix socket, loopback TCP or stdio.
 listen = ["std", "dep:daedalus-wire"]
 # Allocation attribution through the counting allocator. Feature only.
@@ -21,6 +23,7 @@ daedalus-backend = { path = "../backend", optional = true }
 daedalus-graph = { path = "../graph", optional = true }
 daedalus-plan = { path = "../plan", optional = true }
 daedalus-planner = { path = "../planner", optional = true }
+daedalus-made = { path = "../made", optional = true }
 daedalus-registry = { path = "../registry", optional = true }
 daedalus-runner = { path = "../runner" }
 serde = { workspace = true, optional = true }
@@ -40,6 +43,10 @@ required-features = ["listen"]
 
 [[test]]
 name = "listen_wire"
+required-features = ["listen"]
+
+[[test]]
+name = "listen_made"
 required-features = ["listen"]
 
 [lints]

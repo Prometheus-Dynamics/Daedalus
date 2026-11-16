@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-made"
+description = "A plan as a host reads it: the layout, the node and edge facts, and the compile requests a plan was made from."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-abi = { path = "../abi" }
+daedalus-backend = { path = "../backend" }
+daedalus-graph = { path = "../graph" }
+daedalus-plan = { path = "../plan" }
+daedalus-registry = { path = "../registry" }
+daedalus-types = { path = "../types" }
+daedalus-wire = { path = "../wire" }
+
+[lints]
+workspace = true

@@ -10,6 +10,7 @@ repository.workspace = true
 daedalus-abi = { path = "../abi" }
 daedalus-backend = { path = "../backend" }
 daedalus-graph = { path = "../graph" }
+daedalus-made = { path = "../made" }
 daedalus-plan = { path = "../plan" }
 daedalus-registry = { path = "../registry" }
 daedalus-runner = { path = "../runner" }

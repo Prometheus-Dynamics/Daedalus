@@ -112,6 +112,18 @@ pub fn ops() -> Vec<Op> {
         },
         Op::Trace { limit: 10 },
         Op::Ping,
+        Op::MakePlan {
+            graph: "g".to_owned(),
+            options: StartConfig {
+                unmerged: true,
+                priority: vec!["cpu".to_owned()],
+                ..StartConfig::default()
+            },
+        },
+        Op::PutPlan {
+            name: "g".to_owned(),
+            bytes: vec![0, 1, 254, 255],
+        },
     ]
 }
 
@@ -324,6 +336,14 @@ pub fn server_messages() -> Vec<ServerMsg> {
             body,
         }));
     }
+    // Added after the first version's samples, so their positions in the corpus stay put.
+    messages.push(ServerMsg::Response(Response {
+        id: 19,
+        result: Ok(Reply::Made {
+            hash: 0xdead_beef,
+            bytes: vec![7, 8, 9],
+        }),
+    }));
     messages
 }
 
@@ -351,6 +371,13 @@ pub fn as_first_sent(mut message: ServerMsg) -> ServerMsg {
         }) => {
             fault.code = 0;
             fault.own_code = false;
+        }
+        // The first version's hello offers no made-plan ops.
+        ServerMsg::Hello(hello) => {
+            hello
+                .capabilities
+                .ops
+                .retain(|op| !matches!(op, OpKind::MakePlan | OpKind::PutPlan));
         }
         ServerMsg::Response(Response {
             result: Ok(Reply::Inspection(Inspection::Telemetry(info))),

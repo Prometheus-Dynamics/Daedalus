@@ -18,6 +18,8 @@ commands:
   ping
   load-plugin PATH
   put-graph NAME FILE
+  make-plan GRAPH --out FILE [--unmerged] [--priority ID,ID]
+  put-plan NAME FILE
   patch-graph GRAPH FILE
   plan GRAPH [--form steps|blob|source] [--inspect] [--priority ID,ID]
   start GRAPH [--fifo N] [--fault-reports N] [--telemetry off|basic|detailed|trace]
@@ -42,6 +44,15 @@ pub enum Command {
         path: String,
     },
     PutGraph {
+        name: String,
+        file: String,
+    },
+    MakePlan {
+        graph: String,
+        out: String,
+        config: StartConfig,
+    },
+    PutPlan {
         name: String,
         file: String,
     },
@@ -258,6 +269,30 @@ impl Command {
                     file: words.at(1).to_owned(),
                 }
             }
+            "make-plan" => {
+                let words = words(&["--out", "--priority"], &["--unmerged"])?;
+                words.arity(&["GRAPH"], 0)?;
+                let out = words
+                    .flag("--out")
+                    .ok_or_else(|| "make-plan: --out FILE names the file to write".to_owned())?;
+                Command::MakePlan {
+                    graph: words.at(0).to_owned(),
+                    out: out.to_owned(),
+                    config: StartConfig {
+                        unmerged: words.has("--unmerged"),
+                        priority: priority(&words),
+                        ..StartConfig::default()
+                    },
+                }
+            }
+            "put-plan" => {
+                let words = words(&[], &[])?;
+                words.arity(&["NAME", "FILE"], 0)?;
+                Command::PutPlan {
+                    name: words.at(0).to_owned(),
+                    file: words.at(1).to_owned(),
+                }
+            }
             "patch-graph" => {
                 let words = words(&[], &[])?;
                 words.arity(&["GRAPH", "FILE"], 0)?;
@@ -450,6 +485,21 @@ pub fn execute(command: &Command, client: &Client) -> Result<Value, Failure> {
         Command::PutGraph { name, file } => client
             .put_graph(name, &read(file)?)
             .map(|found| json!({ "graph": name, "diagnostics": output::diagnostics(&found) })),
+        Command::MakePlan { graph, out, config } => {
+            let (hash, bytes) = client
+                .make_plan(graph, config.clone())
+                .map_err(Failure::Client)?;
+            std::fs::write(out, &bytes)
+                .map_err(|error| Failure::Usage(format!("{out}: {error}")))?;
+            Ok(json!({ "graph": graph, "hash": hash, "bytes": bytes.len(), "file": out }))
+        }
+        Command::PutPlan { name, file } => {
+            let bytes =
+                std::fs::read(file).map_err(|error| Failure::Usage(format!("{file}: {error}")))?;
+            client
+                .put_plan(name, &bytes)
+                .map(|()| json!({ "plan": name }))
+        }
         Command::PatchGraph { graph, file } => client
             .patch_graph(graph, &read(file)?)
             .map(|found| json!({ "graph": graph, "diagnostics": output::diagnostics(&found) })),

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::UnitId;
+use daedalus_made::UnitId;
 
 /// The units that may be pending, by the value they write.
 #[derive(Default)]

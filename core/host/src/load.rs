@@ -3,7 +3,7 @@
 
 #![cfg(feature = "std")]
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::mem;
 use std::string::String;
@@ -12,23 +12,17 @@ use std::time::Instant;
 use std::vec;
 use std::vec::Vec;
 
-use daedalus_abi::{NO_SLOT, Step};
-use daedalus_backend::{Compiled, StepUnit, UnitInfo};
-use daedalus_graph::{EdgePolicyDoc, NodeDoc, NodeKindDoc};
-use daedalus_plan::Span;
-use daedalus_planner::Planned;
-use daedalus_planner::stitch::Item;
-use daedalus_planner::stitch::{HostPort, Stitched};
+use daedalus_backend::StepUnit;
+use daedalus_made::{BindError, Bound, HostPort, MadeError};
 use daedalus_runner::owned_run;
-use daedalus_runner::{Fire, Recovery, SlotKind, SlotSpec, SlotStamp, StepMeta};
-use daedalus_runner::{ProbeClock, best_clock};
+use daedalus_runner::{ProbeClock, StepMeta, best_clock};
 use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey};
-use daedalus_value::{Overflow, Pressure};
+use daedalus_value::Pressure;
 
 use crate::fault::FaultRing;
 use crate::intern::{intern, intern_key, intern_keys, intern_names, intern_ports, intern_wake};
+use crate::lay_out::{Built, lay_out, slot_stamps};
 use crate::patch::ConstTable;
-use crate::recovery::step_recovery;
 use crate::tick_overhead::{TickOverheadReport, TickOverheadWindow};
 use crate::unmerged::Planner;
 use crate::{Dir, Host, PortSpec, Ports, StateStore};
@@ -74,6 +68,10 @@ pub enum LoadError {
     Run(daedalus_runner::LoadError),
     /// A node's recovery metadata is malformed, or merged nodes ask for different recoveries.
     Recovery { node: String, reason: String },
+    /// The made plan's bytes don't read.
+    Made(MadeError),
+    /// The made plan doesn't bind to this host's backends and registry.
+    Bind(BindError),
 }
 
 impl fmt::Display for LoadError {
@@ -85,6 +83,8 @@ impl fmt::Display for LoadError {
             LoadError::Ports(error) => write!(f, "the port table is malformed: {error:?}"),
             LoadError::Run(error) => write!(f, "the runner refused the plan: {error:?}"),
             LoadError::Recovery { node, reason } => write!(f, "node `{node}` {reason}"),
+            LoadError::Made(error) => error.fmt(f),
+            LoadError::Bind(error) => error.fmt(f),
         }
     }
 }
@@ -98,390 +98,60 @@ pub(crate) struct NodeEntry {
     pub(crate) body: String,
 }
 
-fn node_key(doc: &NodeDoc, seen: &mut HashMap<String, u32>) -> String {
-    if let Some(label) = &doc.label {
+fn node_key(label: &Option<String>, id: &str, seen: &mut HashMap<String, u32>) -> String {
+    if let Some(label) = label {
         return label.clone();
     }
-    let count = seen.entry(doc.id.clone()).or_insert(0);
-    let key = std::format!("{}#{}", doc.id, *count);
+    let count = seen.entry(id.to_string()).or_insert(0);
+    let key = std::format!("{}#{}", id, *count);
     *count += 1;
     key
 }
 
 /// The nodes of a plan with their keys and the body each runs.
-pub(crate) fn node_entries(planned: &Planned) -> Vec<NodeEntry> {
-    let mut backend_of = vec![None; planned.graph.nodes.len()];
-    for region in &planned.regions.regions {
-        for &node in &region.formed.nodes {
-            backend_of[node as usize] = Some(region.formed.backend.0);
-        }
-    }
+pub(crate) fn node_entries(bound: &Bound) -> Vec<NodeEntry> {
     let mut seen = HashMap::new();
-    planned
-        .graph
+    bound
+        .facts
         .nodes
         .iter()
-        .enumerate()
-        .map(|(at, node)| NodeEntry {
-            key: node_key(&node.doc, &mut seen),
+        .map(|node| NodeEntry {
+            key: node_key(&node.label, &node.id, &mut seen),
             // Another version of a backend, as a plugin loaded again is, is another body.
             body: std::format!(
                 "{:?}:{}",
-                backend_of[at]
-                    .and_then(|index| planned.backend(daedalus_types::BackendIndex(index))),
-                node.doc.id
+                node.backend.and_then(|index| bound.backend(index)),
+                node.id
             ),
         })
         .collect()
 }
 
 /// The bridge nodes a plan's host ports belong to, for comparing two plans.
-pub(crate) fn bridge_keys(planned: &Planned) -> Vec<String> {
-    let mut keys: Vec<String> = planned
-        .graph
+pub(crate) fn bridge_keys(bound: &Bound) -> Vec<String> {
+    let mut keys: Vec<String> = bound
+        .facts
         .nodes
         .iter()
-        .filter(|node| node.doc.kind == NodeKindDoc::HostBridge)
-        .map(|node| {
-            node.doc
-                .label
-                .clone()
-                .unwrap_or_else(|| node.doc.id.clone())
-        })
+        .filter(|node| node.bridge)
+        .map(|node| node.label.clone().unwrap_or_else(|| node.id.clone()))
         .collect();
     keys.sort_unstable();
     keys.dedup();
     keys
 }
 
-fn take_steps(planned: &mut Planned) -> Vec<Vec<Option<StepUnit>>> {
-    planned
-        .regions
-        .regions
-        .iter_mut()
-        .map(|region| match &mut region.compiled {
-            Compiled::Steps(units) => mem::take(units).into_iter().map(Some).collect(),
-            _ => Vec::new(),
-        })
-        .collect()
-}
-
-struct Built {
-    steps: Vec<Step>,
-    meta: Vec<StepMeta>,
-    table: Vec<u32>,
-    slots: Vec<SlotSpec>,
-    edges: EdgeRules,
-    covers: Vec<Vec<u32>>,
-    same_as: Vec<Option<String>>,
-    transfers: Vec<Option<&'static str>>,
-}
-
-/// The pressure each edge declared, by the slot it lands on.
-type EdgeRules = BTreeMap<u32, EdgeRule>;
-
-#[derive(Clone, Copy)]
-struct EdgeRule {
-    pressure: Pressure,
-    blocking: bool,
-}
-
-/// One step's wiring while it's being laid out.
-struct Draft {
-    reads: Vec<u32>,
-    writes: Vec<u32>,
-    may_pend: bool,
-    fire: Fire,
-    required: Vec<u32>,
-    reuse: bool,
-    always: bool,
-    recovery: Recovery,
-}
-
-fn span(table: &mut Vec<u32>, values: &[u32]) -> Span {
-    let start = table.len() as u32;
-    table.extend_from_slice(values);
-    Span {
-        start,
-        len: values.len() as u32,
-    }
-}
-
-/// Builds the plan's steps in layout order, with each step's slots and join rules.
-fn lay_out(planned: &mut Planned, options: LoadOptions) -> Result<Built, LoadError> {
-    let mut units = take_steps(planned);
-    let mut move_steps = mem::take(&mut planned.transfer_steps);
-    let stitched = &planned.stitched;
-    let mut steps = Vec::new();
-    let mut drafts = Vec::new();
-    let mut step_covers = Vec::new();
-    let mut same_as = Vec::new();
-    let mut transfers = Vec::new();
-    let entries = node_entries(planned);
-    let mut edges = EdgeRules::new();
-    let host_spaces = host_spaces(stitched);
-    for item in &stitched.layout {
-        match item {
-            Item::Run {
-                unit,
-                covers,
-                reads,
-                writes,
-            } => {
-                let Some(StepUnit { step, info }) = units[unit.region as usize]
-                    .get_mut(unit.unit as usize)
-                    .and_then(Option::take)
-                else {
-                    return Err(LoadError::NotSteps);
-                };
-                steps.push(step);
-                step_covers.push(covers.clone());
-                same_as.push(Some(same_step(planned, &entries, covers, &info)));
-                transfers.push(None);
-                let recovery = step_recovery(planned, covers)?;
-                let connected = connected_reads(planned, &info, reads);
-                let (fire, required) = join_for(planned, covers, &connected);
-                for (slot, edge) in &connected {
-                    apply_edge(&mut edges, *slot, &planned.graph.edges[*edge].policy);
-                }
-                drafts.push(Draft {
-                    reads: reads.clone(),
-                    writes: writes.clone(),
-                    may_pend: info.may_pend,
-                    always: reads.iter().all(|slot| *slot == NO_SLOT),
-                    fire,
-                    required,
-                    reuse: covers.len() == 1
-                        && planned.graph.nodes[covers[0] as usize].reusable
-                        && writes.iter().filter(|slot| **slot != NO_SLOT).all(|slot| {
-                            host_spaces.contains(&stitched.slots[*slot as usize].space)
-                        }),
-                    recovery,
-                });
-            }
-            Item::Move {
-                from_slot,
-                to_slot,
-                transfer,
-            } => {
-                let id = &stitched.transfers[*transfer as usize].id;
-                let Some(step) = move_steps
-                    .get_mut(*transfer as usize)
-                    .and_then(Option::take)
-                else {
-                    return Err(LoadError::TransferUnbound { id: id.clone() });
-                };
-                steps.push(step);
-                step_covers.push(Vec::new());
-                same_as.push(None);
-                transfers.push(Some(intern(id)));
-                drafts.push(Draft {
-                    reads: vec![*from_slot],
-                    writes: vec![*to_slot],
-                    may_pend: false,
-                    fire: Fire::Any,
-                    required: Vec::new(),
-                    reuse: false,
-                    always: false,
-                    recovery: Recovery::Fail,
-                });
-            }
-            // A step that returned `Pending` already holds its consumers back until its fence
-            // is ready, so a wait needs no step of its own.
-            Item::Wait { .. } => {}
-        }
-    }
-    planned.transfer_steps = move_steps;
-    let slots = slot_specs(planned, options, &edges);
-    let (meta, table) = wire(&drafts);
-    Ok(Built {
-        steps,
-        meta,
-        table,
-        slots,
-        edges,
-        covers: step_covers,
-        same_as,
-        transfers,
-    })
-}
-
-/// What has to be equal for a step of one plan to stand in for a step of another: the nodes it
-/// covers, at the same places in the graph, with the same bodies and constants, and the same
-/// ports in the same order. A step holds its nodes' state and constants, so a step that matches
-/// is moved across a reload as it is, and one that doesn't starts fresh.
-fn same_step(planned: &Planned, entries: &[NodeEntry], covers: &[u32], info: &UnitInfo) -> String {
-    let nodes: Vec<_> = covers
-        .iter()
-        .map(|&node| {
-            let entry = &entries[node as usize];
-            let consts = &planned.graph.nodes[node as usize].consts;
-            (node, &entry.key, &entry.body, consts)
-        })
-        .collect();
-    std::format!("{nodes:?} {info:?}")
-}
-
-/// The spaces a host port lives in. Reuse keeps an output between runs, which only a value the
-/// process owns can do, so a reusable node stays reusable only when it writes into one of these.
-fn host_spaces(stitched: &Stitched) -> Vec<u32> {
-    stitched
-        .host_inputs
-        .iter()
-        .chain(&stitched.host_outputs)
-        .map(|port| stitched.slots[port.slot as usize].space)
-        .collect()
-}
-
-/// The unit's reads that have a slot and an edge, as (slot, edge). The layout's `reads` line up
-/// with the unit's, with `NO_SLOT` at a port nothing feeds.
-fn connected_reads(planned: &Planned, info: &UnitInfo, reads: &[u32]) -> Vec<(u32, usize)> {
-    let edges = &planned.graph.edges;
-    let edge_of = |input: &daedalus_backend::PortRef| {
-        let node = input.node.0;
-        let port = planned.graph.nodes[node as usize]
-            .inputs
-            .get(usize::from(input.port.0))?;
-        edges
-            .iter()
-            .position(|edge| edge.to.node == node && edge.to.port == port.name)
-    };
-    info.reads
-        .iter()
-        .zip(reads)
-        .filter(|(_, slot)| **slot != NO_SLOT)
-        .filter_map(|(input, slot)| Some((*slot, edge_of(input)?)))
-        .collect()
-}
-
-/// The join rule of a unit: whether a partial set waits, and the slots its nodes require.
-fn join_for(planned: &Planned, covers: &[u32], connected: &[(u32, usize)]) -> (Fire, Vec<u32>) {
-    let nodes = &planned.graph.nodes;
-    let fire = if covers
-        .iter()
-        .any(|&node| nodes[node as usize].fire == daedalus_registry::Fire::All)
-    {
-        Fire::All
-    } else {
-        Fire::Any
-    };
-    let required = connected
-        .iter()
-        .filter(|(_, edge)| {
-            let to = &planned.graph.edges[*edge].to;
-            covers.contains(&to.node) && nodes[to.node as usize].required.contains(&to.port)
-        })
-        .map(|(slot, _)| *slot)
-        .collect();
-    (fire, required)
-}
-
-/// Records what an edge declared, for the slot it lands on. FIFO is the plain default.
-fn apply_edge(rules: &mut EdgeRules, slot: u32, policy: &EdgePolicyDoc) {
-    let pressure = match policy {
-        EdgePolicyDoc::Fifo => return,
-        EdgePolicyDoc::LatestOnly => Pressure::LatestOnly,
-        EdgePolicyDoc::Bounded { capacity, overflow } => Pressure::Bounded {
-            cap: (*capacity).max(1),
-            overflow: match overflow.as_str() {
-                "drop_newest" => Overflow::DropNewest,
-                "error_on_full" | "block" => Overflow::ErrorOnFull,
-                _ => Overflow::DropOldest,
-            },
-        },
-    };
-    let blocking = matches!(policy, EdgePolicyDoc::Bounded { overflow, .. } if overflow == "block");
-    rules.insert(slot, EdgeRule { pressure, blocking });
-}
-
-/// Each slot's capacity and read rule. A slot with several readers keeps its value for all of
-/// them, and an edge that declared a bound gets exactly that many cells.
-fn slot_specs(planned: &Planned, options: LoadOptions, edges: &EdgeRules) -> Vec<SlotSpec> {
-    planned
-        .stitched
-        .slots
-        .iter()
-        .enumerate()
-        .map(|(at, info)| {
-            if info.consumers > 1 {
-                return SlotSpec {
-                    cap: 1,
-                    kind: SlotKind::Held,
-                };
-            }
-            let cap = match edges.get(&(at as u32)).map(|rule| rule.pressure) {
-                Some(Pressure::Bounded { cap, .. }) => cap,
-                Some(Pressure::LatestOnly) => 1,
-                _ => options.fifo_capacity.max(1),
-            };
-            SlotSpec {
-                cap,
-                kind: SlotKind::Fifo,
-            }
-        })
-        .collect()
-}
-
-/// The step records, with a wake edge from each producer to the readers of what it wrote.
-fn wire(drafts: &[Draft]) -> (Vec<StepMeta>, Vec<u32>) {
-    let mut last_writer: HashMap<u32, usize> = HashMap::new();
-    let mut wakes: Vec<Vec<u32>> = vec![Vec::new(); drafts.len()];
-    for (at, draft) in drafts.iter().enumerate() {
-        for slot in draft.reads.iter().filter(|slot| **slot != NO_SLOT) {
-            if let Some(&writer) = last_writer.get(slot)
-                && writer != at
-            {
-                wakes[writer].push(at as u32);
-            }
-        }
-        for slot in draft.writes.iter().filter(|slot| **slot != NO_SLOT) {
-            last_writer.insert(*slot, at);
-        }
-    }
-    let mut table = Vec::new();
-    let meta = drafts
-        .iter()
-        .zip(wakes)
-        .map(|(draft, mut wake)| {
-            wake.sort_unstable();
-            wake.dedup();
-            StepMeta {
-                wake: span(&mut table, &wake),
-                inputs: span(&mut table, &draft.reads),
-                outputs: span(&mut table, &draft.writes),
-                always: draft.always,
-                may_pend: draft.may_pend,
-                recovery: draft.recovery,
-                fire: draft.fire,
-                required: span(&mut table, &draft.required),
-                reuse: draft.reuse,
-            }
-        })
-        .collect();
-    (meta, table)
-}
-
-/// The sorted port table. Interned, so loading the same graph again adds nothing.
-/// What each slot's values are. A compiled step doesn't know these numbers, so the runner writes
-/// them on what the step publishes.
-fn slot_stamps(stitched: &Stitched) -> Vec<SlotStamp> {
-    stitched
-        .slots
-        .iter()
-        .map(|info| SlotStamp {
-            ty: TypeIndex(info.ty.unwrap_or(0)),
-            space: SpaceIndex(info.space as u16),
-        })
-        .collect()
+pub(crate) fn take_steps(bound: &mut Bound) -> Vec<Vec<Option<StepUnit>>> {
+    mem::take(&mut bound.units)
 }
 
 fn port_table(
-    planned: &Planned,
+    bound: &Bound,
     meta: &[StepMeta],
     table: &[u32],
 ) -> Result<Ports<'static>, LoadError> {
-    let stitched = &planned.stitched;
-    let exprs = planned.types.exprs();
+    let stitched = &bound.facts.stitched;
+    let exprs = &bound.facts.types;
     let spec = |port: &HostPort, dir: Dir, wake: &'static [u32]| {
         let info = &stitched.slots[port.slot as usize];
         let ty = TypeIndex(info.ty.unwrap_or(0));
@@ -561,8 +231,8 @@ fn kernel_clock_ok() -> bool {
     }
 }
 
-fn type_keys(planned: &Planned) -> &'static [TypeKey] {
-    let texts: Vec<String> = planned.types.exprs().iter().map(type_text).collect();
+fn type_keys(bound: &Bound) -> &'static [TypeKey] {
+    let texts: Vec<String> = bound.facts.types.iter().map(type_text).collect();
     intern_keys(&texts)
 }
 
@@ -603,10 +273,10 @@ pub(crate) struct Parts {
 
 /// Builds the host for a plan. Nothing else is touched, so a failure leaves any running graph as
 /// it was.
-pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<Parts, LoadError> {
-    let nodes = node_entries(planned);
-    let bridges = bridge_keys(planned);
-    let built = lay_out(planned, options)?;
+pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Parts, LoadError> {
+    let nodes = node_entries(bound);
+    let bridges = bridge_keys(bound);
+    let built = lay_out(bound, options)?;
     let Built {
         steps,
         meta,
@@ -628,16 +298,17 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
             intern_names(&names)
         })
         .collect();
-    let ports = port_table(planned, &meta, &table)?;
-    let types = type_keys(planned);
+    let ports = port_table(bound, &meta, &table)?;
+    let types = type_keys(bound);
     let clock: Option<ProbeClock> = (options.overhead_window > 0).then(probe_clock);
-    let host_inputs: Vec<u32> = planned
+    let host_inputs: Vec<u32> = bound
+        .facts
         .stitched
         .host_inputs
         .iter()
         .map(|p| p.slot)
         .collect();
-    let stamps = slot_stamps(&planned.stitched);
+    let stamps = slot_stamps(&bound.facts.stitched);
     let (mut runner, buffers) =
         owned_run::build(steps, meta, table, slots, stamps, &host_inputs, clock)
             .map_err(LoadError::Run)?;
@@ -647,7 +318,7 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
         let _ = runner.set_blocking(slot, rule.blocking);
     }
     // A slot with several readers holds its newest value, so a new one replaces it.
-    for (slot, info) in planned.stitched.slots.iter().enumerate() {
+    for (slot, info) in bound.facts.stitched.slots.iter().enumerate() {
         if info.consumers > 1 {
             let _ = runner.set_pressure(slot as u32, Pressure::LatestOnly);
         }
@@ -668,18 +339,32 @@ pub(crate) fn build_host(planned: &mut Planned, options: LoadOptions) -> Result<
 
 impl LoadedHost {
     /// Loads a finished plan. Slots, pools, fences and telemetry arrays are sized once, here.
-    pub fn load(planned: Planned, options: LoadOptions) -> Result<LoadedHost, LoadError> {
+    pub fn load(planned: impl Into<Bound>, options: LoadOptions) -> Result<LoadedHost, LoadError> {
         LoadedHost::load_with_consts(planned, options, ConstTable::new())
+    }
+
+    /// Loads a made plan: decodes its bytes, binds each region to the backend of its own id and
+    /// loads the result. Nothing is planned here, so a host built without the planner loads it.
+    pub fn load_made(
+        bytes: &[u8],
+        registry: &daedalus_registry::Registry,
+        backends: &[&dyn daedalus_backend::Backend],
+        options: LoadOptions,
+    ) -> Result<LoadedHost, LoadError> {
+        let made = daedalus_made::decode(bytes).map_err(LoadError::Made)?;
+        let bound = daedalus_made::bind(&made, registry, backends).map_err(LoadError::Bind)?;
+        LoadedHost::load(bound, options)
     }
 
     /// As [`load`](LoadedHost::load), with a const table the plan's step bodies already hold.
     pub fn load_with_consts(
-        mut planned: Planned,
+        planned: impl Into<Bound>,
         options: LoadOptions,
         consts: ConstTable,
     ) -> Result<LoadedHost, LoadError> {
-        let parts = build_host(&mut planned, options)?;
-        consts.seed(&planned);
+        let mut bound: Bound = planned.into();
+        let parts = build_host(&mut bound, options)?;
+        consts.seed(&bound);
         let mut loaded = LoadedHost {
             detail: Default::default(),
             state: StateStore::new(),

@@ -9,6 +9,9 @@ listen = ["unix:/run/daedalusd/daedalusd.sock"]
 # with at most 8 s between attempts, until it loads or its file is removed.
 plugin_dir = "/usr/lib/daedalusd/plugins"
 
+# Every `*.plan` file in this directory is stored at start under its name, so runs need no planner.
+# plan_dir = "/usr/lib/daedalusd/plans"
+
 # Most runs held at once. 0 is no limit.
 max_runs = 64
 

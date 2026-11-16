@@ -8,7 +8,7 @@ use std::fmt;
 use std::string::String;
 use std::vec::Vec;
 
-use daedalus_planner::Planned;
+use daedalus_made::Bound;
 use daedalus_types::NodeId;
 
 use crate::intern::intern;
@@ -43,13 +43,14 @@ impl fmt::Display for ReloadError {
 impl std::error::Error for ReloadError {}
 
 impl LoadedHost {
-    /// Replaces the graph with `planned`. A node keeps its state when its step is the same in both
+    /// Replaces the graph with `bound`. A node keeps its state when its step is the same in both
     /// plans: the same nodes at the same places, bodies, constants and ports. Its step moves
     /// across as it is. Any other node starts fresh and is reported, and a removed node's state
     /// is dropped exactly once. Host
     /// ports the new plan lacks lose their queued values, and the report says how many.
-    pub fn reload(&mut self, mut planned: Planned) -> Result<ReloadReport, ReloadError> {
-        let offered = bridge_keys(&planned);
+    pub fn reload(&mut self, planned: impl Into<Bound>) -> Result<ReloadReport, ReloadError> {
+        let mut bound: Bound = planned.into();
+        let offered = bridge_keys(&bound);
         let shares_one = offered.iter().any(|key| self.bridges.contains(key));
         if !self.bridges.is_empty() && !offered.is_empty() && !shares_one {
             return Err(ReloadError::OtherBridges {
@@ -57,7 +58,7 @@ impl LoadedHost {
                 offered,
             });
         }
-        let parts = build_host(&mut planned, self.options).map_err(ReloadError::Load)?;
+        let parts = build_host(&mut bound, self.options).map_err(ReloadError::Load)?;
         self.collect_faults();
         let nodes = parts.nodes;
         let mut host = parts.host;
@@ -130,7 +131,7 @@ impl LoadedHost {
         self.moves = parts.moves;
         self.node_names = parts.node_names;
         self.attach_detail();
-        self.consts.seed(&planned);
+        self.consts.seed(&bound);
         self.reapply_off_nodes();
         Ok(report)
     }

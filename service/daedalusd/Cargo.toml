@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 daedalus-backend = { path = "../../core/backend" }
-daedalus-host = { path = "../../core/host", features = ["listen"] }
+daedalus-host = { path = "../../core/host", default-features = false, features = ["listen"] }
 daedalus-loader = { path = "../../core/loader" }
 daedalus-registry = { path = "../../core/registry" }
 daedalus-types = { path = "../../core/types" }
@@ -16,6 +16,11 @@ daedalus-wire = { path = "../../core/wire" }
 serde = { workspace = true, features = ["std"] }
 signal-hook = { workspace = true }
 toml = { workspace = true }
+
+[features]
+# Planning in the daemon: graphs are stored and planned here. Off, the daemon serves made plans only.
+default = ["planner"]
+planner = ["daedalus-host/planner"]
 
 [target.'cfg(unix)'.dependencies]
 listenfd = { workspace = true }

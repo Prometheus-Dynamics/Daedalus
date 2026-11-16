@@ -9,7 +9,7 @@ use daedalus_cpu::closure::{ClosureError, closure_node};
 use daedalus_cpu::{CpuBackend, Fault};
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, NodeDoc, PortRefDoc};
 use daedalus_macros::node;
-use daedalus_planner::stitch::Item;
+use daedalus_made::Item;
 use daedalus_planner::{Config, plan};
 use daedalus_registry::Registry;
 

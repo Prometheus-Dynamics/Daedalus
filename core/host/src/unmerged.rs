@@ -7,14 +7,14 @@ use std::boxed::Box;
 use std::fmt;
 use std::string::String;
 
-use daedalus_planner::Planned;
+use daedalus_made::Bound;
 
 use crate::load::LoadedHost;
 use crate::reload::ReloadError;
 use crate::report::ReloadReport;
 
 /// Makes a plan for this graph. The argument is whether merging is allowed.
-pub(crate) type Planner = Box<dyn FnMut(bool) -> Result<Planned, String> + Send>;
+pub(crate) type Planner = Box<dyn FnMut(bool) -> Result<Bound, String> + Send>;
 
 /// Why switching modes failed. The running graph is unchanged.
 #[derive(Debug)]
@@ -39,11 +39,11 @@ impl std::error::Error for UnmergedError {}
 
 impl LoadedHost {
     /// Gives this host a way to plan its graph again.
-    pub fn set_planner(
+    pub fn set_planner<P: Into<Bound>>(
         &mut self,
-        planner: impl FnMut(bool) -> Result<Planned, String> + Send + 'static,
+        mut planner: impl FnMut(bool) -> Result<P, String> + Send + 'static,
     ) {
-        self.planner = Some(Box::new(planner));
+        self.planner = Some(Box::new(move |merged| planner(merged).map(Into::into)));
     }
 
     /// Whether the graph is running unmerged.

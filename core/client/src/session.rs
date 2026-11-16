@@ -92,6 +92,35 @@ impl Client {
         }
     }
 
+    /// Plans a stored graph into a made plan. Returns its hash and its bytes, which a host loads
+    /// with no planner.
+    pub fn make_plan(
+        &self,
+        graph: &str,
+        config: StartConfig,
+    ) -> Result<(u64, Vec<u8>), ClientError> {
+        let graph = graph.to_owned();
+        match self.call(Op::MakePlan {
+            graph,
+            options: config,
+        })? {
+            Reply::Made { hash, bytes } => Ok((hash, bytes)),
+            other => unexpected("make_plan", other),
+        }
+    }
+
+    /// Stores a made plan under `name`. Its bytes are read when a run starts on it.
+    pub fn put_plan(&self, name: &str, bytes: &[u8]) -> Result<(), ClientError> {
+        let op = Op::PutPlan {
+            name: name.to_owned(),
+            bytes: bytes.to_vec(),
+        };
+        match self.call(op)? {
+            Reply::Ack => Ok(()),
+            other => unexpected("put_plan", other),
+        }
+    }
+
     /// Plans a stored graph and starts a run of it.
     pub fn start(&self, graph: &str, config: StartConfig) -> Result<RunId, ClientError> {
         let graph = graph.to_owned();

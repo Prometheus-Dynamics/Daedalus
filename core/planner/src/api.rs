@@ -19,7 +19,9 @@ use crate::regions::{self, RegionError, Regions};
 use crate::solve::Graph;
 use crate::solve::type_table::TypeTable;
 use crate::stitch::transfers::MoveOwner;
-use crate::stitch::{Stitched, stitch};
+use daedalus_made::Stitched;
+
+use crate::stitch::stitch;
 
 #[derive(Debug)]
 #[non_exhaustive]
@@ -44,6 +46,12 @@ pub enum PlanError {
     },
     Encode(daedalus_plan::PlanError),
     Write(std::io::Error),
+    /// The plan has a part a made plan doesn't carry.
+    MadeUnavailable {
+        /// The node that has it, or empty when the whole plan does.
+        node: String,
+        reason: String,
+    },
 }
 
 impl fmt::Display for PlanError {
@@ -65,6 +73,12 @@ impl fmt::Display for PlanError {
             }
             PlanError::Encode(error) => write!(f, "couldn't encode the plan: {error:?}"),
             PlanError::Write(error) => write!(f, "couldn't write the plan: {error}"),
+            PlanError::MadeUnavailable { node, reason } if node.is_empty() => {
+                write!(f, "no made plan: {reason}")
+            }
+            PlanError::MadeUnavailable { node, reason } => {
+                write!(f, "node `{node}` has no made form: {reason}")
+            }
         }
     }
 }
@@ -87,6 +101,8 @@ pub struct Planned {
     pub nested: Vec<NestedBody>,
     pub(crate) backend_ids: Vec<String>,
     pub(crate) backend_versions: Vec<u64>,
+    /// What each backend declared when the plan was made, for a made plan to check on a host.
+    pub(crate) backend_decls: Vec<u64>,
 }
 
 impl Planned {
@@ -349,6 +365,10 @@ pub fn plan(
         nested,
         backend_ids: backends.iter().map(|b| b.id().to_string()).collect(),
         backend_versions: backends.iter().map(|b| b.version()).collect(),
+        backend_decls: backends
+            .iter()
+            .map(|b| daedalus_made::declaration(*b))
+            .collect(),
     };
     check_form(&planned.regions, &backends, config.form)?;
     if config.form == Form::Steps {

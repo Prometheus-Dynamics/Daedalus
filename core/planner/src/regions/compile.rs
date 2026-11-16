@@ -3,10 +3,12 @@
 use std::collections::BTreeSet;
 
 use daedalus_backend::{
-    Backend, CompileCx, Compiled, ConstOf, HostBinding, Incoming, InnerEdge, LentRoom, NodeBody,
-    OutputSharing, PortRef, Refusal, Region, Sharing, UnitInfo,
+    Backend, Compiled, HostBinding, Incoming, InnerEdge, OutputSharing, PortRef, Sharing, UnitInfo,
 };
 use daedalus_graph::{EdgePolicyDoc, Lit, NodeDoc};
+use daedalus_made::recipe::{
+    RecipeBody, RecipeConst, RecipeEdge, RecipeHost, RecipeIncoming, RecipeLent, RegionRecipe,
+};
 use daedalus_registry::Registry;
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
 use daedalus_value::Access;
@@ -14,40 +16,36 @@ use daedalus_value::Access;
 use super::Formed;
 use super::RegionError;
 use crate::assign::{Assignment, Placed};
-use crate::solve::type_table::TypeTable;
 use crate::solve::{Graph, Port};
 
 pub(super) struct Compiling<'a> {
     pub graph: &'a Graph,
     pub backends: &'a [&'a dyn Backend],
     pub registry: &'a Registry,
-    pub types: &'a TypeTable,
     pub assignment: &'a Assignment,
     pub merge_allowed: bool,
     pub freeze_params: bool,
     pub fifo_capacity: u32,
 }
 
-/// Runs the backend's compile for one region.
-pub(super) fn compile_region(
+/// Writes the request one region is compiled from: what the planner asks its backend.
+pub(super) fn region_recipe(
     cx: &Compiling<'_>,
     formed: &Formed,
     backend: &dyn Backend,
     incoming: &[Incoming<'_>],
     placed: &[&str],
     read_in: &[&str],
-    lent: &[LentRoom],
-) -> Result<Compiled, Refusal> {
-    let nodes: Vec<NodeIndex> = formed.nodes.iter().map(|&node| NodeIndex(node)).collect();
+) -> RegionRecipe {
     let mut consts = Vec::new();
     let mut bodies = Vec::new();
     for &node in &formed.nodes {
         let solved = &cx.graph.nodes[node as usize];
         for (port, value) in &solved.consts {
-            consts.push(ConstOf {
-                node: NodeIndex(node),
-                port,
-                value,
+            consts.push(RecipeConst {
+                node,
+                port: port.clone(),
+                value: value.clone(),
             });
         }
         let entry = cx.registry.entry(&solved.doc.id);
@@ -55,73 +53,67 @@ pub(super) fn compile_region(
         if let (Some(entry), Some(body)) = (entry, body)
             && let Some(record) = entry.bodies.get(body.0 as usize)
         {
-            bodies.push(NodeBody {
-                node: NodeIndex(node),
-                id: &solved.doc.id,
-                body,
+            bodies.push(RecipeBody {
+                node,
+                id: solved.doc.id.clone(),
+                backend: record.backend.to_string(),
                 inputs: solved.inputs.len() as u16,
                 outputs: solved.outputs.len() as u16,
                 merges: !opted_out(&solved.doc),
                 fire_all: matches!(solved.fire, daedalus_registry::Fire::All),
-                label: solved.doc.label.as_deref(),
-                metadata: &solved.doc.metadata,
-                code: record.code,
-                text: record.text,
+                label: solved.doc.label.clone(),
+                metadata: solved.doc.metadata.clone(),
             });
         }
     }
-    let edges = inner_edges(cx.graph, &formed.nodes);
-    let sharing = output_sharing(cx, formed);
-    let (host_inputs, host_outputs) = host_bindings(cx.graph, cx.assignment, &formed.nodes);
-    let spaces = backend.memory();
-    let offers: Vec<std::borrow::Cow<'static, str>> = cx
-        .backends
-        .iter()
-        .filter(|other| other.id() != backend.id())
-        .flat_map(|other| other.offers())
+    let edges = inner_edges(cx.graph, &formed.nodes)
+        .into_iter()
+        .map(|edge| RecipeEdge {
+            from: edge.from,
+            to: edge.to,
+            queued: edge.queued,
+            policy: edge.policy.clone(),
+        })
         .collect();
-    let offered: Vec<&str> = offers.iter().map(|id| id.as_ref()).collect();
-    let region = Region {
-        backend: formed.backend,
-        nodes: &nodes,
-        inputs: &formed.inputs,
-        outputs: &formed.outputs,
-        incoming,
-        placed,
-        read_in,
+    let (inputs, outputs) = host_bindings(cx.graph, cx.assignment, &formed.nodes);
+    let host_inputs = owned_hosts(inputs);
+    let host_outputs = owned_hosts(outputs);
+    RegionRecipe {
+        backend: backend.id().to_string(),
+        nodes: formed.nodes.clone(),
+        inputs: formed.inputs.clone(),
+        outputs: formed.outputs.clone(),
         rate: formed.rate,
-    };
-    backend.compile(
-        &region,
-        &CompileCx {
-            types: cx.types.exprs(),
-            consts: &consts,
-            spaces: &spaces,
-            bodies: &bodies,
-            edges: &edges,
-            host_inputs: &host_inputs,
-            host_outputs: &host_outputs,
-            fifo_capacity: cx.fifo_capacity,
-            merge_allowed: cx.merge_allowed,
-            freeze_params: cx.freeze_params,
-            sharing: &sharing,
-            lent,
-            offered: &offered,
-        },
-    )
+        incoming: incoming
+            .iter()
+            .map(|input| RecipeIncoming {
+                input: input.input,
+                from: input.from.to_string(),
+                to: input.to.to_string(),
+                transfer: input.transfer.to_string(),
+            })
+            .collect(),
+        placed: placed.iter().map(|space| space.to_string()).collect(),
+        read_in: read_in.iter().map(|space| space.to_string()).collect(),
+        consts,
+        bodies,
+        edges,
+        host_inputs,
+        host_outputs,
+        sharing: output_sharing(cx, formed),
+        lent: lent_requests(cx, formed, placed),
+        fifo_capacity: cx.fifo_capacity,
+        merge_allowed: cx.merge_allowed,
+        freeze_params: cx.freeze_params,
+    }
 }
 
-/// The room lent for each of the region's outputs placed in a space another backend offers: asked
-/// of that backend, for the nodes of its that read the output.
-pub(super) fn lent_rooms(
-    cx: &Compiling<'_>,
-    backends: &[&dyn Backend],
-    formed: &Formed,
-    placed: &[&str],
-) -> Vec<LentRoom> {
-    let mut rooms = Vec::new();
+/// The room each of the region's outputs placed in a space another backend offers wants: which
+/// backend offers it, and the nodes on that backend that read the output.
+fn lent_requests(cx: &Compiling<'_>, formed: &Formed, placed: &[&str]) -> Vec<RecipeLent> {
+    let mut requests = Vec::new();
     for (port, space) in formed.outputs.iter().zip(placed) {
-        let offering = backends.iter().enumerate().find(|(rank, backend)| {
+        let offering = cx.backends.iter().enumerate().find(|(rank, backend)| {
             *rank != usize::from(formed.backend.0) && backend.offers().iter().any(|id| id == space)
         });
         let Some((rank, backend)) = offering else {
@@ -131,7 +123,7 @@ pub(super) fn lent_rooms(
         let Some(output) = node.outputs.get(usize::from(port.port.0)) else {
             continue;
         };
-        let readers: Vec<&str> = cx
+        let readers: Vec<String> = cx
             .graph
             .edges
             .iter()
@@ -140,13 +132,16 @@ pub(super) fn lent_rooms(
                 matches!(cx.assignment.placed[edge.to.node as usize],
                     Placed::Backend(at) if usize::from(at.0) == rank)
             })
-            .map(|edge| cx.graph.nodes[edge.to.node as usize].doc.id.as_str())
+            .map(|edge| cx.graph.nodes[edge.to.node as usize].doc.id.clone())
             .collect();
-        if let Some(room) = backend.bind_offer(space, &readers) {
-            rooms.push(LentRoom { port: *port, room });
-        }
+        requests.push(RecipeLent {
+            port: *port,
+            space: space.to_string(),
+            offering: backend.id().to_string(),
+            readers,
+        });
     }
-    rooms
+    requests
 }
 
 /// How each output of the region's nodes is consumed. An output with one consumer that takes it by
@@ -229,6 +224,17 @@ fn port_at(ports: &[Port], name: &str) -> Option<PortIndex> {
 }
 
 /// The region's ports that face the host bridge: those it feeds, then those it reads.
+fn owned_hosts(bindings: Vec<HostBinding<'_>>) -> Vec<RecipeHost> {
+    bindings
+        .into_iter()
+        .map(|binding| RecipeHost {
+            port: binding.port,
+            name: binding.name.to_string(),
+            policy: binding.policy.clone(),
+        })
+        .collect()
+}
+
 fn host_bindings<'g>(
     graph: &'g Graph,
     assignment: &Assignment,

@@ -8,6 +8,7 @@ pub mod rules;
 use std::fmt;
 
 use daedalus_backend::{Backend, Compiled, PortRef, RateId};
+use daedalus_made::recipe::RegionRecipe;
 use daedalus_registry::Registry;
 use daedalus_types::BackendIndex;
 
@@ -35,6 +36,8 @@ pub struct Formed {
 pub struct CompiledRegion {
     pub formed: Formed,
     pub compiled: Compiled,
+    /// The request the region was compiled from. A made plan is written from these.
+    pub recipe: RegionRecipe,
 }
 
 #[derive(Debug)]

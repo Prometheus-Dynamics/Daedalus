@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use std::vec::Vec;
 
-use daedalus_planner::Planned;
+use daedalus_made::Bound;
 use daedalus_runner::Forward;
 use daedalus_value::Value;
 
@@ -254,8 +254,13 @@ impl Domain {
 
     /// Replaces one graph in place. Links and every other graph are kept. A plan that lacks a
     /// linked port is refused with nothing changed.
-    pub fn reload(&mut self, name: &str, planned: Planned) -> Result<ReloadReport, DomainError> {
+    pub fn reload(
+        &mut self,
+        name: &str,
+        planned: impl Into<Bound>,
+    ) -> Result<ReloadReport, DomainError> {
         let index = self.index_of(name)?;
+        let planned: Bound = planned.into();
         self.check_reload(name, index, &planned)?;
         let report = self.graphs[index].host.reload(planned);
         let report: Result<ReloadReport, ReloadError> = report;
