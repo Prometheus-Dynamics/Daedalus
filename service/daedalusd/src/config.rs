@@ -25,6 +25,9 @@ pub struct Config {
     pub listen: Vec<String>,
     /// The directory whose libraries are loaded at start.
     pub plugin_dir: Option<PathBuf>,
+    /// The directory of made plans, `*.plan`, stored at start under their file names without the
+    /// extension, in the default session. A plan is not started on its own.
+    pub plan_dir: Option<PathBuf>,
     /// Most runs held at once. Zero is no limit.
     pub max_runs: u32,
     /// Most connections served at once. Zero is the default of 64.
@@ -127,6 +130,14 @@ impl Config {
         {
             return Err(ConfigError(format!(
                 "plugin_dir: `{}` is not an absolute path",
+                dir.display()
+            )));
+        }
+        if let Some(dir) = &self.plan_dir
+            && !dir.is_absolute()
+        {
+            return Err(ConfigError(format!(
+                "plan_dir: `{}` is not an absolute path",
                 dir.display()
             )));
         }

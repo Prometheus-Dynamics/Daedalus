@@ -262,6 +262,16 @@ pub enum Op {
         limit: u32,
     },
     Ping,
+    /// Plans a stored graph with the options a start would use, and answers with the made plan.
+    MakePlan {
+        graph: String,
+        options: StartConfig,
+    },
+    /// Stores a made plan, written by `MakePlan`, under a name. Its bytes are checked when it binds.
+    PutPlan {
+        name: String,
+        bytes: Vec<u8>,
+    },
 }
 
 /// Which op a request is, without its fields. The discriminant is the op's kind byte.
@@ -285,13 +295,15 @@ pub enum OpKind {
     Cache = 15,
     Trace = 16,
     Ping = 17,
+    MakePlan = 18,
+    PutPlan = 19,
     /// An op a newer side has and this one doesn't, where one is only named: in what a server
     /// says it serves, and in a trace. It is never sent, and a request for it is refused.
     Other = 255,
 }
 
 impl OpKind {
-    pub const ALL: [OpKind; 17] = [
+    pub const ALL: [OpKind; 19] = [
         OpKind::LoadPlugin,
         OpKind::PutGraph,
         OpKind::PatchGraph,
@@ -309,6 +321,8 @@ impl OpKind {
         OpKind::Cache,
         OpKind::Trace,
         OpKind::Ping,
+        OpKind::MakePlan,
+        OpKind::PutPlan,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -330,6 +344,8 @@ impl OpKind {
             OpKind::Cache => "cache",
             OpKind::Trace => "trace",
             OpKind::Ping => "ping",
+            OpKind::MakePlan => "make_plan",
+            OpKind::PutPlan => "put_plan",
             OpKind::Other => "other",
         }
     }
@@ -379,6 +395,8 @@ impl Op {
             Op::Cache { .. } => OpKind::Cache,
             Op::Trace { .. } => OpKind::Trace,
             Op::Ping => OpKind::Ping,
+            Op::MakePlan { .. } => OpKind::MakePlan,
+            Op::PutPlan { .. } => OpKind::PutPlan,
         }
     }
 
@@ -405,6 +423,8 @@ impl Op {
                 InspectTarget::Telemetry(run) => format!("telemetry:{run}"),
                 InspectTarget::Host => "host".to_owned(),
             },
+            Op::MakePlan { graph, .. } => graph.clone(),
+            Op::PutPlan { name, .. } => name.clone(),
             Op::Cache { .. } | Op::Trace { .. } | Op::Ping => String::new(),
         }
     }
@@ -424,6 +444,14 @@ impl Op {
             Op::Plan { graph, options } => {
                 out.str(graph)?;
                 options.encode(out)?;
+            }
+            Op::MakePlan { graph, options } => {
+                out.str(graph)?;
+                options.encode(out)?;
+            }
+            Op::PutPlan { name, bytes } => {
+                out.str(name)?;
+                out.bytes(bytes)?;
             }
             Op::Start { graph, config } => {
                 out.str(graph)?;
@@ -571,6 +599,14 @@ impl Op {
                 limit: input.u32()?,
             },
             OpKind::Ping => Op::Ping,
+            OpKind::MakePlan => Op::MakePlan {
+                graph: input.str()?,
+                options: StartConfig::decode(input)?,
+            },
+            OpKind::PutPlan => Op::PutPlan {
+                name: input.str()?,
+                bytes: input.bytes()?,
+            },
             // `from_byte` gives only the ops in `ALL`.
             OpKind::Other => return Err(WireError::UnknownOp(OpKind::Other as u8)),
         })

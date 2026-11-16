@@ -1,8 +1,9 @@
 use daedalus_backend::{SpaceKind, TransferCost};
 use daedalus_graph::{EdgeDoc, NodeDoc};
+use daedalus_made::{Item, Stitched};
 use daedalus_plan::encode;
 use daedalus_planner::regions::RegionError;
-use daedalus_planner::stitch::{Item, StitchError, Stitched};
+use daedalus_planner::stitch::StitchError;
 use daedalus_planner_tests::{Mem, decl, edge, node, stitched, u8_ty};
 use daedalus_registry::Registry;
 

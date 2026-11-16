@@ -22,7 +22,7 @@ use crate::api::{PlanError, Planned, plan};
 use crate::config::Config;
 use crate::form::Form;
 use crate::solve::Graph;
-use crate::stitch::Item;
+use daedalus_made::Item;
 
 /// The id of the built-in backend that holds control nodes.
 pub const CONTROL_BACKEND: &str = "daedalus.control";
@@ -126,7 +126,7 @@ fn take_steps(
     Ok((steps, covers))
 }
 
-fn host_slots(ports: &[crate::stitch::HostPort]) -> BTreeMap<String, u32> {
+fn host_slots(ports: &[daedalus_made::HostPort]) -> BTreeMap<String, u32> {
     ports
         .iter()
         .map(|port| (port.port.clone(), port.slot))

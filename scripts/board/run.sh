@@ -115,6 +115,33 @@ cross_env() { # rust target: prints the environment a cross build of it needs, o
   esac
 }
 
+make_plan_bundle() { # the graph's made plan, from this machine's own full daemon, into the bundle
+  local native="$target_dir/release" fixture="$out/native-fixture" work="$out/plan-run" pid tries
+  echo "board: making the graph's plan with this machine's daemon"
+  cargo build -q --release -p daedalusd -p daedalus-ctl 2>>"$out/build.log" ||
+    { tail -20 "$out/build.log" >&2; die "the daemon's build failed: $out/build.log"; }
+  cargo build -q --release --manifest-path testing/fixtures/dylib/Cargo.toml \
+    --target-dir "$fixture" 2>>"$out/build.log" ||
+    { tail -20 "$out/build.log" >&2; die "the plugin's build failed: $out/build.log"; }
+  mkdir -p "$work/plugins"
+  cp "$fixture/release/libdaedalus_dylib_fixture.so" "$work/plugins/fixture.so"
+  printf 'listen = ["unix:%s"]\nplugin_dir = "%s"\n' "$work/d.sock" "$work/plugins" > "$work/daedalusd.toml"
+  "$native/daedalusd" --config "$work/daedalusd.toml" > "$work/daemon.log" 2>&1 &
+  pid=$!
+  tries=0
+  until "$native/daedalus-ctl" --socket "$work/d.sock" ping >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 500 ] || ! kill -0 "$pid" 2>/dev/null; then break; fi
+    sleep 0.05
+  done
+  "$native/daedalus-ctl" --socket "$work/d.sock" put-graph g "$out/bundle/g.json" >/dev/null 2>&1 &&
+    "$native/daedalus-ctl" --socket "$work/d.sock" make-plan g --out "$out/bundle/g.plan" >/dev/null 2>&1
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  [ -s "$out/bundle/g.plan" ] || { tail -5 "$work/daemon.log" >&2; die "the plan wasn't made: $work/daemon.log"; }
+  echo "board: the plan is $(wc -c < "$out/bundle/g.plan") bytes"
+}
+
 measure_bundle() { # rust target: the programs a measurement runs, under $out/bundle
   local target="$1" env=() line release
   rm -rf "$out"
@@ -135,6 +162,11 @@ measure_bundle() { # rust target: the programs a measurement runs, under $out/bu
   cp "$release/daedalus-process-timings" "$out/bundle/bin/process-timings"
   cp "$release/daedalus-worker-fixture" "$out/bundle/bin/worker-fixture"
   cp "$release/daedalusd" "$release/daedalus-ctl" "$out/bundle/bin/"
+  # The daemon built without the planner, which loads the plan below (`put-plan`), and nothing else.
+  env "${env[@]}" cargo build --release --target "$target" -p daedalusd --no-default-features \
+    --target-dir "$out/lean-target" 2>>"$out/build.log" ||
+    { tail -20 "$out/build.log" >&2; die "the lean daemon's build failed: $out/build.log"; }
+  cp "$out/lean-target/$target/release/daedalusd" "$out/bundle/bin/daedalusd-lean"
   cp "$out/fixture-target/$target/release/libdaedalus_dylib_fixture.so" "$out/bundle/lib/"
   # The scorecard's other column: the same measurements against the reference revision, where
   # a checkout of it is beside this repository (testing/board-runs/scorecard/README.md).
@@ -149,6 +181,7 @@ measure_bundle() { # rust target: the programs a measurement runs, under $out/bu
   fi
   # The graph the daemon is given, made by this machine's own build of the same program.
   cargo run -q --release -p daedalus-cpu-timings -- daemon_graph > "$out/bundle/g.json"
+  make_plan_bundle
   cp scripts/board/measure-on-board.sh "$out/bundle/"
   git rev-parse --short HEAD > "$out/results/rev.txt" 2>/dev/null || true
   du -sh "$out/bundle" | sed 's/^/board: the bundle is /'

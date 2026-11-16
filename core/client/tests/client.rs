@@ -79,6 +79,11 @@ fn reply_for(request: &Request, sub: u64) -> Result<Reply, ServiceError> {
             hash: 9,
             ..PlanSummary::default()
         }),
+        Op::MakePlan { graph, .. } => Reply::Made {
+            hash: 1,
+            bytes: graph.clone().into_bytes(),
+        },
+        Op::PutPlan { .. } => Reply::Ack,
         Op::Start { .. } => Reply::Started { run: 7 },
         Op::Feed { .. } => Reply::Fed {
             woke: 1,
@@ -331,6 +336,9 @@ fn every_op_has_a_typed_method() {
     assert!(tools.put_graph("g", "{}").unwrap().is_empty());
     assert!(tools.patch_graph("g", "{}").unwrap().is_empty());
     assert_eq!(tools.plan("g", PlanOptions::default()).unwrap().hash, 9);
+    let (hash, bytes) = tools.make_plan("g", StartConfig::default()).unwrap();
+    assert_eq!((hash, bytes), (1, b"g".to_vec()));
+    tools.put_plan("g", b"g").unwrap();
     let run = tools.start("g", StartConfig::default()).unwrap();
     assert_eq!(run, 7);
     let value = TypedValue::new(

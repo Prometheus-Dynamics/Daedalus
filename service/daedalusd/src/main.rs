@@ -138,6 +138,38 @@ fn within_grace(mut done: impl FnMut() -> bool) -> bool {
     true
 }
 
+/// Stores each `*.plan` file in `dir` under its file stem, in the default session.
+fn store_plans(host: &ServiceHost, dir: &std::path::Path) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warning!("plan_dir {}: {error}", dir.display());
+            return;
+        }
+    };
+    let mut paths: Vec<_> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "plan"))
+        .collect();
+    paths.sort();
+    for path in paths {
+        let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            warning!("plan {}: its name is not text", path.display());
+            continue;
+        };
+        let stored = std::fs::read(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                host.put_plan(daedalus_wire::service::DEFAULT_SESSION, name, &bytes)
+                    .map_err(|error| error.message)
+            });
+        match stored {
+            Ok(()) => info!("plan {name} stored"),
+            Err(error) => warning!("plan {}: {error}", path.display()),
+        }
+    }
+}
+
 fn run(args: &Args, config: &Config) -> Result<bool, String> {
     let stop = Stop::install().map_err(|error| format!("signal handlers: {error}"))?;
     let probes: Probes = Arc::new(Mutex::new(Vec::new()));
@@ -163,6 +195,11 @@ fn run(args: &Args, config: &Config) -> Result<bool, String> {
         None => Vec::new(),
     };
     let retrying = plugins::retry_in_background(Arc::clone(&host), failed, stop.flag());
+
+    // Made plans next. A file that doesn't read or bind is logged and skipped; nothing starts.
+    if let Some(dir) = &config.plan_dir {
+        store_plans(&host, dir);
+    }
 
     let mut listeners = adopted(&host);
     if listeners.is_empty() && !args.stdio {

@@ -1,7 +1,7 @@
 //! Where a value lives, under generic space names.
 
 use daedalus_backend::{SpaceKind, TransferCost};
-use daedalus_planner::stitch::{Item, Stitched};
+use daedalus_made::{Item, Stitched};
 use daedalus_planner_tests::{Mem, decl, edge, node, stitched, u8_ty};
 use daedalus_registry::Registry;
 

@@ -69,10 +69,9 @@ fi
 } > "$out/worker.txt" 2>&1
 
 # The daemon: what it holds idle, with a plugin and a graph loaded, and after a run has stepped.
-mkdir -p "$here/daemon/plugins"
-cp "$here/lib/libdaedalus_dylib_fixture.so" "$here/daemon/plugins/fixture.so"
-printf 'listen = ["unix:%s"]\nplugin_dir = "%s"\n' "$here/daemon/d.sock" "$here/daemon/plugins" \
-  > "$here/daemon/daedalusd.toml"
+# Two daemons are measured at the same points, into two files with the same names: the full one
+# plans its graph, and the lean one (built without the planner) loads the plan the bundle carries,
+# which the full one made from the same graph.
 # Nanoseconds now. A busybox `date` prints `%N` as it is, so a board without a finer clock in
 # `date` reads /proc/uptime, whose resolution is 10 ms, and the figure says which it was.
 now_ns() {
@@ -90,58 +89,99 @@ case "$(date +%s%N 2>/dev/null)" in
   '' | *[!0-9]*) clock_resolution_ns=10000000 ;;
   *) clock_resolution_ns=1 ;;
 esac
-started="$(now_ns)"
-./bin/daedalusd --config "$here/daemon/daedalusd.toml" > "$out/daedalusd.log" 2>&1 &
-daemon=$!
-echo "$daemon" > "$here/daemon.pid"
-ctl() { ./bin/daedalus-ctl --socket "$here/daemon/d.sock" "$@"; }
-tries=0
-until ctl ping >/dev/null 2>&1; do
-  tries=$((tries + 1))
-  if [ "$tries" -gt 500 ] || ! kill -0 "$daemon" 2>/dev/null; then break; fi
-  sleep 0.01 2>/dev/null || sleep 1
-done
-answered="$(now_ns)"
-{
-  echo "daemon_start_to_first_answer_ns $((answered - started)) resolution_ns $clock_resolution_ns"
-  echo "daemon_rss_idle_kb $(rss_kb "$daemon")"
-  ctl put-graph g "$here/g.json" >/dev/null 2>&1
-  ctl plan g >/dev/null 2>&1
-  echo "daemon_rss_graph_planned_kb $(rss_kb "$daemon")"
-  ctl start g >/dev/null 2>&1
-  ctl feed 1 in u32:5 >/dev/null 2>&1
-  ctl step 1 >/dev/null 2>&1
-  echo "daemon_rss_one_run_first_step_kb $(rss_kb "$daemon")"
-  n=0
-  while [ "$n" -lt 200 ]; do
-    ctl feed 1 in u32:7 >/dev/null 2>&1
+
+ctl() { ./bin/daedalus-ctl --socket "$socket" "$@"; }
+
+# Waits until the daemon in $daemon answers on $socket, and stops when it has gone.
+wait_for_daemon() {
+  tries=0
+  until ctl ping >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 500 ] || ! kill -0 "$daemon" 2>/dev/null; then break; fi
+    sleep 0.01 2>/dev/null || sleep 1
+  done
+}
+
+# Starts a daemon with the config in $1 and its log in $2, on the socket in $3, and sets daemon,
+# socket, started and answered.
+start_daemon() {
+  started="$(now_ns)"
+  ./bin/"$4" --config "$1" > "$2" 2>&1 &
+  daemon=$!
+  echo "$daemon" > "$here/daemon.pid"
+  socket="$3"
+  wait_for_daemon
+  answered="$(now_ns)"
+}
+
+stop_daemon() {
+  kill "$daemon" 2>/dev/null
+  wait "$daemon" 2>/dev/null
+  rm -f "$here/daemon.pid"
+}
+
+# The figures of the daemon started by start_daemon, taken at the same points for both daemons.
+# $1 is the file to write; $2 is the commands that give the daemon its graph, run in order.
+daemon_figures() {
+  {
+    echo "daemon_start_to_first_answer_ns $((answered - started)) resolution_ns $clock_resolution_ns"
+    echo "daemon_rss_idle_kb $(rss_kb "$daemon")"
+    eval "$2"
+    echo "daemon_rss_graph_planned_kb $(rss_kb "$daemon")"
+    ctl start g >/dev/null 2>&1
+    ctl feed 1 in u32:5 >/dev/null 2>&1
     ctl step 1 >/dev/null 2>&1
-    ctl take 1 out >/dev/null 2>&1
-    n=$((n + 1))
-  done
-  echo "daemon_rss_after_200_round_trips_kb $(rss_kb "$daemon")"
-  echo "daemon_rss_peak_kb $(sed -n 's/^VmHWM:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$daemon/status")"
-  echo "daemon_threads $(sed -n 's/^Threads:[[:space:]]*//p' "/proc/$daemon/status")"
-  # Connections held open: each is a session thread and its writer. The watchers are stopped by
-  # the pids taken when they were started.
-  vm_kb() { sed -n "s/^$2:[[:space:]]*\([0-9]*\).*/\1/p" "/proc/$1/status"; }
-  echo "daemon_vmsize_0_connections_kb $(vm_kb "$daemon" VmSize)"
-  watchers=""
-  n=0
-  while [ "$n" -lt 32 ]; do
-    ctl watch all > /dev/null 2>&1 &
-    watchers="$watchers $!"
-    n=$((n + 1))
-  done
-  sleep 1
-  echo "daemon_rss_32_connections_kb $(rss_kb "$daemon")"
-  echo "daemon_vmsize_32_connections_kb $(vm_kb "$daemon" VmSize)"
-  echo "daemon_threads_32_connections $(sed -n 's/^Threads:[[:space:]]*//p' "/proc/$daemon/status")"
-  for watcher in $watchers; do kill "$watcher" 2>/dev/null; done
-  for watcher in $watchers; do wait "$watcher" 2>/dev/null; done
-} > "$out/daemon.txt" 2>&1
+    echo "daemon_rss_one_run_first_step_kb $(rss_kb "$daemon")"
+    n=0
+    while [ "$n" -lt 200 ]; do
+      ctl feed 1 in u32:7 >/dev/null 2>&1
+      ctl step 1 >/dev/null 2>&1
+      ctl take 1 out >/dev/null 2>&1
+      n=$((n + 1))
+    done
+    echo "daemon_rss_after_200_round_trips_kb $(rss_kb "$daemon")"
+    echo "daemon_rss_peak_kb $(sed -n 's/^VmHWM:[[:space:]]*\([0-9]*\).*/\1/p' "/proc/$daemon/status")"
+    echo "daemon_threads $(sed -n 's/^Threads:[[:space:]]*//p' "/proc/$daemon/status")"
+    # Connections held open: each is a session thread and its writer. The watchers are stopped by
+    # the pids taken when they were started.
+    vm_kb() { sed -n "s/^$2:[[:space:]]*\([0-9]*\).*/\1/p" "/proc/$1/status"; }
+    echo "daemon_vmsize_0_connections_kb $(vm_kb "$daemon" VmSize)"
+    watchers=""
+    n=0
+    while [ "$n" -lt 32 ]; do
+      ctl watch all > /dev/null 2>&1 &
+      watchers="$watchers $!"
+      n=$((n + 1))
+    done
+    sleep 1
+    echo "daemon_rss_32_connections_kb $(rss_kb "$daemon")"
+    echo "daemon_vmsize_32_connections_kb $(vm_kb "$daemon" VmSize)"
+    echo "daemon_threads_32_connections $(sed -n 's/^Threads:[[:space:]]*//p' "/proc/$daemon/status")"
+    for watcher in $watchers; do kill "$watcher" 2>/dev/null; done
+    for watcher in $watchers; do wait "$watcher" 2>/dev/null; done
+  } > "$1" 2>&1
+}
+
+mkdir -p "$here/daemon/plugins"
+cp "$here/lib/libdaedalus_dylib_fixture.so" "$here/daemon/plugins/fixture.so"
+printf 'listen = ["unix:%s"]\nplugin_dir = "%s"\n' "$here/daemon/d.sock" "$here/daemon/plugins" \
+  > "$here/daemon/daedalusd.toml"
+start_daemon "$here/daemon/daedalusd.toml" "$out/daedalusd.log" "$here/daemon/d.sock" daedalusd
+daemon_figures "$out/daemon.txt" 'ctl put-graph g "$here/g.json" >/dev/null 2>&1; ctl plan g >/dev/null 2>&1'
 # The one process this stops is the daemon it started.
-kill "$daemon" 2>/dev/null
-wait "$daemon" 2>/dev/null
-rm -f "$here/daemon.pid"
+stop_daemon
+
+# The lean daemon: the same figures, from the plan the bundle carries. It has no planner, so it is
+# given the plan the full daemon made and stores it, then runs it the same way.
+if [ -x ./bin/daedalusd-lean ] && [ -s "$here/g.plan" ]; then
+  mkdir -p "$here/daemon-lean/plugins"
+  cp "$here/lib/libdaedalus_dylib_fixture.so" "$here/daemon-lean/plugins/fixture.so"
+  printf 'listen = ["unix:%s"]\nplugin_dir = "%s"\n' "$here/daemon-lean/d.sock" "$here/daemon-lean/plugins" \
+    > "$here/daemon-lean/daedalusd.toml"
+  start_daemon "$here/daemon-lean/daedalusd.toml" "$out/daedalusd-lean.log" "$here/daemon-lean/d.sock" daedalusd-lean
+  daemon_figures "$out/daemon-lean.txt" 'ctl put-plan g "$here/g.plan" >/dev/null 2>&1'
+  stop_daemon
+else
+  echo "the bundle carries no lean daemon or no plan" > "$out/daemon-lean.txt"
+fi
 echo done > "$out/finished.txt"

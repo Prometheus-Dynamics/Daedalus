@@ -7,7 +7,7 @@ use daedalus_backend::Compiled;
 use daedalus_cpu::CpuBackend;
 use daedalus_cpu::steps::CpuStepBody;
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, NodeDoc, PortRefDoc};
-use daedalus_planner::stitch::Item;
+use daedalus_made::Item;
 use daedalus_planner::{Config, plan};
 use daedalus_registry::{OwnedBody, OwnedDecl, OwnedPort, Registry, TypeRef};
 use daedalus_runner::{UNSTAMPED, put_typed, typed_view};

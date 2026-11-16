@@ -97,6 +97,15 @@ MEASURED = {
         "daemon_rss_32_connections_kb",
         "daemon_vmsize_32_connections_kb",
     ],
+    # The daemon built without the planner, loading the plan the full daemon made: the same
+    # figures at the same points.
+    "daemon-lean.txt": [
+        "daemon_rss_idle_kb",
+        "daemon_rss_graph_planned_kb",
+        "daemon_rss_after_200_round_trips_kb",
+        "daemon_rss_32_connections_kb",
+        "daemon_vmsize_32_connections_kb",
+    ],
 }
 
 
@@ -212,6 +221,9 @@ def self_test():
         "worker.txt": "round_trip median_ns 9.0\nhand_over megabytes 1 median_ns 8\n",
         "daemon.txt": "daemon_rss_idle_kb 900\ndaemon_rss_after_200_round_trips_kb 950\n"
         "daemon_rss_32_connections_kb 990\ndaemon_vmsize_32_connections_kb 9000\n",
+        "daemon-lean.txt": "daemon_rss_idle_kb 700\ndaemon_rss_graph_planned_kb 720\n"
+        "daemon_rss_after_200_round_trips_kb 760\ndaemon_rss_32_connections_kb 800\n"
+        "daemon_vmsize_32_connections_kb 8000\n",
     }
     expect("measure: a whole run passes", measure(whole), None)
     cut = dict(whole)
@@ -222,6 +234,11 @@ def self_test():
     expect("measure: a missing file fails", measure(gone), "worker.txt is missing")
     empty = dict(whole, **{"daemon.txt": "daemon_rss_idle_kb \n"})
     expect("measure: a figure with no number fails", measure(empty), "no number")
+    lean_gone = dict(whole)
+    del lean_gone["daemon-lean.txt"]
+    expect("measure: a run without the lean daemon's figures fails", measure(lean_gone), "daemon-lean.txt is missing")
+    no_plan = dict(whole, **{"daemon-lean.txt": "the bundle carries no lean daemon or no plan\n"})
+    expect("measure: a lean run that never loaded a plan fails", measure(no_plan), "no daemon_rss_idle_kb figure")
     crashed = dict(whole, **{"timings.txt": whole["timings.txt"] + "thread main panicked\n"})
     expect("measure: a panic fails", measure(crashed), "panicked")
     if failed:

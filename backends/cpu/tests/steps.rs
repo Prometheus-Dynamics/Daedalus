@@ -11,7 +11,7 @@ use daedalus_cpu::CpuBackend;
 use daedalus_cpu_author::{Ctx, FanIn};
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, Lit, NodeDoc, PortRefDoc};
 use daedalus_macros::node;
-use daedalus_planner::stitch::Item;
+use daedalus_made::Item;
 use daedalus_planner::{Config, plan};
 use daedalus_registry::Registry;
 use daedalus_runner::{put_typed, typed_view};

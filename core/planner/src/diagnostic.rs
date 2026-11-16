@@ -63,6 +63,7 @@ pub enum Code {
     ControlBodyInvalid,
     ControlMaxInvalid,
     ControlBodyWaits,
+    MadeUnavailable,
 }
 
 /// Only errors stop planning. Warnings come back with the plan.
@@ -345,6 +346,9 @@ impl PlanError {
                 vec![Diagnostic::error(Code::TransferUnavailable, self)]
             }
             PlanError::Control { .. } => vec![Diagnostic::error(Code::ControlBodyInvalid, self)],
+            PlanError::MadeUnavailable { .. } => {
+                vec![Diagnostic::error(Code::MadeUnavailable, self)]
+            }
             PlanError::Encode(_) => vec![Diagnostic::error(Code::Encode, self)],
             PlanError::Write { .. } => vec![Diagnostic::error(Code::Write, self)],
         }

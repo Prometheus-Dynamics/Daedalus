@@ -1,9 +1,10 @@
 //! Assign, form, compile; when a backend refuses, take that choice away and go again.
 
 use daedalus_backend::{Compiled, Refusal};
+use daedalus_made::recipe::RegionRecipe;
 use daedalus_types::NodeIndex;
 
-use super::compile::{Compiling, check_contract, compile_region, lent_rooms};
+use super::compile::{Compiling, check_contract, region_recipe};
 use super::form::{form, rank};
 use super::{CompiledRegion, Formed, Input, RegionError, Regions, rules};
 use crate::assign::{self, Removed};
@@ -42,8 +43,8 @@ fn refused_nodes(
     Ok(nodes)
 }
 
-fn discard_all(done: Vec<Compiled>) {
-    done.into_iter().for_each(discard);
+fn discard_all(done: Vec<(RegionRecipe, Compiled)>) {
+    done.into_iter().for_each(|(_, compiled)| discard(compiled));
 }
 
 pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
@@ -84,7 +85,6 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
             graph,
             backends,
             registry,
-            types,
             assignment: &assignment,
             merge_allowed,
             freeze_params,
@@ -96,22 +96,21 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
         for (region, one) in formed.iter().enumerate() {
             let backend = backends[rank(one.backend)];
             let placed = routing.placed_of(&one.outputs);
-            let lent = lent_rooms(&cx, backends, one, &placed);
-            match compile_region(
+            let recipe = region_recipe(
                 &cx,
                 one,
                 backend,
                 &routing.incoming_of(region),
                 &placed,
                 &routing.read_in_of(&one.inputs),
-                &lent,
-            ) {
+            );
+            match recipe.compile(backends, registry, types.exprs()) {
                 Ok(compiled) => {
                     if let Err(error) = check_contract(one, region as u32, backend.id(), &compiled)
                     {
                         failure.get_or_insert(error);
                     }
-                    done.push(compiled);
+                    done.push((recipe, compiled));
                 }
                 Err(refusal) => refusals.push((region, refusal)),
             }
@@ -124,7 +123,11 @@ pub fn build(input: &Input<'_>) -> Result<Regions, RegionError> {
             let regions = formed
                 .into_iter()
                 .zip(done)
-                .map(|(formed, compiled)| CompiledRegion { formed, compiled })
+                .map(|(formed, (recipe, compiled))| CompiledRegion {
+                    formed,
+                    compiled,
+                    recipe,
+                })
                 .collect();
             return Ok(Regions {
                 assignment,

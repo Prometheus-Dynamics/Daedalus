@@ -52,6 +52,7 @@ daedalus-graph = { path = "../../core/graph" }
 daedalus-host = { path = "../../core/host" }
 daedalus-plan = { path = "../../core/plan" }
 daedalus-planner = { path = "../../core/planner" }
+daedalus-made = { path = "../../core/made" }
 daedalus-registry = { path = "../../core/registry" }
 
 [lints]

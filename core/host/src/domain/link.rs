@@ -7,7 +7,7 @@ use std::fmt;
 use std::string::String;
 use std::vec::Vec;
 
-use daedalus_planner::Planned;
+use daedalus_made::Bound;
 
 use super::Domain;
 use crate::load::type_text;
@@ -192,7 +192,7 @@ impl Domain {
         &mut self,
         name: &str,
         index: usize,
-        planned: &Planned,
+        bound: &Bound,
     ) -> Result<(), DomainError> {
         let links: Vec<(String, Dir)> = self
             .links
@@ -207,7 +207,7 @@ impl Domain {
                 }
             })
             .collect();
-        let stitched = &planned.stitched;
+        let stitched = &bound.facts.stitched;
         for (port, dir) in links {
             let list = match dir {
                 Dir::Input => &stitched.host_inputs,
@@ -217,7 +217,7 @@ impl Domain {
             let same_type = offered.is_some_and(|candidate| {
                 let ty = stitched.slots[candidate.slot as usize].ty;
                 let key = ty
-                    .and_then(|ty| planned.types.exprs().get(ty as usize))
+                    .and_then(|ty| bound.facts.types.get(ty as usize))
                     .map(type_text);
                 let running = self.graphs[index]
                     .host

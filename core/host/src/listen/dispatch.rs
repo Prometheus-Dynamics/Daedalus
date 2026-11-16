@@ -2,23 +2,14 @@
 //! with an error, and the host goes on.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::string::{String, ToString};
+use std::string::String;
 use std::sync::Arc;
 use std::vec::Vec;
 
-use daedalus_backend::Backend;
-use daedalus_graph::{GraphBody, GraphDoc, GraphPatch};
-use daedalus_planner::cache::PlanKey;
-use daedalus_planner::edit::patch::apply_patch;
-use daedalus_planner::explain::{explain_plan, json::to_json};
-use daedalus_planner::hash::plan_hash;
-use daedalus_planner::lint::lint;
-use daedalus_planner::{Config, Form, Planned, plan, solve};
 use daedalus_wire::service::{
-    CacheAction, CacheInfo, CarryReport, Diagnostic, EndReason, ErrorCode, EventBody, EventKinds,
-    HostInfo, InspectTarget, Inspection, Names, Op, PlanForm, PlanOptions, PlanSummary, PluginInfo,
-    Reply, Request, Response, RunId, ServiceError, Severity, StartConfig, StepSummary, StopMode,
-    TelemetryEvent, TypedValue,
+    CacheAction, CarryReport, EndReason, ErrorCode, EventBody, EventKinds, HostInfo, InspectTarget,
+    Inspection, Names, Op, PluginInfo, Reply, Request, Response, RunId, ServiceError, StartConfig,
+    StepSummary, StopMode, TelemetryEvent, TypedValue,
 };
 
 use super::runs::RunEntry;
@@ -32,26 +23,6 @@ type Answer = Result<Reply, ServiceError>;
 
 fn refuse(code: ErrorCode, message: impl Into<String>) -> ServiceError {
     ServiceError::new(code, message)
-}
-
-fn diagnostics(found: &[daedalus_planner::diagnostic::Diagnostic]) -> Vec<Diagnostic> {
-    found
-        .iter()
-        .map(|item| Diagnostic {
-            severity: match item.severity {
-                daedalus_planner::diagnostic::Severity::Error => Severity::Error,
-                daedalus_planner::diagnostic::Severity::Warning => Severity::Warning,
-            },
-            // The planner's code as it names it in JSON: snake case.
-            code: serde_json::to_value(item.code)
-                .ok()
-                .and_then(|code| code.as_str().map(String::from))
-                .unwrap_or_default(),
-            message: item.message.clone(),
-            node: item.node.clone(),
-            port: item.port.clone(),
-        })
-        .collect()
 }
 
 fn names(list: &BoundedNames) -> Names {
@@ -72,14 +43,6 @@ fn carry(report: &ReloadReport) -> CarryReport {
     }
 }
 
-fn form(form: PlanForm) -> Form {
-    match form {
-        PlanForm::Steps => Form::Steps,
-        PlanForm::Blob => Form::Blob,
-        PlanForm::Source => Form::Source,
-    }
-}
-
 fn port_error(error: &HostError) -> ServiceError {
     let code = match error {
         HostError::UnknownPort { .. }
@@ -90,57 +53,6 @@ fn port_error(error: &HostError) -> ServiceError {
         _ => ErrorCode::ValueType,
     };
     refuse(code, crate::render_error(error))
-}
-
-impl Engine {
-    fn graph(&self, session: &str, name: &str) -> Result<&GraphBody, ServiceError> {
-        self.graphs
-            .get(session)
-            .and_then(|graphs| graphs.get(name))
-            .ok_or_else(|| {
-                refuse(
-                    ErrorCode::UnknownGraph,
-                    std::format!("session `{session}` has no graph `{name}`"),
-                )
-            })
-    }
-
-    fn backends(&self) -> Vec<&dyn Backend> {
-        self.backends.iter().map(|backend| &**backend).collect()
-    }
-
-    /// What solving and linting `graph` finds, without planning it.
-    fn check(&self, graph: &GraphBody) -> Vec<Diagnostic> {
-        let config = Config {
-            lints: true,
-            ..Config::default()
-        };
-        match solve(graph, &self.registry, &config) {
-            Ok(solved) => diagnostics(&lint(&solved, &self.registry)),
-            Err(errors) => {
-                let found: Vec<_> = errors.iter().map(Into::into).collect();
-                diagnostics(&found)
-            }
-        }
-    }
-
-    /// Plans a stored graph in the steps form, ready to load.
-    fn plan_steps(
-        &self,
-        session: &str,
-        name: &str,
-        config: &StartConfig,
-    ) -> Result<Planned, ServiceError> {
-        let planning = Config {
-            priority: config.priority.clone(),
-            merge: !config.unmerged,
-            ..Config::default()
-        };
-        let graph = self.graph(session, name)?;
-        plan(graph, &self.registry, &self.backends(), &planning).map_err(|error| {
-            ServiceError::planning(error.to_string(), diagnostics(&error.diagnostics()))
-        })
-    }
 }
 
 impl ServiceHost {
@@ -182,6 +94,8 @@ impl ServiceHost {
             Op::PutGraph { name, json } => self.put_graph(space, name, json),
             Op::PatchGraph { graph, patch } => self.patch_graph(space, graph, patch),
             Op::Plan { graph, options } => self.plan(space, graph, options),
+            Op::MakePlan { graph, options } => self.make_plan(space, graph, options),
+            Op::PutPlan { name, bytes } => self.put_plan(space, name, bytes).map(|()| Reply::Ack),
             Op::Start { graph, config } => self.start(space, graph, config),
             Op::Feed { run, port, value } => self.feed(&self.run(*run)?, port, value),
             Op::Step { run, count } => self.step(&self.run(*run)?, *count),
@@ -211,12 +125,7 @@ impl ServiceHost {
             Op::Inspect { target } => self.inspect(space, target).map(Reply::Inspection),
             Op::Cache {
                 action: CacheAction::Clear,
-            } => {
-                let mut engine = lock(&self.engine);
-                let capacity = self.options().plan_cache.max(1);
-                engine.cache = daedalus_planner::cache::PlanCache::new(capacity);
-                Ok(Reply::Ack)
-            }
+            } => self.clear_cache(),
             Op::Trace { limit } => Ok(Reply::Trace(lock(&self.trace).recent(*limit))),
         }
     }
@@ -244,110 +153,6 @@ impl ServiceHost {
         Ok(info)
     }
 
-    fn put_graph(&self, session: &str, name: &str, json: &str) -> Answer {
-        if name.is_empty() {
-            return Err(refuse(ErrorCode::InvalidRequest, "a graph needs a name"));
-        }
-        let doc = GraphDoc::parse(json)
-            .map_err(|error| refuse(ErrorCode::InvalidRequest, error.to_string()))?;
-        let mut engine = lock(&self.engine);
-        let diagnostics = engine.check(&doc.graph);
-        engine
-            .graphs
-            .entry(String::from(session))
-            .or_default()
-            .insert(String::from(name), doc.graph);
-        Ok(Reply::Graph {
-            name: String::from(name),
-            diagnostics,
-        })
-    }
-
-    fn patch_graph(&self, session: &str, name: &str, patch: &str) -> Answer {
-        let patch = GraphPatch::parse(patch)
-            .map_err(|error| refuse(ErrorCode::InvalidRequest, error.to_string()))?;
-        let mut engine = lock(&self.engine);
-        let mut graph = engine.graph(session, name)?.clone();
-        let report = apply_patch(&mut graph, &patch)
-            .map_err(|error| refuse(ErrorCode::InvalidRequest, std::format!("{error:?}")))?;
-        let mut diagnostics: Vec<Diagnostic> = report
-            .not_found
-            .iter()
-            .map(|missing| Diagnostic {
-                severity: Severity::Warning,
-                code: String::from("selector_not_found"),
-                message: std::format!(
-                    "op {} selects a node the graph does not have: {:?}",
-                    missing.op,
-                    missing.selector
-                ),
-                node: missing.selector.id.clone(),
-                port: None,
-            })
-            .collect();
-        diagnostics.extend(engine.check(&graph));
-        if let Some(graphs) = engine.graphs.get_mut(session) {
-            graphs.insert(String::from(name), graph);
-        }
-        Ok(Reply::Graph {
-            name: String::from(name),
-            diagnostics,
-        })
-    }
-
-    fn plan(&self, session: &str, name: &str, options: &PlanOptions) -> Answer {
-        let mut engine = lock(&self.engine);
-        let config = Config {
-            priority: options.priority.clone(),
-            lints: true,
-            form: form(options.form),
-            ..Config::default()
-        };
-        let key = {
-            let graph = engine.graph(session, name)?;
-            PlanKey::new(graph, &engine.registry, &engine.backends(), &config)
-        };
-        // An inspection is made from the plan itself, so it is planned again.
-        if !options.inspect
-            && let Some(summary) = engine.cache.get(&key)
-        {
-            let mut summary = summary.clone();
-            summary.graph = String::from(name);
-            summary.cached = true;
-            return Ok(Reply::Plan(summary));
-        }
-        let graph = engine.graph(session, name)?;
-        let backends = engine.backends();
-        let planned = plan(graph, &engine.registry, &backends, &config).map_err(|error| {
-            ServiceError::planning(error.to_string(), diagnostics(&error.diagnostics()))
-        })?;
-        let summary = PlanSummary {
-            graph: String::from(name),
-            // A plan with no stored encoding is named by what it was made from.
-            hash: plan_hash(&planned, &config, &backends)
-                .unwrap_or(key.graph_hash() ^ key.settings_hash().rotate_left(1)),
-            form: options.form,
-            nodes: planned.graph.nodes.len() as u32,
-            edges: planned.graph.edges.len() as u32,
-            regions: planned.regions.regions.len() as u32,
-            steps: planned.stitched.layout.len() as u32,
-            cached: false,
-            diagnostics: diagnostics(&planned.warnings),
-            explain: match options.inspect {
-                true => Some(
-                    to_json(&explain_plan(&planned))
-                        .map_err(|error| refuse(ErrorCode::InvalidRequest, error.to_string()))?,
-                ),
-                false => None,
-            },
-        };
-        drop(planned);
-        let mut stored = summary.clone();
-        stored.explain = None;
-        engine.cache.insert(key, stored);
-        Ok(Reply::Plan(summary))
-    }
-
     fn load_options(config: &StartConfig) -> LoadOptions {
         let defaults = LoadOptions::default();
         LoadOptions {
@@ -372,8 +177,8 @@ impl ServiceHost {
                 std::format!("the host holds {limit} runs at once"),
             ));
         }
-        let planned = lock(&self.engine).plan_steps(session, name, config)?;
-        let host = LoadedHost::load(planned, Self::load_options(config))
+        let bound = lock(&self.engine).bound(session, name, config)?;
+        let host = LoadedHost::load(bound, Self::load_options(config))
             .map_err(|error| ServiceError::planning(error.to_string(), Vec::new()))?;
         let run = self.next_run();
         let entry = Arc::new(RunEntry::new(run, session, name, host, config.clone()));
@@ -490,10 +295,10 @@ impl ServiceHost {
     fn reload(&self, session: &str, entry: &Arc<RunEntry>, name: &str) -> Answer {
         entry.live()?;
         let config = lock(&entry.run).config.clone();
-        let planned = lock(&self.engine).plan_steps(session, name, &config)?;
+        let bound = lock(&self.engine).bound(session, name, &config)?;
         let report = lock(&entry.run)
             .host
-            .reload(planned)
+            .reload(bound)
             .map_err(|error| match error {
                 ReloadError::OtherBridges { .. } => {
                     refuse(ErrorCode::InvalidRequest, error.to_string())
@@ -539,34 +344,14 @@ impl ServiceHost {
         Ok(match target {
             InspectTarget::Run(run) => Inspection::Run(self.run(*run)?.info()),
             InspectTarget::Telemetry(run) => Inspection::Telemetry(self.run(*run)?.telemetry()),
-            InspectTarget::Graph(name) => {
-                let engine = lock(&self.engine);
-                let doc = GraphDoc::new(engine.graph(session, name)?.clone());
-                Inspection::Graph {
-                    name: name.clone(),
-                    json: doc
-                        .to_json()
-                        .map_err(|error| refuse(ErrorCode::InvalidRequest, error.to_string()))?,
-                }
-            }
-            InspectTarget::Cache => {
-                let engine = lock(&self.engine);
-                Inspection::Cache(CacheInfo {
-                    entries: engine.cache.len() as u32,
-                    hits: engine.cache.hits(),
-                    misses: engine.cache.misses(),
-                })
-            }
+            InspectTarget::Graph(name) => self.inspect_graph(session, name)?,
+            InspectTarget::Cache => self.inspect_cache()?,
             InspectTarget::Host => {
                 let runs = lock(&self.runs).values().map(|run| run.brief()).collect();
                 let engine = lock(&self.engine);
                 Inspection::Host(HostInfo {
-                    sessions: engine.graphs.keys().cloned().collect(),
-                    graphs: engine
-                        .graphs
-                        .get(session)
-                        .map(|graphs| graphs.keys().cloned().collect())
-                        .unwrap_or_default(),
+                    sessions: engine.stored_sessions(),
+                    graphs: engine.stored_names(session),
                     runs,
                     plugins: engine.loaded.clone(),
                 })

@@ -360,6 +360,12 @@ The Host only ever receives a finished backend.
 A form doesn't depend on the machine. A chip is a machine with a small CPU backend and the same
 `#[node]`.
 
+A made plan is the `Steps` form written down. It holds the facts a host reads from a plan (its nodes,
+edges, types and layout) and, for each region, the request its backend was given and the units the
+backend answered with. A host without the planner loads one by asking its own backends for the
+same requests again, and refuses the plan when an answer differs. A made plan is a binary file
+(`DAEDMADE`, a format number and a hash) and it has no control nodes: a graph with one is not made.
+
 ```rust
 // build.rs
 daedalus::plan("graph.json", NODES)?.form(Form::Source).write("graph.rs")?;

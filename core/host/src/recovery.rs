@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::string::String;
 
 use daedalus_graph::Lit;
-use daedalus_planner::Planned;
+use daedalus_made::Bound;
 use daedalus_runner::Recovery;
 
 use crate::load::LoadError;
@@ -66,12 +66,12 @@ pub(crate) fn node_recovery(
 /// The recovery of one step, from the nodes it covers. Nodes that say nothing don't count. Nodes
 /// merged into one step that ask for different things are refused: the step can have only one
 /// recovery, so the graph has to keep them apart with `daedalus.node.fusion` set to false.
-pub(crate) fn step_recovery(planned: &Planned, covers: &[u32]) -> Result<Recovery, LoadError> {
+pub(crate) fn step_recovery(bound: &Bound, covers: &[u32]) -> Result<Recovery, LoadError> {
     let mut chosen: Option<(Recovery, &str)> = None;
     for &node in covers {
-        let doc = &planned.graph.nodes[node as usize].doc;
-        let name = doc.label.as_deref().unwrap_or(doc.id.as_str());
-        let Some(found) = node_recovery(name, &doc.metadata)? else {
+        let node = &bound.facts.nodes[node as usize];
+        let name = node.label.as_deref().unwrap_or(node.id.as_str());
+        let Some(found) = node_recovery(name, &node.metadata)? else {
             continue;
         };
         match chosen {

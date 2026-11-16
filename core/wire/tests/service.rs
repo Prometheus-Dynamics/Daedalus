@@ -363,8 +363,8 @@ fn a_corpus_of_malformed_requests_gives_typed_errors() {
         ),
         (
             "an op past the last",
-            request_body(&[18]),
-            WireError::UnknownOp(18),
+            request_body(&[20]),
+            WireError::UnknownOp(20),
         ),
         (
             "a session over the bound",

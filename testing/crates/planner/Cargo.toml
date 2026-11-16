@@ -15,12 +15,14 @@ daedalus-backend = { path = "../../../core/backend" }
 daedalus-graph = { path = "../../../core/graph" }
 daedalus-host = { path = "../../../core/host" }
 daedalus-planner = { path = "../../../core/planner" }
+daedalus-made = { path = "../../../core/made" }
 daedalus-runner = { path = "../../../core/runner" }
 daedalus-registry = { path = "../../../core/registry" }
 daedalus-types = { path = "../../../core/types" }
 daedalus-value = { path = "../../../core/value" }
 
 [dev-dependencies]
+daedalus-fake-npu = { path = "../fake-npu" }
 serde_json = { workspace = true }
 
 [lints]

@@ -15,9 +15,27 @@ Static binaries (musl), in bytes, at `next` with the workspace's release profile
 
 | Binary | aarch64 | armv7 | riscv64 |
 |---|---|---|---|
-| `daedalusd`, the daemon | 2 238 072 | 2 290 936 | 2 203 720 |
+| `daedalusd`, the daemon, with the planner (the default) | 2 429 896 | not re-measured | not re-measured |
 | `daedalus-ctl`, its command line | 801 352 | 822 664 | 811 624 |
 | a host with one small graph (`examples/02_host`) | 1 449 376 | 1 482 912 | 1 440 816 |
+
+The daemon, aarch64 musl release, `stat -c %s` for the file and `llvm-size` for `.text`, before
+this change (`base`) and after it, with the planner and without it (`--no-default-features`, which
+loads only made plans; see the knob below):
+
+| Daemon, aarch64 musl release | Bytes | `.text` |
+|---|---|---|
+| Before (`base`, with the planner) | 2 247 864 | 2 202 816 |
+| After, with the planner (the default) | 2 429 896 | 2 384 196 |
+| After, without the planner (lean) | 1 318 720 | 1 285 964 |
+
+With the planner, the daemon grows by 182 032 bytes over `base`. That growth is the feature, not copies: the made-plan format's encode,
+decode, bind and recipe code is about 49 KB; the listener's `put_plan`, bound and planning parts are
+about 30 KB; the planner's `made` and `facts` about 11 KB; the wire codec about 6 KB. The four
+together are about 96 KB, and the rest of the growth is spread over the host and the planner's
+changed code, not counted separately. Nothing is compiled twice. The planner-less daemon is 929 144 bytes
+smaller than `base`, because it no longer carries the planner at all. The planner-less figure is
+the one a board needs.
 
 The release profile builds one unit and optimises across crates (`lto = "fat"`,
 `codegen-units = 1`). That is about a fifth smaller than the compiler's default (the daemon was
@@ -43,7 +61,7 @@ The runner, which is what runs a graph, is under 2 % of it: 41 KiB.
 |---|---|---|
 | `opt-level = "s"` in the release profile | With the next, the daemon goes to 1 589 504 bytes on aarch64 (−29 % again). | Slower steps. Measure on the board before choosing it. |
 | `panic = "abort"` | Part of the figure above. | A node that panics takes the process down, where it is otherwise a fault of that node and the graph runs on. Not for a host that runs nodes it didn't write. |
-| Plan somewhere else | The planner and the graph documents are 47 % of the daemon's code. A board that only ever runs one graph can carry its plan as a blob made at build time (`backends/cpu/src/blob`), as a chip does, and link neither. | The graph can't be changed on the board. |
+| No planner | A daemon or host built without the planner (`--no-default-features`, the host with `--features listen`) loads a made plan that `put_plan` stores or `plan_dir` names. It links no planner, and the size is in the table above. | The graph can't be changed on the board: a made plan is made on another machine with `make-plan`. |
 | No daemon | A host linked into the application has no protocol, no TOML and no listener: the small host above is 0.8 MB smaller than the daemon. | No remote control of the graph. |
 
 ## What a running graph holds
@@ -94,8 +112,8 @@ Ideas that were listed here with no measurement behind them, each now done or dr
 - **Dropped:** decoding a worker's long output straight into the memory it is handed on in. The
   same: a long output is handed on as the place it is at, and goes back into a worker with no copy.
 - **Done:** smaller stacks for the daemon's connection threads. See Thread stacks, below.
-- **To do:** a host feature that leaves the planner out, for a board that loads a plan made
-  elsewhere, with the binary size and resident memory saved measured.
+- **Done:** a host and a daemon that leave the planner out, for a board that loads a plan made
+  elsewhere. The binary sizes saved are in the table above.
 - **Done:** a query for the offset alignment a device needs to import a dma-buf in place,
   `dmabuf_offset_alignment`, beside `dmabuf_status`. `dmabuf_offset_status` says, for one offset,
   when a value is copied for being misaligned, and names the offset and the alignment. See
@@ -117,6 +135,24 @@ build, which uses more stack than a release one. A session's own thread, the dae
 session and its plugin loader keep the default: a run's ticks run on the session that steps it,
 so node code runs there, and a plugin's registration runs on the loader. The runner's lanes and a
 stream's worker run node code too, and keep it as well.
+
+Measured on the development machine (x86-64, 32 cores, release build) with `scripts/board/run.sh
+local-measure`, which also records the lean build. The board's figures come from a board run, in
+`testing/board-runs/`. The daemon is idle, then has a graph planned (or a made plan loaded, for the
+lean build), then has run one step, then 200 round trips, and then 32 connections open:
+
+| Daemon, x86-64 release | Full (with the planner) | Lean (made plans only) |
+|---|---|---|
+| Idle: address space, resident | 266 MiB, 3.7 MiB | 199 MiB, 3.7 MiB |
+| Graph planned, or plan loaded: resident | 4.8 MiB | 3.7 MiB |
+| After the first step: resident | 4.9 MiB | 3.8 MiB |
+| After 200 round trips: resident (peak) | 5.0 MiB | 3.9 MiB |
+| 32 connections: address space, resident | 4.13 GiB, 6.2 MiB | 4.13 GiB, 5.1 MiB |
+| Threads, 0 and 32 connections | 2 and 66 | 2 and 66 |
+| Time from start to the first answer | 29.7 ms | 21.4 ms |
+
+The lean build's resident memory is the same at idle and about 1.1 MiB lower once a plan is loaded.
+The address space at 32 connections is glibc's arenas, which `MALLOC_ARENA_MAX=2` (below) reduces.
 
 Measured on the desktop (x86-64, 32 cores), release build, the daemon idle and then with 32
 connections held open by `daedalus-ctl watch all`. `scripts/board/measure-on-board.sh` takes the

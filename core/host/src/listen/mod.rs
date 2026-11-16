@@ -9,6 +9,9 @@
 //! once a write to it has blocked for longer than the write timeout.
 
 mod dispatch;
+mod made;
+#[cfg(feature = "planner")]
+mod planning;
 mod runs;
 mod session;
 mod stdio;
@@ -32,15 +35,20 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use daedalus_backend::Backend;
+#[cfg(feature = "planner")]
 use daedalus_graph::GraphBody;
+use daedalus_made::MadePlan;
+#[cfg(feature = "planner")]
 use daedalus_planner::cache::PlanCache;
 use daedalus_registry::Registry;
 #[cfg(target_os = "linux")]
 use daedalus_runner::event_fd::{EventFd, poll_readable};
 use daedalus_wire::Schema;
+#[cfg(feature = "planner")]
+use daedalus_wire::service::PlanSummary;
 use daedalus_wire::service::{
-    Capabilities, EndReason, ErrorCode, OpKind, PlanSummary, PluginInfo, RunId, ServiceError,
-    ServiceHello, TraceRing,
+    Capabilities, EndReason, ErrorCode, OpKind, PluginInfo, RunId, ServiceError, ServiceHello,
+    TraceRing,
 };
 
 pub use session::Channel;
@@ -148,9 +156,22 @@ pub(crate) struct Engine {
     pub(crate) backends: Vec<Arc<dyn Backend>>,
     pub(crate) plugins: Option<Box<dyn PluginLoader>>,
     pub(crate) loaded: Vec<String>,
+    /// Made plans, by session and then by name. A name is a graph or a plan, never both.
+    pub(crate) plans: BTreeMap<String, BTreeMap<String, Arc<MadePlan>>>,
     /// Stored graphs, by session and then by name.
+    #[cfg(feature = "planner")]
     pub(crate) graphs: BTreeMap<String, BTreeMap<String, GraphBody>>,
+    #[cfg(feature = "planner")]
     pub(crate) cache: PlanCache<PlanSummary>,
+}
+
+/// Whether a host answers an op that needs the planner. One built without it doesn't offer them.
+fn planner_op(op: OpKind) -> bool {
+    cfg!(feature = "planner")
+        || !matches!(
+            op,
+            OpKind::PutGraph | OpKind::PatchGraph | OpKind::Plan | OpKind::MakePlan | OpKind::Cache
+        )
 }
 
 /// One host, shared by every session of every listener opened on it.
@@ -211,7 +232,10 @@ impl ServiceHostBuilder {
                 backends: self.backends,
                 plugins: self.plugins,
                 loaded: Vec::new(),
+                plans: BTreeMap::new(),
+                #[cfg(feature = "planner")]
                 graphs: BTreeMap::new(),
+                #[cfg(feature = "planner")]
                 cache: PlanCache::new(self.options.plan_cache.max(1)),
             }),
             runs: Mutex::new(BTreeMap::new()),
@@ -276,6 +300,7 @@ impl ServiceHost {
         let ops = OpKind::ALL
             .into_iter()
             .filter(|op| self.serves_plugins || *op != OpKind::LoadPlugin)
+            .filter(|op| planner_op(*op))
             .collect();
         ServiceHello::server(Capabilities {
             ops,

@@ -1,3 +1,6 @@
+// Without the planner, the tests that plan are left out and their imports are not used.
+#![cfg_attr(not(feature = "planner"), allow(unused_imports, dead_code))]
+
 //! The listener: several clients on one host, over TCP, a unix socket and stdio.
 
 mod listen_support;
@@ -40,6 +43,7 @@ fn start_double(client: &Client) -> u64 {
     client.start("g", StartConfig::default()).unwrap()
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn two_clients_share_one_host() {
     let (host, addr) = serving(ListenOptions::default());
@@ -86,6 +90,7 @@ fn two_clients_share_one_host() {
     host.shutdown();
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn a_disconnect_leaves_the_run_running_and_ends_its_watches() {
     let (host, addr) = serving(ListenOptions::default());
@@ -112,6 +117,7 @@ fn a_disconnect_leaves_the_run_running_and_ends_its_watches() {
     host.shutdown();
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn a_client_that_stops_reading_is_disconnected_without_stalling_step() {
     let (host, addr) = serving(ListenOptions {
@@ -161,6 +167,7 @@ fn a_client_that_stops_reading_is_disconnected_without_stalling_step() {
     host.shutdown();
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn a_connection_past_the_limit_is_told_the_host_is_busy() {
     let (host, addr) = serving(ListenOptions {
@@ -189,6 +196,7 @@ fn a_connection_past_the_limit_is_told_the_host_is_busy() {
     host.shutdown();
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn a_fault_reaches_every_watcher_and_a_cancel_stops_a_tick_in_progress() {
     let (host, addr) = serving(ListenOptions::default());
@@ -323,6 +331,7 @@ fn a_fault_reaches_every_watcher_and_a_cancel_stops_a_tick_in_progress() {
     host.shutdown();
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn each_refusal_has_its_code_and_a_panic_is_an_error_response() {
     let (host, addr) = serving(ListenOptions::default());
@@ -414,6 +423,7 @@ fn each_refusal_has_its_code_and_a_panic_is_an_error_response() {
     host.shutdown();
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn plan_reload_patch_and_the_cache() {
     let (host, addr) = serving(ListenOptions::default());
@@ -473,6 +483,7 @@ fn plan_reload_patch_and_the_cache() {
     host.shutdown();
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn shutdown_ends_watches_and_closes_every_session() {
     let (host, addr) = serving(ListenOptions::default());
@@ -519,6 +530,7 @@ fn only_loopback_is_offered() {
 }
 
 #[cfg(unix)]
+#[cfg(feature = "planner")]
 #[test]
 fn a_unix_socket_serves_clients_and_replaces_a_stale_file() {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("listen-unix");
@@ -613,6 +625,7 @@ fn a_stopping_host_leaves_a_socket_file_that_replaced_its_own() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn a_run_that_is_reloaded_or_stopped_releases_its_steps() {
     let live = || listen_support::PROBES.load(Ordering::SeqCst);
@@ -659,6 +672,7 @@ fn through(client: &Client, node: &str, key: &str, value: &TypedValue) -> TypedV
     taken
 }
 
+#[cfg(feature = "planner")]
 #[test]
 fn every_scalar_crosses_the_wire_in_the_form_its_backend_reads() {
     let scalar =

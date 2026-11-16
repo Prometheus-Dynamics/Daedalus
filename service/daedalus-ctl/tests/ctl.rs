@@ -729,6 +729,8 @@ mod with_daemon {
             "ping",
             "load-plugin",
             "put-graph",
+            "make-plan",
+            "put-plan",
             "patch-graph",
             "plan",
             "start",

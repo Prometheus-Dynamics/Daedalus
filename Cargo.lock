@@ -631,6 +631,7 @@ dependencies = [
  "daedalus-graph",
  "daedalus-host",
  "daedalus-macros",
+ "daedalus-made",
  "daedalus-plan",
  "daedalus-planner",
  "daedalus-registry",
@@ -871,6 +872,7 @@ dependencies = [
  "daedalus-backend",
  "daedalus-client",
  "daedalus-graph",
+ "daedalus-made",
  "daedalus-plan",
  "daedalus-planner",
  "daedalus-registry",
@@ -970,6 +972,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-made"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-abi",
+ "daedalus-backend",
+ "daedalus-graph",
+ "daedalus-plan",
+ "daedalus-registry",
+ "daedalus-types",
+ "daedalus-wire",
+]
+
+[[package]]
 name = "daedalus-nostd-smoke"
 version = "3.0.1-dev"
 dependencies = [
@@ -995,6 +1010,7 @@ dependencies = [
  "daedalus-abi",
  "daedalus-backend",
  "daedalus-graph",
+ "daedalus-made",
  "daedalus-plan",
  "daedalus-registry",
  "daedalus-runner",
@@ -1010,8 +1026,10 @@ version = "3.0.1-dev"
 dependencies = [
  "daedalus-abi",
  "daedalus-backend",
+ "daedalus-fake-npu",
  "daedalus-graph",
  "daedalus-host",
+ "daedalus-made",
  "daedalus-plan",
  "daedalus-planner",
  "daedalus-registry",
@@ -1144,6 +1162,7 @@ dependencies = [
  "daedalus-dma-sys",
  "daedalus-dmabuf",
  "daedalus-graph",
+ "daedalus-made",
  "daedalus-planner",
  "daedalus-planner-tests",
  "daedalus-registry",

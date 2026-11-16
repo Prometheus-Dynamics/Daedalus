@@ -10,10 +10,10 @@ use super::slots::{Live, number};
 use super::transfers::{Reader, Routing, Source};
 use daedalus_abi::NO_SLOT;
 
-use super::{HostPort, Item, SlotInfo, Stitched, TransferUse, UnitId};
 use crate::regions::CompiledRegion;
 use crate::regions::Regions;
 use crate::solve::type_table::TypeTable;
+use daedalus_made::{HostPort, Item, SlotInfo, Stitched, TransferUse, UnitId};
 
 /// An item before slots are numbered.
 pub(super) enum Draft {

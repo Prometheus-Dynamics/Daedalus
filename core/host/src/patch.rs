@@ -12,7 +12,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use std::vec::Vec;
 
 use daedalus_graph::Lit;
-use daedalus_planner::Planned;
+use daedalus_made::Bound;
 
 use crate::load::{LoadedHost, node_entries};
 
@@ -29,7 +29,7 @@ struct Entry {
     port: String,
     current: ConstValue,
     /// What the plan said, so a reload can tell whether the plan moved it.
-    planned: Arc<Lit>,
+    bound: Arc<Lit>,
 }
 
 #[derive(Debug, Default)]
@@ -139,17 +139,17 @@ impl ConstTable {
     }
 
     /// Takes the plan's consts. An entry the plan didn't move keeps its patched value.
-    pub(crate) fn seed(&self, planned: &Planned) {
+    pub(crate) fn seed(&self, bound: &Bound) {
         let previous = self.snapshot();
-        let keys = node_entries(planned);
+        let keys = node_entries(bound);
         let mut next = Vec::new();
-        for (node, entry) in planned.graph.nodes.iter().zip(&keys) {
+        for (node, entry) in bound.facts.nodes.iter().zip(&keys) {
             for (port, value) in &node.consts {
                 let old = position(&previous, &entry.key, port)
                     .ok()
                     .map(|at| &previous[at]);
                 let current = match old {
-                    Some(old) if *old.planned == *value => old.current.clone(),
+                    Some(old) if *old.bound == *value => old.current.clone(),
                     _ => ConstValue {
                         value: Arc::new(value.clone()),
                         version: old.map_or(0, |old| old.current.version.wrapping_add(1)),
@@ -159,7 +159,7 @@ impl ConstTable {
                     node: entry.key.clone(),
                     port: port.clone(),
                     current,
-                    planned: Arc::new(value.clone()),
+                    bound: Arc::new(value.clone()),
                 });
             }
         }
