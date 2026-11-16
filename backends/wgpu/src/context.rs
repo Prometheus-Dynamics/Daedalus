@@ -4,6 +4,8 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
+use daedalus_vk_sys::adapters::Policy;
+
 use crate::adapter::{Options, choose};
 use crate::caps::{CapsRecord, OPTIONAL_FEATURES};
 use crate::copy_limiter::{CopyLimiter, MAX_INFLIGHT_COPIES};
@@ -28,6 +30,10 @@ pub enum OpenError {
     Backoff(std::time::Duration),
     /// The host turned the backend off.
     Off,
+    /// `DAEDALUS_GPU_ADAPTERS` holds a value it doesn't take. The text names the variable.
+    Policy(String),
+    /// Adapters exist, and `DAEDALUS_GPU_ADAPTERS` hid every one. `count` is how many it hid.
+    Hidden { count: usize, policy: &'static str },
 }
 
 impl fmt::Display for OpenError {
@@ -41,6 +47,11 @@ impl fmt::Display for OpenError {
             OpenError::Device(reason) => write!(f, "no adapter gave a device: {reason}"),
             OpenError::Backoff(wait) => write!(f, "no device: trying again in {wait:?}"),
             OpenError::Off => f.write_str("the backend is turned off"),
+            OpenError::Policy(text) => f.write_str(text),
+            OpenError::Hidden { count, policy } => write!(
+                f,
+                "{count} adapter(s) hidden by DAEDALUS_GPU_ADAPTERS={policy}, and none is left to open"
+            ),
         }
     }
 }
@@ -414,16 +425,27 @@ impl Context {
     }
 
     fn open_private(options: &Options) -> Result<Context, OpenError> {
+        let policy = Policy::from_env().map_err(|error| OpenError::Policy(error.to_string()))?;
+        Context::open_under(options, policy)
+    }
+
+    /// Opens a device of the caller's own, with the adapters `policy` keeps.
+    pub(crate) fn open_under(options: &Options, policy: Policy) -> Result<Context, OpenError> {
         let held = driver_lock();
         let wanted = options.apis.to_wgpu();
         let instance = LockedInstance::new(&held, wanted);
-        let mut adapters = instance.adapters(wanted);
+        let (mut adapters, mut hidden) = instance.adapters(wanted, policy);
         if adapters.is_empty() && wanted != wgpu::Backends::all() {
-            adapters = instance.adapters(wgpu::Backends::all());
+            (adapters, hidden) = instance.adapters(wgpu::Backends::all(), policy);
         }
         // With no adapter at all, the usual reason on a board is that this user may not open the
-        // GPU's nodes. That is said by name, where a driver only prints it.
+        // GPU's nodes. That is said by name, where a driver only prints it. Adapters the policy
+        // hid are named as such: the nodes may be fine.
         let mut last = match denied_nodes() {
+            _ if adapters.is_empty() && hidden > 0 => OpenError::Hidden {
+                count: hidden,
+                policy: policy.name(),
+            },
             Some(nodes) if adapters.is_empty() => OpenError::NoAccess(nodes),
             _ => OpenError::NoAdapter,
         };

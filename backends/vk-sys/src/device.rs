@@ -223,7 +223,12 @@ pub(crate) fn test_device(software: bool) -> Option<(wgpu::Device, wgpu::Queue)>
     desc.backends = wgpu::Backends::VULKAN;
     desc.flags -= wgpu::InstanceFlags::DEBUG;
     let instance = wgpu::Instance::new(desc);
-    let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN));
+    let found = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN));
+    // The same rule as the backend's opens: DAEDALUS_GPU_ADAPTERS decides what may be opened.
+    let policy = crate::adapters::Policy::from_env().unwrap_or_else(|error| panic!("{error}"));
+    let (mut adapters, _) = crate::adapters::filter(policy, found, |adapter| {
+        adapter.get_info().device_type == wgpu::DeviceType::Cpu
+    });
     // Hardware first, unless the test wants the software one.
     adapters.sort_by_key(|adapter| {
         (adapter.get_info().device_type == wgpu::DeviceType::Cpu) != software

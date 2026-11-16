@@ -233,7 +233,7 @@ rehearse() {
 
   local pinned=(env -i "PATH=$run/path" "HOME=$run/home" "TMPDIR=$run/tmp" LANG=C LC_ALL=C
     "VK_DRIVER_FILES=$lvp" "VK_ICD_FILENAMES=$lvp" "VK_LOADER_LAYERS_DISABLE=~implicit~"
-    WGPU_BACKEND=vulkan "__EGL_VENDOR_LIBRARY_FILENAMES=/nonexistent"
+    WGPU_BACKEND=vulkan "__EGL_VENDOR_LIBRARY_FILENAMES=/nonexistent" DAEDALUS_GPU_ADAPTERS=software
     BATCH_REHEARSAL=1 BATCH_SKIP_E11=1 "BATCH_I3_DIR=$run/i3" "BATCH_SECONDS=${BATCH_SECONDS:-300}")
   local summary
   summary=$("${pinned[@]}" vulkaninfo --summary 2>&1 || true)

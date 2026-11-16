@@ -159,6 +159,8 @@ lean build), then has run one step, then 200 round trips, and then 32 connection
 | Time from start to the first answer | 29.7 ms | 21.4 ms |
 
 The lean build's resident memory is the same at idle and about 1.1 MiB lower once a plan is loaded.
+On a CM5 the full daemon peaks at 4.1 MiB resident and the lean daemon at 3.1 MiB
+([lean-daemon.md](../testing/board-runs/lean-daemon.md)).
 The address space at 32 connections is glibc's arenas, which `MALLOC_ARENA_MAX=2` (below) reduces.
 
 Measured on the desktop (x86-64, 32 cores), release build, the daemon idle and then with 32

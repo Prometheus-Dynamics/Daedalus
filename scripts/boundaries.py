@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The rules behind check-boundaries.sh. Each rule appends (rule, path, line, detail)."""
-import argparse, glob, json, os, re, subprocess, sys
+import argparse, glob, json, os, re, subprocess, sys, tomllib
 
 GLOB_FOLDERS = ["core", "backends", "languages", "service", "testing/crates", "examples"]
 HARDWARE_WORDS = {"gpu", "wgpu", "shader", "texture", "npu", "frame", "image", "pixel", "camera", "mcu"}
@@ -243,6 +243,27 @@ def check_heap_free(root, packages, build):
                 report("heap-free", rel(root, pkg["manifest_path"]), 0, f"does not build for {target}: {done.stderr.strip()}")
 
 
+def check_gpu_default(root):
+    """Cargo's runs see only software GPU adapters: the repo's .cargo/config.toml says so.
+
+    A developer's shell can still set DAEDALUS_GPU_ADAPTERS to hardware or any, which overrides
+    the [env] value; the rule is that the repo's default is software.
+    """
+    path = ".cargo/config.toml"
+    try:
+        with open(os.path.join(root, path), "rb") as f:
+            config = tomllib.load(f)
+    except FileNotFoundError:
+        report("gpu-default", path, 0, "missing: cargo runs would see a hardware GPU")
+        return
+    except tomllib.TOMLDecodeError as error:
+        report("gpu-default", path, 0, f"does not parse: {error}")
+        return
+    value = config.get("env", {}).get("DAEDALUS_GPU_ADAPTERS")
+    if value != "software":
+        report("gpu-default", path, 0, f"[env] DAEDALUS_GPU_ADAPTERS is {value!r}, not \"software\"")
+
+
 def check_glob_folders(root):
     for folder in GLOB_FOLDERS:
         base = os.path.join(root, folder)
@@ -300,6 +321,7 @@ def main():
     check_unsafe(root)
     check_heap_free(root, packages, not args.no_build)
     check_glob_folders(root)
+    check_gpu_default(root)
     check_names(root)
     for rule, path, line, detail in violations:
         print(f"{rule}: {path}:{line}: {detail}")

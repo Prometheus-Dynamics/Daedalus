@@ -158,6 +158,11 @@ done
 
 # 5. GPU on V3D: the tests, then the timings of E2, E3, E5, E7, E8, E9 and E12.
 export DAEDALUS_GPU_REQUIRED=1
+# A board's GPU is hardware, and a software rasteriser must never be measured as one. The
+# rehearsal (batch.sh rehearse) runs this script on lavapipe with BATCH_REHEARSAL=1, and only then
+# is it software.
+if [ "${BATCH_REHEARSAL:-}" = 1 ]; then DAEDALUS_GPU_ADAPTERS=software; else DAEDALUS_GPU_ADAPTERS=hardware; fi
+export DAEDALUS_GPU_ADAPTERS
 step gpu-test-storage env DAEDALUS_DMA_HEAP_REQUIRED=1 "$B/wgpu.storage" --nocapture --test-threads=1
 step gpu-test-transfer "$B/wgpu.transfer" --nocapture --test-threads=1
 step gpu-test-region "$B/wgpu.region" --nocapture --test-threads=1

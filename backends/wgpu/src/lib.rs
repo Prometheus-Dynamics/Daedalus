@@ -25,6 +25,8 @@ mod loss;
 mod mapped;
 mod memory;
 pub mod merge;
+#[cfg(test)]
+mod policy_tests;
 mod pool;
 mod profile;
 #[cfg(target_os = "linux")]

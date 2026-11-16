@@ -20,7 +20,7 @@ expect_fail() { # rule, checker, root
 }
 
 
-for rule in core-deps no-lemnos core-names unsafe heap-free glob-folders names; do
+for rule in core-deps no-lemnos core-names unsafe heap-free glob-folders names gpu-default; do
   expect_fail "$rule" "$scripts/check-boundaries.sh" "$fixtures/$rule"
 done
 expect_fail unsafe "$scripts/check-boundaries.sh" "$fixtures/unsafe-comment"

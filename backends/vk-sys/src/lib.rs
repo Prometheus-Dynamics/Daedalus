@@ -1,5 +1,6 @@
 //! Raw Vulkan and wgpu-hal calls, kept in one crate. See the README.
 
+pub mod adapters;
 mod lock;
 pub use lock::{DriverHeld, SubmitGuard, SubmitLock};
 

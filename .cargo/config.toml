@@ -1,0 +1,4 @@
+[env]
+# Tests, benches and `cargo run` see only software adapters (lavapipe, llvmpipe, SwiftShader)
+# unless the shell says otherwise: DAEDALUS_GPU_ADAPTERS=hardware or =any. See docs/gpu-nodes.md.
+DAEDALUS_GPU_ADAPTERS = "software"

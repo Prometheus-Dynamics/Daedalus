@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs the tests of the GPU backend crates against a real adapter. A machine with none fails here:
-# the tests skip only when DAEDALUS_GPU_REQUIRED is unset. It needs a Vulkan driver, so it has its
+# Runs the tests of the GPU backend crates against an adapter. A machine with none fails here:
+# the tests skip only when DAEDALUS_GPU_REQUIRED is unset. Cargo sees only software adapters by
+# default (.cargo/config.toml); DAEDALUS_GPU_ADAPTERS=hardware runs them on the real GPU. It needs a Vulkan driver, so it has its
 # own workflow, .github/workflows/ci-gpu.yml, which installs lavapipe.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
