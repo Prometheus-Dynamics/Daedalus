@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use daedalus_abi::Slot;
 use daedalus_abi::testing::release;
-use daedalus_gpu_budgets::{through, transfer};
+use daedalus_gpu_budgets::{read_through, through, transfer};
 use daedalus_runner::{put_shared, put_typed, take_typed};
 use daedalus_types::{SpaceIndex, TypeIndex};
 use daedalus_wgpu::{Storage, StorageError, WgpuBackend};
@@ -48,7 +48,8 @@ pub fn run(backend: &WgpuBackend) {
             |device| {
                 let mut cell = Slot::EMPTY;
                 put_typed(&mut cell, ty, space, Arc::new(device));
-                let mut back = through(&mut readback, cell);
+                // The readback's copy is waited for before the host reads: `read_through`.
+                let mut back = read_through(&mut readback, cell);
                 let mapped = take_typed::<Storage>(&mut back).expect("a buffer");
                 mapped.read_into(0, &mut out_bytes).expect("a readback");
             },
@@ -65,7 +66,7 @@ pub fn run(backend: &WgpuBackend) {
             |device| {
                 let mut cell = Slot::EMPTY;
                 put_typed(&mut cell, ty, space, Arc::new(device));
-                let mut back = through(&mut readback_heap, cell);
+                let mut back = read_through(&mut readback_heap, cell);
                 let heap = take_typed::<Storage>(&mut back).expect("a buffer");
                 heap.read_into(0, &mut out_bytes).expect("a readback");
             },

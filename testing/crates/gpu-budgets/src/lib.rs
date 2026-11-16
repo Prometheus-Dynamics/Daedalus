@@ -19,6 +19,10 @@
 //! - `fragment-pass`, `raw-submit`, `timer-source`: a fragment pass, the record and submit of one
 //!   dispatch on the wgpu path and on a raw Vulkan chain, and the timer source of a timed pass.
 //! - `dma-1mib`: a 1 MiB dma-heap buffer's allocate, map, read and write, and its export_fence.
+//! - `baselines`: the no-Daedalus floors of two board rows, E2 (a storage's first write of 16 MiB)
+//!   and E3 (a 16 MiB readback into host-mapped memory). Each Daedalus row is timed next to the
+//!   same work in raw Vulkan, interleaved round by round in one process, with the per-round
+//!   overhead. `DAEDALUS_BASELINE_ROUNDS` sets the rounds (31 by default, after 5 to warm up).
 //! - `grind`, opt-in and never in a default run: a long shader that runs past the 5 s wait bound,
 //!   so the timeout, the device loss and the reopen are exercised. `DAEDALUS_GRIND_ROUNDS`,
 //!   `DAEDALUS_GRIND_REPEAT` and `DAEDALUS_GRIND_ELEMENTS` set its work. It writes nothing to disk.
@@ -28,7 +32,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use daedalus_abi::testing::{release, run_once};
+use daedalus_abi::testing::{release, run_once, wait_fence};
 use daedalus_abi::{Slot, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{Backend, CompileCx};
 use daedalus_runner::{drop_owned, put_shared, put_typed, take_typed};
@@ -203,6 +207,21 @@ pub fn through(step: &mut Step, input: Slot) -> Slot {
     let mut cx = StepCx::new();
     let end = run_once(step, &mut Slots::of(&mut cells), &mut cx);
     assert!(!matches!(end, StepEnd::Fault), "{}", cx.reason());
+    drop_owned(cells[0]);
+    cells[1]
+}
+
+/// `through`, then the wait on the fence a readback returns pending. A readback's target is only
+/// correct to read once its copy has finished, so a readback row the host then reads uses this,
+/// and its timing includes the wait: the row is from the call to the fence resolving.
+pub fn read_through(step: &mut Step, input: Slot) -> Slot {
+    let mut cells = [input, Slot::EMPTY];
+    let mut cx = StepCx::new();
+    let end = run_once(step, &mut Slots::of(&mut cells), &mut cx);
+    assert!(!matches!(end, StepEnd::Fault), "{}", cx.reason());
+    if let StepEnd::Pending(fence) = &end {
+        wait_fence(fence, u64::MAX);
+    }
     drop_owned(cells[0]);
     cells[1]
 }

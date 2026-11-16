@@ -4,6 +4,8 @@ mod lock;
 pub use lock::{DriverHeld, SubmitGuard, SubmitLock};
 
 #[cfg(target_os = "linux")]
+pub mod block;
+#[cfg(target_os = "linux")]
 pub mod chain;
 #[cfg(all(test, target_os = "linux"))]
 mod chain_tests;

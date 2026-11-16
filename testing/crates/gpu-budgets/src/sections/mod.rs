@@ -2,6 +2,8 @@
 //! median of the timed runs after a warm-up. A section that cannot run on the device says why.
 
 pub mod allocations;
+#[cfg(target_os = "linux")]
+pub mod baselines;
 pub mod chains;
 pub mod fences;
 pub mod gaps;
