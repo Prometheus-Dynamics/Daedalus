@@ -9,6 +9,16 @@ listen = ["unix:/run/daedalusd/daedalusd.sock"]
 # with at most 8 s between attempts, until it loads or its file is removed.
 plugin_dir = "/usr/lib/daedalusd/plugins"
 
+# Worker programs, for nodes written in another language. The packaged daemon is built without the
+# `workers` feature, so it refuses a config that names one: build a daemon with
+# `--features workers` to use these. Each program is started at start and greeted, and a program
+# that does not come up is tried again. The config is read at start: to switch a worker off,
+# remove its table and restart the daemon. See docs/ffi.md.
+# [[worker]]
+# program = "python3"
+# args = ["/usr/lib/daedalusd/workers/worker.py"]
+# also_check = ["/usr/lib/daedalusd/workers/nodes.py"]
+
 # Every `*.plan` file in this directory is stored at start under its name, so runs need no planner.
 # plan_dir = "/usr/lib/daedalusd/plans"
 

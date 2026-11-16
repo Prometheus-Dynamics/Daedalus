@@ -120,6 +120,42 @@ stop_daemon() {
   rm -f "$here/daemon.pid"
 }
 
+# The workers daemon's figures, taken at the points the daemon's are: its own resident memory, and
+# the resident memory of its worker, the one child it has. $1 is the file to write.
+workers_figures() {
+  local i w
+  worker_rss() { # the worker's resident memory now, in kB, or nothing when it isn't running
+    # A worker is a child of the thread that started it, which need not be the main thread: read
+    # every thread's list.
+    w="$(cat /proc/$daemon/task/*/children 2>/dev/null | awk '{print $1}' | head -n 1)"
+    [ -n "$w" ] && rss_kb "$w"
+  }
+  # The worker starts with the daemon: wait for it, so the idle figure is taken once it is up.
+  i=0
+  while [ -z "$(worker_rss)" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  {
+    echo "daemon_rss_idle_kb $(rss_kb "$daemon")"
+    echo "worker_rss_idle_kb $(worker_rss)"
+    ctl put-graph g "$here/g-workers.json" >/dev/null 2>&1
+    ctl start g >/dev/null 2>&1
+    ctl feed 1 a i64:5 >/dev/null 2>&1
+    ctl feed 1 b i64:1 >/dev/null 2>&1
+    ctl step 1 >/dev/null 2>&1
+    echo "daemon_rss_after_first_step_kb $(rss_kb "$daemon")"
+    echo "worker_rss_after_first_step_kb $(worker_rss)"
+    i=0
+    while [ "$i" -lt 200 ]; do
+      ctl feed 1 a "i64:$i" >/dev/null 2>&1
+      ctl feed 1 b i64:1 >/dev/null 2>&1
+      ctl step 1 >/dev/null 2>&1
+      ctl take 1 out >/dev/null 2>&1
+      i=$((i + 1))
+    done
+    echo "daemon_rss_after_200_round_trips_kb $(rss_kb "$daemon")"
+    echo "worker_rss_after_200_round_trips_kb $(worker_rss)"
+  } > "$1" 2>&1
+}
+
 # The figures of the daemon started by start_daemon, taken at the same points for both daemons.
 # $1 is the file to write; $2 is the commands that give the daemon its graph, run in order.
 daemon_figures() {
@@ -183,5 +219,19 @@ if [ -x ./bin/daedalusd-lean ] && [ -s "$here/g.plan" ]; then
   stop_daemon
 else
   echo "the bundle carries no lean daemon or no plan" > "$out/daemon-lean.txt"
+fi
+
+# The workers daemon: one Rust fixture worker started from its config, and a graph whose node the
+# worker serves. Its own resident memory, and the worker's, are taken at the same points. The
+# worker is the one child the daemon has.
+if [ -x ./bin/daedalusd-workers ] && [ -x ./bin/worker-fixture ] && [ -s "$here/g-workers.json" ]; then
+  mkdir -p "$here/daemon-workers"
+  printf 'listen = ["unix:%s"]\nlog_level = "warn"\n\n[[worker]]\nprogram = "%s"\n' \
+    "$here/daemon-workers/d.sock" "$here/bin/worker-fixture" > "$here/daemon-workers/daedalusd.toml"
+  start_daemon "$here/daemon-workers/daedalusd.toml" "$out/daedalusd-workers.log" "$here/daemon-workers/d.sock" daedalusd-workers
+  workers_figures "$out/daemon-workers.txt"
+  stop_daemon
+else
+  echo "the bundle carries no workers daemon, no worker or no graph" > "$out/daemon-workers.txt"
 fi
 echo done > "$out/finished.txt"

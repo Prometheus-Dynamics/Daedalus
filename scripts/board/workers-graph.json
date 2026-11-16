@@ -1,0 +1,63 @@
+{
+  "format": "daedalus.graph",
+  "schema_version": 1,
+  "graph": {
+    "nodes": [
+      {
+        "id": "host",
+        "kind": "host_bridge",
+        "label": "io",
+        "port_types": {
+          "a": "i64",
+          "b": "i64",
+          "out": "i64"
+        }
+      },
+      {
+        "id": "fixture.scalar_add",
+        "label": "add"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "node": 0,
+          "port": "a"
+        },
+        "to": {
+          "node": 1,
+          "port": "a"
+        },
+        "policy": {
+          "kind": "fifo"
+        }
+      },
+      {
+        "from": {
+          "node": 0,
+          "port": "b"
+        },
+        "to": {
+          "node": 1,
+          "port": "b"
+        },
+        "policy": {
+          "kind": "fifo"
+        }
+      },
+      {
+        "from": {
+          "node": 1,
+          "port": "out"
+        },
+        "to": {
+          "node": 0,
+          "port": "out"
+        },
+        "policy": {
+          "kind": "fifo"
+        }
+      }
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 //! The daemon's config file: where it listens, where its plugins are, how many runs it holds
 //! and how much it logs. Every key is optional.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -40,6 +41,67 @@ pub struct Config {
     pub integrity: Option<String>,
     /// The lock file, as an absolute path. Needed under `locked` and `record`.
     pub lock_file: Option<PathBuf>,
+    /// Worker programs, each started at start and greeted: the nodes it declares become graph
+    /// nodes. Refused unless the daemon was built with the `workers` feature.
+    #[serde(rename = "worker")]
+    pub workers: Vec<WorkerConfig>,
+}
+
+/// One worker program, as a `[[worker]]` table.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields, default)]
+pub struct WorkerConfig {
+    /// The program: an absolute path, or a bare name the daemon finds on its `PATH`.
+    pub program: String,
+    /// Its arguments, in order.
+    pub args: Vec<String>,
+    /// Variables set for it, over the daemon's own.
+    pub env: BTreeMap<String, String>,
+    /// The directory it starts in, as an absolute path. The daemon's own by default.
+    pub cwd: Option<PathBuf>,
+    /// Files it reads by path besides its program, as absolute paths. Checked against the lock
+    /// under `locked` and `record`, as the program is.
+    pub also_check: Vec<PathBuf>,
+}
+
+impl WorkerConfig {
+    /// The name the daemon logs and lists the worker under: its program and arguments.
+    pub fn label(&self) -> String {
+        std::iter::once(self.program.as_str())
+            .chain(self.args.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn check(&self, index: usize) -> Result<(), ConfigError> {
+        if self.program.is_empty() {
+            return Err(ConfigError(format!("worker {index}: program is empty")));
+        }
+        let bare = !self.program.contains(['/', '\\']);
+        if !bare && !Path::new(&self.program).is_absolute() {
+            return Err(ConfigError(format!(
+                "worker {index}: program `{}` is not an absolute path or a bare name",
+                self.program
+            )));
+        }
+        if let Some(dir) = &self.cwd
+            && !dir.is_absolute()
+        {
+            return Err(ConfigError(format!(
+                "worker {index}: cwd `{}` is not an absolute path",
+                dir.display()
+            )));
+        }
+        for file in &self.also_check {
+            if !file.is_absolute() {
+                return Err(ConfigError(format!(
+                    "worker {index}: also_check `{}` is not an absolute path",
+                    file.display()
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// One place to listen.
@@ -156,7 +218,35 @@ impl Config {
             )));
         }
         self.integrity()?;
+        for (index, worker) in self.workers.iter().enumerate() {
+            worker.check(index)?;
+        }
+        #[cfg(not(feature = "workers"))]
+        if !self.workers.is_empty() {
+            return Err(ConfigError(
+                "worker: this daemon was built without `workers`, so it runs no worker programs; \
+                 build it with `--features workers`, or remove the [[worker]] tables"
+                    .to_owned(),
+            ));
+        }
         Ok(())
+    }
+
+    /// The workers, as the config names them, for the summary `--check-config` prints. With any,
+    /// the line says how one is switched off: the config is read at start, so that is a restart.
+    pub fn workers_text(&self) -> String {
+        if self.workers.is_empty() {
+            return "(none)".to_owned();
+        }
+        let names = self
+            .workers
+            .iter()
+            .map(WorkerConfig::label)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "{names} (a worker is switched off by removing its [[worker]] table and starting the daemon again)"
+        )
     }
 
     /// The integrity mode the config names. Refused when the mode is not one of its three names,

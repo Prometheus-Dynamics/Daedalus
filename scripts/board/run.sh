@@ -167,10 +167,17 @@ measure_bundle() { # rust target: the programs a measurement runs, under $out/bu
     --target-dir "$out/lean-target" 2>>"$out/build.log" ||
     { tail -20 "$out/build.log" >&2; die "the lean daemon's build failed: $out/build.log"; }
   cp "$out/lean-target/$target/release/daedalusd" "$out/bundle/bin/daedalusd-lean"
+  # The daemon built with `workers`, which starts the worker program its config names: the
+  # measurement of a worker's cost runs this one beside the default daemon (see docs/weak-hardware.md).
+  env "${env[@]}" cargo build --release --target "$target" -p daedalusd --features workers \
+    --target-dir "$out/workers-target" 2>>"$out/build.log" ||
+    { tail -20 "$out/build.log" >&2; die "the workers daemon's build failed: $out/build.log"; }
+  cp "$out/workers-target/$target/release/daedalusd" "$out/bundle/bin/daedalusd-workers"
   cp "$out/fixture-target/$target/release/libdaedalus_dylib_fixture.so" "$out/bundle/lib/"
   # The scorecard's other column: the same measurements against the reference revision, where
   # a checkout of it is beside this repository (testing/board-runs/scorecard/README.md).
-  if [[ -d ../dd-dev/crates/engine ]]; then
+  # BOARD_REFERENCE=0 leaves the reference column out, for a run that must not read another checkout.
+  if [[ -d ../dd-dev/crates/engine && "${BOARD_REFERENCE:-1}" != 0 ]]; then
     echo "board: building the reference column's program from ../dd-dev"
     env "${env[@]}" cargo build --release --target "$target" \
       --manifest-path testing/board-runs/scorecard/dev-measure/Cargo.toml \
@@ -183,6 +190,8 @@ measure_bundle() { # rust target: the programs a measurement runs, under $out/bu
   cargo run -q --release -p daedalus-cpu-timings -- daemon_graph > "$out/bundle/g.json"
   make_plan_bundle
   cp scripts/board/measure-on-board.sh "$out/bundle/"
+  # The graph the workers daemon runs: its node is the worker's, fed a and b.
+  cp scripts/board/workers-graph.json "$out/bundle/g-workers.json"
   git rev-parse --short HEAD > "$out/results/rev.txt" 2>/dev/null || true
   du -sh "$out/bundle" | sed 's/^/board: the bundle is /'
 }

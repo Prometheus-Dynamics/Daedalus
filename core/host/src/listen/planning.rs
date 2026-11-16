@@ -95,7 +95,10 @@ impl Engine {
         };
         let graph = self.graph(session, name)?;
         plan(graph, &self.registry, &self.backends(), &planning).map_err(|error| {
-            ServiceError::planning(error.to_string(), diagnostics(&error.diagnostics()))
+            ServiceError::planning(
+                self.planning_text(error.to_string()),
+                diagnostics(&error.diagnostics()),
+            )
         })
     }
 }
@@ -179,7 +182,10 @@ impl ServiceHost {
         let graph = engine.graph(session, name)?;
         let backends = engine.backends();
         let planned = plan(graph, &engine.registry, &backends, &config).map_err(|error| {
-            ServiceError::planning(error.to_string(), diagnostics(&error.diagnostics()))
+            ServiceError::planning(
+                engine.planning_text(error.to_string()),
+                diagnostics(&error.diagnostics()),
+            )
         })?;
         let summary = PlanSummary {
             graph: String::from(name),
@@ -211,7 +217,10 @@ impl ServiceHost {
     pub(super) fn make_plan(&self, session: &str, name: &str, config: &StartConfig) -> Answer {
         let planned = lock(&self.engine).plan_steps(session, name, config)?;
         let made = planned.made().map_err(|error| {
-            ServiceError::planning(error.to_string(), diagnostics(&error.diagnostics()))
+            ServiceError::planning(
+                lock(&self.engine).planning_text(error.to_string()),
+                diagnostics(&error.diagnostics()),
+            )
         })?;
         let bytes =
             encode(&made).map_err(|error| refuse(ErrorCode::InvalidRequest, error.to_string()))?;

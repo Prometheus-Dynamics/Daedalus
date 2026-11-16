@@ -92,6 +92,52 @@ A program that starts with `#!` is refused under `locked`. Name its interpreter 
 add the script with `also_check`. A native worker, such as a C or C++ worker or a Rust worker, is its
 own program, and its one file is the whole check.
 
+## Workers in the daemon
+
+A daemon built with the `workers` feature runs worker programs named in its config, so a node
+written in Python, Node, Java, C or C++ is usable from any client of the daemon, with no Rust
+host of the user's own. Each `[[worker]]` table names one program:
+
+```toml
+[[worker]]
+program = "python3"                                   # an absolute path, or a name on PATH
+args = ["/usr/lib/daedalusd/workers/worker.py"]       # its arguments, in order
+env = { PYTHONUNBUFFERED = "1" }                      # set over the daemon's own environment
+cwd = "/usr/lib/daedalusd/workers"                    # absolute; the daemon's own by default
+also_check = ["/usr/lib/daedalusd/workers/nodes.py"]  # files it reads by path, checked under the lock
+```
+
+The daemon starts each worker after its plugins and greets it. The nodes its hello declares are
+then in the registry, and a graph uses them as it uses a plugin's nodes. The integrity mode of
+the daemon checks each program and each `also_check` file, as it checks a plugin.
+
+The daemon starts the workers on a thread of its own, so it answers requests while one waits for
+its hello. A worker that does not come up is logged once, and tried again in the background with
+the same backoff as a plugin, capped at 8 s. Each repeat of the same reason is logged at debug;
+a new reason is logged at warning. The daemon serves while a worker is down. A graph that needs a
+node of a worker that is not up fails to plan, and the answer names the worker. A worker that dies
+while it runs is started again by the process backend at its next step.
+
+`inspect host` lists each worker in its `plugins` list, as `worker <program> <args>: running`,
+`restarting`, `refused` (the integrity check refused it), `starting`, or `waiting, not started`
+with the reason.
+
+To switch a worker off, remove its `[[worker]]` table and start the daemon again. The config is
+read once, at start, so there is no runtime switch; a worker whose program is missing keeps being
+tried until the daemon stops or is restarted without it. `--check-config` prints the workers and
+says this.
+
+Build a daemon with the feature: `cargo build --release -p daedalusd --features workers`, or with
+`--no-default-features --features planner,workers` for a daemon without the planner. The `workers`
+feature is not in the default build, because it adds about 290 KB to the planner build (see
+[weak-hardware.md](weak-hardware.md#worker-programs)). The packaged daemon is the default build,
+so it has no workers: a packaged install that runs worker programs builds its own daemon with the
+feature.
+
+A daemon built without `workers` refuses a config that names a worker at `--check-config`, and the
+message names the feature. A made plan that needs the process backend is refused at bind by a
+daemon without it, and the refusal says the daemon was built without `workers`.
+
 ## The wire
 
 Host and worker talk in packets: a length, then a body. A value is encoded by its port's type,

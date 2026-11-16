@@ -8,7 +8,10 @@
 mod config;
 mod logging;
 mod plugins;
+mod retry;
 mod signals;
+#[cfg(feature = "workers")]
+mod workers;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -21,7 +24,8 @@ use daedalus_registry::Registry;
 
 use config::{Config, DEFAULT_CONFIG, Listen};
 use logging::{error, info, warning};
-use plugins::{Note, Plugins, Probes};
+use plugins::{Plugins, Probes};
+use retry::{Attempt, Note};
 use signals::Stop;
 
 const USAGE: &str = "\
@@ -205,6 +209,10 @@ fn run(args: &Args, config: &Config) -> Result<bool, String> {
         );
         warn_if_open(lock);
     }
+    // The workers, when the config names any: their backend is the host's, and the plugins list them.
+    #[cfg(feature = "workers")]
+    let workers = (!config.workers.is_empty())
+        .then(|| workers::Workers::new(integrity.clone(), &config.workers));
     let (notes_tx, notes_rx) = std::sync::mpsc::channel::<Note>();
     let options = ListenOptions {
         max_runs: config.max_runs,
@@ -214,24 +222,40 @@ fn run(args: &Args, config: &Config) -> Result<bool, String> {
         },
         ..ListenOptions::default()
     };
-    let host = ServiceHost::builder(Registry::new())
-        .plugins(Box::new(Plugins::new(
-            Arc::clone(&probes),
-            integrity,
-            notes_tx.clone(),
-        )))
-        // Every backend here is a plugin's, and a plugin reads a cell's bytes.
+    let builder = ServiceHost::builder(Registry::new());
+    #[cfg(feature = "workers")]
+    let builder = match &workers {
+        Some(workers) => builder.backend(workers.backend()),
+        None => builder,
+    };
+    let plugins = Plugins::new(Arc::clone(&probes), integrity, notes_tx.clone());
+    #[cfg(feature = "workers")]
+    let plugins = match &workers {
+        Some(workers) => plugins.with_workers(Arc::clone(workers)),
+        None => plugins,
+    };
+    let host = builder
+        .plugins(Box::new(plugins))
+        // Every backend here is a plugin's or a worker's, and each reads a cell's bytes.
         .codecs(WireCodecs::byte_form())
         .options(options)
         .build();
 
     // Plugins first, so a client that connects finds them. One that fails is tried again in the
-    // background and does not hold the daemon up.
-    let failed = match &config.plugin_dir {
+    // background and does not hold the daemon up. Workers are started on that same thread.
+    let failed: Vec<Box<dyn Attempt>> = match &config.plugin_dir {
         Some(dir) => plugins::load_all(&host, plugins::scan(dir)),
         None => Vec::new(),
     };
-    let retrying = plugins::retry_in_background(Arc::clone(&host), failed, notes_rx);
+    // The workers are started by the retry thread, at once, so the listeners open without waiting
+    // for any worker's hello.
+    #[cfg(feature = "workers")]
+    let starting: Vec<Box<dyn Attempt>> = workers
+        .as_ref()
+        .map_or_else(Vec::new, |workers| workers.attempts());
+    #[cfg(not(feature = "workers"))]
+    let starting: Vec<Box<dyn Attempt>> = Vec::new();
+    let retrying = retry::retry_in_background(Arc::clone(&host), failed, starting, notes_rx);
 
     // Made plans next. A file that doesn't read or bind is logged and skipped; nothing starts.
     if let Some(dir) = &config.plan_dir {
@@ -279,6 +303,10 @@ fn run(args: &Args, config: &Config) -> Result<bool, String> {
     // The host holds the plugins' backends. With it gone, a library stays open only while a
     // step compiled from it is still held, and none should be.
     drop(host);
+    #[cfg(feature = "workers")]
+    if let Some(workers) = &workers {
+        workers.shutdown();
+    }
     let retired = within_grace(|| plugins::still_open(&probes).is_empty());
     for name in plugins::still_open(&probes) {
         warning!("plugin {name} was not released");
@@ -324,8 +352,9 @@ fn main() -> ExitCode {
                     (mode, None) => mode.to_owned(),
                 };
                 out(&format!(
-                    "config ok: {source}\nlisten: {}\nplugin_dir: {plugins}\nintegrity: {integrity}\nmax_runs: {}\nlog_level: {}\n",
+                    "config ok: {source}\nlisten: {}\nplugin_dir: {plugins}\nworkers: {}\nintegrity: {integrity}\nmax_runs: {}\nlog_level: {}\n",
                     addresses.join(", "),
+                    config.workers_text(),
                     config.max_runs,
                     logging::Level::NAMES[level as usize],
                 ));

@@ -51,8 +51,23 @@ impl Engine {
                  with the options a run needs",
             ));
         }
-        bind(made, &self.registry, &self.backends())
-            .map_err(|error| ServiceError::planning(error.to_string(), Vec::new()))
+        bind(made, &self.registry, &self.backends()).map_err(|error| {
+            let why = match &error {
+                daedalus_made::BindError::NoBackend { backend } => self
+                    .plugins
+                    .as_ref()
+                    .and_then(|plugins| plugins.missing_backend(backend)),
+                _ => None,
+            };
+            let text = self.planning_text(error.to_string());
+            ServiceError::planning(
+                match why {
+                    Some(why) => format!("{text}; {why}"),
+                    None => text,
+                },
+                Vec::new(),
+            )
+        })
     }
 
     /// The sessions that hold a graph or a plan.

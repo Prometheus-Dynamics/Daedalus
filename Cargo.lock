@@ -1334,7 +1334,9 @@ dependencies = [
 name = "daedalusd"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus-abi",
  "daedalus-backend",
+ "daedalus-backend-process",
  "daedalus-client",
  "daedalus-graph",
  "daedalus-host",

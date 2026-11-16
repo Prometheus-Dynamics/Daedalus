@@ -353,7 +353,17 @@ impl ServiceHost {
                     sessions: engine.stored_sessions(),
                     graphs: engine.stored_names(session),
                     runs,
-                    plugins: engine.loaded.clone(),
+                    plugins: engine
+                        .loaded
+                        .iter()
+                        .cloned()
+                        .chain(
+                            engine
+                                .plugins
+                                .as_ref()
+                                .map_or_else(Vec::new, |p| p.listing()),
+                        )
+                        .collect(),
                 })
             }
         })

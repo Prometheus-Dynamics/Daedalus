@@ -138,7 +138,9 @@ plugin.join(&mut registry)?;        // its nodes join the registry
 
 `daedalusd` loads every library in its plugin directory at start, and `load_plugin` loads one
 on request. A library that fails to load is tried again in the background for as long as its
-file is there, and never stops the daemon. Every backend the daemon has comes from a plugin.
+file is there, and never stops the daemon. Every backend the daemon has comes from a plugin,
+except the process backend of a daemon built with the `workers` feature, which runs the worker
+programs its config names (see [ffi.md](ffi.md#workers-in-the-daemon)).
 A reload of a run after its plugin was loaded again moves the run onto the new generation, and
 its nodes start fresh.
 

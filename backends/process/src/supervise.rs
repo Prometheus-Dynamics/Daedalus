@@ -389,7 +389,7 @@ impl OwnedStep for WorkerStep {
         let run = sup.run;
         sup.writer.buf.clear();
         let Link::Up(worker) = &mut sup.link else {
-            return self.fail(&shared, sup, cx, "worker is not running", Blame::Worker);
+            return self.fail(&shared, sup, cx, &not_running(&shared), Blame::Worker);
         };
         let sent = match self.encode_run(run, cells, &mut sup.writer, worker, &shared.telemetry) {
             Ok(sent) => sent,
@@ -402,7 +402,7 @@ impl OwnedStep for WorkerStep {
         sup.panicked = false;
 
         let Link::Up(worker) = &mut sup.link else {
-            return self.fail(&shared, sup, cx, "worker is not running", Blame::Worker);
+            return self.fail(&shared, sup, cx, &not_running(&shared), Blame::Worker);
         };
         if let Err(error) = worker.send_run(&sup.writer.buf, &shared.telemetry) {
             return self.fail(
@@ -685,4 +685,9 @@ fn say(cx: &mut StepCx, at: Option<u32>, text: &str) {
     if cx.reason_cut() {
         cx.detail(text);
     }
+}
+
+/// The fault reason for a step sent to a worker that is not up: it names the worker.
+fn not_running(shared: &Shared) -> String {
+    format!("worker {} is not running", shared.spec.program.display())
 }

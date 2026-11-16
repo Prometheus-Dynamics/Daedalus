@@ -7,7 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+daedalus-abi = { path = "../../core/abi", optional = true }
 daedalus-backend = { path = "../../core/backend" }
+daedalus-backend-process = { path = "../../backends/process", optional = true }
 daedalus-host = { path = "../../core/host", default-features = false, features = ["listen"] }
 daedalus-integrity = { path = "../../core/integrity" }
 daedalus-loader = { path = "../../core/loader" }
@@ -22,6 +24,8 @@ toml = { workspace = true }
 # Planning in the daemon: graphs are stored and planned here. Off, the daemon serves made plans only.
 default = ["planner"]
 planner = ["daedalus-host/planner"]
+# Worker programs from the config: the process backend, which runs nodes written in other languages.
+workers = ["dep:daedalus-abi", "dep:daedalus-backend-process"]
 
 [target.'cfg(unix)'.dependencies]
 listenfd = { workspace = true }

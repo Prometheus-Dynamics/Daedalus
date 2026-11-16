@@ -666,9 +666,13 @@ documents the patch and refresh JSON.
 - A runner built by `owned_run` owns its steps and releases them when its buffers are dropped,
   which is what lets a plugin's library close once the last run that used it is gone. Its cancel
   word is in an `Arc`, so another thread can hold a `CancelHandle` to it.
-- `daedalusd` links no backend of its own. Each backend comes from a plugin, wrapped so the
-  planner can use it, and every plugin backend's values live in the one space `plugin.host`.
-  Loading a plugin's name again is a new generation whose backend replaces the old one.
+- The lean `daedalusd` links no backend. Its backends come from plugins, wrapped so the planner
+  can use it, and every plugin backend's values live in the one space `plugin.host`. Loading a
+  plugin's name again is a new generation whose backend replaces the old one.
+- The `workers` feature of `daedalusd` adds the process backend, and worker programs from the
+  daemon's config start it. Each program is started and greeted at start; the nodes it declares
+  join the registry, and a graph uses them as it uses a plugin's node. A program that does not
+  come up is tried again in the background. See [ffi.md](ffi.md#workers-in-the-daemon).
 - The daemon's default socket is `$RUNTIME_DIRECTORY/daedalusd.sock`, else
   `$XDG_RUNTIME_DIR/daedalusd/daedalusd.sock`, else `/run/daedalusd/daedalusd.sock`. Sockets a
   service manager passes in (`LISTEN_FDS`) are used in place of the configured ones.
