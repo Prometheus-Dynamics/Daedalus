@@ -1,5 +1,5 @@
-//! The native C and C++ tests: the value codec and the worker loop's state messages, run by ctest in
-//! the CMake build the SDK makes.
+//! The native C++ test: the header links against the Rust library, and a value round-trips. ctest
+//! runs it in the CMake build the SDK makes.
 
 use std::path::Path;
 

@@ -133,10 +133,14 @@ fn a_graph_runs_with_typed_pushes_and_optional_takes() {
     graph.push(input, 300i64).expect("a push");
     graph.tick().expect("a tick");
     assert_eq!(graph.take::<u16>(output), Ok(Some(300)));
+    // Two takes have found a value so far; the empty take before them is not counted.
+    let so_far = graph.telemetry().expect("telemetry");
+    assert_eq!((so_far.ticks, so_far.pushes, so_far.takes), (3, 2, 2));
     graph.push(input, 300u16).expect("a push");
     graph.tick().expect("a tick");
-    // Taken as a type too small for it, the number is refused and not lost.
+    // Taken as a type too small for it, the number is refused and stays in the port.
     assert_eq!(graph.take::<u8>(output), Err(HostError::OutOfRange));
+    assert_eq!(graph.take::<u16>(output), Ok(Some(300)));
 
     let telemetry = graph.telemetry().expect("telemetry");
     assert_eq!(
@@ -255,4 +259,16 @@ fn a_host_is_busy_while_its_graphs_live_and_drop_releases_both() {
         before,
         "the linked copy was never used"
     );
+}
+
+#[test]
+fn a_narrow_take_that_is_refused_keeps_the_number_for_a_wider_one() {
+    let surface = Surface::load(library()).expect("loads");
+    let host = host(&surface);
+    let graph = pass(&host);
+    graph.push("in", 300u32).expect("a push");
+    graph.tick().expect("a tick");
+    assert_eq!(graph.take::<u8>("out"), Err(HostError::OutOfRange));
+    assert_eq!(graph.take::<u16>("out"), Ok(Some(300)));
+    assert_eq!(graph.take::<u16>("out"), Ok(None));
 }

@@ -10,6 +10,7 @@
 //! A host made here has no nodes of its own. Its nodes and the backends that run them come
 //! from plugins, installed by path.
 
+mod batch;
 mod graph;
 mod guard;
 mod handles;
@@ -17,6 +18,9 @@ mod host;
 mod io;
 mod status;
 
+pub use batch::{
+    ByteSpan, KIND_BOOL, KIND_BYTES, KIND_F64, KIND_I64, Push, PushValue, daedalus_push_batch,
+};
 pub use graph::{
     PortInfo, Telemetry, TickInfo, daedalus_graph_compile, daedalus_graph_explain,
     daedalus_graph_port, daedalus_graph_port_count, daedalus_graph_port_index,
@@ -28,11 +32,11 @@ pub use host::{
     daedalus_host_schemas, daedalus_version,
 };
 pub use io::{
-    ByteSpan, KIND_BOOL, KIND_BYTES, KIND_F64, KIND_I64, Push, PushValue, daedalus_push_batch,
     daedalus_push_bool, daedalus_push_bool_at, daedalus_push_bytes, daedalus_push_bytes_at,
     daedalus_push_f64, daedalus_push_f64_at, daedalus_push_i64, daedalus_push_i64_at,
     daedalus_take_bool, daedalus_take_bool_at, daedalus_take_bytes, daedalus_take_bytes_at,
     daedalus_take_f64, daedalus_take_f64_at, daedalus_take_i64, daedalus_take_i64_at,
+    daedalus_take_i64_within, daedalus_take_i64_within_at,
 };
 pub use status::{Status, daedalus_status_name};
 

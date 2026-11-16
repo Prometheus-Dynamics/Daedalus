@@ -1,0 +1,32 @@
+[package]
+name = "daedalus-counters"
+description = "Runs a command under Linux hardware counters and prints them to stderr: the board's perf helper. Also `bounded`, which runs a command with a time bound on one core. Run on a board, not in the gate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "counters"
+path = "src/main.rs"
+
+[[bin]]
+name = "bounded"
+path = "src/bin/bounded.rs"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
+# This crate may use unsafe, so it carries its own lint table.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_lifetimes = "deny"
+unused_attributes = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+print_stdout = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stderr = "deny"

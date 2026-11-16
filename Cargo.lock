@@ -614,6 +614,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-counters"
+version = "3.0.1-dev"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "daedalus-cpu"
 version = "3.0.1-dev"
 dependencies = [
@@ -880,8 +887,18 @@ name = "daedalus-lang-cpp"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-backend-process",
+ "daedalus-lang-cpp-sdk",
  "daedalus-wire",
  "daedalus-worker-conformance",
+]
+
+[[package]]
+name = "daedalus-lang-cpp-sdk"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-types",
+ "daedalus-wire",
+ "libc",
 ]
 
 [[package]]

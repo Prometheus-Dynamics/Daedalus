@@ -187,6 +187,10 @@ daedalus_status_t daedalus_push_batch(daedalus_handle_t graph, const daedalus_pu
  * one, and `present` is 0 when there was none. */
 daedalus_status_t daedalus_take_i64(daedalus_handle_t graph, const uint8_t *name, size_t len, int64_t *out, uint8_t *present);
 daedalus_status_t daedalus_take_i64_at(daedalus_handle_t graph, size_t index, int64_t *out, uint8_t *present);
+/* Takes the oldest integer of an output port if it lies in low..high, both included. A number
+ * outside that range gives DAEDALUS_OUT_OF_RANGE and stays in the port for the next take. */
+daedalus_status_t daedalus_take_i64_within(daedalus_handle_t graph, const uint8_t *name, size_t len, int64_t low, int64_t high, int64_t *out, uint8_t *present);
+daedalus_status_t daedalus_take_i64_within_at(daedalus_handle_t graph, size_t index, int64_t low, int64_t high, int64_t *out, uint8_t *present);
 daedalus_status_t daedalus_take_f64(daedalus_handle_t graph, const uint8_t *name, size_t len, double *out, uint8_t *present);
 daedalus_status_t daedalus_take_f64_at(daedalus_handle_t graph, size_t index, double *out, uint8_t *present);
 daedalus_status_t daedalus_take_bool(daedalus_handle_t graph, const uint8_t *name, size_t len, uint8_t *out, uint8_t *present);

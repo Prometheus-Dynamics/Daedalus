@@ -89,6 +89,21 @@ board, the revision, the judge's lines, and what was not run.
 
 ## State
 
-No Luckfox, Pico or CM5 run has been made with these scripts yet. `local` and `local-measure`
-pass on the development machine, and `luckfox-build`, `cm5-build` and `cm5-measure-build` build
-there.
+- CM5: two runs.
+  - 2026-11-14, written up in `scorecard/2026-11-14-cm5.md`.
+  - 2026-11-15, a second CM5 (2 GB, the same image), `next` at 7448193c: `cm5 --go` passed (57
+    test binaries, 245 tests, none failed), and `cm5-measure --go` passed the judge.
+- The batched session (`scripts/board/batch.sh`) has not measured anything yet. Its first run, on
+  2026-11-15, failed at every step: the image has no `timeout` and no `taskset`, and the script
+  used both. Its end-of-run GPU check failed the same way, was read as a wedged GPU, and the
+  board was rebooted for nothing. It came back clean. Since then:
+  - The bundle brings `bounded` (the `daedalus-counters` crate), which bounds a step and pins it.
+  - The script starts with a preflight: every command it names and every program in the bundle
+    must run, or the run ends there.
+  - Only a GPU call past its bound, or a failed one with a V3D reset in the kernel log, reboots
+    the board.
+  - `testing/crates/counters/tests/batch_script.rs` runs the whole script at home with only the
+    image's commands (`cm5-commands.txt`) on PATH.
+- No Luckfox or Pico run has been made with these scripts yet.
+- `local` and `local-measure` pass on the development machine, and `luckfox-build`, `cm5-build`
+  and `cm5-measure-build` build there.

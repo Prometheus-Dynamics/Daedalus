@@ -472,3 +472,48 @@ fn a_value_whose_fence_is_pending_is_not_taken_until_the_fence_resolves() {
     assert_eq!(daedalus_graph_release(graph), OK);
     assert_eq!(daedalus_host_release(host), OK);
 }
+
+#[test]
+fn a_range_checked_take_refuses_a_number_outside_the_range_and_keeps_it() {
+    let _turn = turn();
+    let host = host();
+    let graph = compile(host, &graph_json("fixture.pass")).expect("compiles");
+    assert_eq!(push(graph, "in", 300), OK);
+    tick(graph);
+
+    let (mut out, mut present) = (0i64, 9u8);
+    // SAFETY: the name is `len` bytes, and out and present are values to write.
+    assert_eq!(
+        unsafe {
+            daedalus_take_i64_within(graph, "out".as_ptr(), 3, 0, 255, &mut out, &mut present)
+        },
+        Status::OUT_OF_RANGE
+    );
+    assert_eq!(present, 9, "a refused take writes nothing");
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe {
+            daedalus_take_i64_within(graph, "out".as_ptr(), 3, 0, 65535, &mut out, &mut present)
+        },
+        OK
+    );
+    assert_eq!((present, out), (1, 300));
+    assert_eq!(take(graph, "out"), Ok(None), "taken once, it is gone");
+
+    // By index, the same: the output is port 1.
+    assert_eq!(push(graph, "in", 300), OK);
+    tick(graph);
+    // SAFETY: out and present are values to write.
+    assert_eq!(
+        unsafe { daedalus_take_i64_within_at(graph, 1, 0, 255, &mut out, &mut present) },
+        Status::OUT_OF_RANGE
+    );
+    // SAFETY: as above.
+    assert_eq!(
+        unsafe { daedalus_take_i64_within_at(graph, 1, 0, 65535, &mut out, &mut present) },
+        OK
+    );
+    assert_eq!((present, out), (1, 300));
+    assert_eq!(daedalus_graph_release(graph), OK);
+    assert_eq!(daedalus_host_release(host), OK);
+}

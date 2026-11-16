@@ -1,7 +1,8 @@
 /*
  * The Daedalus worker SDK for C (C11). A worker serves nodes over the wire protocol on its stdin and
  * stdout: it reads host packets, runs node functions, and writes the replies. Node output on stdout
- * is sent to stderr, so a printf cannot corrupt the stream.
+ * is sent to stderr, so a printf cannot corrupt the stream. The functions declared here are
+ * implemented in Rust (languages/cpp-sdk), which a worker links as a static library.
  *
  * A type is a dd_type; a value is a dd_value built in an arena that the loop resets after each
  * run. Unsigned integers are exact: a u64 is a uint64_t, and a range check is explicit.

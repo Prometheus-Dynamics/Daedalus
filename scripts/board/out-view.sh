@@ -1,5 +1,6 @@
 #!/bin/sh
-# Built with: zig cc -target aarch64-linux-musl -static -O2 -o counters scripts/board/counters.c
+# The counters binary is the daedalus-counters crate (testing/crates/counters), built with:
+# cargo build --release --target aarch64-unknown-linux-musl -p daedalus-counters
 # Runs on a board, from /tmp/dd-outview only. User space, nothing written outside it.
 D=/tmp/dd-outview
 cd $D || exit 1

@@ -11,11 +11,58 @@ mkdir -p "$R"
 B="$D/bin"
 SECONDS_MAX="${BATCH_SECONDS:-900}"
 
-step() { # name, command...: one step, bounded, logged
+I3_DIR="${BATCH_I3_DIR:-/tmp/dd-i3dev}"
+
+# The image may have neither `timeout` nor `taskset`, so the bundle brings `bounded`, which does
+# both. It exits 124 past the bound, 126 or 127 for a command that cannot run.
+run_step() { # name, bounded's options..., --, command...
   name="$1"; shift
+  pin=""
+  while [ "$1" != -- ]; do pin="$pin $1"; shift; done
+  shift
   echo "== $name: $*" >> "$R/steps.txt"
-  { echo "== $(date -u +%FT%TZ) $*"; timeout -k 10 "$SECONDS_MAX" "$@" 2>&1; echo "== exit $?"; } >> "$R/$name.txt"
+  # shellcheck disable=SC2086 # the options are words
+  { echo "== $(date -u +%FT%TZ) $*"; "$B/bounded" $pin "$SECONDS_MAX" "$@" 2>&1; echo "== exit $?"; } >> "$R/$name.txt"
 }
+step() { name="$1"; shift; run_step "$name" -- "$@"; }          # name, command...: bounded, logged
+pinned() { name="$1"; shift; run_step "$name" -c 2 -- "$@"; }   # the same, on core 2
+
+# Before anything is measured: every command this script names is on the board, and every
+# program in the bundle starts. A miss ends the run here, with nothing else touched.
+preflight() {
+  bad=0
+  # The board's own shell reads the whole script first: it is busybox ash there, and the test at
+  # home runs under another shell.
+  sh -n "$D/batch-on-board.sh" || { echo "the shell cannot parse the script"; bad=1; }
+  for c in awk basename cat date dirname dmesg env findmnt grep head mkdir paste rmdir sed sort \
+    systemctl tail uname uniq vulkaninfo; do
+    command -v "$c" > /dev/null 2>&1 || { echo "missing command: $c"; bad=1; }
+  done
+  "$B/bounded" 5 true; code=$?
+  [ "$code" = 0 ] || { echo "bounded does not run: exit $code"; echo "preflight failed"; return 1; }
+  for f in "$B"/*; do
+    n=$(basename "$f")
+    case "$n" in
+      bounded) continue ;;
+      *.so) [ -r "$f" ] || { echo "unreadable: $n"; bad=1; }; continue ;;
+      counters) set -- "$f" true ;;
+      ref-frame_chain) set -- env FRAME_CHAIN_TICKS=1 "$f" ;;
+      daedalus-process-timings | daedalus-sweep-worker) set -- "$f" ;;
+      ticks-bench | ref-dylib_frames_overhead | *.*) set -- "$f" --list ;;
+      *) set -- "$f" --help ;;
+    esac
+    "$B/bounded" 30 "$@" > /dev/null 2>&1 < /dev/null; code=$?
+    echo "$n: exit $code"
+    # 124 is a hang, 125 to 127 a program that cannot start, above that a signal.
+    [ "$code" -lt 124 ] || { echo "does not start: $n"; bad=1; }
+  done
+  [ "$bad" = 0 ] && echo "preflight ok" || echo "preflight failed"
+  return "$bad"
+}
+if ! preflight > "$R/preflight.txt" 2>&1; then
+  date -u +%FT%TZ > "$R/done"
+  exit 3
+fi
 
 kernel_log() { # name: what the kernel said since the mark, when the board lets a user read it
   dmesg 2>/dev/null | tail -n 200 > "$R/dmesg-$1.txt" || echo "dmesg not readable" > "$R/dmesg-$1.txt"
@@ -42,10 +89,11 @@ kernel_log() { # name: what the kernel said since the mark, when the board lets 
 systemctl list-units --type=service --state=active --no-legend --plain 2>/dev/null |
   awk '{print $1}' | sort > "$R/services-before.txt"
 kernel_log start
+resets_start=$(dmesg 2>/dev/null | grep -c "Resetting GPU")
 
 # 1. C1: next's byte chain against the reference frame chain (C1.md), pinned to core 2.
 for round in 1 2 3; do
-  step c1-byte-chain taskset -c 2 "$B/daedalus-cpu-timings" byte_chain 5000
+  pinned c1-byte-chain "$B/daedalus-cpu-timings" byte_chain 5000
   step c1-ref-fused env FRAME_CHAIN_TICKS=5000 FRAME_BENCH_CPU=2 "$B/ref-frame_chain"
   step c1-ref-unfused env DAEDALUS_NODE_FUSION=0 FRAME_CHAIN_TICKS=5000 FRAME_BENCH_CPU=2 "$B/ref-frame_chain"
 done
@@ -53,14 +101,14 @@ done
 # 2. C1/D2: per-stage and idle tick; D2/I2: instructions per tick from the counters, as the
 #    difference of two tick counts over the extra ticks.
 for round in 1 2 3; do
-  step d2-chain16 taskset -c 2 "$B/daedalus-budget-harness" chain 2000000 16 unfused
-  step d2-chain1 taskset -c 2 "$B/daedalus-budget-harness" chain 2000000 1 unfused
-  step d2-chain16-fused taskset -c 2 "$B/daedalus-budget-harness" chain 2000000 16 fused
-  step d2-idle taskset -c 2 "$B/daedalus-budget-harness" idle 2000000
+  pinned d2-chain16 "$B/daedalus-budget-harness" chain 2000000 16 unfused
+  pinned d2-chain1 "$B/daedalus-budget-harness" chain 2000000 1 unfused
+  pinned d2-chain16-fused "$B/daedalus-budget-harness" chain 2000000 16 fused
+  pinned d2-idle "$B/daedalus-budget-harness" idle 2000000
   for ticks in 100000 1100000; do
-    step d2-counters-idle taskset -c 2 "$B/counters" "$B/daedalus-budget-harness" idle $ticks
-    step d2-counters-chain16 taskset -c 2 "$B/counters" "$B/daedalus-budget-harness" chain $ticks 16 unfused
-    step d2-counters-chain16-fused taskset -c 2 "$B/counters" "$B/daedalus-budget-harness" chain $ticks 16 fused
+    pinned d2-counters-idle "$B/counters" "$B/daedalus-budget-harness" idle $ticks
+    pinned d2-counters-chain16 "$B/counters" "$B/daedalus-budget-harness" chain $ticks 16 unfused
+    pinned d2-counters-chain16-fused "$B/counters" "$B/daedalus-budget-harness" chain $ticks 16 fused
   done
 done
 
@@ -74,12 +122,12 @@ step i3-stable-allocations "$B/daedalus-budget-harness" plugin 0 "$B/libdaedalus
 for round in 1 2 3; do
   step i3-stable "$B/daedalus-budget-harness" plugin 5000 "$B/libdaedalus_dylib_fixture.so" i3
 done
-mkdir -p /tmp/dd-i3dev
+mkdir -p "$I3_DIR"
 for round in 1 2 3; do
   step i3-ref env I3_PLUGIN="$B/libdaedalus_plugins_stable_abi.so" CARGO="$D/cargo-shim" \
     "$B/ref-dylib_frames_overhead" frame_handoff_overhead --ignored --nocapture
 done
-rmdir /tmp/dd-i3dev 2>/dev/null
+rmdir "$I3_DIR" 2>/dev/null
 
 # 4. The records fan (ListView): every fan row, three rounds.
 for round in 1 2 3; do
@@ -137,15 +185,21 @@ else
 fi
 
 # A V3D wedged while the kernel lives is not the watchdog's. The GPU is checked at the end of
-# every run, E11 or not, so a wait that failed in any step is covered, and the host reboots the
-# board when it doesn't answer.
-{ vulkaninfo --summary 2>&1 | head -20; echo "== exit $?"
-  timeout -k 5 60 "$B/daedalus-gpu-budgets" dispatch-floor 2>&1; echo "== exit $?"; } > "$R/gpu-health.txt"
-if tail -n 1 "$R/gpu-health.txt" | grep -q "== exit 0" && grep -q "dispatch" "$R/gpu-health.txt"; then
-  echo "gpu ok" >> "$R/gpu-health.txt"
-else
-  echo "gpu wedged" >> "$R/gpu-health.txt"
-fi
+# every run, E11 or not, so a wait that failed in any step is covered. The host reboots the board
+# only on "gpu wedged": the GPU call ran past its bound, or it failed and the kernel logged a
+# V3D reset during the run. A check that could not run is its own answer and reboots nothing.
+resets_end=$(dmesg 2>/dev/null | grep -c "Resetting GPU")
+{ vulkaninfo --summary 2>&1 | head -20
+  "$B/bounded" "${BATCH_HEALTH_SECONDS:-60}" "$B/daedalus-gpu-budgets" dispatch-floor 2>&1; code=$?
+  echo "== exit $code"
+  echo "v3d resets in the kernel log: $resets_start at the start, $resets_end at the end"
+  case "$code" in
+    0) echo "gpu ok" ;;
+    124) echo "gpu wedged" ;;
+    125 | 126 | 127) echo "gpu check could not run" ;;
+    *) [ "$resets_end" -gt "$resets_start" ] && echo "gpu wedged" || echo "gpu check failed" ;;
+  esac
+} > "$R/gpu-health.txt"
 systemctl list-units --type=service --state=active --no-legend --plain 2>/dev/null |
   awk '{print $1}' | sort > "$R/services-after.txt"
 date -u +%FT%TZ > "$R/done"

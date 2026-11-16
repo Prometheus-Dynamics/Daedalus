@@ -14,6 +14,10 @@ UNSAFE_ALLOWED = (
     "examples/wasm_bindgen_host",
     # The RP2040 boot sector and the stack probe.
     "examples/chip_board",
+    # The C worker SDK's API: the C boundary, every dd_* function of daedalus.h.
+    "languages/cpp-sdk",
+    # perf_event_open, fork and exec: the board's counter tool, Linux only.
+    "testing/crates/counters",
 )
 HEAP_FREE_TARGETS = ["thumbv7em-none-eabihf", "thumbv6m-none-eabi", "riscv32imac-unknown-none-elf"]
 PRODUCT_NAMES = re.compile(r"\b(lemnos|eidos|ariadne|gaia|orion|helios)\b", re.I)
