@@ -1,33 +1,26 @@
-//! The worker loop. A reader thread takes packets from stdin, so a cancel can reach a running
-//! node; the loop runs each node under a panic guard, and sends its events and outputs in order.
+//! The worker loop. The host's packets come through `daedalus-worker-io`'s transport, which reads
+//! them in order and carries the cancel flag; the loop runs each node under a panic guard, and sends
+//! its events and outputs in order.
 //!
-//! Right after its hello the worker asks the host for shared memory. A host that lends it some
-//! sends large runs in a buffer and takes large outputs in another (`daedalus-process-shm`); one
-//! that lends none, or an older host that doesn't answer, leaves the worker on the plain path,
-//! and the worker logs one line saying so.
-//!
-//! It asks for values by reference too. A host that agrees sends a large `bytes` or opaque input
-//! as its place: in the host's buffer, or in a buffer by descriptor (a dma-buf), which the worker
-//! maps read-only and reads inside the kernel's sync brackets. A node's `&[u8]` parameter borrows
-//! those bytes for the call. A large `bytes` output is written into the value buffer the host named
-//! for the run, and the host's cell holds it there.
+//! Right after its hello the worker asks the host for shared memory and values by reference. The
+//! transport does the asking and the reading; this file binds a run's inputs to the Rust node
+//! bodies and writes their outputs.
 
 use std::io::{self, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, channel};
-use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use daedalus_process_shm::{Inbox, Incoming, Lent, PLAIN_LINE, Reads, View, Writes};
+use daedalus_process_shm::{Reads, View, Writes};
 use daedalus_registry::{NodeRecord, PortDecl, TypeRef, port_type};
 use daedalus_types::{Scalar, TypeKey, Typed};
 use daedalus_wire::codec::Writer;
 use daedalus_wire::{
-    BoundaryValue, DEFAULT_CAP, Declaration, Dir, Fault, FaultCode, Hello, HostMsg, LogLevel,
-    Outputs, PacketError, PortSpec, Progress, RunStatus, Schema, WireType, WireValue, WorkerMsg,
-    encode_bare, write_packet,
+    BoundaryValue, DEFAULT_CAP, Declaration, Fault, FaultCode, Hello, HostMsg, Outputs,
+    PacketError, PortSpec, Progress, RunStatus, Schema, WireType, WireValue, WorkerMsg,
+    write_packet,
 };
+use daedalus_worker_io::{Arrival, Transport, fd_slots, place_outputs, with_run};
 
 use crate::codec::Value;
 use crate::context::{Context, Event};
@@ -237,39 +230,15 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
     // The packets go to a copy of stdout. After this, stdout is stderr: a node that prints goes there.
     let mut out = daedalus_worker_io::packet_stream()?;
     send(&mut out, &WorkerMsg::Hello(hello), &Schema::new()).map_err(io::Error::other)?;
-    let lent = Lent::default();
-    // Until the host answers, a run means it never will: it is an older host.
-    let features = daedalus_wire::shared::BY_REFERENCE | daedalus_wire::shared::ANY_TYPE;
-    let mut unanswered = lent.ask_for(features, &mut out).map_err(io::Error::other)?;
+    let mut transport = Transport::stdio(&mut out)?;
 
-    let current = Arc::new(AtomicU64::new(0));
-    let cancel = Arc::new(AtomicBool::new(false));
-    let packets = read_in_thread(current.clone(), cancel.clone(), Inbox::new(lent.clone()));
-
-    while let Ok(packet) = packets.recv() {
-        let decoded = match packet {
-            Ok(Packet::Bytes(packet)) => {
-                if unanswered && packet.first() == Some(&daedalus_wire::kind::RUN) {
-                    unanswered = false;
-                    log(&mut out, PLAIN_LINE, &schema)?;
-                }
-                HostMsg::decode(&packet, &schema)
-            }
-            Ok(Packet::Run(len)) => match lent.run(len, |bytes| HostMsg::decode(bytes, &schema)) {
-                Some(decoded) => decoded,
-                None => continue,
-            },
-            Ok(Packet::Answer(None)) => {
-                unanswered = false;
-                schema.set_features(lent.features());
+    while let Some(arrival) = transport.next(&mut out, |bytes| HostMsg::decode(bytes, &schema))? {
+        let decoded = match arrival {
+            Arrival::Granted => {
+                schema.set_features(transport.lent().features());
                 continue;
             }
-            Ok(Packet::Answer(Some(reason))) => {
-                unanswered = false;
-                log(&mut out, &format!("{PLAIN_LINE}: {reason}"), &schema)?;
-                continue;
-            }
-            Err(_) => return Ok(()),
+            Arrival::Message(decoded) => decoded,
         };
         let msg = match decoded {
             Ok(msg) => msg,
@@ -286,6 +255,8 @@ pub fn serve(nodes: &[&'static NodeRecord]) -> io::Result<()> {
         };
         match msg {
             HostMsg::Run(run) => {
+                let cancel = transport.cancel_flag();
+                let lent = transport.lent();
                 let (mut status, outputs) = lent
                     .view(|view| run_nodes(&mut served, &run, view, &cancel, &schema, &mut out))?;
                 if status == RunStatus::Cancelled || cancel.load(Ordering::SeqCst) {
@@ -354,44 +325,13 @@ fn run_nodes(
     schema: &Schema,
     out: &mut impl Write,
 ) -> io::Result<(RunStatus, Vec<BoundaryValue>)> {
-    let slots: Vec<u32> = run
-        .inputs
-        .iter()
-        .filter_map(|entry| match &entry.value {
-            WireValue::Placed(daedalus_wire::shared::Place {
-                at: daedalus_wire::shared::At::Fd(slot),
-                ..
-            }) => Some(*slot),
-            _ => None,
-        })
-        .collect();
-    let mut begun = 0;
-    let mut result = Ok((RunStatus::Ok, Vec::new()));
-    for slot in &slots {
-        if let Err(reason) = view.begin_read(*slot) {
-            result = fault(run, None, FaultCode::Internal, reason, schema, out);
-            break;
-        }
-        begun += 1;
+    let slots = fd_slots(run.inputs.iter().map(|entry| &entry.value));
+    match with_run(view, &slots, |reads, writes, threshold| {
+        run_each(served, run, reads, writes, threshold, cancel, schema, out)
+    }) {
+        Ok(result) => result,
+        Err(reason) => fault(run, None, FaultCode::Internal, reason, schema, out),
     }
-    if begun == slots.len() {
-        let threshold = view.threshold();
-        let (reads, mut writes) = view.split();
-        result = run_each(
-            served,
-            run,
-            &reads,
-            &mut writes,
-            threshold,
-            cancel,
-            schema,
-            out,
-        );
-    }
-    for slot in &slots[..begun] {
-        view.end_read(*slot);
-    }
-    result
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -416,35 +356,8 @@ fn run_each(
             Err(error) => return fault(run, Some(id), error.code, error.reason, schema, out),
         }
     }
-    // A large output with a form goes into the run's value buffer, where the host's cell holds
-    // it, with its items aligned; the packet carries its place.
-    for output in &mut outputs {
-        let Ok(ty) = schema.lookup(&output.node, Dir::Output, &output.port) else {
-            continue;
-        };
-        if !schema.has_form(ty) {
-            continue;
-        }
-        if let WireValue::Bytes(bytes) | WireValue::Opaque(bytes) = &output.value {
-            if bytes.len() >= threshold
-                && let Some((place, room)) = writes.room(bytes.len())
-            {
-                room.copy_from_slice(bytes);
-                output.value = WireValue::Placed(place);
-            }
-            continue;
-        }
-        let mut bare = Writer::new();
-        if encode_bare(ty, &output.value, schema, &mut bare).is_err() || bare.buf.len() < threshold
-        {
-            continue;
-        }
-        let items_at = ty.layout().items_at().unwrap_or(0);
-        if let Some((place, room)) = writes.room_for(bare.buf.len(), items_at) {
-            room.copy_from_slice(&bare.buf);
-            output.value = WireValue::Placed(place);
-        }
-    }
+    // A large output goes into the run's value buffer, where the host's cell holds it.
+    place_outputs(writes, threshold, schema, &mut outputs);
     Ok((RunStatus::Ok, outputs))
 }
 
@@ -560,86 +473,4 @@ fn run_node(
             value,
         })
         .collect()))
-}
-
-/// Sends one log line to the host.
-fn log(out: &mut impl Write, text: &str, schema: &Schema) -> io::Result<()> {
-    let line = WorkerMsg::Log {
-        level: LogLevel::Info,
-        text: text.to_owned(),
-    };
-    send(out, &line, schema).map_err(io::Error::other)
-}
-
-/// What the reader thread passes on.
-enum Packet {
-    Bytes(Vec<u8>),
-    /// A run in the lent buffer, this many bytes.
-    Run(usize),
-    /// The host answered the ask: lent memory (`None`), or the reason it lends none.
-    Answer(Option<String>),
-}
-
-/// The stdin reader. It forwards every packet in order. A run starts a new cancel window, and a
-/// cancel that names the run going on sets the cancel flag, so a cancel that arrives right after its
-/// run is never lost.
-fn read_in_thread(
-    current: Arc<AtomicU64>,
-    cancel: Arc<AtomicBool>,
-    mut inbox: Inbox,
-) -> Receiver<Result<Packet, PacketError>> {
-    let (tx, rx) = channel();
-    thread::spawn(move || {
-        let mut buf = Vec::new();
-        loop {
-            let len = match inbox.next(&mut buf) {
-                Ok(Incoming::Packet(len)) => len,
-                Ok(Incoming::Run { len, run }) => {
-                    current.store(run, Ordering::SeqCst);
-                    cancel.store(false, Ordering::SeqCst);
-                    if tx.send(Ok(Packet::Run(len))).is_err() {
-                        return;
-                    }
-                    continue;
-                }
-                Ok(Incoming::Granted) => {
-                    if tx.send(Ok(Packet::Answer(None))).is_err() {
-                        return;
-                    }
-                    continue;
-                }
-                Ok(Incoming::Plain(reason)) => {
-                    if tx.send(Ok(Packet::Answer(Some(reason)))).is_err() {
-                        return;
-                    }
-                    continue;
-                }
-                Err(error) => {
-                    let _ = tx.send(Err(error));
-                    return;
-                }
-            };
-            buf.truncate(len);
-            let run_id = buf
-                .get(1..9)
-                .map(|raw| u64::from_le_bytes(raw.try_into().unwrap_or([0; 8])));
-            match (buf.first(), run_id) {
-                (Some(&daedalus_wire::kind::RUN), Some(run)) => {
-                    current.store(run, Ordering::SeqCst);
-                    cancel.store(false, Ordering::SeqCst);
-                }
-                (Some(&daedalus_wire::kind::CANCEL), Some(run))
-                    if run == current.load(Ordering::SeqCst) =>
-                {
-                    cancel.store(true, Ordering::SeqCst);
-                }
-                _ => {}
-            }
-            let packet = std::mem::take(&mut buf);
-            if tx.send(Ok(Packet::Bytes(packet))).is_err() {
-                return;
-            }
-        }
-    });
-    rx
 }

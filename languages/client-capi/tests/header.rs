@@ -71,6 +71,20 @@ surface! {
         => "daedalus_client_status_t daedalus_client_stop(daedalus_client_handle_t client, uint64_t run, uint32_t mode, daedalus_client_stopped_t *out);";
     daedalus_client_reload: unsafe extern "C" fn(H, u64, *const u8, usize, *mut Carry) -> S
         => "daedalus_client_status_t daedalus_client_reload(daedalus_client_handle_t client, uint64_t run, const uint8_t *graph, size_t graph_len, daedalus_client_carry_t *out);";
+    daedalus_client_load_plugin_report: unsafe extern "C" fn(H, *const u8, usize) -> S
+        => "daedalus_client_status_t daedalus_client_load_plugin_report(daedalus_client_handle_t client, const uint8_t *path, size_t len);";
+    daedalus_client_put_graph_report: unsafe extern "C" fn(H, *const u8, usize, *const u8, usize) -> S
+        => "daedalus_client_status_t daedalus_client_put_graph_report(daedalus_client_handle_t client, const uint8_t *name, size_t name_len, const uint8_t *json, size_t json_len);";
+    daedalus_client_patch_graph_report: unsafe extern "C" fn(H, *const u8, usize, *const u8, usize) -> S
+        => "daedalus_client_status_t daedalus_client_patch_graph_report(daedalus_client_handle_t client, const uint8_t *graph, size_t graph_len, const uint8_t *patch, size_t patch_len);";
+    daedalus_client_reload_report: unsafe extern "C" fn(H, u64, *const u8, usize) -> S
+        => "daedalus_client_status_t daedalus_client_reload_report(daedalus_client_handle_t client, uint64_t run, const uint8_t *graph, size_t graph_len);";
+    daedalus_client_report: unsafe extern "C" fn(H, *mut u8, usize, *mut usize) -> S
+        => "daedalus_client_status_t daedalus_client_report(daedalus_client_handle_t client, uint8_t *buf, size_t cap, size_t *len);";
+    daedalus_client_plan_raw: unsafe extern "C" fn(H, *const u8, usize, *const PlanOptions, *mut u8, usize, *mut usize) -> S
+        => "daedalus_client_status_t daedalus_client_plan_raw(daedalus_client_handle_t client, const uint8_t *graph, size_t graph_len, const daedalus_client_plan_options_t *options, uint8_t *buf, size_t cap, size_t *len);";
+    daedalus_client_graph_text: unsafe extern "C" fn(H, *const u8, usize, *mut u8, usize, *mut usize) -> S
+        => "daedalus_client_status_t daedalus_client_graph_text(daedalus_client_handle_t client, const uint8_t *name, size_t name_len, uint8_t *buf, size_t cap, size_t *len);";
     daedalus_client_inspect_run: unsafe extern "C" fn(H, u64, *mut u8, usize, *mut usize) -> S
         => "daedalus_client_status_t daedalus_client_inspect_run(daedalus_client_handle_t client, uint64_t run, uint8_t *buf, size_t cap, size_t *len);";
     daedalus_client_inspect_graph: unsafe extern "C" fn(H, *const u8, usize, *mut u8, usize, *mut usize) -> S
@@ -137,6 +151,13 @@ const BASELINE: &[&str] = &[
     "daedalus_client_status_t daedalus_client_cancel(daedalus_client_handle_t client, uint64_t run);",
     "daedalus_client_status_t daedalus_client_stop(daedalus_client_handle_t client, uint64_t run, uint32_t mode, daedalus_client_stopped_t *out);",
     "daedalus_client_status_t daedalus_client_reload(daedalus_client_handle_t client, uint64_t run, const uint8_t *graph, size_t graph_len, daedalus_client_carry_t *out);",
+    "daedalus_client_status_t daedalus_client_load_plugin_report(daedalus_client_handle_t client, const uint8_t *path, size_t len);",
+    "daedalus_client_status_t daedalus_client_put_graph_report(daedalus_client_handle_t client, const uint8_t *name, size_t name_len, const uint8_t *json, size_t json_len);",
+    "daedalus_client_status_t daedalus_client_patch_graph_report(daedalus_client_handle_t client, const uint8_t *graph, size_t graph_len, const uint8_t *patch, size_t patch_len);",
+    "daedalus_client_status_t daedalus_client_reload_report(daedalus_client_handle_t client, uint64_t run, const uint8_t *graph, size_t graph_len);",
+    "daedalus_client_status_t daedalus_client_report(daedalus_client_handle_t client, uint8_t *buf, size_t cap, size_t *len);",
+    "daedalus_client_status_t daedalus_client_plan_raw(daedalus_client_handle_t client, const uint8_t *graph, size_t graph_len, const daedalus_client_plan_options_t *options, uint8_t *buf, size_t cap, size_t *len);",
+    "daedalus_client_status_t daedalus_client_graph_text(daedalus_client_handle_t client, const uint8_t *name, size_t name_len, uint8_t *buf, size_t cap, size_t *len);",
     "daedalus_client_status_t daedalus_client_inspect_run(daedalus_client_handle_t client, uint64_t run, uint8_t *buf, size_t cap, size_t *len);",
     "daedalus_client_status_t daedalus_client_inspect_graph(daedalus_client_handle_t client, const uint8_t *name, size_t name_len, uint8_t *buf, size_t cap, size_t *len);",
     "daedalus_client_status_t daedalus_client_inspect_cache(daedalus_client_handle_t client, uint8_t *buf, size_t cap, size_t *len);",

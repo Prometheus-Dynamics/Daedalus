@@ -10,6 +10,10 @@ repository.workspace = true
 daedalus-backend-process = { path = "../../backends/process" }
 
 [dev-dependencies]
+# Built beside the tests, as the shared libraries the Python SDK's tests load with ctypes.
+daedalus-capi = { path = "../../core/capi" }
+daedalus-client-capi = { path = "../client-capi" }
+daedalus-drive-conformance = { path = "../../testing/crates/drive-conformance" }
 daedalus-integrity = { path = "../../core/integrity" }
 daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance" }
 

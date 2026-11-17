@@ -31,4 +31,10 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen-cli@${{ steps.wasm-bindgen.outputs.version }}
+      # The Java SDK builds with `javac --release 21`. The runner image carries JDK 21; point at it.
+      - name: JDK 21
+        shell: bash
+        run: |
+          test -n "$JAVA_HOME_21_X64" || { echo "the runner image has no JDK 21" >&2; exit 1; }
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
       - run: ./scripts/gate.sh

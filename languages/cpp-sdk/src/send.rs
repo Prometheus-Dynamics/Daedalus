@@ -22,6 +22,11 @@ impl Packets {
         self.write(&body)
     }
 
+    /// The stream the packets go to, for the transport's writes and the lent-memory sends.
+    pub fn writer(&mut self) -> &mut dyn Write {
+        &mut *self.out
+    }
+
     /// Writes one already-encoded body as a packet.
     pub fn write(&mut self, body: &[u8]) -> io::Result<()> {
         write_packet(&mut self.out, body, DEFAULT_CAP).map_err(io::Error::other)

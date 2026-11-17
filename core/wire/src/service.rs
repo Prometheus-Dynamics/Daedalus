@@ -4,6 +4,8 @@
 //! A connection starts with one hello each way. After that the client sends requests, each with an
 //! id, and may send the next before the last is answered. Every response carries the id of its
 //! request. Events arrive between responses, each with the id of the watch it belongs to.
+//! A response under id 0 is about the connection, not a request (requests are numbered from 1):
+//! a server sends one when it refuses a packet it could not read, then closes the connection.
 //!
 //! # What may be added, and what may not
 //!

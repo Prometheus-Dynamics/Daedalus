@@ -960,6 +960,9 @@ name = "daedalus-lang-cpp"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-backend-process",
+ "daedalus-capi",
+ "daedalus-client-capi",
+ "daedalus-drive-conformance",
  "daedalus-lang-cpp-sdk",
  "daedalus-wire",
  "daedalus-worker-conformance",
@@ -969,6 +972,7 @@ dependencies = [
 name = "daedalus-lang-cpp-sdk"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus-process-shm",
  "daedalus-types",
  "daedalus-wire",
  "daedalus-worker-io",
@@ -980,6 +984,7 @@ name = "daedalus-lang-java"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-backend-process",
+ "daedalus-drive-conformance",
  "daedalus-wire",
  "daedalus-worker-conformance",
 ]
@@ -989,6 +994,7 @@ name = "daedalus-lang-node"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-backend-process",
+ "daedalus-drive-conformance",
  "daedalus-worker-conformance",
 ]
 
@@ -997,6 +1003,9 @@ name = "daedalus-lang-python"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-backend-process",
+ "daedalus-capi",
+ "daedalus-client-capi",
+ "daedalus-drive-conformance",
  "daedalus-integrity",
  "daedalus-worker-conformance",
 ]
@@ -1327,6 +1336,8 @@ dependencies = [
 name = "daedalus-worker-io"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus-process-shm",
+ "daedalus-wire",
  "libc",
 ]
 

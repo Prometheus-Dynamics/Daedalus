@@ -3,6 +3,8 @@
 
 use std::ffi::{c_char, c_void};
 use std::ptr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use daedalus_wire::{
     FaultCode, LogLevel, Progress, REASON_CAP, Schema, WorkerMsg, truncate_reason,
@@ -35,6 +37,8 @@ pub struct Ctx {
     /// The value the node set with `dd_set_state`, which `state` points to after the set.
     pub state_store: DdValue,
     pub state_set: bool,
+    /// The host's cancel flag for the run: set when the host cancels the run going on.
+    pub cancel: Arc<AtomicBool>,
 }
 
 impl Ctx {
@@ -164,6 +168,17 @@ pub unsafe extern "C" fn dd_fault(cx: *mut DdCtx, code: *const c_char, reason: *
 pub unsafe extern "C" fn dd_state(cx: *mut DdCtx) -> *mut DdValue {
     // SAFETY: the caller passes the running node's context.
     unsafe { Ctx::from_raw(cx) }.state
+}
+
+/// Whether the host asked the run going on to stop. A node that loops should check it, and end its
+/// run once it is set.
+///
+/// # Safety
+/// `cx` is the running node's context.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dd_cancelled(cx: *mut DdCtx) -> bool {
+    // SAFETY: the caller passes the running node's context.
+    unsafe { Ctx::from_raw(cx) }.cancel.load(Ordering::SeqCst)
 }
 
 /// Sets the node's state, kept for the next run.

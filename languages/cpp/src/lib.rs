@@ -51,17 +51,44 @@ pub fn sdk_library() -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other("cargo built no daedalus-lang-cpp-sdk staticlib"))
 }
 
-/// Configures and builds the fixture worker in `build_dir` with CMake, linked against the Rust C API.
-/// Returns the worker's path.
+/// The shared library a crate builds beside the test binaries, by its file stem (`daedalus_capi`).
+/// A cdylib is not hashed, so the file is the one of that name in the deps folder.
+pub fn shared_library(stem: &str) -> io::Result<PathBuf> {
+    let deps = std::env::current_exe()?
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| io::Error::other("the test binary has no deps folder"))?;
+    let name = format!(
+        "{}{stem}{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
+    let found = deps.join(name);
+    if found.is_file() {
+        Ok(found)
+    } else {
+        Err(io::Error::other(format!(
+            "{} is not there",
+            found.display()
+        )))
+    }
+}
+
+/// Configures and builds the fixture worker in `build_dir` with CMake, linked against the Rust C API,
+/// and the host and client libraries the SDK's targets name. Returns the worker's path.
 pub fn build(build_dir: &Path) -> io::Result<PathBuf> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("sdk");
     let library = sdk_library()?;
+    let host = shared_library("daedalus_capi")?;
+    let client = shared_library("daedalus_client_capi")?;
     let configure = Command::new("cmake")
         .arg("-S")
         .arg(&source)
         .arg("-B")
         .arg(build_dir)
         .arg(format!("-DDAEDALUS_RUST_LIB={}", library.display()))
+        .arg(format!("-DDAEDALUS_HOST_LIB={}", host.display()))
+        .arg(format!("-DDAEDALUS_CLIENT_LIB={}", client.display()))
         .status()?;
     if !configure.success() {
         return Err(io::Error::other("cmake configure failed"));

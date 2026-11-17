@@ -37,5 +37,11 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # The Java SDK builds with `javac --release 21`. The runner image carries JDK 21; point at it.
+      - name: JDK 21
+        shell: bash
+        run: |
+          test -n "$JAVA_HOME_21_X64" || { echo "the runner image has no JDK 21" >&2; exit 1; }
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --all-targets --no-fail-fast

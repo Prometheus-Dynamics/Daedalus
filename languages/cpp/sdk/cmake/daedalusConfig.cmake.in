@@ -1,10 +1,14 @@
-# Found by find_package(daedalus CONFIG). Defines daedalus::daedalus (the worker SDK's headers, and the
-# libraries they need) and daedalus::rust (the Rust library behind the C API), both at the install
-# prefix this file was installed under.
+# Found by find_package(daedalus CONFIG). Defines these targets, at the install prefix this file was
+# installed under:
+#   daedalus::daedalus   the worker SDK's headers, and the libraries they need
+#   daedalus::rust       the Rust library behind the worker C API
+#   daedalus::host       daedalus.h and daedalus_host.hpp, over the host C API library
+#   daedalus::client     daedalus_client.h and daedalus_client.hpp, over the client C API library
 #
-# A worker built with MSVC must use the release DLL C runtime, as the Rust library does. CMake's
+# A program built with MSVC must use the release DLL C runtime, as the Rust libraries do. CMake's
 # default there is that runtime, so a consumer keeps the default or sets
-# CMAKE_MSVC_RUNTIME_LIBRARY to MultiThreadedDLL.
+# CMAKE_MSVC_RUNTIME_LIBRARY to MultiThreadedDLL. The host and client libraries are shared: a
+# consumer finds them at run time beside the program, or through its library path.
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
@@ -21,6 +25,40 @@ if(NOT TARGET daedalus::daedalus)
   set_target_properties(daedalus::daedalus PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@DAEDALUS_INCLUDE_INSTALL_DIR@"
     INTERFACE_LINK_LIBRARIES "daedalus::rust;@DAEDALUS_PLATFORM_LINK_LIBS@")
+endif()
+
+if(NOT TARGET daedalus::host_library)
+  add_library(daedalus::host_library SHARED IMPORTED)
+  set_target_properties(daedalus::host_library PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@DAEDALUS_HOST_INSTALL_PATH@")
+  if(WIN32)
+    set_target_properties(daedalus::host_library PROPERTIES
+      IMPORTED_IMPLIB "${PACKAGE_PREFIX_DIR}/@DAEDALUS_HOST_INSTALL_PATH@.lib")
+  endif()
+endif()
+
+if(NOT TARGET daedalus::client_library)
+  add_library(daedalus::client_library SHARED IMPORTED)
+  set_target_properties(daedalus::client_library PROPERTIES
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@DAEDALUS_CLIENT_INSTALL_PATH@")
+  if(WIN32)
+    set_target_properties(daedalus::client_library PROPERTIES
+      IMPORTED_IMPLIB "${PACKAGE_PREFIX_DIR}/@DAEDALUS_CLIENT_INSTALL_PATH@.lib")
+  endif()
+endif()
+
+if(NOT TARGET daedalus::host)
+  add_library(daedalus::host INTERFACE IMPORTED)
+  set_target_properties(daedalus::host PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@DAEDALUS_INCLUDE_INSTALL_DIR@"
+    INTERFACE_LINK_LIBRARIES "daedalus::host_library;@DAEDALUS_PLATFORM_LINK_LIBS@")
+endif()
+
+if(NOT TARGET daedalus::client)
+  add_library(daedalus::client INTERFACE IMPORTED)
+  set_target_properties(daedalus::client PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@DAEDALUS_INCLUDE_INSTALL_DIR@"
+    INTERFACE_LINK_LIBRARIES "daedalus::client_library;@DAEDALUS_PLATFORM_LINK_LIBS@")
 endif()
 
 check_required_components(daedalus)

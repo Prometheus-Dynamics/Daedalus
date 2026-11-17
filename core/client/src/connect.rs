@@ -15,13 +15,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use daedalus_wire::service::{
-    ClientMsg, DEFAULT_SESSION, EndReason, Event, EventBody, EventKinds, Op, Reply, Request,
-    Response, ServerMsg, ServiceError, ServiceHello, WatchTarget,
+    ClientMsg, DEFAULT_SESSION, EndReason, ErrorCode, Event, EventBody, EventKinds, Op, Reply,
+    Request, Response, ServerMsg, ServiceError, ServiceHello, WatchTarget,
 };
 use daedalus_wire::{DEFAULT_CAP, PacketError, Schema, WireError, read_packet, write_packet};
 
 use crate::reconnect::{Backoff, Clock, SystemClock};
-use crate::watch::Watch;
+use crate::watch::{Feed, Watch};
 
 /// Where the server listens.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -191,7 +191,7 @@ struct WatchEntry {
     target: WatchTarget,
     kinds: EventKinds,
     session: Arc<str>,
-    events: Sender<Event>,
+    events: Feed,
     /// The server's number for the subscription on this connection.
     sub: Option<u64>,
 }
@@ -450,9 +450,9 @@ impl Client {
         target: WatchTarget,
         kinds: EventKinds,
     ) -> Result<Watch, ClientError> {
-        let (events, stream) = channel();
         let (answer, wait) = channel();
         let watch = self.inner.id();
+        let (events, stream) = crate::watch::stream(watch);
         self.inner.lock().watches.insert(
             watch,
             WatchEntry {
@@ -603,9 +603,18 @@ fn read_loop(inner: &Arc<Inner>, mut reader: Box<dyn Read + Send>) {
     let mut buf = Vec::new();
     let mut backoff = Backoff::new();
     loop {
+        // Set when the server refuses the connection itself: see `CONNECTION`.
+        let mut refusal = None;
         while read_packet(&mut reader, DEFAULT_CAP, &mut buf).is_ok() {
             let codecs = inner.lock().codecs.clone();
             match ServerMsg::decode(&buf, &codecs) {
+                Ok(ServerMsg::Response(Response {
+                    id: CONNECTION,
+                    result: Err(error),
+                })) if error.code == ErrorCode::FrameTooLarge => {
+                    refusal = Some(error);
+                    break;
+                }
                 Ok(ServerMsg::Response(response)) => answer(inner, response),
                 Ok(ServerMsg::Event(event)) => deliver(inner, event),
                 // A second hello or a body that does not decode: the connection cannot be
@@ -613,7 +622,7 @@ fn read_loop(inner: &Arc<Inner>, mut reader: Box<dyn Read + Send>) {
                 Ok(ServerMsg::Hello(_)) | Err(_) => break,
             }
         }
-        drop_link(inner);
+        drop_link(inner, refusal);
         loop {
             if !inner.keeps_trying() {
                 end(inner);
@@ -639,9 +648,11 @@ fn read_loop(inner: &Arc<Inner>, mut reader: Box<dyn Read + Send>) {
     }
 }
 
-/// The connection is gone: closes it and settles every request that cannot be sent again.
-fn drop_link(inner: &Inner) {
-    let keep = inner.keeps_trying();
+/// The connection is gone: closes it and settles every request that cannot be sent again. A
+/// refusal of the connection is the error for every request in flight: none is sent again, since
+/// the server would refuse it again.
+fn drop_link(inner: &Inner, refusal: Option<ServiceError>) {
+    let keep = inner.keeps_trying() && refusal.is_none();
     let mut state = inner.lock();
     if let Some(link) = state.link.take() {
         (link.close)();
@@ -652,9 +663,10 @@ fn drop_link(inner: &Inner) {
             return true;
         }
         if let Some(answer) = waiter.answer.take() {
-            let error = match waiter.resend {
-                Some(_) => ClientError::Disconnected,
-                None => ClientError::UnknownDelivery,
+            let error = match (&refusal, &waiter.resend) {
+                (Some(refused), _) => ClientError::Service(refused.clone()),
+                (None, Some(_)) => ClientError::Disconnected,
+                (None, None) => ClientError::UnknownDelivery,
             };
             let _ = answer.send(Err(error));
         }
@@ -673,6 +685,10 @@ fn end(inner: &Inner) {
         }
     }
 }
+
+/// The id of an answer about the connection, not about a request: the server uses it when it
+/// refuses a request it could not read, so the id is not known. Request ids start at 1.
+const CONNECTION: u64 = 0;
 
 fn answer(inner: &Inner, response: Response) {
     let mut state = inner.lock();
@@ -718,13 +734,7 @@ fn deliver(inner: &Inner, event: Event) {
         }
         _ => false,
     };
-    let gone = entry
-        .events
-        .send(Event {
-            sub: watch,
-            body: event.body,
-        })
-        .is_err();
+    let gone = !entry.events.push(event.body);
     if last || gone {
         state.watches.remove(&watch);
         state.subs.remove(&event.sub);

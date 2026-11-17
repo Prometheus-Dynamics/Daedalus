@@ -1,0 +1,19 @@
+# Package metadata only. Nothing here is built or fetched by the Daedalus tests: the SDK is the
+# directory `daedalus/`, and it uses the standard library alone (no build backend is needed to put
+# it on a path). The two C libraries are built by cargo and found at run time.
+
+[project]
+name = "daedalus"
+version = "0.0.0"
+description = "Write Daedalus nodes in Python, drive the daemon, and host graphs in-process."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Typing :: Typed",
+]
+
+[tool.setuptools]
+packages = ["daedalus"]
+package-data = { daedalus = ["py.typed"] }

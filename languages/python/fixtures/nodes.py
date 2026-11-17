@@ -1,5 +1,8 @@
-"""The thirteen canonical fixture nodes, as the Python worker serves them. Their ports and types
-match testing/crates/worker-conformance/src/fixtures.rs exactly."""
+"""The canonical fixture nodes, as the Python worker serves them: the thirteen value fixtures, and the
+four behaviour fixtures. Their ports and types match testing/crates/worker-conformance/src/fixtures.rs
+exactly."""
+
+import time
 
 from daedalus import NodeError, T, node
 
@@ -70,3 +73,35 @@ def failure_diagnostic(value, cx):
     cx.detail("and this is the rest of it")
     cx.fault_code(77)
     raise NodeError("node_error", "diagnostic: the value is rejected")
+
+
+# The behaviour fixtures of the worker behaviour suite (testing/crates/worker-conformance).
+
+
+@node("fixture.wait_cancel", inputs=[("x", T.i64)], outputs=[("y", T.i64)])
+def wait_cancel(x, cx):
+    while not cx.cancelled():
+        time.sleep(0.002)
+    return x
+
+
+@node("fixture.events", inputs=[("x", T.i64)], outputs=[("y", T.i64)])
+def events(x, cx):
+    cx.progress(0.5, "half")
+    cx.log("info", "after the progress")
+    cx.detail("a detail line")
+    cx.progress(1.0, "done")
+    return x
+
+
+@node("fixture.chatty", inputs=[("x", T.i64)], outputs=[("y", T.i64)])
+def chatty(x):
+    print("a node line on stdout")
+    return x + 1
+
+
+@node("fixture.stateful_label", inputs=[("in", T.string)], outputs=[("out", T.string)], state=T.string)
+def stateful_label(cx, **ports):
+    label = (cx.state or "") + ports["in"]
+    cx.new_state = label
+    return label

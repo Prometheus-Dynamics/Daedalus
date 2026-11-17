@@ -35,6 +35,17 @@ def _layout_hash(words):
 
 LAYOUT_HASH = _layout_hash(_LAYOUT)
 
+# The service protocol (the client's, on the daemon) has its own version and layout. Its layout
+# covers the worker layout above, as core/wire/src/service.rs builds it.
+SERVICE_VERSION = 1
+SESSION_CAP = 64
+_SERVICE_LAYOUT = [
+    SERVICE_VERSION, LAYOUT_HASH, SESSION_CAP,
+    0x80, 0x81, 0xC0, 0xC1, 0xC2,
+    0xF2A3,
+]
+SERVICE_LAYOUT_HASH = _layout_hash(_SERVICE_LAYOUT)
+
 KIND_RUN, KIND_CANCEL, KIND_STATE_EXPORT, KIND_STATE_IMPORT, KIND_PING, KIND_SHUTDOWN = 1, 2, 3, 4, 5, 6
 KIND_HELLO, KIND_OUTPUTS, KIND_PROGRESS, KIND_LOG, KIND_FAULT, KIND_STATE_VALUE, KIND_PONG = (
     0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46)
@@ -54,6 +65,10 @@ SCALARS = [
 ]
 
 
+# A wire type, as the builders in `T` make it.
+WireType = tuple
+
+
 class WireError(Exception):
     """A message, value or type that cannot be encoded or decoded."""
 
@@ -61,7 +76,7 @@ class WireError(Exception):
 class NodeError(Exception):
     """Raise from a node body to fault the run with this code and message."""
 
-    def __init__(self, code, message):
+    def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         if code not in FAULT_CODES:
             raise ValueError(f"unknown fault code {code!r}")
@@ -73,7 +88,7 @@ class T:
     """Type constructors."""
 
     @staticmethod
-    def scalar(name):
+    def scalar(name: str) -> WireType:
         if name not in SCALARS:
             raise ValueError(f"unknown scalar {name!r}")
         return ("scalar", name)
@@ -94,31 +109,31 @@ class T:
     bytes = ("scalar", "bytes")
 
     @staticmethod
-    def opaque(key):
+    def opaque(key: str) -> WireType:
         return ("opaque", key)
 
     @staticmethod
-    def optional(inner):
+    def optional(inner: WireType) -> WireType:
         return ("optional", inner)
 
     @staticmethod
-    def list(inner):
+    def list(inner: WireType) -> WireType:
         return ("list", inner)
 
     @staticmethod
-    def map(key, value):
+    def map(key: WireType, value: WireType) -> WireType:
         return ("map", key, value)
 
     @staticmethod
-    def tuple(*items):
+    def tuple(*items: WireType) -> WireType:
         return ("tuple", tuple(items))
 
     @staticmethod
-    def struct(*fields):
+    def struct(*fields: WireType) -> WireType:
         return ("struct", tuple(fields))
 
     @staticmethod
-    def enum(*variants):
+    def enum(*variants: WireType) -> WireType:
         return ("enum", tuple(variants))
 
 

@@ -200,9 +200,12 @@
 //! - `stopped`: the host answers it only in the window inside one `stop`, after the run is
 //!   marked stopped and before it leaves the table. A second stop finds no run (`unknown_run`).
 //!   No sequence of one driver's commands reaches it.
-//! - An inbound frame bigger than the host's 16 MiB read cap: the client refuses to send it, and
-//!   the host's answer to it carries id 0, which the Rust client cannot match to a request (read
-//!   from the listener's code; not run here).
+//! - An inbound request bigger than the host's read cap. The reference client does not send one: its
+//!   cap is the host's advertised cap, 16 MiB (16777216 bytes), which is the host's read cap too,
+//!   and it refuses a larger request before it is sent. So no driver can reach this path through
+//!   the reference client. If a request that large arrives anyway, the host answers under id 0 and
+//!   closes, and the Rust client gives the requests in flight the typed `frame_too_large` error.
+//!   That is tested in `core/client/tests/oversize_refusal.rs`, not by a scenario.
 //!
 //! ## Golden transcripts
 //!

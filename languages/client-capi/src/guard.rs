@@ -2,7 +2,7 @@
 //! text, with the server's error code when the server refused, for the thread that made the call.
 //! Also the checked reads of a caller's text and bytes, and the writes of a call's results.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::status::Status;
@@ -14,6 +14,8 @@ struct Last {
 
 thread_local! {
     static LAST: RefCell<Last> = const { RefCell::new(Last { text: String::new(), service: 0 }) };
+    /// Whether the call on this thread that is running noted its failure with `fail`.
+    static NOTED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Notes why the call on this thread is failing, and gives the status back.
@@ -30,11 +32,29 @@ pub(crate) fn fail_service(code: u32, why: impl std::fmt::Display) -> Status {
 
 fn set(text: String, service: u32) {
     LAST.with(|last| *last.borrow_mut() = Last { text, service });
+    NOTED.with(|noted| noted.set(true));
 }
 
 /// Runs an entry point's body. A failure is its status, which the body has already noted. A
-/// panic becomes `PANIC`.
+/// panic becomes `PANIC`. A failure the body did not note clears the reason an earlier failure
+/// left, so the last error never names a failure that is not the last one.
 pub(crate) fn guard(body: impl FnOnce() -> Result<(), Status>) -> Status {
+    let status = guard_keep(body);
+    if status != Status::OK && !NOTED.with(Cell::get) {
+        LAST.with(|last| {
+            *last.borrow_mut() = Last {
+                text: String::new(),
+                service: 0,
+            }
+        });
+    }
+    status
+}
+
+/// As [`guard`], but a failure the body did not note leaves the stored reason alone. The
+/// last-error queries use it: asking for the reason is not a failure that replaces it.
+pub(crate) fn guard_keep(body: impl FnOnce() -> Result<(), Status>) -> Status {
+    NOTED.with(|noted| noted.set(false));
     match catch_unwind(AssertUnwindSafe(body)) {
         Ok(Ok(())) => Status::OK,
         Ok(Err(status)) => status,
@@ -192,7 +212,7 @@ pub unsafe extern "C" fn daedalus_client_last_error(
     cap: usize,
     len: *mut usize,
 ) -> Status {
-    guard(|| {
+    guard_keep(|| {
         let text = LAST.with(|last| last.borrow().text.clone());
         // SAFETY: the caller's contract is this function's.
         unsafe { copy_out(text.as_bytes(), buf, cap, len) }
@@ -208,7 +228,7 @@ pub unsafe extern "C" fn daedalus_client_last_error(
 // SAFETY: the name is this library's own, with its prefix: no other symbol has it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn daedalus_client_last_error_code(code: *mut u32) -> Status {
-    guard(|| {
+    guard_keep(|| {
         let service = LAST.with(|last| last.borrow().service);
         // SAFETY: the caller's contract is this function's.
         unsafe { write_out(code, service) }
