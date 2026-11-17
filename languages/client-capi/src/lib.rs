@@ -30,12 +30,14 @@ mod values;
 mod watch;
 
 pub use calls::{
-    daedalus_client_cache_clear, daedalus_client_cancel, daedalus_client_inspect_cache,
-    daedalus_client_inspect_graph, daedalus_client_inspect_host, daedalus_client_inspect_run,
-    daedalus_client_inspect_telemetry, daedalus_client_load_plugin, daedalus_client_make_plan,
-    daedalus_client_patch_graph, daedalus_client_plan, daedalus_client_put_graph,
-    daedalus_client_put_plan, daedalus_client_reload, daedalus_client_start, daedalus_client_step,
-    daedalus_client_stop, daedalus_client_trace,
+    daedalus_client_cache_clear, daedalus_client_cancel, daedalus_client_graph_text,
+    daedalus_client_inspect_cache, daedalus_client_inspect_graph, daedalus_client_inspect_host,
+    daedalus_client_inspect_run, daedalus_client_inspect_telemetry, daedalus_client_load_plugin,
+    daedalus_client_load_plugin_report, daedalus_client_make_plan, daedalus_client_patch_graph,
+    daedalus_client_patch_graph_report, daedalus_client_plan, daedalus_client_plan_raw,
+    daedalus_client_put_graph, daedalus_client_put_graph_report, daedalus_client_put_plan,
+    daedalus_client_reload, daedalus_client_reload_report, daedalus_client_report,
+    daedalus_client_start, daedalus_client_step, daedalus_client_stop, daedalus_client_trace,
 };
 #[doc(hidden)]
 pub use codes::CONSTANTS;

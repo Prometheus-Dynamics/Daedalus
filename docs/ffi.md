@@ -16,19 +16,27 @@ def checked_divide(a, b):
     return int(a / b)
 ```
 
+A Python worker reads its packets on a thread of its own, so a node's `cx.cancelled()` turns true
+while the body runs, as in Rust. Python workers stay on the plain transport for large values, by
+ruling: the SDK has no shared memory, and any that comes later goes through the Rust implementation.
+
 Each language's SDK is under [`languages/`](../languages), with the worker loop and the node
 declarations, and each is run against the same thirteen canonical fixtures:
 
 | Language | SDK | Status |
 |---|---|---|
-| Python | `languages/python/sdk` | all thirteen fixtures |
-| JavaScript (Node) | `languages/node/sdk` | all thirteen fixtures |
-| Java | `languages/java/sdk` | all thirteen fixtures |
-| C and C++ | `languages/cpp/sdk` (`daedalus_worker.h`, and the CMake build) over `languages/cpp-sdk` (the C API, in Rust) | all thirteen fixtures |
+| Python | `languages/python/sdk` | all thirteen fixtures, and the six behaviours (large values travel as plain packets, by ruling: see [its README](../languages/python/sdk/README.md)) |
+| JavaScript (Node) | `languages/node/sdk` (worker, and the service client in `client.js`) | all thirteen fixtures and all six behaviours; large values by plain packets, since Node has no fd passing in pure JavaScript; the drive suite over TCP and unix sockets |
+| Java | `languages/java/sdk` | all thirteen fixtures and the six behaviours, on the plain transport; drives the daemon through a pure-Java client |
+| C and C++ | `languages/cpp/sdk` (`daedalus_worker.h`, `daedalus_worker.hpp`, and the CMake build) over `languages/cpp-sdk` (the C API, in Rust) | all thirteen fixtures and all six behaviours |
 | Rust | `languages/rust` | all thirteen fixtures |
 
 The Status section of each language's brief in [`prs/`](prs) (`G5` to `G9`) says exactly what is
 served and what is not.
+
+The C and C++ worker's transport is the Rust worker's: the reading and the shared memory are in
+`languages/worker-io`, and both SDKs call it. A large value goes by reference on Linux, and plain
+elsewhere, as the Rust worker's does.
 
 A behaviour suite holds a worker to what the thirteen fixtures do not cover: a cancel seen during a
 run ends it as cancelled, progress, log and detail arrive in order before the outputs, a state
@@ -148,7 +156,8 @@ mismatch is refused. `core/wire` is the Rust implementation. The C and C++ SDKs 
 ### Large values in shared memory
 
 On Linux a worker's stdin and stdout are one Unix socket, and a large value doesn't travel in its
-packet. After the hello the host sends a ping. A worker that can take shared memory asks for it
+packet. The Python SDK doesn't ask for it: it has no shared-memory transport, by ruling (see
+[its README](../languages/python/sdk/README.md)), so its large values are plain packets. After the hello the host sends a ping. A worker that can take shared memory asks for it
 (kind `0x49`) before its pong, and the host always answers (kind `0x07`): either it grants it,
 passing a pool of two memfd buffers over the socket, one for each direction, or it says the worker
 stays on the plain path, with the reason. A worker logs that reason as
@@ -173,6 +182,11 @@ runs on pipes and stays plain.
 
 On a CM5 the hand-over of a 1 MiB value there and back went from 3.91 ms/MB to 2.06 ms/MB, and of
 a 4 MiB one from 4.10 to 2.69: [testing/board-runs/worker-shm.md](../testing/board-runs/worker-shm.md).
+
+The Java worker never asks for shared memory, so its large values travel in packets, and the
+behaviour suite reports the plain transport for it. That is a decision for a managed worker. The
+Java SDK is pure Java at release 21 with no native code, and a Java process cannot map a shared
+buffer without it, so the plain path is the one it has.
 
 ### Values by reference
 
@@ -285,8 +299,35 @@ might crash is kept out of the host's process. See [plugins.md](plugins.md).
 ## From C, without a worker
 
 `core/capi` is a C surface for running a graph from a shared library: `include/daedalus.h`
-declares it, and a host links `libdaedalus_capi`. [`languages/rust-capi`](../languages/rust-capi) is a safe Rust
+declares it, and a host links `libdaedalus_capi`. A C++ program includes
+`languages/cpp/sdk/include/daedalus_host.hpp` over it: `dd::Host` and `dd::Graph` own their handles,
+and a failed call throws `dd::HostError`, with the status and the text the library kept. [`languages/rust-capi`](../languages/rust-capi) is a safe Rust
 host over it, on the sys crate [`languages/rust-capi-sys`](../languages/rust-capi-sys).
+
+## Driving the daemon from Python
+
+`languages/python/sdk/daedalus/client.py` drives the daemon through the same library, with `ctypes`.
+Build it with `cargo build -p daedalus-client-capi`, and give its path to `Client.connect(endpoint,
+library=PATH)` or set `DAEDALUS_CLIENT_LIB`. A client is a context manager, a run's values are typed
+by the wire codec, and an error carries the daemon's code. The [SDK README](../languages/python/sdk/README.md)
+has the calls and their lifetime rules. The drive conformance suite runs the Python client over every
+scenario, on both transports.
+
+## Hosting in-process from Python
+
+`languages/python/sdk/daedalus/host.py` loads `libdaedalus_capi` with `ctypes`, built with
+`cargo build -p daedalus-capi` and named by `Host(library=PATH)` or `DAEDALUS_HOST_LIB`. It compiles a
+graph, pushes, ticks and takes. It offers what this C surface offers: integers, floats, booleans and
+bytes, and no cancel, state or fault detail.
+
+## Driving the daemon from Java
+
+`languages/java/sdk` has `dev.daedalus.client.Client`, a pure-Java client of the daemon's service
+protocol. `Client.connect(Endpoint.parse("unix:/path"))` or `"tcp:127.0.0.1:4100"` opens a
+connection, and the calls mirror the protocol's ops. The codec it uses is the service codec in
+`dev.daedalus.service`, which the drive conformance suite holds to the same golden transcripts as
+the Rust client and to the corpus of wire bytes. Its usage and its build are in
+[`languages/java/sdk/README.md`](../languages/java/sdk/README.md).
 
 ## Driving the daemon from C
 
@@ -327,6 +368,37 @@ Compound values use the wire encoding of a typed value with `daedalus_client_fee
 `daedalus_client_take_wire`. The header gives the bytes. A binding that already has the protocol's
 codec produces them.
 
+Four calls keep what the daemon answered for `daedalus_client_report` to copy: the plugin a
+`load_plugin_report` loaded, the diagnostics of a `put_graph_report` or `patch_graph_report`, and
+the carry of a `reload_report`. `daedalus_client_plan_raw` and `daedalus_client_graph_text` give
+the planner's explanation and a stored document as text, so their key order is the one written.
+
+A C++ program includes `languages/cpp/sdk/include/daedalus_client.hpp` over this library. `dd::Client`
+and `dd::Watch` own their handles, and a failed call throws `dd::ClientError`, which carries the
+status, the text, and the daemon's error code. Closing a client closes its connection for every
+handle made from it, as the C call does.
+
 The header and this library grow only by new functions and new statuses. A program built
 against an older header keeps working. To check that the library has a newer function, look it
 up with `dlsym` and test for null.
+
+## Driving the daemon from Node
+
+`languages/node/sdk/src/client.js` is a pure JavaScript client for the daemon's service protocol,
+over `node:net`. It needs no addon. Its codec is a second implementation of the one in
+`core/wire`, and the drive suite and the codec check hold the two to the same answers.
+
+```js
+import { connect, typed } from "daedalus-node-sdk/client";
+
+const client = await connect({ socket: "/run/daedalusd.sock" });  // or { host: "127.0.0.1", port: 4100 }
+const run = await client.start("g");
+await run.feed("in", typed({ scalar: "u32" }, 41));
+await run.step(1);
+const out = await run.take("out");
+client.close();
+```
+
+The client refuses an address that is not loopback. It does not reconnect. A unix socket is the
+default route on Linux, where the drive suite runs over both transports. On Windows the suite
+runs over TCP only, and the Windows path of `connect({ socket })` is not verified.

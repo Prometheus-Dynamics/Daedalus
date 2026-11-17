@@ -20,13 +20,16 @@ pub(crate) struct Held {
 }
 
 /// One client handle. Calls on it are made by any thread: the client itself takes care of its
-/// requests, and only the held values are behind a lock.
+/// requests, and only the held values, the trace and the report are behind a lock.
 pub(crate) struct Link {
     pub(crate) client: Client,
     pub(crate) held: Mutex<Vec<Held>>,
     /// A trace that did not fit its buffer, with the limit it was asked for. The trace changes with
     /// every request the daemon serves, so the retry is given this one.
     pub(crate) trace: Mutex<Option<(u32, Vec<u8>)>>,
+    /// The JSON of the last call that kept a report: a plugin, a graph's diagnostics, or a carry
+    /// report. `daedalus_client_report` gives it out, as many times as it is asked.
+    pub(crate) report: Mutex<Option<Vec<u8>>>,
 }
 
 pub(crate) static LINKS: Table<Link> = Table::new(1);
@@ -86,8 +89,8 @@ fn endpoint(text: &str) -> Result<Endpoint, Status> {
     if let Some(path) = text.strip_prefix("unix:") {
         return unix_endpoint(path).ok_or_else(|| {
             fail(
-                Status::BAD_ENDPOINT,
-                "unix sockets are not on this platform",
+                Status::UNSUPPORTED,
+                "unix sockets are not available on this platform: use tcp:127.0.0.1:PORT",
             )
         });
     }
@@ -135,6 +138,7 @@ pub unsafe extern "C" fn daedalus_client_connect(
             client,
             held: Mutex::new(Vec::new()),
             trace: Mutex::new(None),
+            report: Mutex::new(None),
         });
         // SAFETY: the caller's contract is this function's, and `out` was checked above.
         unsafe { write_out(out, handle) }
@@ -177,6 +181,7 @@ pub unsafe extern "C" fn daedalus_client_in_session(
             client,
             held: Mutex::new(Vec::new()),
             trace: Mutex::new(None),
+            report: Mutex::new(None),
         });
         // SAFETY: the caller's contract is this function's, and `out` was checked above.
         unsafe { write_out(out, handle) }
@@ -211,5 +216,20 @@ mod tests {
             assert!(error == Status::BAD_ENDPOINT, "{text:?} gave {error:?}");
         }
         assert!(endpoint("tcp:127.0.0.1:4100").is_ok());
+    }
+
+    /// A `unix:` endpoint is well formed. Where the platform has unix sockets it is accepted (the
+    /// connect then decides); where it has none it is unsupported, not a bad endpoint.
+    #[cfg(unix)]
+    #[test]
+    fn a_unix_endpoint_is_accepted_where_the_platform_has_unix_sockets() {
+        assert!(endpoint("unix:/tmp/daedalus.sock").is_ok());
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn a_unix_endpoint_is_unsupported_where_the_platform_has_no_unix_sockets() {
+        let error = endpoint("unix:/tmp/daedalus.sock").expect_err("refused");
+        assert_eq!(error, Status::UNSUPPORTED);
     }
 }

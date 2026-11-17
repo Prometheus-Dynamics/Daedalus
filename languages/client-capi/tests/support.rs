@@ -183,7 +183,11 @@ pub fn text(call: impl Fn(*mut u8, usize, *mut usize) -> Status) -> String {
         assert_eq!(sized, Status::BUFFER_TOO_SMALL, "{}", last_error());
         let mut buf = vec![0; len];
         match call(buf.as_mut_ptr(), buf.len(), &mut len) {
-            Status::OK => return String::from_utf8(buf).expect("UTF-8"),
+            Status::OK => {
+                // A call that answers afresh may answer shorter than the size it gave.
+                buf.truncate(len);
+                return String::from_utf8(buf).expect("UTF-8");
+            }
             Status::BUFFER_TOO_SMALL => continue,
             other => panic!("{other:?}: {}", last_error()),
         }

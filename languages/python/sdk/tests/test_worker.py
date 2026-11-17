@@ -68,6 +68,7 @@ class StdoutTests(unittest.TestCase):
         self.assertEqual(process.wait(timeout=10), 0)
         self.assertIn(b"hello from a body", process.stderr.read())
         process.stdout.close()
+        process.stderr.close()
 
 
 if __name__ == "__main__":

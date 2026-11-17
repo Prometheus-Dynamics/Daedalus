@@ -145,8 +145,13 @@ pub fn split_packets(mut bytes: &[u8]) -> Vec<Vec<u8>> {
 /// Runs the loop over `input` and returns the packets it wrote, as bodies.
 pub fn serve(nodes: &[DdNode], input: &[u8]) -> Vec<Vec<u8>> {
     let sink = Sink::default();
-    let mut reader = io::Cursor::new(input.to_vec());
-    serve_io(nodes, &mut reader, Box::new(sink.clone()), "test-worker").expect("the loop serves");
+    serve_io(
+        nodes,
+        Box::new(io::Cursor::new(input.to_vec())),
+        Box::new(sink.clone()),
+        "test-worker",
+    )
+    .expect("the loop serves");
     let written = sink.0.lock().expect("the sink").clone();
     split_packets(&written)
 }

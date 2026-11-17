@@ -1,5 +1,6 @@
-// The thirteen canonical fixture nodes, as the Node worker serves them. Their ports and types
-// match testing/crates/worker-conformance/src/fixtures.rs exactly.
+// The canonical fixture nodes, as the Node worker serves them: the thirteen value fixtures, and the
+// behaviour suite's four. Their ports and types match testing/crates/worker-conformance/src/
+// fixtures.rs exactly.
 
 import { NodeError, T, node } from "../sdk/src/index.js";
 
@@ -42,4 +43,40 @@ node("fixture.failure_diagnostic", { inputs: [["value", T.i64]], outputs: [["out
     cx.detail("and this is the rest of it");
     cx.faultCode(77);
     throw new NodeError("node_error", "diagnostic: the value is rejected");
+  });
+
+// The behaviour suite's nodes (testing/crates/worker-conformance/src/fixtures.rs): each one is
+// the same node as its Rust fixture, with the same ports.
+
+const SLEEP = new Int32Array(new SharedArrayBuffer(4));
+
+// Waits until the host cancels the run, then gives its input back. A body that polls `cancelled()`
+// is the case: the reader thread sets the flag while this body sleeps in two-millisecond steps.
+node("fixture.wait_cancel", { inputs: [["x", T.i64]], outputs: [["y", T.i64]] }, (inputs, cx) => {
+  while (!cx.cancelled()) Atomics.wait(SLEEP, 0, 0, 2);
+  return inputs.x;
+});
+
+// Progress, log, detail, progress, in that order, then the input.
+node("fixture.events", { inputs: [["x", T.i64]], outputs: [["y", T.i64]] }, (inputs, cx) => {
+  cx.progress(0.5, "half");
+  cx.log("info", "after the progress");
+  cx.detail("a detail line");
+  cx.progress(1.0, "done");
+  return inputs.x;
+});
+
+// Prints a line to stdout, which the SDK sends to stderr; then the input plus one.
+node("fixture.chatty", { inputs: [["x", T.i64]], outputs: [["y", T.i64]] }, (inputs) => {
+  console.log("a node line on stdout");
+  return inputs.x + 1n;
+});
+
+// Appends its input to its string state, and gives the state.
+node("fixture.stateful_label",
+  { inputs: [["in", T.string]], outputs: [["out", T.string]], state: T.string },
+  (inputs, cx) => {
+    const next = (cx.state ?? "") + inputs.in;
+    cx.setState(next);
+    return next;
   });

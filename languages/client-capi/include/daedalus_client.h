@@ -97,6 +97,9 @@ typedef int32_t daedalus_client_status_t;
 #define DAEDALUS_CLIENT_TYPE_MISMATCH 28
 /* A number that names no option. */
 #define DAEDALUS_CLIENT_BAD_ARGUMENT 29
+/* The endpoint is well formed, but this platform cannot serve it: a unix:/path endpoint where the
+ * platform has no unix sockets. Nothing was connected; use tcp:127.0.0.1:PORT there. */
+#define DAEDALUS_CLIENT_UNSUPPORTED 30
 
 /* Plan forms, for daedalus_client_plan_options_t. */
 #define DAEDALUS_CLIENT_FORM_STEPS 0
@@ -221,7 +224,9 @@ daedalus_client_status_t daedalus_client_last_error_code(uint32_t *code);
 daedalus_client_status_t daedalus_client_selftest_panic(void);
 
 /* Connects to the daemon at `endpoint`: "unix:/path", or "tcp:127.0.0.1:4100". Non-zero for
- * `reconnect` keeps the connection trying again after a disconnect. */
+ * `reconnect` keeps the connection trying again after a disconnect. An endpoint that is neither
+ * form, or a TCP address off the loopback interface, is DAEDALUS_CLIENT_BAD_ENDPOINT. A unix:/path
+ * endpoint on a platform with no unix sockets is DAEDALUS_CLIENT_UNSUPPORTED. */
 daedalus_client_status_t daedalus_client_connect(const uint8_t *endpoint, size_t len, uint8_t reconnect, daedalus_client_handle_t *out);
 /* Closes the connection for every handle made from it, sessions included, and releases this
  * handle. Watches of the connection end. Other handles then fail with DISCONNECTED. */
@@ -243,6 +248,9 @@ daedalus_client_status_t daedalus_client_patch_graph(daedalus_client_handle_t cl
  * planner found under "diagnostics". Planning reads only, so a call with a buffer too small may
  * be repeated. */
 daedalus_client_status_t daedalus_client_plan(daedalus_client_handle_t client, const uint8_t *graph, size_t graph_len, const daedalus_client_plan_options_t *options, uint8_t *buf, size_t cap, size_t *len);
+/* Plans a stored graph as daedalus_client_plan does, but its explanation is the planner's own
+ * text, as a JSON string (or null), so the order of its keys is kept. */
+daedalus_client_status_t daedalus_client_plan_raw(daedalus_client_handle_t client, const uint8_t *graph, size_t graph_len, const daedalus_client_plan_options_t *options, uint8_t *buf, size_t cap, size_t *len);
 /* Plans a stored graph into a made plan: writes its hash to `hash` and its bytes to the buffer.
  * A host loads a made plan with no planner. Reads only, so it may be repeated. */
 daedalus_client_status_t daedalus_client_make_plan(daedalus_client_handle_t client, const uint8_t *graph, size_t graph_len, const daedalus_client_config_t *config, uint64_t *hash, uint8_t *buf, size_t cap, size_t *len);
@@ -259,6 +267,23 @@ daedalus_client_status_t daedalus_client_stop(daedalus_client_handle_t client, u
 /* Replaces a run's graph with a stored one. `out` may be null. */
 daedalus_client_status_t daedalus_client_reload(daedalus_client_handle_t client, uint64_t run, const uint8_t *graph, size_t graph_len, daedalus_client_carry_t *out);
 
+/* Reports. The calls below do what their plain forms do, and keep what they gave the caller on
+ * this client, as JSON, for daedalus_client_report: a plugin's description, the diagnostics of a
+ * graph, or what a reload carried. Keeping a report replaces the one before it. */
+/* Loads the plugin at `path`. Its description is kept: name, generation, nodes and backends. */
+daedalus_client_status_t daedalus_client_load_plugin_report(daedalus_client_handle_t client, const uint8_t *path, size_t len);
+/* Stores a graph document under `name`. The diagnostics it gave are kept, as a JSON array. */
+daedalus_client_status_t daedalus_client_put_graph_report(daedalus_client_handle_t client, const uint8_t *name, size_t name_len, const uint8_t *json, size_t json_len);
+/* Applies a patch to a stored graph. The diagnostics it gave are kept, as a JSON array. */
+daedalus_client_status_t daedalus_client_patch_graph_report(daedalus_client_handle_t client, const uint8_t *graph, size_t graph_len, const uint8_t *patch, size_t patch_len);
+/* Reloads a run to a stored graph. What it carried is kept: the names of each kind, and the counts. */
+daedalus_client_status_t daedalus_client_reload_report(daedalus_client_handle_t client, uint64_t run, const uint8_t *graph, size_t graph_len);
+/* Copies the report kept by the last of the calls above on this client. Empty when none was made.
+ * Reading it changes nothing, so a call with a buffer too small may be repeated. */
+daedalus_client_status_t daedalus_client_report(daedalus_client_handle_t client, uint8_t *buf, size_t cap, size_t *len);
+
+/* Writes a stored graph's document as it was stored, as text: its key order is kept. */
+daedalus_client_status_t daedalus_client_graph_text(daedalus_client_handle_t client, const uint8_t *name, size_t name_len, uint8_t *buf, size_t cap, size_t *len);
 /* Inspects a run as JSON: its graph, state, tick, ports and nodes. */
 daedalus_client_status_t daedalus_client_inspect_run(daedalus_client_handle_t client, uint64_t run, uint8_t *buf, size_t cap, size_t *len);
 /* Inspects a stored graph as JSON: its name and its document. */
@@ -304,7 +329,9 @@ daedalus_client_status_t daedalus_client_take_wire(daedalus_client_handle_t clie
 daedalus_client_status_t daedalus_client_watch_open(daedalus_client_handle_t client, uint64_t run, uint32_t kinds, daedalus_client_handle_t *out);
 /* Waits up to `timeout_ms` for the next event. `state` is DAEDALUS_CLIENT_WATCH_EVENT with the
  * event as JSON in the buffer, DAEDALUS_CLIENT_WATCH_IDLE when none came in time, or
- * DAEDALUS_CLIENT_WATCH_ENDED when no more will. `len` is the JSON's length in every case. */
+ * DAEDALUS_CLIENT_WATCH_ENDED when no more will. `len` is the JSON's length in every case.
+ * A watch keeps at most 64 unread events, as the daemon does: past that the oldest are dropped,
+ * and the next event is a `lagged` one with their count. */
 daedalus_client_status_t daedalus_client_watch_next(daedalus_client_handle_t watch, uint32_t timeout_ms, uint8_t *buf, size_t cap, size_t *len, uint32_t *state);
 /* Ends a watch and releases its handle. */
 daedalus_client_status_t daedalus_client_watch_close(daedalus_client_handle_t watch);

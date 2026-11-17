@@ -8,7 +8,7 @@ public final class NodeException extends RuntimeException {
 
     public NodeException(String code, String message) {
         super(message);
-        if (!Wire.FAULT_CODES.containsKey(code)) {
+        if (!Protocol.FAULT_CODES.containsKey(code)) {
             throw new IllegalArgumentException("unknown fault code " + code);
         }
         this.code = code;

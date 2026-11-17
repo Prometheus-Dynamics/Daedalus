@@ -3,8 +3,13 @@
 //! A worker speaks the wire protocol on its stdin and stdout. Anything a node body prints to
 //! stdout would land in that stream and corrupt it, so the worker takes its packets from a copy of
 //! stdout, and points stdout at stderr. [`packet_stream`] does both, once, and every worker that
-//! serves a protocol on stdio calls it before its first packet. The worker's shared-memory
-//! transport goes in this crate as well.
+//! serves a protocol on stdio calls it before its first packet.
+//!
+//! Every worker SDK that serves stdio shares the rest of the transport: [`transport`] reads the
+//! host's packets in order on a reader thread, asks for shared memory, carries the cancel flag,
+//! and hands over a run that the host lent memory for. [`run`] begins a run's descriptor reads and
+//! places large outputs in lent memory. The Rust and C worker SDKs call these, so a value by
+//! reference travels the same way in both.
 //!
 //! This is the only crate in the worker SDKs that uses `unsafe`, and only for the descriptor
 //! calls below. Each of them is a `libc` call on the process's own standard streams.
@@ -12,6 +17,12 @@
 use std::fs::File;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+pub mod run;
+pub mod transport;
+
+pub use run::{fd_slots, place_outputs, with_run};
+pub use transport::{Arrival, FEATURES, Transport};
 
 static TAKEN: AtomicBool = AtomicBool::new(false);
 

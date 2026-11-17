@@ -2,12 +2,15 @@
 //! closes the pipe. Runs are answered in `run.rs`. A state export or import is answered here.
 
 use std::io::{self, Read, Write};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use daedalus_wire::codec::Reader;
 use daedalus_wire::{
-    DEFAULT_CAP, Declaration, FaultCode, Hello, PacketError, PortSpec, Schema, WireType, WireValue,
-    WorkerMsg, decode_value, kind, read_packet,
+    DEFAULT_CAP, Declaration, FaultCode, Hello, PortSpec, Schema, WireType, WireValue, WorkerMsg,
+    decode_value, kind,
 };
+use daedalus_worker_io::{Arrival, Transport};
 
 use crate::convert::{Refused, c_text, opaque_keys, ports, wire_type};
 use crate::ffi::{DdNode, DdNodeFn, MAX_NODES};
@@ -35,8 +38,11 @@ pub struct Worker {
     pub served: Vec<Served>,
     /// Each node's stored state, by node index.
     pub slots: Vec<Option<Slot>>,
-    /// The schema the host's values and the worker's values are read and written with.
+    /// The schema the host's values and the worker's values are read and written with. It gains the
+    /// host's agreed features when the host lends memory.
     pub schema: Schema,
+    /// The host's cancel flag: set while the run going on is cancelled.
+    pub cancel: Arc<AtomicBool>,
 }
 
 impl Worker {
@@ -68,11 +74,12 @@ impl Worker {
             );
             return;
         };
+        let named = String::from_utf8_lossy(&id).into_owned();
         let Some(index) = self.find_node(&id) else {
             send_fault(
                 packets,
                 0,
-                None,
+                Some(named.as_str()),
                 FaultCode::BadInput,
                 "the node has no state to export",
             );
@@ -88,7 +95,7 @@ impl Worker {
                 send_fault(
                     packets,
                     0,
-                    None,
+                    Some(named.as_str()),
                     FaultCode::Internal,
                     "the node's state does not fit its type",
                 );
@@ -98,7 +105,7 @@ impl Worker {
                 send_fault(
                     packets,
                     0,
-                    None,
+                    Some(named.as_str()),
                     FaultCode::BadInput,
                     "the node has no state to export",
                 );
@@ -113,7 +120,7 @@ impl Worker {
                 send_fault(
                     packets,
                     0,
-                    None,
+                    Some(named.as_str()),
                     FaultCode::Internal,
                     "the node's state does not fit its type",
                 );
@@ -135,11 +142,12 @@ impl Worker {
             );
             return;
         };
+        let named = String::from_utf8_lossy(&id).into_owned();
         let Some(index) = self.find_node(&id) else {
             send_fault(
                 packets,
                 0,
-                None,
+                Some(named.as_str()),
                 FaultCode::BadInput,
                 "the node has no state to import",
             );
@@ -149,7 +157,7 @@ impl Worker {
             send_fault(
                 packets,
                 0,
-                None,
+                Some(named.as_str()),
                 FaultCode::BadInput,
                 "the node has no state to import",
             );
@@ -161,7 +169,7 @@ impl Worker {
                 send_fault(
                     packets,
                     0,
-                    None,
+                    Some(named.as_str()),
                     FaultCode::MalformedPacket,
                     "the state value does not match the node's state type",
                 );
@@ -173,13 +181,33 @@ impl Worker {
 }
 
 /// Serves the worker protocol on `input`, writing its packets to `out`, until the host shuts the
-/// worker down or the input ends. Returns an error when the hello cannot be written, when a packet
-/// cannot be read, or when the table is not one the SDK can serve.
-pub fn serve_io<R: Read>(
+/// worker down or the input ends. The input is read with plain packets: no shared memory is asked
+/// for, so this is the loop a test serves over a buffer. Returns an error when the hello cannot be
+/// written, when a packet cannot be read, or when the table is not one the SDK can serve.
+pub fn serve_io(
     nodes: &[DdNode],
-    input: &mut R,
+    input: Box<dyn Read + Send>,
     out: Box<dyn Write>,
     worker_name: &str,
+) -> io::Result<()> {
+    serve_with(nodes, worker_name, out, |_| Ok(Transport::plain(input)))
+}
+
+/// Serves the worker protocol on the worker's stdin and stdout, with the shared memory the host
+/// lends it. The packets go to `out`, the worker's packet stream.
+pub fn serve_stdio(nodes: &[DdNode], worker_name: &str, out: Box<dyn Write>) -> io::Result<()> {
+    serve_with(nodes, worker_name, out, |packets| {
+        Transport::stdio(&mut packets.writer())
+    })
+}
+
+/// The loop: the hello, then one message at a time until the host shuts the worker down or closes
+/// the pipe. `start` makes the transport, after the hello is sent.
+fn serve_with(
+    nodes: &[DdNode],
+    worker_name: &str,
+    out: Box<dyn Write>,
+    start: impl FnOnce(&mut Packets) -> io::Result<Transport>,
 ) -> io::Result<()> {
     let served = served(nodes)?;
     let hello = hello(&served, worker_name);
@@ -196,18 +224,21 @@ pub fn serve_io<R: Read>(
     let schema = Schema::from_hello(&hello, &codecs);
     let mut packets = Packets::new(out);
     packets.send(&WorkerMsg::Hello(hello), &Schema::new())?;
+    let mut transport = start(&mut packets)?;
     let mut worker = Worker {
         slots: (0..served.len()).map(|_| None).collect(),
         served,
         schema,
+        cancel: transport.cancel_flag(),
     };
-    let mut body = Vec::new();
-    loop {
-        match read_packet(input, DEFAULT_CAP, &mut body) {
-            Ok(()) => {}
-            Err(PacketError::Closed) => return Ok(()),
-            Err(error) => return Err(io::Error::other(error)),
-        }
+    while let Some(arrival) = transport.next(&mut packets.writer(), <[u8]>::to_vec)? {
+        let body = match arrival {
+            Arrival::Granted => {
+                worker.schema.set_features(transport.lent().features());
+                continue;
+            }
+            Arrival::Message(body) => body,
+        };
         let Some((&tag, message)) = body.split_first() else {
             continue;
         };
@@ -216,7 +247,7 @@ pub fn serve_io<R: Read>(
                 let _ = packets.send(&WorkerMsg::Pong, &Schema::new());
             }
             kind::SHUTDOWN => return Ok(()),
-            kind::RUN => handle_run(&mut worker, &mut packets, message),
+            kind::RUN => handle_run(&mut worker, &mut packets, transport.lent(), message),
             kind::STATE_EXPORT => worker.export(&mut packets, message),
             kind::STATE_IMPORT => worker.import(&mut packets, message),
             // A cancel between runs has nothing to stop.
@@ -230,6 +261,7 @@ pub fn serve_io<R: Read>(
             ),
         }
     }
+    Ok(())
 }
 
 /// The served nodes, from the C table.

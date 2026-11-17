@@ -1,24 +1,40 @@
 //! Nothing unwinds into C: every entry point runs under [`guard`]. And the reason a call
 //! failed, as text, kept for the thread that made it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::status::Status;
 
 thread_local! {
     static LAST: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Whether the call on this thread that is running noted its failure with `fail`.
+    static NOTED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Notes why the call on this thread is failing, and gives the status back.
 pub(crate) fn fail(status: Status, why: impl std::fmt::Display) -> Status {
     let text = why.to_string();
     LAST.with(|last| *last.borrow_mut() = text);
+    NOTED.with(|noted| noted.set(true));
     status
 }
 
-/// Runs an entry point's body. A panic becomes a status.
+/// Runs an entry point's body. A panic becomes a status. A call that fails without noting why
+/// clears the text an earlier failure left, so the last error never names a failure that is not
+/// the last one.
 pub(crate) fn guard(body: impl FnOnce() -> Status) -> Status {
+    let status = guard_keep(body);
+    if status != Status::OK && !NOTED.with(Cell::get) {
+        LAST.with(|last| last.borrow_mut().clear());
+    }
+    status
+}
+
+/// As [`guard`], but a failure without a note leaves the stored text alone. The last-error query
+/// uses it: asking for the text is not a failure that replaces it.
+pub(crate) fn guard_keep(body: impl FnOnce() -> Status) -> Status {
+    NOTED.with(|noted| noted.set(false));
     match catch_unwind(AssertUnwindSafe(body)) {
         Ok(status) => status,
         Err(payload) => {
@@ -57,7 +73,7 @@ pub(crate) unsafe fn copy_out(text: &[u8], buf: *mut u8, cap: usize, len: *mut u
 // SAFETY: the name is this library\'s own, with its prefix: no other symbol has it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn daedalus_last_error(buf: *mut u8, cap: usize, len: *mut usize) -> Status {
-    guard(|| {
+    guard_keep(|| {
         let text = LAST.with(|last| last.borrow().clone());
         // SAFETY: the caller's contract is this function's.
         unsafe { copy_out(text.as_bytes(), buf, cap, len) }

@@ -28,33 +28,40 @@ fn connect_text(endpoint: &str) -> (Status, Handle) {
     (status, handle)
 }
 
+/// What a `unix:` endpoint gets on a platform with unix sockets: a socket error, since there is no
+/// socket at the path. On a platform without them the endpoint is well formed but cannot be
+/// served, which is `UNSUPPORTED`, not a bad endpoint.
+#[cfg(unix)]
+const UNIX_PATH_STATUS: Status = Status::IO;
+#[cfg(not(unix))]
+const UNIX_PATH_STATUS: Status = Status::UNSUPPORTED;
+
 #[test]
 fn an_endpoint_that_is_not_unix_or_loopback_tcp_is_refused_before_a_connection() {
     let _turn = turn();
-    for text in [
-        "",
-        "http://x",
-        "tcp:8.8.8.8:4100",
-        "tcp:not-an-address",
-        "unix:",
-    ] {
+    for text in ["", "http://x", "tcp:8.8.8.8:4100", "tcp:not-an-address"] {
         let (status, handle) = connect_text(text);
-        if text == "unix:" {
-            // A unix path is tried: there is no socket at an empty path.
-            assert_eq!(status, Status::IO, "{text:?}: {}", last_error());
-        } else {
-            assert_eq!(status, Status::BAD_ENDPOINT, "{text:?}: {}", last_error());
-        }
+        assert_eq!(status, Status::BAD_ENDPOINT, "{text:?}: {}", last_error());
         assert_eq!(handle, 0, "{text:?} gave a handle");
     }
+    let (status, handle) = connect_text("unix:");
+    assert_eq!(status, UNIX_PATH_STATUS, "unix: {}", last_error());
+    assert_eq!(handle, 0, "unix: gave a handle");
     // A socket nobody listens on, through a path.
     let dir = std::env::temp_dir();
     let path = dir.join(format!(
         "daedalus-client-capi-none-{}.sock",
         std::process::id()
     ));
-    let (status, _) = connect_text(&format!("unix:{}", path.display()));
-    assert_eq!(status, Status::IO, "{}", last_error());
+    let (status, handle) = connect_text(&format!("unix:{}", path.display()));
+    assert_eq!(status, UNIX_PATH_STATUS, "{}", last_error());
+    assert_eq!(handle, 0, "a path with no socket gave a handle");
+    #[cfg(not(unix))]
+    assert!(
+        last_error().contains("unix sockets are not available"),
+        "{}",
+        last_error()
+    );
 }
 
 #[cfg(unix)]

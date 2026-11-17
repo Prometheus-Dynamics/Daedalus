@@ -14,6 +14,7 @@ crate-type = ["staticlib", "rlib"]
 daedalus-types = { path = "../../core/types" }
 daedalus-wire = { path = "../../core/wire" }
 libc = { workspace = true }
+daedalus-process-shm = { path = "../../backends/process-shm" }
 daedalus-worker-io = { path = "../worker-io" }
 
 # This crate is the C boundary, so it carries its own lint table.

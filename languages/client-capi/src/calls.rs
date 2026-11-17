@@ -3,9 +3,9 @@
 
 use daedalus_wire::service::{InspectTarget, StartConfig};
 
-use crate::guard::{copy_or_note, guard, json_bytes, non_null, read_text, write_out};
+use crate::guard::{copy_or_note, fail, guard, json_bytes, non_null, read_text, write_out};
 use crate::handles::{Handle, lock};
-use crate::link::{link, refuse};
+use crate::link::{Link, link, refuse};
 use crate::shapes::{
     Carry, Config, PlanOptions, Step, Stopped, plan_options, start_config, stop_mode,
 };
@@ -119,6 +119,51 @@ pub unsafe extern "C" fn daedalus_client_plan(
         let text = json_bytes(&daedalus_client::json::plan(&summary));
         // SAFETY: the caller's contract is this function's, and `len` was checked above.
         unsafe { copy_or_note(&text, buf, cap, len) }
+    })
+}
+
+/// Plans a stored graph as `daedalus_client_plan` does, except that the explanation is the
+/// planner's own text, as a JSON string, and not its JSON re-read: the text keeps the order its
+/// keys were written in. `null` when there is no explanation.
+///
+/// # Safety
+/// As [`daedalus_client_plan`].
+// SAFETY: the name is this library's own, with its prefix: no other symbol has it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_client_plan_raw(
+    client: Handle,
+    graph: *const u8,
+    graph_len: usize,
+    options: *const PlanOptions,
+    buf: *mut u8,
+    cap: usize,
+    len: *mut usize,
+) -> Status {
+    guard(|| {
+        non_null(len, "the length")?;
+        let link = link(client)?;
+        // SAFETY: the caller's contract is this function's.
+        let graph = unsafe { read_text(graph, graph_len) }?;
+        // SAFETY: the caller's contract is this function's, for the options and their list.
+        let (form, inspect, priority) = unsafe { plan_options(options) }?;
+        let summary = link
+            .client
+            .plan(
+                graph,
+                daedalus_wire::service::PlanOptions {
+                    form,
+                    inspect,
+                    priority,
+                },
+            )
+            .map_err(refuse)?;
+        let mut value = daedalus_client::json::plan(&summary);
+        value["explain"] = match &summary.explain {
+            Some(text) => serde_json::Value::String(text.clone()),
+            None => serde_json::Value::Null,
+        };
+        // SAFETY: the caller's contract is this function's, and `len` was checked above.
+        unsafe { copy_or_note(&json_bytes(&value), buf, cap, len) }
     })
 }
 
@@ -333,6 +378,42 @@ fn inspect(
     unsafe { copy_or_note(&text, buf, cap, len) }
 }
 
+/// Writes a stored graph's document as it was stored: its text, not the JSON it was read into, so
+/// the order of its keys is kept.
+///
+/// # Safety
+/// `name` points to `name_len` bytes of UTF-8 text. `buf` is null or points to `cap` writable
+/// bytes, and `len` points to a `size_t`.
+// SAFETY: the name is this library's own, with its prefix: no other symbol has it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_client_graph_text(
+    client: Handle,
+    name: *const u8,
+    name_len: usize,
+    buf: *mut u8,
+    cap: usize,
+    len: *mut usize,
+) -> Status {
+    guard(|| {
+        non_null(len, "the length")?;
+        // SAFETY: the caller's contract is this function's.
+        let name = unsafe { read_text(name, name_len) }?.to_owned();
+        let link = link(client)?;
+        let found = link
+            .client
+            .inspect(InspectTarget::Graph(name))
+            .map_err(refuse)?;
+        let daedalus_client::protocol::Inspection::Graph { json, .. } = found else {
+            return Err(fail(
+                Status::UNEXPECTED,
+                "the daemon answered a graph with another inspection",
+            ));
+        };
+        // SAFETY: the caller's contract is this function's, and `len` was checked above.
+        unsafe { copy_or_note(json.as_bytes(), buf, cap, len) }
+    })
+}
+
 /// Inspects a run as JSON: its state, ports and nodes.
 ///
 /// # Safety
@@ -465,4 +546,138 @@ pub unsafe extern "C" fn daedalus_client_trace(
             }
         }
     })
+}
+
+/// Loads the plugin at `path`, and keeps its description for `daedalus_client_report`: its name,
+/// generation, nodes and backends, as JSON.
+///
+/// # Safety
+/// `path` points to `len` bytes of UTF-8 text.
+// SAFETY: the name is this library's own, with its prefix: no other symbol has it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_client_load_plugin_report(
+    client: Handle,
+    path: *const u8,
+    len: usize,
+) -> Status {
+    guard(|| {
+        let link = link(client)?;
+        // SAFETY: the caller's contract is this function's.
+        let path = unsafe { read_text(path, len) }?;
+        let info = link.client.load_plugin(path).map_err(refuse)?;
+        keep(&link, json_bytes(&daedalus_client::json::plugin(&info)));
+        Ok(())
+    })
+}
+
+/// Stores a graph document, and keeps the diagnostics it gave, for `daedalus_client_report`, as a
+/// JSON array.
+///
+/// # Safety
+/// As [`daedalus_client_put_graph`].
+// SAFETY: the name is this library's own, with its prefix: no other symbol has it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_client_put_graph_report(
+    client: Handle,
+    name: *const u8,
+    name_len: usize,
+    json: *const u8,
+    json_len: usize,
+) -> Status {
+    guard(|| {
+        let link = link(client)?;
+        // SAFETY: the caller's contract is this function's.
+        let name = unsafe { read_text(name, name_len) }?;
+        // SAFETY: the caller's contract is this function's.
+        let json = unsafe { read_text(json, json_len) }?;
+        let found = link.client.put_graph(name, json).map_err(refuse)?;
+        keep(
+            &link,
+            json_bytes(&daedalus_client::json::diagnostics(&found)),
+        );
+        Ok(())
+    })
+}
+
+/// Applies a patch to a stored graph, and keeps the diagnostics it gave, for
+/// `daedalus_client_report`, as a JSON array.
+///
+/// # Safety
+/// As [`daedalus_client_patch_graph`].
+// SAFETY: the name is this library's own, with its prefix: no other symbol has it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_client_patch_graph_report(
+    client: Handle,
+    graph: *const u8,
+    graph_len: usize,
+    patch: *const u8,
+    patch_len: usize,
+) -> Status {
+    guard(|| {
+        let link = link(client)?;
+        // SAFETY: the caller's contract is this function's.
+        let graph = unsafe { read_text(graph, graph_len) }?;
+        // SAFETY: the caller's contract is this function's.
+        let patch = unsafe { read_text(patch, patch_len) }?;
+        let found = link.client.patch_graph(graph, patch).map_err(refuse)?;
+        keep(
+            &link,
+            json_bytes(&daedalus_client::json::diagnostics(&found)),
+        );
+        Ok(())
+    })
+}
+
+/// Reloads a run to a stored graph, and keeps what it carried, for `daedalus_client_report`, as
+/// JSON: the names carried, fresh, added, removed and dropped.
+///
+/// # Safety
+/// As [`daedalus_client_reload`].
+// SAFETY: the name is this library's own, with its prefix: no other symbol has it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_client_reload_report(
+    client: Handle,
+    run: u64,
+    graph: *const u8,
+    graph_len: usize,
+) -> Status {
+    guard(|| {
+        let link = link(client)?;
+        // SAFETY: the caller's contract is this function's.
+        let graph = unsafe { read_text(graph, graph_len) }?;
+        let report = link.client.reload(run, graph).map_err(refuse)?;
+        keep(&link, json_bytes(&daedalus_client::json::carry(&report)));
+        Ok(())
+    })
+}
+
+/// Copies the JSON of the last call on this client that kept a report: a plugin, a graph's
+/// diagnostics, or a carry report. Empty when no such call was made. Asking again changes nothing.
+///
+/// # Safety
+/// As `daedalus_client_last_error`: `buf` is null or `cap` writable bytes, and `len` a `size_t`.
+// SAFETY: the name is this library's own, with its prefix: no other symbol has it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_client_report(
+    client: Handle,
+    buf: *mut u8,
+    cap: usize,
+    len: *mut usize,
+) -> Status {
+    guard(|| {
+        let link = link(client)?;
+        let text = link
+            .report
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_default();
+        // SAFETY: the caller's contract is this function's, and `len` is checked by `copy_or_note`.
+        unsafe { copy_or_note(&text, buf, cap, len) }
+    })
+}
+
+/// Keeps a call's report on its link, for `daedalus_client_report`.
+fn keep(link: &Link, report: Vec<u8>) {
+    *link.report.lock().unwrap_or_else(|e| e.into_inner()) = Some(report);
 }

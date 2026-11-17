@@ -485,6 +485,17 @@ unsafe fn items_of<'a>(items: *mut DdValue, count: usize) -> Result<&'a [DdValue
     Ok(unsafe { slice::from_raw_parts(items, count) })
 }
 
+/// A `bytes` or opaque value that points at `bytes` where the host placed them, without a copy. The
+/// bytes are valid while the run's reads are begun, which is the node's call.
+pub fn borrowed_bytes(bytes: &[u8]) -> DdValue {
+    let mut out = DdValue::ZERO;
+    out.data.bytes = DdBytes {
+        data: bytes.as_ptr(),
+        len: bytes.len(),
+    };
+    out
+}
+
 /// Writes a wire value as a C value. The arena keeps the pointers the value holds until the run
 /// ends. A place (a by-reference value) never reaches the C side, since the worker does not agree
 /// to them, so it is written as nothing.

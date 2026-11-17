@@ -16,6 +16,16 @@ if(NOT DAEDALUS_RUST_LIB OR NOT EXISTS "${DAEDALUS_RUST_LIB}")
   message(FATAL_ERROR "DAEDALUS_RUST_LIB must name the Rust staticlib of the C API")
 endif()
 
+# The host and client libraries a consumer links: the shared libraries of core/capi (daedalus.h)
+# and languages/client-capi (daedalus_client.h), both built by cargo as cdylibs.
+set(DAEDALUS_HOST_LIB "" CACHE FILEPATH "The shared library of the host C API (daedalus_capi)")
+set(DAEDALUS_CLIENT_LIB "" CACHE FILEPATH "The shared library of the client C API (daedalus_client_capi)")
+foreach(lib IN ITEMS DAEDALUS_HOST_LIB DAEDALUS_CLIENT_LIB)
+  if(NOT ${lib} OR NOT EXISTS "${${lib}}")
+    message(FATAL_ERROR "${lib} must name the shared library it stands for")
+  endif()
+endforeach()
+
 # The worker SDK: the C header, and the Rust library behind it with what a Rust staticlib needs from
 # the platform.
 find_package(Threads REQUIRED)
@@ -32,6 +42,30 @@ endif()
 add_library(daedalus INTERFACE)
 target_include_directories(daedalus INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(daedalus INTERFACE daedalus_rust ${daedalus_platform_libs})
+
+# The host and client libraries, as imported shared libraries. On Windows the import library is the
+# library's name with `.lib` added (cargo writes it beside the DLL).
+set(daedalus_api_headers
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../../core/capi/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../client-capi/include)
+add_library(daedalus_host_lib SHARED IMPORTED)
+set_target_properties(daedalus_host_lib PROPERTIES IMPORTED_LOCATION "${DAEDALUS_HOST_LIB}")
+add_library(daedalus_client_lib SHARED IMPORTED)
+set_target_properties(daedalus_client_lib PROPERTIES IMPORTED_LOCATION "${DAEDALUS_CLIENT_LIB}")
+if(WIN32)
+  set_target_properties(daedalus_host_lib PROPERTIES IMPORTED_IMPLIB "${DAEDALUS_HOST_LIB}.lib")
+  set_target_properties(daedalus_client_lib PROPERTIES IMPORTED_IMPLIB "${DAEDALUS_CLIENT_LIB}.lib")
+endif()
+
+# The host: daedalus.h and daedalus_host.hpp, over the host C API.
+add_library(daedalus_host INTERFACE)
+target_include_directories(daedalus_host INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include ${daedalus_api_headers})
+target_link_libraries(daedalus_host INTERFACE daedalus_host_lib ${daedalus_platform_libs})
+
+# The client: daedalus_client.h and daedalus_client.hpp, over the client C API.
+add_library(daedalus_client INTERFACE)
+target_include_directories(daedalus_client INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include ${daedalus_api_headers})
+target_link_libraries(daedalus_client INTERFACE daedalus_client_lib ${daedalus_platform_libs})
 
 if(MSVC)
   set(warnings /W3)
@@ -51,14 +85,20 @@ target_link_libraries(daedalus_wire_test PRIVATE daedalus)
 target_compile_options(daedalus_wire_test PRIVATE ${warnings})
 add_test(NAME wire COMMAND daedalus_wire_test)
 
-# Install: the two headers and the Rust library into the prefix, and a package config that a consumer
-# finds with find_package(daedalus CONFIG). The Rust library is an imported target, which
-# install(EXPORT) cannot carry (it would name the library by a file name the consumer cannot
-# resolve), so the config file defines both targets with paths relative to the prefix:
-#   daedalus::daedalus   the headers, and the libraries they need
+# Install: the headers (the worker's, the host's and the client's) and the libraries into the prefix,
+# and a package config that a consumer finds with find_package(daedalus CONFIG). The Rust library is
+# an imported target, which install(EXPORT) cannot carry (it would name the library by a file name the
+# consumer cannot resolve), so the config file defines the targets with paths relative to the prefix:
+#   daedalus::daedalus   the worker's headers, and the libraries they need
 #   daedalus::rust       the Rust staticlib
+#   daedalus::host       daedalus.h and daedalus_host.hpp, over the host C API library
+#   daedalus::client     daedalus_client.h and daedalus_client.hpp, over the client C API library
 get_filename_component(daedalus_rust_file "${DAEDALUS_RUST_LIB}" NAME)
+get_filename_component(daedalus_host_file "${DAEDALUS_HOST_LIB}" NAME)
+get_filename_component(daedalus_client_file "${DAEDALUS_CLIENT_LIB}" NAME)
 set(DAEDALUS_RUST_INSTALL_PATH "${CMAKE_INSTALL_LIBDIR}/${daedalus_rust_file}")
+set(DAEDALUS_HOST_INSTALL_PATH "${CMAKE_INSTALL_LIBDIR}/${daedalus_host_file}")
+set(DAEDALUS_CLIENT_INSTALL_PATH "${CMAKE_INSTALL_LIBDIR}/${daedalus_client_file}")
 set(DAEDALUS_INCLUDE_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}")
 # The link line the config file repeats for the installed targets.
 set(DAEDALUS_PLATFORM_LINK_LIBS "${daedalus_platform_libs}")
@@ -70,7 +110,16 @@ configure_package_config_file(
 install(FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/include/daedalus_worker.h
   ${CMAKE_CURRENT_SOURCE_DIR}/include/daedalus_worker.hpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/daedalus_host.hpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/daedalus_client.hpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../../core/capi/include/daedalus.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../client-capi/include/daedalus_client.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(FILES "${DAEDALUS_RUST_LIB}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES "${DAEDALUS_RUST_LIB}" "${DAEDALUS_HOST_LIB}" "${DAEDALUS_CLIENT_LIB}"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR})
+if(WIN32)
+  # The import libraries of the two DLLs, which a consumer links against.
+  install(FILES "${DAEDALUS_HOST_LIB}.lib" "${DAEDALUS_CLIENT_LIB}.lib" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/daedalusConfig.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/daedalus)

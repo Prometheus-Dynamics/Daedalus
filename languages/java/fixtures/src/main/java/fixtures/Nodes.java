@@ -3,13 +3,15 @@ package fixtures;
 import dev.daedalus.worker.Context;
 import dev.daedalus.worker.Node;
 import dev.daedalus.worker.NodeException;
-import dev.daedalus.worker.Wire;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-/** The thirteen canonical fixture nodes. Their ports and types match worker-conformance exactly. */
+/**
+ * The thirteen canonical fixture nodes, and the four of the behaviour suite. Their ports and types match
+ * worker-conformance exactly.
+ */
 public final class Nodes {
     private Nodes() {}
 
@@ -88,5 +90,40 @@ public final class Nodes {
         cx.detail("and this is the rest of it");
         cx.faultCode(77);
         throw new NodeException("node_error", "diagnostic: the value is rejected");
+    }
+
+    /** Runs until the host cancels it, then gives its input: the behaviour `cancel`. */
+    @Node(id = "fixture.wait_cancel", inputs = {"x:i64"}, outputs = {"y:i64"})
+    public static Object waitCancel(Map<String, Object> in, Context cx) throws InterruptedException {
+        while (!cx.cancelled()) {
+            Thread.sleep(2);
+        }
+        return in.get("x");
+    }
+
+    /** Progress, log and detail, in that order, then its input: the behaviour `events`. */
+    @Node(id = "fixture.events", inputs = {"x:i64"}, outputs = {"y:i64"})
+    public static Object events(Map<String, Object> in, Context cx) {
+        cx.progress(0.5f, "half");
+        cx.log("info", "after the progress");
+        cx.detail("a detail line");
+        cx.progress(1.0f, "done");
+        return in.get("x");
+    }
+
+    /** Prints a line, then gives its input plus one: the behaviour `chatty`. */
+    @Node(id = "fixture.chatty", inputs = {"x:i64"}, outputs = {"y:i64"})
+    public static Object chatty(Map<String, Object> in, Context cx) {
+        System.out.println("hello from a body");
+        return (Long) in.get("x") + 1;
+    }
+
+    /** Appends its input to a string state, and gives the state: the behaviour `state`. */
+    @Node(id = "fixture.stateful_label", inputs = {"in:string"}, outputs = {"out:string"}, state = "string")
+    public static Object statefulLabel(Map<String, Object> in, Context cx) {
+        String state = cx.state() == null ? "" : (String) cx.state();
+        String next = state + (String) in.get("in");
+        cx.setState(next);
+        return next;
     }
 }

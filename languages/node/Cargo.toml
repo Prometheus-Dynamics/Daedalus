@@ -10,6 +10,7 @@ repository.workspace = true
 daedalus-backend-process = { path = "../../backends/process" }
 
 [dev-dependencies]
+daedalus-drive-conformance = { path = "../../testing/crates/drive-conformance" }
 daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance" }
 
 [lints]

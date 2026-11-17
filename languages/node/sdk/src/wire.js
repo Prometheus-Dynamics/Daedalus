@@ -93,12 +93,23 @@ export class Writer {
   raw(buf) { this.push(Buffer.from(buf)); }
   bytes(buf) { this.u32(buf.length); this.push(Buffer.from(buf)); }
   str(text) { this.bytes(Buffer.from(text, "utf8")); }
+  // A record: its length, then what `body` writes into a writer of its own. A reader takes the
+  // fields it knows and skips the rest, so a record can gain fields at its end.
+  record(body) {
+    const inner = new Writer();
+    body(inner);
+    const data = inner.finish();
+    this.u32(data.length);
+    this.push(data);
+  }
   finish() { return Buffer.concat(this.chunks, this.size); }
 }
 
 export class Reader {
-  constructor(buf) { this.buf = Buffer.from(buf); this.pos = 0; }
+  constructor(buf) { this.buf = Buffer.isBuffer(buf) ? buf : Buffer.from(buf); this.pos = 0; }
   remaining() { return this.buf.length - this.pos; }
+  // Whether anything is left. A field added at the end of a record is read only when this is true.
+  more() { return this.remaining() > 0; }
   take(count) {
     if (count > this.remaining()) throw new WireError(`input ends early: needs ${count}, ${this.remaining()} left`);
     const out = this.buf.subarray(this.pos, this.pos + count);
@@ -122,6 +133,12 @@ export class Reader {
     return count;
   }
   bytes() { return Buffer.from(this.take(this.count())); }
+  // Reads a record written with `Writer.record`: `body` reads the fields this version knows, and
+  // whatever else the record holds is skipped.
+  record(body) {
+    const inner = new Reader(this.take(this.count()));
+    return body(inner);
+  }
   str() {
     const raw = this.bytes();
     try {
@@ -527,16 +544,18 @@ const LAYOUT_WORDS = [
   0x40n, 0x41n, 0x42n, 0x43n, 0x44n, 0x45n, 0x46n,
   16n, 8n,
 ];
-export const LAYOUT_HASH = (() => {
+export function layoutHash(words) {
   const mask = (1n << 64n) - 1n;
   let h = 0xcbf29ce484222325n;
-  for (const word of LAYOUT_WORDS) {
+  for (const word of words) {
     const bytes = Buffer.alloc(8);
-    bytes.writeBigUInt64LE(word);
+    bytes.writeBigUInt64LE(BigInt(word));
     for (const byte of bytes) {
       h ^= BigInt(byte);
       h = (h * 0x100000001b3n) & mask;
     }
   }
   return h;
-})();
+}
+
+export const LAYOUT_HASH = layoutHash(LAYOUT_WORDS);

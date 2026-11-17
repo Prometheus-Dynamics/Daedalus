@@ -370,7 +370,7 @@ fn a_state_import_of_the_wrong_size_keeps_the_stored_state() {
     assert!(
         msgs.contains(&fault(
             0,
-            None,
+            Some("test.counter"),
             FaultCode::MalformedPacket,
             "the state value does not match the node's state type"
         )),
@@ -393,7 +393,7 @@ fn a_node_with_no_state_refuses_an_export() {
         msgs[1],
         fault(
             0,
-            None,
+            Some("test.add"),
             FaultCode::BadInput,
             "the node has no state to export"
         )

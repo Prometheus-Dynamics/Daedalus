@@ -8,7 +8,8 @@ use std::slice;
 
 use crate::convert::c_text;
 use crate::ffi::{DdNode, MAX_NODES};
-use crate::serve::serve_io;
+use crate::serve::serve_stdio;
+use daedalus_worker_io::packet_stream;
 
 /// Serves the nodes on stdin and stdout until the host shuts the worker down or closes the pipe.
 /// Returns 0 on a clean end, and -1 when the stream could not be read or written.
@@ -32,15 +33,14 @@ pub unsafe extern "C" fn dd_serve(
     };
     // SAFETY: the caller's worker name is a NUL-terminated string.
     let name = unsafe { c_text(worker_name) };
-    match serve_stdio(table, &name) {
+    match on_stdio(table, &name) {
         Ok(()) => 0,
         Err(_) => -1,
     }
 }
 
-/// The stdio loop: the packets are on the worker's packet stream, and stdout is stderr from then on.
-fn serve_stdio(table: &[DdNode], name: &str) -> io::Result<()> {
-    let packets = daedalus_worker_io::packet_stream()?;
-    let stdin = io::stdin();
-    serve_io(table, &mut stdin.lock(), Box::new(packets), name)
+/// The loop on the packet stream, which takes stdout for it.
+fn on_stdio(table: &[DdNode], name: &str) -> io::Result<()> {
+    let packets = packet_stream()?;
+    serve_stdio(table, name, Box::new(packets))
 }

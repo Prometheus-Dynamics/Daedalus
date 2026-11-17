@@ -254,7 +254,9 @@ pub(crate) fn serve(host: &Arc<ServiceHost>, mut channel: Channel, refuse: Optio
         match read_packet(&mut reader, DEFAULT_CAP, &mut buf) {
             Ok(()) => {}
             Err(error @ PacketError::TooLarge { .. }) => {
-                // The body was not read, so the stream is out of step: say why, then drop it.
+                // The body was not read, so the stream is out of step, and the request's id
+                // is not known. The answer is about the connection, under id 0, and then it
+                // is dropped.
                 session.answer(error_packet(0, ServiceError::from_packet(&error)));
                 break;
             }

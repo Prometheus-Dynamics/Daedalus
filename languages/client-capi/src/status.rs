@@ -73,6 +73,9 @@ statuses! {
     TYPE_MISMATCH = 28, "DAEDALUS_CLIENT_TYPE_MISMATCH";
     /// A number that names no option: a telemetry level, a stop mode, an event kind or a plan form.
     BAD_ARGUMENT = 29, "DAEDALUS_CLIENT_BAD_ARGUMENT";
+    /// The endpoint is well formed, but this platform cannot serve it: a `unix:` endpoint where the
+    /// platform has no unix sockets. Nothing was connected. Use `tcp:127.0.0.1:PORT` there.
+    UNSUPPORTED = 30, "DAEDALUS_CLIENT_UNSUPPORTED";
 }
 
 /// The name of a status, for messages. Never null, and never freed.

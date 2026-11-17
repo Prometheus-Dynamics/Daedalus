@@ -115,6 +115,10 @@ void dd_detail(dd_ctx *cx, const char *text);
  * says: the host passes it through untouched, with the node's id. */
 void dd_fault_code(dd_ctx *cx, uint32_t code);
 
+/* Whether the host asked the run going on to stop. A node that loops checks it, and returns once it
+ * is true: the run then ends as cancelled. */
+bool dd_cancelled(dd_ctx *cx);
+
 /* A node's state, kept in the worker between runs. Nodes with no state never touch it. */
 dd_value *dd_state(dd_ctx *cx);
 void dd_set_state(dd_ctx *cx, dd_value value);
