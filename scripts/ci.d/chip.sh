@@ -52,7 +52,7 @@ out="${CARGO_TARGET_DIR:-target}"
 status=0
 for entry in "${TARGETS[@]}"; do
   IFS=: read -r target pin_flash pin_ram <<<"$entry"
-  cargo build --locked -q --target "$target" --profile chip -p daedalus-chip-blink --bins
+  CARGO_INCREMENTAL=0 cargo build --locked -q --target "$target" --profile chip -p daedalus-chip-blink --bins
   cargo check --locked -q --target "$target" -p daedalus-cpu --no-default-features --features chip
   check_budget "$target" daedalus-chip-blink "$MAX_FLASH" "$MAX_RAM"
   check_budget "$target" daedalus-chip-blink-tunable "$TUNABLE_MAX_FLASH" "$TUNABLE_MAX_RAM"
@@ -65,7 +65,7 @@ for entry in "${TARGETS[@]}"; do
 done
 
 # The Raspberry Pi Pico firmware: all three modes, the HAL and defmt.
-cargo build --locked -q --target thumbv6m-none-eabi --profile chip -p daedalus-chip-board
+CARGO_INCREMENTAL=0 cargo build --locked -q --target thumbv6m-none-eabi --profile chip -p daedalus-chip-board
 check_budget thumbv6m-none-eabi daedalus-chip-pico "$PICO_MAX_FLASH" "$PICO_MAX_RAM"
 
 # One set of nodes for a host and a chip. A chip build must not pull the facade, and the full

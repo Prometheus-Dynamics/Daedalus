@@ -28,7 +28,20 @@ for file in scripts/ci.d/*.sh; do
 done
 
 logs="$(mktemp -d)"
-trap 'rm -rf "$logs"' EXIT
+# Each lane runs in a process group of its own, whose id is the lane's pid, captured as it starts.
+# A gate that ends early (a signal, a timeout) stops the lanes it started that are still running,
+# with everything they started, and nothing else.
+running=()
+stop_lanes() {
+  local pid
+  for pid in "${running[@]}"; do
+    kill -TERM -- "-$pid" 2>/dev/null
+  done
+  rm -rf "$logs"
+}
+trap stop_lanes EXIT
+trap 'exit 130' INT TERM
+set -m
 
 scripts_lane() {
   scripts/ci.sh "${scripts[@]}" || return 1
@@ -45,15 +58,22 @@ scripts_lane() {
 start=$SECONDS
 scripts/ci.sh "${host[@]}" > "$logs/host" 2>&1 &
 host_pid=$!
+running+=("$host_pid")
 scripts/ci.sh "${cross[@]}" > "$logs/cross" 2>&1 &
 cross_pid=$!
+running+=("$cross_pid")
 scripts_lane > "$logs/scripts" 2>&1 &
 scripts_pid=$!
+running+=("$scripts_pid")
+set +m
 
 failed=()
 wait "$host_pid" || failed+=(host)
+running=("$cross_pid" "$scripts_pid")
 wait "$cross_pid" || failed+=(cross)
+running=("$scripts_pid")
 wait "$scripts_pid" || failed+=(scripts)
+running=()
 
 for lane in host cross scripts; do
   echo "=== lane: $lane"

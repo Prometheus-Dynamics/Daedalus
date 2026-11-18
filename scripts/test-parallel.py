@@ -13,6 +13,9 @@ failing binary's output is printed whole.
 
 A binary is run as cargo runs it: in its package's directory, with cargo's variables for that
 package, and the target's library directories on the library path.
+
+Binaries that link trybuild run one after another: trybuild builds every crate's compile tests in
+one shared directory under the same binary names, so two at once overwrite each other's builds.
 """
 import json
 import os
@@ -76,6 +79,12 @@ def package_of(package_id, manifest):
     return name, version
 
 
+def shares_trybuild(message):
+    """Whether the binary links trybuild, by its symbols: wherever in the test the use sits."""
+    with open(message["executable"], "rb") as file:
+        return b"trybuild" in file.read()
+
+
 def label(message):
     kinds = message["target"]["kind"]
     kind = "unittests" if any(k in ("lib", "rlib", "proc-macro", "cdylib", "staticlib") for k in kinds) else kinds[0]
@@ -96,35 +105,42 @@ def main():
             last = json.load(file)
     except (OSError, ValueError):
         last = {}
-    found.sort(key=lambda m: -last.get(label(m), 0.0))
+    shared = [m for m in found if shares_trybuild(m)]
+    jobs = [[m] for m in found if m not in shared] + ([shared] if shared else [])
+    jobs.sort(key=lambda job: -sum(last.get(label(m), 0.0) for m in job))
 
-    def run(message):
-        start = time.monotonic()
-        done = subprocess.run(
-            [message["executable"]], cwd=os.path.dirname(message["manifest_path"]),
-            env=package_env(message, sysroot_lib), stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True, errors="replace",
-        )
-        return message, done, time.monotonic() - start
+    def run(job):
+        ran = []
+        for message in job:
+            start = time.monotonic()
+            done = subprocess.run(
+                [message["executable"]], cwd=os.path.dirname(message["manifest_path"]),
+                env=package_env(message, sysroot_lib), stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, errors="replace",
+            )
+            ran.append((message, done, time.monotonic() - start))
+        return ran
 
     workers = max(1, len(os.sched_getaffinity(0)))
     failed, times = [], {}
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for message, done, seconds in pool.map(run, found):
-            name = label(message)
-            times[name] = round(seconds, 2)
-            summary = [l for l in done.stdout.splitlines() if l.startswith("test result:")]
-            status = "ok" if done.returncode == 0 else f"FAILED (exit {done.returncode})"
-            print(f"  {seconds:6.1f} s  {name}: {status} {summary[-1][12:] if summary else ''}")
-            if done.returncode != 0:
-                failed.append((name, done.stdout))
+        for ran in pool.map(run, jobs):
+            for message, done, seconds in ran:
+                name = label(message)
+                times[name] = round(seconds, 2)
+                summary = [l for l in done.stdout.splitlines() if l.startswith("test result:")]
+                status = "ok" if done.returncode == 0 else f"FAILED (exit {done.returncode})"
+                print(f"  {seconds:6.1f} s  {name}: {status} {summary[-1][12:] if summary else ''}")
+                if done.returncode != 0:
+                    failed.append((name, done.stdout))
     try:
         with open(TIMES, "w") as file:
             json.dump(times, file, indent=0, sort_keys=True)
     except OSError:
         pass
-    print(f"  {len(found)} test binaries in {time.monotonic() - started:.0f} s, {workers} at a time")
+    print(f"  {len(found)} test binaries in {time.monotonic() - started:.0f} s, {workers} at a time,"
+          f" {len(shared)} sharing trybuild's build one after another")
     for name, output in failed:
         print(f"\n---- {name} ----\n{output}", end="")
     if failed:
