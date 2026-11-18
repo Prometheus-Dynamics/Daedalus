@@ -6,6 +6,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # every edit, and off for release and the firmware profile. The steps whose result is the code
 # itself (firmware sizes, instruction counts) build with it off whatever the caller's environment.
 
+# Tests that open a GPU open the default adapter, and the stress tests open hundreds of devices on
+# it. Where lavapipe is installed the steps get lavapipe, so a gate never loads the machine's own
+# GPU; a caller that names its driver keeps it. The GPU lanes choose their device themselves.
+if [[ -z "${VK_DRIVER_FILES:-}${VK_ICD_FILENAMES:-}" ]] && icd=$(scripts/lavapipe-icd.sh); then
+  export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd"
+fi
+
 if [[ $# -eq 0 ]]; then
   set -- format clippy test boundaries
 fi
