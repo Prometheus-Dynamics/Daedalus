@@ -14,6 +14,9 @@ failing binary's output is printed whole.
 A binary is run as cargo runs it: in its package's directory, with cargo's variables for that
 package, and the target's library directories on the library path.
 
+With DAEDALUS_TEST_PACKAGES set to package names, only those packages' binaries run, from the
+same build: scripts/check.sh runs a change's packages this way. The gate unsets it.
+
 Binaries that link trybuild run one after another: trybuild builds every crate's compile tests in
 one shared directory under the same binary names, so two at once overwrite each other's builds.
 """
@@ -105,6 +108,12 @@ def main():
             last = json.load(file)
     except (OSError, ValueError):
         last = {}
+    built = len(found)
+    only = os.environ.get("DAEDALUS_TEST_PACKAGES")
+    if only is not None:
+        wanted = set(only.split())
+        found = [m for m in found if package_of(m["package_id"], m["manifest_path"])[0] in wanted]
+        print(f"  {len(found)} of {built} test binaries: those of DAEDALUS_TEST_PACKAGES")
     shared = [m for m in found if shares_trybuild(m)]
     jobs = [[m] for m in found if m not in shared] + ([shared] if shared else [])
     jobs.sort(key=lambda job: -sum(last.get(label(m), 0.0) for m in job))
@@ -136,7 +145,7 @@ def main():
                     failed.append((name, done.stdout))
     try:
         with open(TIMES, "w") as file:
-            json.dump(times, file, indent=0, sort_keys=True)
+            json.dump({**last, **times}, file, indent=0, sort_keys=True)
     except OSError:
         pass
     print(f"  {len(found)} test binaries in {time.monotonic() - started:.0f} s, {workers} at a time,"

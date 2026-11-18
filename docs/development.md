@@ -57,10 +57,28 @@ named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` ru
 | `semver` | Semantic versioning against the `SEMVER_BASELINE` tag; reports and never fails the gate |
 | `smoke` | The examples run and print what they should |
 | `doc` | The API docs build with no warning, and every link in `docs/` resolves |
+| `tools` | `scripts/affected.py` and `scripts/prune-targets.py` against planted cases |
 
 To add a check, add an executable `scripts/ci.d/<step>.sh`. A check that needs an environment of
 its own gets a workflow of its own: `Portability` (other targets under qemu, and Windows), `GPU`
 (lavapipe) and `Budgets` (valgrind) are those.
+
+Where lavapipe is installed, the steps run on it unless the caller names a Vulkan driver, so a
+gate never loads the machine's own GPU.
+
+### While working
+
+`scripts/check.sh` is a quick answer for a change, never a replacement for the gate. It runs
+`format`, `clippy` and the file-size rule as the gate does, and the gate's own test build, from
+which only the binaries of the packages the change can reach run: the changed packages, every
+package that depends on them, and `daedalus`, whose tests read the whole tree. A change to a file
+in no package runs every binary. A red there is a red at the gate; a green is not a green there.
+
+A build directory belongs to one checkout, and `scripts/ci.sh` refuses one another checkout built
+in: cargo would reuse those builds, and they carry the other checkout's paths. Each directory
+records its checkout. `scripts/prune-targets.py DIR...` lists the build directories under `DIR`
+whose checkout is finished with: gone, or merged into `origin/next`, clean and unused for two
+days. `--delete` deletes them. A directory with no record is never touched.
 
 ## Adding a backend
 
