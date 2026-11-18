@@ -46,6 +46,29 @@ runs in the cloud until the user says so, whatever a brief's `Runs:` line says.
 - A PR merges when `scripts/gate.sh` passes. Paste the proof named in the brief into the PR
   description.
 
+## Workers
+
+A worker takes one item to a pushed branch. The lander runs `scripts/gate.sh` on it before it
+merges, and that run is the proof.
+
+- A worker doesn't run the full gate before pushing. It runs `scripts/check.sh`, the fail-before
+  proof for its change (the new check fails without the change and passes with it), and `cargo fmt`
+  and `cargo clippy` on what it touched. Nothing lands on a red gate.
+- How many times a test is repeated is set by risk and stated in the PR: many runs only for a change
+  to timing or concurrency; three for a join of branches that each passed, and for an ordinary
+  change.
+- A red landing gate is read and given a named cause before anything runs again. Never rerun in
+  hope.
+- Heavy jobs at once never outnumber the cores they are given (`taskset`, `CARGO_BUILD_JOBS`). More
+  build or test chains than cores makes every one of them slower and flakier.
+- A worker starts warm. The next item reuses a kept worktree and its build directory once the
+  previous item has landed; otherwise the build directory starts from the seed
+  (`DAEDALUS_TARGET_SEED`, see `docs/development.md`). Never a cold build per item.
+- A brief names the exact base commit and the files in scope, and is small enough to finish in one
+  context. Long work hands off through a written state file, so a worker that runs out of room costs
+  minutes, not the item.
+- Board runs: one runner per board, in parallel with software work.
+
 ## Rules
 
 - Daedalus connects and structures. Nothing in `core/` may know what a GPU, shader, NPU, frame, image
