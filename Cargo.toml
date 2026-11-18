@@ -82,6 +82,10 @@ opt-level = 1
 debug = false
 opt-level = 0
 
+# The plugin digest. Tests hash every library they load, and sha2 unoptimised is the slowest part.
+[profile.dev.package.sha2]
+opt-level = 3
+
 # What is built to run: one unit, optimised across crates. It is about a fifth smaller than the
 # compiler's default for the daemon and a host, and no slower. It costs build time, which a
 # debug build doesn't pay.

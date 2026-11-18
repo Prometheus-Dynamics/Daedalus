@@ -146,10 +146,19 @@ pub fn transcript(
     result.map(|text| normalize(&text, fixture))
 }
 
-/// The answers with the fixture's path as `{plugin}` and the graph directory as `{graphs}`.
+/// The answers with the fixture's path as `{plugin}` and the graph directory as `{graphs}`. A path
+/// can appear as it is or inside a JSON string, where each `\` of a Windows path is written `\\`.
 fn normalize(text: &str, fixture: &Path) -> String {
-    text.replace(&fixture.display().to_string(), "{plugin}")
-        .replace(&scenario::graphs_dir().display().to_string(), "{graphs}")
+    let mut text = text.to_owned();
+    for (path, name) in [
+        (fixture.display().to_string(), "{plugin}"),
+        (scenario::graphs_dir().display().to_string(), "{graphs}"),
+    ] {
+        text = text
+            .replace(&path.replace('\\', "\\\\"), name)
+            .replace(&path, name);
+    }
+    text
 }
 
 /// Runs the driver once with `input` on stdin and `args` after its own arguments. Its stdout is
@@ -352,4 +361,20 @@ pub fn build_fixture(target: &Path) -> Result<PathBuf, String> {
         return Err("the dylib fixture does not build".to_owned());
     }
     Ok(library_under(target))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_windows_path_is_replaced_as_it_is_and_inside_a_json_string() {
+        let fixture = Path::new(r"D:\a\target\fixture.dll");
+        let text =
+            r#"load D:\a\target\fixture.dll ["2|load_plugin|D:\\a\\target\\fixture.dll|none"]"#;
+        assert_eq!(
+            normalize(text, fixture),
+            r#"load {plugin} ["2|load_plugin|{plugin}|none"]"#
+        );
+    }
 }

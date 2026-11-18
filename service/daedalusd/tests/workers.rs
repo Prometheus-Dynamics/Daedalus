@@ -107,7 +107,7 @@ mod running {
         BUILT.get_or_init(|| {
             let source = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../testing/crates/worker-fixture/Cargo.toml");
-            let target = Path::new(env!("CARGO_TARGET_TMPDIR")).join("daedalusd-worker-fixture");
+            let target = Path::new(env!("CARGO_TARGET_TMPDIR")).join("worker-fixture");
             let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
             let status = Command::new(cargo)
                 .args(["build", "-q", "--manifest-path"])

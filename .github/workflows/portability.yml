@@ -20,10 +20,16 @@ concurrency:
 jobs:
   cross:
     runs-on: ubuntu-latest
+    # A hung step fails here, not at the runner's six-hour limit.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Pull requests restore next's caches and save none: their own would only push next's
+          # out of the repository's cache space.
+          save-if: ${{ github.ref == 'refs/heads/next' }}
       - run: rustup target add aarch64-unknown-linux-gnu armv7-unknown-linux-musleabihf riscv64gc-unknown-linux-gnu riscv64gc-unknown-linux-musl
       - uses: mlugg/setup-zig@v2
         with:
@@ -31,12 +37,26 @@ jobs:
       - run: ./scripts/apt-install.sh qemu-user libc6-riscv64-cross
       - run: ./scripts/cross.sh
 
+  # Known red, not hidden. Two failures are known here:
+  #   - `daedalus-lang-cpp --test native`: a consumer built with MSVC against the installed C++ SDK
+  #     doesn't compile (`std::string_view`, `std::optional` and `daedalus_status_t` undeclared in
+  #     the installed daedalus_host.hpp); likely the installed package doesn't pass C++17 on to
+  #     its consumers. A product fault, held for a decision on the C and C++ SDKs.
+  #   - `daedalus-lang-node --test units` hung here until the runner's limit; it now stops a hung
+  #     test and names it. The cause is open.
+  # Remove an entry when its fix lands.
   windows:
     runs-on: windows-latest
+    # A hung step fails here, not at the runner's six-hour limit.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Pull requests restore next's caches and save none: their own would only push next's
+          # out of the repository's cache space.
+          save-if: ${{ github.ref == 'refs/heads/next' }}
       # The Java SDK builds with `javac --release 21`. The runner image carries JDK 21; point at it.
       - name: JDK 21
         shell: bash

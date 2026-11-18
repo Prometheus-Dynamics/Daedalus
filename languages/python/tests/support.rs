@@ -34,7 +34,7 @@ pub fn library(name: &str) -> PathBuf {
 pub fn plugin() -> &'static Path {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     BUILT.get_or_init(|| {
-        let target = Path::new(env!("CARGO_TARGET_TMPDIR")).join("python-plugin");
+        let target = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dylib-fixture");
         daedalus_drive_conformance::build_fixture(&target).expect("the dylib fixture builds")
     })
 }
