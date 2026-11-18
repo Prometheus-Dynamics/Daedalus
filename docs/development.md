@@ -42,7 +42,7 @@ crate is making its directory.
 
 | Step | What it checks |
 |---|---|
-| `format`, `clippy`, `test` | `cargo fmt`, `cargo clippy -D warnings`, and the workspace's tests with every feature |
+| `format`, `clippy`, `test` | `cargo fmt`, `cargo clippy -D warnings`, and every test binary `cargo test --workspace --all-targets` builds, run side by side by `scripts/test-parallel.py` |
 | `boundaries` | The rules above |
 | `nostd` | The heap-free crates on the bare-metal targets |
 | `chip` | The firmware builds and their flash and RAM |

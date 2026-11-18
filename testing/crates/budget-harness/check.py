@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
@@ -33,20 +34,28 @@ def build():
     return os.path.join(FIXTURE_DIR, "debug", "libdaedalus_dylib_fixture.so")
 
 
-def instructions(command, fixture):
-    """Ir per iteration: the difference between two runs, over the difference in their counts."""
-    counts = []
-    for n in (LOW, HIGH):
-        words = [w.replace("{n}", str(n)).replace("{fixture}", fixture) for w in command.split()]
-        out = subprocess.run(
-            ["valgrind", "--tool=callgrind", "--callgrind-out-file=/dev/null", HARNESS, *words],
-            cwd=ROOT, text=True, capture_output=True,
-        )
-        found = re.search(r"Collected : (\d+)", out.stderr)
-        if out.returncode != 0 or not found:
-            raise RuntimeError(f"callgrind failed on `{command}`:\n{out.stderr[-2000:]}")
-        counts.append(int(found.group(1)))
-    return (counts[1] - counts[0]) // (HIGH - LOW)
+def collected(command, n, fixture):
+    """The instructions callgrind counts for one run of the harness, `{n}` iterations."""
+    words = [w.replace("{n}", str(n)).replace("{fixture}", fixture) for w in command.split()]
+    out = subprocess.run(
+        ["valgrind", "--tool=callgrind", "--callgrind-out-file=/dev/null", HARNESS, *words],
+        cwd=ROOT, text=True, capture_output=True,
+    )
+    found = re.search(r"Collected : (\d+)", out.stderr)
+    if out.returncode != 0 or not found:
+        raise RuntimeError(f"callgrind failed on `{command}`:\n{out.stderr[-2000:]}")
+    return int(found.group(1))
+
+
+def instructions_of(commands, fixture):
+    """Ir per iteration of each command: the difference between two runs, over the difference in
+    their counts. The runs are independent and callgrind's counts don't depend on load, so they
+    run side by side, one valgrind per core."""
+    commands = list(dict.fromkeys(commands))
+    jobs = [(command, n) for command in commands for n in (LOW, HIGH)]
+    with ThreadPoolExecutor(max_workers=max(1, min(len(jobs), len(os.sched_getaffinity(0))))) as pool:
+        counts = dict(zip(jobs, pool.map(lambda job: collected(*job, fixture), jobs)))
+    return {c: (counts[(c, HIGH)] - counts[(c, LOW)]) // (HIGH - LOW) for c in commands}
 
 
 def allocations(fixture, planted=False):
@@ -104,6 +113,11 @@ def main():
             failures.append(name)
 
     measured = {}
+    # Every callgrind row, and the planted pair, counted at once.
+    wanted = [] if self_test else [row["command"] for row in rows if row["tool"] == "callgrind"]
+    if have_valgrind:
+        wanted += ["chain {n} 16", "chain {n} 16 extra"]
+    counted_ir = instructions_of(wanted, fixture) if have_valgrind else {}
     if not self_test:
         counted = allocations(fixture)
         for row in rows:
@@ -112,7 +126,7 @@ def main():
                 if not have_valgrind:
                     skipped.append(name)
                     continue
-                value = instructions(row["command"], fixture)
+                value = counted_ir[row["command"]]
                 measured[name] = value
                 ceiling = row["next"] * (100 + row["tolerance_percent"]) // 100
                 ok = value <= row["limit"] and value <= ceiling
@@ -144,8 +158,8 @@ def main():
     else:
         print(f"  ok   planted: one allocation a tick ({planted}) fails alloc_fused_tick")
     if have_valgrind:
-        plain = measured.get("fused_chain_16_tick") or instructions("chain {n} 16", fixture)
-        extra = instructions("chain {n} 16 extra", fixture)
+        plain = measured.get("fused_chain_16_tick") or counted_ir["chain {n} 16"]
+        extra = counted_ir["chain {n} 16 extra"]
         # The row's limit, were it set to what the chain costs with its tolerance: a stage that
         # does a loop of extra work must be over it.
         tolerance = next(row["tolerance_percent"] for row in rows
