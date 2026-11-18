@@ -2,11 +2,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import * as wire from "../src/wire.js";
 import { NodeError, T, node } from "../src/index.js";
 
-const here = fileURLToPath(new URL(".", import.meta.url));
+// A URL, not a path: on Windows a path starts with a drive letter, which ESM reads as a scheme.
+const sdk = new URL("../src/index.js", import.meta.url).href;
 
 test("a NodeError with a code is a declaration-time check of its port types", () => {
   assert.throws(() => node("demo.bad", { inputs: [["x", { scalar: "complex" }]], outputs: [] }, () => 0), wire.WireError);
@@ -16,7 +16,7 @@ test("a NodeError with a code is a declaration-time check of its port types", ()
 
 test("console output in a body goes to stderr, and stdout carries packets only", async () => {
   const script = `
-    import { serve, node, T } from ${JSON.stringify(here + "../src/index.js")};
+    import { serve, node, T } from ${JSON.stringify(sdk)};
     node("demo.chatty", { inputs: [["x", T.i64]], outputs: [["out", T.i64]] }, (inputs) => {
       console.log("hello from a body");
       return inputs.x;
@@ -50,7 +50,7 @@ test("console output in a body goes to stderr, and stdout carries packets only",
     at += 4 + len;
   }
   assert.equal(at, stdout.length, "stdout holds whole packets and nothing else");
-  assert.deepEqual(packets, [wire.KIND.HELLO, wire.KIND.OUTPUTS]);
+  assert.deepEqual(packets, [wire.KIND.HELLO, wire.KIND.OUTPUTS], `the worker's stderr: ${stderr}`);
   assert.ok(stderr.includes("hello from a body"));
 });
 
