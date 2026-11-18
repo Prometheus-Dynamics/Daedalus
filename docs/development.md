@@ -57,7 +57,7 @@ named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` ru
 | `semver` | Semantic versioning against the `SEMVER_BASELINE` tag; reports and never fails the gate |
 | `smoke` | The examples run and print what they should |
 | `doc` | The API docs build with no warning, and every link in `docs/` resolves |
-| `tools` | `scripts/affected.py` and `scripts/prune-targets.py` against planted cases |
+| `tools` | `scripts/affected.py`, `scripts/prune-targets.py` and `scripts/seed-target.py` against planted cases |
 
 To add a check, add an executable `scripts/ci.d/<step>.sh`. A check that needs an environment of
 its own gets a workflow of its own: `Portability` (other targets under qemu, and Windows), `GPU`
@@ -79,6 +79,12 @@ in: cargo would reuse those builds, and they carry the other checkout's paths. E
 records its checkout. `scripts/prune-targets.py DIR...` lists the build directories under `DIR`
 whose checkout is finished with: gone, or merged into `origin/next`, clean and unused for two
 days. `--delete` deletes them. A directory with no record is never touched.
+
+A new checkout's first build can start from the dependencies another one built. `scripts/seed-target.py
+save SEED` keeps this checkout's build directory, less the workspace's own builds, as `SEED`; with
+`DAEDALUS_TARGET_SEED=SEED`, a build directory that doesn't exist yet starts as a copy of it.
+The workspace's own builds never go in a seed: they carry the paths of the checkout that built
+them. Cargo checks every seeded build against the source, so an old seed only means more to build.
 
 ## Adding a backend
 

@@ -29,6 +29,11 @@ for file in scripts/ci.d/*.sh; do
   fi
 done
 
+# Seeded once here, before the lanes, rather than by each lane's first step.
+if [[ -n "${DAEDALUS_TARGET_SEED:-}" ]]; then
+  scripts/seed-target.py use "$DAEDALUS_TARGET_SEED"
+fi
+
 logs="$(mktemp -d)"
 # Each lane runs in a process group of its own, whose id is the lane's pid, captured as it starts.
 # A gate that ends early (a signal, a timeout) stops the lanes it started that are still running,
