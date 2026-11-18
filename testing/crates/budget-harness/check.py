@@ -23,12 +23,17 @@ REQUIRE_ALL = os.environ.get("BUDGETS_REQUIRE_ALL") == "1"
 LOW, HIGH = 1000, 3000
 
 
+# Instruction counts and firmware sizes are the code's: never an incremental build, whatever the
+# caller's environment says.
+CODE_ENV = {**os.environ, "CARGO_INCREMENTAL": "0"}
+
+
 def run(args, **kwargs):
     return subprocess.run(args, cwd=ROOT, check=True, text=True, **kwargs)
 
 
 def build():
-    run(["cargo", "build", "-q", "--release", "-p", "daedalus-budget-harness"])
+    run(["cargo", "build", "-q", "--release", "-p", "daedalus-budget-harness"], env=CODE_ENV)
     manifest = os.path.join(ROOT, "testing", "fixtures", "dylib", "Cargo.toml")
     run(["cargo", "build", "-q", "--manifest-path", manifest, "--target-dir", FIXTURE_DIR])
     return os.path.join(FIXTURE_DIR, "debug", "libdaedalus_dylib_fixture.so")
@@ -94,7 +99,7 @@ def firmware(row):
     values = []
     for target in row["targets"]:
         run(["cargo", "build", "-q", "--target", target, "--profile", "chip",
-             "-p", "daedalus-chip-blink", "--bins"])
+             "-p", "daedalus-chip-blink", "--bins"], env=CODE_ENV)
         values.append((target, *sections(os.path.join(TARGET, target, "chip", row["binary"]))))
     return values
 
