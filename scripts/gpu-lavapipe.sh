@@ -62,15 +62,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
 fi
 
 # lavapipe, and nothing else: the driver list is this one file.
-icd=""
-for candidate in /usr/share/vulkan/icd.d/lvp_icd.*.json /usr/share/vulkan/icd.d/lvp_icd.json \
-  /etc/vulkan/icd.d/lvp_icd.*.json; do
-  if [[ -f "$candidate" && "$candidate" != *i686* ]]; then
-    icd="$candidate"
-    break
-  fi
-done
-if [[ -z "$icd" ]]; then
+if ! icd=$(scripts/lavapipe-icd.sh); then
   echo "gpu-lavapipe: no lavapipe driver is installed (mesa-vulkan-drivers)" >&2
   exit 1
 fi
