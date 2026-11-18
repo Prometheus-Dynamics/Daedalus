@@ -985,6 +985,7 @@ version = "3.0.1-dev"
 dependencies = [
  "daedalus-backend-process",
  "daedalus-drive-conformance",
+ "daedalus-integrity",
  "daedalus-wire",
  "daedalus-worker-conformance",
 ]

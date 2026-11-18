@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 daedalus-backend-process = { path = "../../backends/process" }
+daedalus-integrity = { path = "../../core/integrity" }
 
 [dev-dependencies]
 daedalus-drive-conformance = { path = "../../testing/crates/drive-conformance" }
