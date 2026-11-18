@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The working tools check themselves against planted cases: which packages a change reaches
-# (scripts/check.sh runs those), and which build directories may be deleted.
+# (scripts/check.sh runs those), which build directories may be deleted, and what a seed keeps.
 set -euo pipefail
 python3 -I scripts/affected.py --self-test
 python3 -I scripts/prune-targets.py --self-test
+python3 -I scripts/seed-target.py --self-test
 # A build directory another checkout built in is refused before anything builds.
 planted="$(mktemp -d)"
 trap 'rm -rf "$planted"' EXIT

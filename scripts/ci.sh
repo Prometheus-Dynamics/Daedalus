@@ -17,6 +17,10 @@ fi
 # and those builds carry that checkout's paths: its tests would read the other checkout's files,
 # or files that are gone. The directory records its checkout, which scripts/prune-targets.py reads
 # to tell when it is finished with; a directory with no record is never pruned.
+# A build directory that doesn't exist yet can start from a seed of dependency builds.
+if [[ -n "${DAEDALUS_TARGET_SEED:-}" ]]; then
+  scripts/seed-target.py use "$DAEDALUS_TARGET_SEED"
+fi
 target="${CARGO_TARGET_DIR:-target}"
 mkdir -p "$target"
 owner="$(cat "$target/.daedalus-checkout" 2>/dev/null || true)"
