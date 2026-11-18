@@ -12,10 +12,12 @@
 # output is printed whole, in lane order, and the gate fails if any lane failed. `scripts/ci.sh <step>` still runs one step by name.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# The gate runs every test binary, whatever a caller's scripts/check.sh setting says.
+unset DAEDALUS_TEST_PACKAGES
 
 host=(clippy test budgets chip doc no-planner no-workers package packaging smoke semver)
 cross=(boundaries nostd wasm)
-scripts=(format capability gpu-async-blocking gpu-driver-lock)
+scripts=(format capability gpu-async-blocking gpu-driver-lock tools)
 trailing=(scripts/check-file-sizes.sh scripts/check-workspace-deps.sh testing/boundary/run.sh)
 
 # A step in scripts/ci.d that no lane names is a mistake: it would never run.

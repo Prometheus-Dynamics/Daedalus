@@ -13,6 +13,20 @@ if [[ -z "${VK_DRIVER_FILES:-}${VK_ICD_FILENAMES:-}" ]] && icd=$(scripts/lavapip
   export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd"
 fi
 
+# A build directory belongs to one checkout. Cargo would reuse what another checkout built there,
+# and those builds carry that checkout's paths: its tests would read the other checkout's files,
+# or files that are gone. The directory records its checkout, which scripts/prune-targets.py reads
+# to tell when it is finished with; a directory with no record is never pruned.
+target="${CARGO_TARGET_DIR:-target}"
+mkdir -p "$target"
+owner="$(cat "$target/.daedalus-checkout" 2>/dev/null || true)"
+if [[ -n "$owner" && "$owner" != "$PWD" ]]; then
+  echo "ci: the build directory $target belongs to the checkout $owner; its builds carry that" >&2
+  echo "ci: checkout's paths. Give this checkout a build directory of its own." >&2
+  exit 2
+fi
+echo "$PWD" > "$target/.daedalus-checkout"
+
 if [[ $# -eq 0 ]]; then
   set -- format clippy test boundaries
 fi

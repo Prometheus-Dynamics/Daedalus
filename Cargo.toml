@@ -70,11 +70,17 @@ todo = "deny"
 unimplemented = "deny"
 
 # Line tables keep file:line in panics; dependencies carry no debug info.
+# The workspace's own code is built at opt-level 1, with its debug assertions and overflow checks
+# kept: the long tests are compute in this code (a tick moving a 1 MiB value, hundreds of device
+# openings), which runs several times faster for a little more build time. Dependencies stay at
+# 0: optimising them costs far more build than it gives back.
 [profile.dev]
 debug = "line-tables-only"
+opt-level = 1
 
 [profile.dev.package."*"]
 debug = false
+opt-level = 0
 
 # What is built to run: one unit, optimised across crates. It is about a fifth smaller than the
 # compiler's default for the daemon and a host, and no slower. It costs build time, which a
