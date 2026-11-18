@@ -38,7 +38,9 @@ crate is making its directory.
 ## The gate
 
 `scripts/gate.sh` is what every change must pass, and what CI runs. It runs every step in
-`scripts/ci.d/`, and `scripts/ci.sh <step>` runs one by name:
+`scripts/ci.d/`, in three lanes at once: the cargo steps for this machine one after another, the
+steps that build only for other targets, and the checks that build nothing. A new step must be
+named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` runs one by name:
 
 | Step | What it checks |
 |---|---|

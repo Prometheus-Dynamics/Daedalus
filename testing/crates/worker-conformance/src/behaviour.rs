@@ -41,7 +41,8 @@ pub const REPLY_WAIT: Duration = Duration::from_secs(10);
 const CANCEL_AFTER: Duration = Duration::from_millis(100);
 
 /// The longest a run may take to end once cancelled. A worker that answers at once is well under.
-/// Past the host's own grace a worker that ignores the cancel is killed, which fails this bound.
+/// The worker is given this as the host's grace too, so on a loaded machine a worker that does
+/// answer is not killed first; one that ignores the cancel is killed at the bound, which fails it.
 const CANCEL_BOUND: Duration = Duration::from_secs(5);
 
 /// The size of the large value: a mebibyte, in and out.
@@ -117,7 +118,7 @@ pub fn large_transport(spec: &WorkerSpec) -> Result<Transport, String> {
 fn cancel(spec: &WorkerSpec) -> Result<(), Stop> {
     let mut backend = ProcessBackend::new();
     backend
-        .add_worker(spec.clone(), &registry())
+        .add_worker(spec.clone().grace(CANCEL_BOUND), &registry())
         .map_err(Stop::Refused)?;
     let mut step = crate::runner::compile_node(&backend, WAIT_CANCEL, 1, 1)?;
     let word = Word::new(0);
