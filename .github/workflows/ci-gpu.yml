@@ -20,10 +20,16 @@ concurrency:
 jobs:
   lavapipe:
     runs-on: ubuntu-latest
+    # A hung step fails here, not at the runner's six-hour limit.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Pull requests restore next's caches and save none: their own would only push next's
+          # out of the repository's cache space.
+          save-if: ${{ github.ref == 'refs/heads/next' }}
       # lavapipe: Vulkan on the CPU. And the validation layer, which the lane runs under.
       - run: ./scripts/apt-install.sh mesa-vulkan-drivers libvulkan1 vulkan-validationlayers
       - run: ./scripts/gpu-lavapipe.sh --self-test

@@ -23,7 +23,7 @@ fn driver_classes() -> &'static OsString {
 fn fixture() -> &'static PathBuf {
     static FIXTURE: OnceLock<PathBuf> = OnceLock::new();
     FIXTURE.get_or_init(|| {
-        build_fixture(&PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("drive-fixture"))
+        build_fixture(&PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("dylib-fixture"))
             .expect("the dylib fixture builds")
     })
 }

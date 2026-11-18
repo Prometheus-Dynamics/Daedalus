@@ -29,7 +29,7 @@ fn shared() -> PathBuf {
 fn fixture() -> PathBuf {
     let source =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testing/fixtures/dylib/Cargo.toml");
-    let target = Path::new(env!("CARGO_TARGET_TMPDIR")).join("made-fixture");
+    let target = Path::new(env!("CARGO_TARGET_TMPDIR")).join("dylib-fixture");
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let status = Command::new(cargo)
         .args(["build", "-q", "--manifest-path"])

@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
 HARNESS = os.path.join(TARGET, "release", "daedalus-budget-harness")
-FIXTURE_DIR = os.path.join(TARGET, "tmp", "budget-fixture")
+FIXTURE_DIR = os.path.join(TARGET, "tmp", "dylib-fixture")
 REQUIRE_ALL = os.environ.get("BUDGETS_REQUIRE_ALL") == "1"
 LOW, HIGH = 1000, 3000
 

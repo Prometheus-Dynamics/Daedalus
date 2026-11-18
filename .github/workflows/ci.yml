@@ -20,11 +20,17 @@ concurrency:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    # A hung step fails here, not at the runner's six-hour limit.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       # rust-toolchain.toml selects the toolchain and its components.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Pull requests restore next's caches and save none: their own would only push next's
+          # out of the repository's cache space.
+          save-if: ${{ github.ref == 'refs/heads/next' }}
       - run: rustup target add thumbv7em-none-eabihf thumbv6m-none-eabi riscv32imac-unknown-none-elf wasm32-unknown-unknown wasm32-wasip1
       - id: wasm-bindgen
         run: echo "version=$(scripts/wasm-bindgen-version.sh)" >> "$GITHUB_OUTPUT"

@@ -85,7 +85,7 @@ fn report(failures: &[Failure]) -> String {
 fn the_cpp_driver_gives_the_golden_transcripts_for_every_scenario() {
     let library = client_library();
     let driver = build_driver(&library);
-    let fixture = build_fixture(&Path::new(env!("CARGO_TARGET_TMPDIR")).join("drive-fixture"))
+    let fixture = build_fixture(&Path::new(env!("CARGO_TARGET_TMPDIR")).join("dylib-fixture"))
         .expect("the dylib fixture builds");
     let mut command = Command::new(&driver);
     command.env("LD_LIBRARY_PATH", library.parent().expect("a directory"));

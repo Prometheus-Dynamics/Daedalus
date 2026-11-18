@@ -85,6 +85,7 @@ save SEED` keeps this checkout's build directory, less the workspace's own build
 `DAEDALUS_TARGET_SEED=SEED`, a build directory that doesn't exist yet starts as a copy of it.
 The workspace's own builds never go in a seed: they carry the paths of the checkout that built
 them. Cargo checks every seeded build against the source, so an old seed only means more to build.
+The build directories inside it, trybuild's and the test fixtures' under `tmp`, are seeded the same way.
 
 ## Adding a backend
 

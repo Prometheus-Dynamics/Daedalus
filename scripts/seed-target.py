@@ -12,6 +12,11 @@ dependencies' builds carry no checkout's paths, and what their build scripts wro
 directory they ran in, which cargo maps onto the directory it finds them in. Cargo still checks
 every seeded build against the source, so an old seed only means more to build.
 
+Some builds have a build directory of their own inside this one: trybuild's (`tests/trybuild`, one
+project per crate named `<crate>-tests`) and the fixtures tests build (`tmp/<name>`). Their
+dependency builds go in the seed the same way. The rest of `tests` and `tmp` is ours, and so are
+trybuild's projects, whose manifests name this checkout's paths.
+
 The build directory is CARGO_TARGET_DIR, or `target` in this checkout. Copies share their blocks
 where the file system can (btrfs, XFS); a seed is replaced whole, under a lock beside it.
 """
@@ -25,7 +30,9 @@ import tempfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 # Whole: what is built from the workspace, or belongs to one checkout.
-ONLY_OURS = ["tests", "tmp", "doc", "test-parallel-times.json", ".daedalus-checkout"]
+ONLY_OURS = ["doc", "test-parallel-times.json", ".daedalus-checkout"]
+# Ours, except the build directories inside them.
+HOLDING_BUILDS = ["tests", "tmp"]
 
 
 def target():
@@ -56,6 +63,20 @@ def strip(directory, ours):
     """Removes from a build directory every build of the packages named in `ours`."""
     for name in ONLY_OURS:
         remove(os.path.join(directory, name))
+    for holder in HOLDING_BUILDS:
+        holder = os.path.join(directory, holder)
+        if not os.path.isdir(holder):
+            continue
+        for name in os.listdir(holder):
+            inner = os.path.join(holder, name)
+            # Cargo writes `.rustc_info.json` at the top of every build directory.
+            if not os.path.exists(os.path.join(inner, ".rustc_info.json")):
+                remove(inner)
+                continue
+            for project in os.listdir(inner):
+                # A trybuild project: its manifest names the checkout's paths.
+                if os.path.exists(os.path.join(inner, project, "Cargo.toml")):
+                    remove(os.path.join(inner, project))
     profiles = []
     for root, dirs, _ in os.walk(directory):
         if ".fingerprint" in dirs:
@@ -66,7 +87,8 @@ def strip(directory, ours):
         units = set()
         for name in os.listdir(fingerprints):
             package, _, unit = name.rpartition("-")
-            if package in ours:
+            # `<crate>-tests` is the project trybuild generates for one of ours.
+            if package in ours or package.removesuffix("-tests") in ours:
                 units.add(unit)
                 remove(os.path.join(fingerprints, name))
         for sub in ("deps", "build", "examples"):
@@ -153,8 +175,24 @@ def self_test():
                 put("debug/incremental/daedalus_wire-x/s"), put("debug/daedalusd"),
                 put("thumbv6m-none-eabi/chip/.fingerprint/daedalus-wire-fff/x"),
                 put("thumbv6m-none-eabi/chip/deps/libdaedalus_wire-fff.rlib"),
-                put("tests/trybuild/x"), put("tmp/x"), put("doc/x"), put(".daedalus-checkout"),
+                put("tmp/x"), put("doc/x"), put(".daedalus-checkout"),
                 put("test-parallel-times.json")]
+        # The build directories inside ours: a dependency's builds stay, a project and its builds go.
+        tb = "tests/trybuild/"
+        fx = "tmp/dylib-fixture/"
+        keep += [put(tb + ".rustc_info.json"), put(fx + ".rustc_info.json"),
+                 put(fx + "debug/.fingerprint/serde-kkk/x"), put(fx + "debug/deps/libserde-kkk.rlib"),
+                 put(tb + "debug/.fingerprint/syn-ggg/lib-syn"), put(tb + "debug/deps/libsyn-ggg.rlib"),
+                 put(tb + "x86_64-unknown-linux-gnu/debug/.fingerprint/serde-hhh/x"),
+                 put(tb + "x86_64-unknown-linux-gnu/debug/deps/libserde-hhh.rlib")]
+        gone += [put(tb + "daedalus-wire/Cargo.toml"), put(tb + "daedalus-wire/main.rs"),
+                 put(tb + "x86_64-unknown-linux-gnu/debug/.fingerprint/daedalus-wire-tests-iii/x"),
+                 put(tb + "x86_64-unknown-linux-gnu/debug/deps/daedalus_wire_tests-iii"),
+                 put(tb + "x86_64-unknown-linux-gnu/debug/daedalus-wire-tests"),
+                 put(tb + "debug/.fingerprint/daedalus-wire-jjj/x"),
+                 put(tb + "debug/deps/libdaedalus_wire-jjj.rlib"),
+                 put(fx + "debug/.fingerprint/daedalus-wire-lll/x"), put(fx + "debug/libdaedalus_wire.so"),
+                 put("tmp/daedalusd-run/daedalus.sock"), put("tests/other/x")]
         # The unit `eee` of ours shares its directory with `aaa`, a dependency's.
         strip(top, {"daedalus-wire"})
         for path in keep:

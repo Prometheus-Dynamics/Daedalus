@@ -141,8 +141,9 @@ mod with_daemon {
         );
     }
 
-    /// The daemon and the dylib fixture, each built once per test binary into a directory of
-    /// this package's own. Another package's binary is not given to a test, so cargo builds it.
+    /// The daemon and the dylib fixture, each built once per test binary. Another package's
+    /// binary is not given to a test, so cargo builds the daemon, into a directory of this
+    /// package's own. The fixture goes where every package's tests build it, with the same command.
     fn built() -> &'static (PathBuf, PathBuf) {
         static BUILT: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
         BUILT.get_or_init(|| {
@@ -150,7 +151,7 @@ mod with_daemon {
             let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
             let daemon_dir = tmp.join("ctl-daemon");
             cargo_build(&["-p", "daedalusd"], &root.join("Cargo.toml"), &daemon_dir);
-            let fixture_dir = tmp.join("ctl-fixture");
+            let fixture_dir = tmp.join("dylib-fixture");
             cargo_build(
                 &[],
                 &root.join("testing/fixtures/dylib/Cargo.toml"),

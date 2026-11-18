@@ -44,7 +44,7 @@ fn node() -> Option<Command> {
 }
 
 fn fixture() -> PathBuf {
-    let target = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("drive-fixture");
+    let target = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("dylib-fixture");
     build_fixture(&target).expect("the dylib fixture builds")
 }
 
