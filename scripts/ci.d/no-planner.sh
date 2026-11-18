@@ -8,6 +8,9 @@
 #   scripts/ci.d/no-planner.sh --self-test  only the tree check: the default build must name the planner
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+# These builds of the daemon would replace the one the test step's tests run, so they go in a
+# build directory of their own, which lets this step run beside the test step.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/variants"
 
 fail() {
   echo "no-planner: $*" >&2

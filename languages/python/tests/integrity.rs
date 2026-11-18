@@ -1,9 +1,10 @@
-//! The interpreted-worker path, end to end. The program is `python3`, found on the path and
-//! checked as a file; the worker's script is named with `also_check`. Record writes both entries,
-//! Locked starts the worker from them, and a changed script is refused before the start.
+//! The interpreted-worker path, end to end. The program is the SDK's default interpreter, found on
+//! the path and checked as a file; the worker's script is named with `also_check`. Record writes
+//! both entries, Locked starts the worker from them, and a changed script is refused before the
+//! start.
 //!
-//! Linux only, as the checks read `/proc/self/fd`. It does nothing where `python3` is not on the
-//! path: the test returns at once, and says nothing.
+//! Linux only, as the checks read `/proc/self/fd`. It does nothing where that interpreter is not on
+//! the path: the test returns at once, and says nothing.
 
 #![cfg(target_os = "linux")]
 
@@ -11,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use daedalus_backend_process::{ProcessBackend, ProcessError};
 use daedalus_integrity::{Integrity, find_program, read_lock};
-use daedalus_lang_python::spec;
+use daedalus_lang_python::{DEFAULT_INTERPRETER, spec};
 use daedalus_worker_conformance::runner::registry;
 
 /// A scratch directory for this test, emptied first.
@@ -40,7 +41,7 @@ fn worker_copy(dir: &Path) -> PathBuf {
 #[test]
 fn an_interpreted_worker_is_checked_recorded_run_and_a_changed_script_refused() {
     let path_var = std::env::var_os("PATH");
-    if find_program("python3".as_ref(), path_var.as_deref()).is_none() {
+    if find_program(DEFAULT_INTERPRETER.as_ref(), path_var.as_deref()).is_none() {
         return;
     }
     let dir = scratch();
@@ -54,11 +55,12 @@ fn an_interpreted_worker_is_checked_recorded_run_and_a_changed_script_refused() 
         .add_worker(spec(&script).also_check(&script), &registry())
         .expect("record starts the worker");
     let recorded = read_lock(&lock).expect("the lock was written");
-    let python = find_program("python3".as_ref(), path_var.as_deref()).expect("python3");
+    let python =
+        find_program(DEFAULT_INTERPRETER.as_ref(), path_var.as_deref()).expect("the interpreter");
     let digest_of =
         |path: &Path| daedalus_integrity::Digest::of(&std::fs::read(path).expect("read"));
     assert_eq!(
-        recorded.get("python3"),
+        recorded.get(DEFAULT_INTERPRETER),
         Some(&digest_of(&python)),
         "the interpreter"
     );

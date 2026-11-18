@@ -10,7 +10,10 @@ use std::process::Command;
 #[test]
 fn the_python_sdk_unit_tests_pass() {
     let Some(python) = support::python() else {
-        eprintln!("skipping: no python3 on PATH, so the Python unit tests did not run");
+        eprintln!(
+            "skipping: {} doesn't run here, so the Python unit tests did not run",
+            daedalus_lang_python::DEFAULT_INTERPRETER
+        );
         return;
     };
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("sdk");

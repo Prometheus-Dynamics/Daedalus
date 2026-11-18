@@ -7,7 +7,10 @@
 #   scripts/ci.d/no-workers.sh              the checks below
 #   scripts/ci.d/no-workers.sh --self-test  only the tree check: the workers build must name the backend
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+# These builds of the daemon would replace the one the test step's tests run, so they go in a
+# build directory of their own, which lets this step run beside the test step.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/variants"
 
 fail() {
   echo "no-workers: $*" >&2
