@@ -187,12 +187,18 @@ fn collect(dir: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-/// Builds the SDK into `out/daedalus.jar`, through `out/classes`. Returns the jar's path.
+/// Builds the SDK into `out/daedalus.jar`, through `out/classes`. Returns the jar's path. The jar is
+/// made again only when the classes were compiled again.
 pub fn build_jar(out: &Path) -> io::Result<PathBuf> {
     let classes = out.join("classes");
-    let _ = std::fs::remove_dir_all(&classes);
     compile(&classes, &[], &sdk_sources())?;
     let jar = out.join(JAR);
+    let made_from = std::fs::read(stamp_of(&classes))?;
+    let stamp = stamp_of(&jar);
+    if jar.exists() && std::fs::read(&stamp).is_ok_and(|kept| kept == made_from) {
+        return Ok(jar);
+    }
+    let _ = std::fs::remove_file(&stamp);
     run(Command::new(&tools()?.jar)
         .arg("--create")
         .arg("--file")
@@ -200,28 +206,73 @@ pub fn build_jar(out: &Path) -> io::Result<PathBuf> {
         .arg("-C")
         .arg(&classes)
         .arg("."))?;
+    std::fs::write(&stamp, made_from)?;
     Ok(jar)
 }
 
-/// Compiles `sources` into `out` with `javac --release 21`, against `classpath`.
+/// Where the digest of what `path` was made from is kept: beside it, so it never ends up in a jar.
+fn stamp_of(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_owned();
+    name.push(".stamp");
+    path.with_file_name(name)
+}
+
+/// The digest of everything a compile reads: the compiler and its options, each class path entry
+/// (a jar's bytes, or a compiled directory's own stamp), and each source's path and bytes.
+fn inputs_of(classpath: &[PathBuf], sources: &[PathBuf]) -> io::Result<String> {
+    let tools = tools()?;
+    let mut all = Vec::new();
+    let mut part = |bytes: &[u8]| {
+        all.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        all.extend_from_slice(bytes);
+    };
+    part(tools.javac.as_os_str().as_encoded_bytes());
+    part(&tools.version.to_le_bytes());
+    part(FLAGS.join(" ").as_bytes());
+    part(RELEASE.as_bytes());
+    for entry in classpath {
+        part(entry.as_os_str().as_encoded_bytes());
+        if entry.is_dir() {
+            part(&std::fs::read(stamp_of(entry))?);
+        } else {
+            part(&std::fs::read(entry)?);
+        }
+    }
+    for source in sources {
+        part(source.as_os_str().as_encoded_bytes());
+        part(&std::fs::read(source)?);
+    }
+    Ok(daedalus_integrity::Digest::of(&all).to_string())
+}
+
+/// The options every compile passes besides `--release`, the class path and the output directory.
+const FLAGS: [&str; 3] = ["-encoding", "UTF-8", "-Xlint:all"];
+
+/// Compiles `sources` into `out` with `javac --release 21`, against `classpath`. A compile of the
+/// same inputs into the same directory is not run again: `out`'s stamp holds the digest of the
+/// inputs it was compiled from. Anything else starts from an empty `out`.
 pub fn compile(out: &Path, classpath: &[PathBuf], sources: &[PathBuf]) -> io::Result<()> {
+    let inputs = inputs_of(classpath, sources)?;
+    let stamp = stamp_of(out);
+    if out.is_dir() && std::fs::read_to_string(&stamp).is_ok_and(|kept| kept == inputs) {
+        return Ok(());
+    }
+    let _ = std::fs::remove_file(&stamp);
+    let _ = std::fs::remove_dir_all(out);
     std::fs::create_dir_all(out)?;
     let mut javac = Command::new(&tools()?.javac);
     javac
-        .args([
-            "--release",
-            RELEASE,
-            "-encoding",
-            "UTF-8",
-            "-Xlint:all",
-            "-d",
-        ])
+        .arg("--release")
+        .arg(RELEASE)
+        .args(FLAGS)
+        .arg("-d")
         .arg(out);
     if !classpath.is_empty() {
         javac.arg("-cp").arg(class_path(classpath)?);
     }
     javac.args(sources);
-    run(&mut javac)
+    run(&mut javac)?;
+    std::fs::write(&stamp, inputs)
 }
 
 /// A class path of the given entries, joined the way the platform joins them.
@@ -309,5 +360,75 @@ mod tests {
             Some(17)
         );
         assert_eq!(major_version("no version here"), None);
+    }
+}
+
+#[cfg(test)]
+mod stamps {
+    use super::*;
+
+    /// A scratch directory for one test, emptied first.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("daedalus-java-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    fn class_bytes_and_time(path: &Path) -> (Vec<u8>, std::time::SystemTime) {
+        let bytes = std::fs::read(path).expect("the class");
+        (
+            bytes,
+            std::fs::metadata(path)
+                .and_then(|m| m.modified())
+                .expect("its time"),
+        )
+    }
+
+    #[test]
+    fn the_same_inputs_compile_once_and_a_changed_or_removed_source_compiles_again() {
+        let dir = scratch("stamp");
+        let (a, b, out) = (dir.join("A.java"), dir.join("B.java"), dir.join("classes"));
+        std::fs::write(&a, "class A { int x() { return 1; } }").unwrap();
+        std::fs::write(&b, "class B {}").unwrap();
+        or_fail(compile(&out, &[], &[a.clone(), b.clone()]));
+        let first = class_bytes_and_time(&out.join("A.class"));
+
+        or_fail(compile(&out, &[], &[a.clone(), b.clone()]));
+        assert_eq!(
+            class_bytes_and_time(&out.join("A.class")),
+            first,
+            "nothing changed: not compiled again"
+        );
+
+        std::fs::write(&a, "class A { int x() { return 2; } }").unwrap();
+        or_fail(compile(&out, &[], std::slice::from_ref(&a)));
+        assert_ne!(
+            class_bytes_and_time(&out.join("A.class")).0,
+            first.0,
+            "a changed source compiles again"
+        );
+        assert!(
+            !out.join("B.class").exists(),
+            "a source no longer compiled leaves no class behind"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_jar_is_kept_while_its_stamp_names_its_classes() {
+        let dir = scratch("jar");
+        let jar = or_fail(build_jar(&dir));
+        let first = class_bytes_and_time(&jar);
+        assert_eq!(class_bytes_and_time(&or_fail(build_jar(&dir))), first);
+        // A jar whose stamp names other classes is made again.
+        std::fs::write(stamp_of(&jar), "other classes").unwrap();
+        let remade = or_fail(build_jar(&dir));
+        assert_ne!(class_bytes_and_time(&remade).1, first.1, "made again");
+        assert_eq!(
+            std::fs::read(stamp_of(&remade)).unwrap(),
+            std::fs::read(stamp_of(&dir.join("classes"))).unwrap()
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
