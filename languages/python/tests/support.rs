@@ -6,15 +6,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// The interpreter: `python3`, or `python` where that is the name. `None` when neither runs.
+use daedalus_lang_python::DEFAULT_INTERPRETER;
+
+/// The interpreter the SDK's spec starts, [`DEFAULT_INTERPRETER`], when it runs here. `None` when
+/// it doesn't: these tests then say so and do nothing.
 pub fn python() -> Option<String> {
-    ["python3", "python"].into_iter().find_map(|name| {
-        Command::new(name)
-            .arg("--version")
-            .output()
-            .is_ok_and(|out| out.status.success())
-            .then(|| name.to_owned())
-    })
+    Command::new(DEFAULT_INTERPRETER)
+        .arg("--version")
+        .output()
+        .is_ok_and(|out| out.status.success())
+        .then(|| DEFAULT_INTERPRETER.to_owned())
 }
 
 /// The built shared library `name` (without prefix or suffix), beside this test binary.

@@ -29,7 +29,8 @@ test("console output in a body goes to stderr, and stdout carries packets only",
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   child.stdout.on("data", (chunk) => chunks.push(chunk));
   const packets = [];
-  const finished = new Promise((resolve) => child.on("exit", resolve));
+  // `close`, not `exit`: the child can exit before this side has read all it wrote to the pipes.
+  const finished = new Promise((resolve) => child.on("close", resolve));
   const schema = new wire.Schema([]);
   schema.port("demo.chatty", "input", "x", T.i64);
   schema.port("demo.chatty", "output", "out", T.i64);

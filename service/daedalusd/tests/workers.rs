@@ -40,9 +40,14 @@ fn check_config_names_its_workers_or_refuses_them_when_built_without_them() {
         "{relative:?}"
     );
 
+    // An absolute path on this platform: `/usr/bin/tool` has no drive, so Windows calls it relative.
+    let tool = dir.join("tool");
     let named = check(
         &dir,
-        "[[worker]]\nprogram = \"python3\"\nargs = [\"w.py\"]\n[[worker]]\nprogram = '/usr/bin/tool'\ncwd = 'relative'\n",
+        &format!(
+            "[[worker]]\nprogram = \"python3\"\nargs = [\"w.py\"]\n[[worker]]\nprogram = '{}'\ncwd = 'relative'\n",
+            tool.display()
+        ),
     );
     assert_eq!(named.status.code(), Some(1), "{named:?}");
     assert!(

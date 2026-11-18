@@ -1,7 +1,7 @@
 // The client against a small in-process server: pipelined requests matched by id out of order, the
 // additive rules on the client's side (an unknown event kind, an error code it does not have), a
 // request over the cap refused before it is sent, and what a dropped connection does to calls.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 import * as svc from "../src/service.js";
@@ -13,6 +13,13 @@ function packet(body) {
   header.writeUInt32LE(body.length);
   return Buffer.concat([header, body]);
 }
+
+// Every server still open when the file's tests end. A test that fails before closing its server
+// would otherwise leave connections that keep the file running until the runner's timeout.
+const open = new Set();
+after(async () => {
+  for (const server of open) await server.close();
+});
 
 /** Starts a server on loopback. `handle(message, socket)` answers each request; the hello is automatic. */
 async function serve(handle, { packetCap = 16 * 1024 * 1024 } = {}) {
@@ -40,11 +47,17 @@ async function serve(handle, { packetCap = 16 * 1024 * 1024 } = {}) {
     socket.on("error", () => {});
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return {
+  const served = {
     port: server.address().port,
     sockets,
-    close: () => new Promise((resolve) => { for (const socket of sockets) socket.destroy(); server.close(resolve); }),
+    close: () => new Promise((resolve) => {
+      open.delete(served);
+      for (const socket of sockets) socket.destroy();
+      server.close(resolve);
+    }),
   };
+  open.add(served);
+  return served;
 }
 
 const reply = (socket, id, body) => socket.write(packet(svc.encodeServer({ kind: "response", id, reply: body })));
@@ -86,11 +99,15 @@ test("an event of a kind the client does not have arrives as unknown, and a watc
 });
 
 test("an error code this client does not have is other, and the message is kept", async () => {
+  let answered = 0;
   const server = await serve((message, socket) => {
     const { id } = message.request;
-    socket.write(packet(svc.encodeServer({ kind: "response", id, error: { code: "unknown_run", message: "no run 9", diagnostics: [] } })));
+    if (answered++ === 0) {
+      socket.write(packet(svc.encodeServer({ kind: "response", id, error: { code: "unknown_run", message: "no run 9", diagnostics: [] } })));
+      return;
+    }
     // Patch the code to one no version has.
-    const body = svc.encodeServer({ kind: "response", id: id + 1n, error: { code: "busy", message: "the pool is full", diagnostics: [] } });
+    const body = svc.encodeServer({ kind: "response", id, error: { code: "busy", message: "the pool is full", diagnostics: [] } });
     body.writeUInt16LE(900, 1 + 8 + 1);
     socket.write(packet(body));
   });

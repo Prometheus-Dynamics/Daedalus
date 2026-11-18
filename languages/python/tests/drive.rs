@@ -16,7 +16,10 @@ use daedalus_drive_conformance::run_driver;
 #[test]
 fn the_python_driver_gives_the_golden_transcripts_on_every_transport() {
     let Some(python) = support::python() else {
-        eprintln!("skipping: no python3 on PATH, so the Python driver did not run");
+        eprintln!(
+            "skipping: {} doesn't run here, so the Python driver did not run",
+            daedalus_lang_python::DEFAULT_INTERPRETER
+        );
         return;
     };
     let driver = Path::new(env!("CARGO_MANIFEST_DIR")).join("drive/driver.py");

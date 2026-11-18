@@ -15,7 +15,9 @@ every seeded build against the source, so an old seed only means more to build.
 Some builds have a build directory of their own inside this one: trybuild's (`tests/trybuild`, one
 project per crate named `<crate>-tests`) and the fixtures tests build (`tmp/<name>`). Their
 dependency builds go in the seed the same way. The rest of `tests` and `tmp` is ours, and so are
-trybuild's projects, whose manifests name this checkout's paths.
+trybuild's projects, whose manifests name this checkout's paths. A step that builds the daemon
+with other features has a build directory of its own beside the main one (`variants`), and it is
+seeded the same way as the main one.
 
 The build directory is CARGO_TARGET_DIR, or `target` in this checkout. Copies share their blocks
 where the file system can (btrfs, XFS); a seed is replaced whole, under a lock beside it.
@@ -33,6 +35,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ONLY_OURS = ["doc", "test-parallel-times.json", ".daedalus-checkout"]
 # Ours, except the build directories inside them.
 HOLDING_BUILDS = ["tests", "tmp"]
+# Build directories laid out as the main one, inside it.
+BESIDE = ["variants"]
 
 
 def target():
@@ -59,8 +63,8 @@ def remove(path):
         os.remove(path)
 
 
-def strip(directory, ours):
-    """Removes from a build directory every build of the packages named in `ours`."""
+def strip_holders(directory):
+    """Removes what is only ours from the top of one build directory, keeping the builds inside."""
     for name in ONLY_OURS:
         remove(os.path.join(directory, name))
     for holder in HOLDING_BUILDS:
@@ -77,6 +81,13 @@ def strip(directory, ours):
                 # A trybuild project: its manifest names the checkout's paths.
                 if os.path.exists(os.path.join(inner, project, "Cargo.toml")):
                     remove(os.path.join(inner, project))
+
+
+def strip(directory, ours):
+    """Removes from a build directory every build of the packages named in `ours`."""
+    for build in [directory] + [os.path.join(directory, name) for name in BESIDE]:
+        if os.path.isdir(build):
+            strip_holders(build)
     profiles = []
     for root, dirs, _ in os.walk(directory):
         if ".fingerprint" in dirs:
@@ -193,6 +204,14 @@ def self_test():
                  put(tb + "debug/deps/libdaedalus_wire-jjj.rlib"),
                  put(fx + "debug/.fingerprint/daedalus-wire-lll/x"), put(fx + "debug/libdaedalus_wire.so"),
                  put("tmp/daedalusd-run/daedalus.sock"), put("tests/other/x")]
+        # A build directory beside the main one, seeded as the main one is.
+        vb = "variants/"
+        keep += [put(vb + ".rustc_info.json"), put(vb + "debug/.fingerprint/serde-mmm/x"),
+                 put(vb + "debug/deps/libserde-mmm.rlib"), put(vb + "tmp/dylib-fixture/.rustc_info.json"),
+                 put(vb + "tmp/dylib-fixture/debug/deps/libserde-nnn.rlib")]
+        gone += [put(vb + "debug/.fingerprint/daedalus-wire-ooo/x"), put(vb + "debug/daedalusd"),
+                 put(vb + "debug/deps/libdaedalus_wire-ooo.rlib"), put(vb + "tmp/daedalusd-run/x"),
+                 put(vb + "doc/x"), put(vb + "test-parallel-times.json")]
         # The unit `eee` of ours shares its directory with `aaa`, a dependency's.
         strip(top, {"daedalus-wire"})
         for path in keep:
