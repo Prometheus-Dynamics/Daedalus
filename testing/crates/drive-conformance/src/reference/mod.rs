@@ -1,9 +1,13 @@
 //! The Rust reference driver: the canonical output of the contract, produced over `core/client`.
-//! The binaries `drive-reference` and `drive-faulty` are thin wrappers around this module.
+//! The binaries `drive-reference` and `drive-faulty` are thin wrappers around this module. A driver
+//! over another surface of the client gives its own `Service` to `drive_service`.
 
 mod exec;
+mod service;
 mod show;
 mod syntax;
+
+pub use service::{Events, Refused, Service};
 
 use std::io::{Read, Write};
 
@@ -50,6 +54,17 @@ pub fn drive(
 ) -> Result<(), String> {
     let endpoint = parse_endpoint(endpoint)?;
     let root = Client::connect(endpoint, Options::default()).map_err(|error| error.to_string())?;
+    drive_service(root, mutation, input, out)
+}
+
+/// Runs every command line read from `input` through `root`, and writes one answer line per
+/// command to `out`.
+pub fn drive_service(
+    root: impl Service,
+    mutation: Mutation,
+    input: &mut impl Read,
+    out: &mut impl Write,
+) -> Result<(), String> {
     let mut driver = exec::Driver::new(root, mutation);
     let mut text = String::new();
     input

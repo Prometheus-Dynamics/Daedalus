@@ -1,11 +1,12 @@
-//! Runs one parsed command against a daemon, through `core/client`, and gives its canonical line.
+//! Runs one parsed command against a daemon, through a `Service`, and gives its canonical line.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use daedalus_client::protocol::{DEFAULT_SESSION, ErrorCode, TypedValue};
-use daedalus_client::{Client, ClientError, Watch, WireType, WireValue};
+use daedalus_client::{WireType, WireValue};
 
 use super::Mutation;
+use super::service::{Events, Refused, Service};
 use super::show;
 use super::syntax::{self, Cmd};
 
@@ -15,29 +16,29 @@ enum Fail {
     Usage,
     /// A file cannot be read.
     Local,
-    /// The client failed: a service error with its code, or anything else.
-    Client(ClientError),
+    /// The call failed: the host refused it with a code, or anything else.
+    Refused(Refused),
 }
 
-impl From<ClientError> for Fail {
-    fn from(error: ClientError) -> Fail {
-        Fail::Client(error)
+impl From<Refused> for Fail {
+    fn from(refused: Refused) -> Fail {
+        Fail::Refused(refused)
     }
 }
 
 /// The state a scenario builds up: the sessions, the watches it opened and the blobs it made.
-pub struct Driver {
-    root: Client,
-    current: Client,
-    watches: BTreeMap<u64, Watch>,
+pub struct Driver<S: Service> {
+    root: S,
+    current: S,
+    watches: BTreeMap<u64, S::Watch>,
     blobs: BTreeMap<String, Vec<u8>>,
     /// Watches whose first event a mutated driver has dropped.
     dropped: BTreeSet<u64>,
     mutation: Mutation,
 }
 
-impl Driver {
-    pub fn new(root: Client, mutation: Mutation) -> Driver {
+impl<S: Service> Driver<S> {
+    pub fn new(root: S, mutation: Mutation) -> Driver<S> {
         Driver {
             current: root.clone(),
             root,
@@ -58,8 +59,8 @@ impl Driver {
             Ok(text) => text,
             Err(Fail::Usage) => self.error_line(None),
             Err(Fail::Local) => "error local".to_owned(),
-            Err(Fail::Client(ClientError::Service(error))) => self.error_line(Some(error.code)),
-            Err(Fail::Client(_)) => "error local".to_owned(),
+            Err(Fail::Refused(Refused::Code(code))) => self.error_line(Some(code)),
+            Err(Fail::Refused(Refused::Local)) => "error local".to_owned(),
         }
     }
 

@@ -1,18 +1,17 @@
-//! The native C++ test: the header links against the Rust library, and a value round-trips. ctest
-//! runs it in the CMake build the SDK makes. The same build is then installed into a prefix, and a
-//! consumer built against the installed package runs.
+//! The SDK's CMake build: it builds, it installs into a prefix, and a consumer built against the
+//! installed package with `find_package` links each library and runs. The worker header's own
+//! behaviour is the fixture worker's, run by the conformance suites; the codec is tested in Rust.
 
 use std::path::Path;
 use std::process::Command;
 
-use daedalus_lang_cpp::{build, install_and_build_consumer, run_native_tests};
+use daedalus_lang_cpp::{build, install_and_build_consumer};
 
 #[test]
-fn the_native_c_and_cpp_tests_pass() {
+fn the_sdk_builds_installs_and_a_consumer_links_every_library() {
     let target = Path::new(env!("CARGO_TARGET_TMPDIR"));
     let dir = daedalus_lang_cpp::build_dir(target, "cpp-native");
-    build(&dir).expect("cmake builds the SDK and its tests");
-    run_native_tests(&dir).expect("the native tests pass");
+    build(&dir).expect("cmake builds the SDK and its fixture worker");
 
     // Keyed by this checkout like the SDK's build: a CMake cache made from another checkout's
     // sources is refused, and an install holds only this one's libraries.

@@ -50,6 +50,19 @@ pub fn run_driver(cmd: Command, fixture: &Path) -> Vec<Failure> {
     failures
 }
 
+/// What `run_driver` compares: the number of transcripts (a scenario over one transport) and of
+/// answer lines in them.
+pub fn coverage() -> Result<(usize, usize), String> {
+    let scenarios = scenario::load_all()?;
+    Ok(scenarios.iter().fold((0, 0), |(runs, lines), scenario| {
+        let transports = transports_for(scenario).len();
+        (
+            runs + transports,
+            lines + transports * scenario.commands.len(),
+        )
+    }))
+}
+
 /// The transports a scenario runs over. A scenario behind the proxy runs over TCP only.
 fn transports_for(scenario: &Scenario) -> Vec<Transport> {
     if scenario.proxy != Proxy::None {

@@ -378,6 +378,12 @@ and `dd::Watch` own their handles, and a failed call throws `dd::ClientError`, w
 status, the text, and the daemon's error code. Closing a client closes its connection for every
 handle made from it, as the C call does.
 
+The drive conformance suite holds this surface to its golden transcripts:
+`languages/client-capi/tests/drive` runs the reference driver's commands with every request made
+through these calls, and every answer read back from the structs, JSON and wire bytes they give.
+`tests/cxx/client.cpp` checks what the C++ wrapper adds: the retry for a result larger than its
+first buffer, the status and code of a `dd::ClientError`, and the handle closed with its client.
+
 The header and this library grow only by new functions and new statuses. A program built
 against an older header keeps working. To check that the library has a newer function, look it
 up with `dlsym` and test for null.

@@ -52,6 +52,10 @@ int main(int argc, char** argv) {
         graph.tick();
         if (graph.take_i64(1).value_or(-1) != 7) return fail("the index forms agree with the names");
 
+        // A text is read with the size query: the plan's explanation is a JSON object, whole.
+        const std::string explained = graph.explain();
+        if (explained.size() < 2 || explained.front() != '{' || explained.back() != '}') return fail("the explanation is read whole");
+
         const dd::Graph::Telemetry telemetry = graph.telemetry();
         if (telemetry.pushes != 2 || telemetry.takes < 2) return fail("telemetry counts the pushes and takes");
 

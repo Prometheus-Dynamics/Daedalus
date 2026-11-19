@@ -20,6 +20,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 daedalus-backend = { path = "../../core/backend" }
+daedalus-drive-conformance = { path = "../../testing/crates/drive-conformance" }
 daedalus-host = { path = "../../core/host", features = ["listen"] }
 daedalus-loader = { path = "../../core/loader" }
 daedalus-registry = { path = "../../core/registry" }
@@ -45,3 +46,10 @@ path = "tests/all.rs"
 [[test]]
 name = "surface_errors"
 path = "tests/surface_errors.rs"
+
+# Its own harness: the drive conformance suite runs its driver as a program, and this binary is both
+# the suite (run as a test) and the driver over the C ABI (run by the suite).
+[[test]]
+name = "drive"
+path = "tests/drive/main.rs"
+harness = false
