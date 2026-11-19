@@ -29,7 +29,9 @@ HARNESS = os.path.join(TARGET, "release", "daedalus-budget-harness")
 # its symbols: built in the checkout, the library would differ by checkout. The budgets build it from
 # a copy at a path named by the key instead, the same for every checkout with these inputs.
 FIXTURE_DIR = os.path.join(TARGET, "tmp", "dylib-fixture-budgets")
-COPIES = os.path.join(tempfile.gettempdir(), "daedalus-budgets")
+# A gate step's own TMPDIR is removed when the step ends; the copies outlive it, in the gate's.
+COPIES = os.path.join(os.environ.get("DAEDALUS_GATE_TMPDIR") or tempfile.gettempdir(),
+                      "daedalus-budgets")
 RECORD = os.path.join(TARGET, "budgets-record.json")
 _spec = importlib.util.spec_from_file_location("record", os.path.join(os.path.dirname(__file__), "record.py"))
 record = importlib.util.module_from_spec(_spec)
