@@ -2,7 +2,7 @@
 
 use crate::support;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use daedalus_abi::testing::{release, run_once};
 use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
@@ -253,9 +253,20 @@ fn a_run_keeps_trying_after_three_consecutive_faults() {
             assert!(matches!(end, StepEnd::Skipped), "round {round}: {reason}");
             assert!(reason.contains("backing off"), "{reason}");
         }
-        // A respawn happens on the first run after the backoff, so the next run starts one.
-        std::thread::sleep(Duration::from_millis(900));
-        let (end, _, _) = run_add(&mut step);
+        // A respawn happens on the first run after the backoff: runs until one is no longer
+        // skipped for backing off, which is when the backoff has passed, within a bound.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let end = loop {
+            let (end, reason, _) = run_add(&mut step);
+            if !(matches!(end, StepEnd::Skipped) && reason.contains("backing off")) {
+                break end;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "round {round}: still backing off"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
         assert!(matches!(end, StepEnd::Fault), "round {round} still faults");
         let spawns = backend.telemetry().spawns;
         assert!(

@@ -112,6 +112,23 @@ language's, and is not Daedalus's to promise.
   The record's first line is a `Status:` line: `run on CM5 <date>`, `partly run on CM5 <date>`
   (what ran and what did not), or `not run` with the reason.
 
+## Measured and left as they are
+
+- The trybuild tests run one after another. trybuild builds every crate's compile tests in one
+  shared directory, `<build directory>/tests/trybuild`, naming each case's binary `trybuild000`,
+  `trybuild001` and so on, so two at once overwrite each other's builds; cargo's lock on that
+  directory would serialize them anyway. A directory of their own each would let them run at once,
+  but after a change to a core crate each directory builds that crate again, up to six times the
+  work of the one shared build (2026-11-18: the seven took 25 s and 60 CPU-s after a core change,
+  most of it that one rebuild, and 8 s warm). Putting all the cases in one trybuild run saves only
+  each run's fixed cost, about 0.2 s of the 8; the rest is compiling the cases, which is the test.
+  The runner starts them first, as its longest job, so they add about 2 s to the test step.
+- Each transcript of the driver suite (`testing/crates/drive-conformance`) starts the driver
+  afresh: 35 starts per suite, about 3 CPU-s a gate for Node, 5 for Java and 1 for Python
+  (2026-11-18). One driver process per transport would save that, but it changes the driver
+  contract in five languages and gives up a fresh process per transcript, which keeps each
+  transcript clear of what an earlier one left in the driver. Not done; this is the measurement.
+
 ## Workflows
 
 | Workflow | Runs |

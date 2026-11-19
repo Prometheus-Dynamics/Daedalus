@@ -14,3 +14,21 @@ pub fn delay_after(failures: u32) -> Duration {
     }
     delay.min(MAX_DELAY)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wait_starts_at_100_ms_doubles_per_failure_and_stops_at_8_s() {
+        let ms = |n| Duration::from_millis(n);
+        assert_eq!(BASE_DELAY, ms(100));
+        assert_eq!(MAX_DELAY, ms(8000));
+        let waits: Vec<Duration> = (0..=9).map(delay_after).collect();
+        assert_eq!(
+            waits,
+            [100, 100, 200, 400, 800, 1600, 3200, 6400, 8000, 8000].map(ms)
+        );
+        assert_eq!(delay_after(u32::MAX), MAX_DELAY);
+    }
+}
