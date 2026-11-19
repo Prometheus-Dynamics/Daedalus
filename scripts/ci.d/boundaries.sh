@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 1290 s (three times its slowest green run, 430 s)
 set -euo pipefail
 scripts/check-boundaries.sh
 # The board-run judges are checked against planted runs, so a judge that can't fail is caught.

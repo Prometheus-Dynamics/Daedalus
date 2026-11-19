@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 60 s (its slowest green run took 2 s; no bound is under a minute)
 # Rule workspace-deps: a third-party dependency in a member manifest uses `workspace = true`,
 # so its version lives only in the root. A crate in this repository is a relative path.
 # Usage: check-workspace-deps.sh [--root DIR]

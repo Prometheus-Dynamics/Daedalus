@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 375 s (three times its slowest green run, 125 s)
 # Checks the crates a program with no operating system uses, for chips with and without
 # compare-and-swap, then the example that puts them together.
 set -euo pipefail

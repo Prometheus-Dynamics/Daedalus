@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 60 s (its slowest green run took 1 s; no bound is under a minute)
 # The blocking check, and a check that it still catches a planted wait.
 set -euo pipefail
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 60 s (its slowest green run took 4 s; no bound is under a minute)
 # The driver-lock check, and a check that it still catches a planted creation call.
 set -euo pipefail
 

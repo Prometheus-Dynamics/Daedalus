@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 99 s (three times its slowest green run, 33 s)
 # Builds and runs each example binary, which must exit 0, and runs each example's test, which
 # checks what it printed against its golden lines.
 #

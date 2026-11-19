@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 603 s (three times its slowest green run, 201 s)
 # The budget table: instruction counts under callgrind, allocations per tick, and firmware
 # section sizes, each against its limit in testing/budgets/budgets.toml, and the planted
 # regressions that must fail. A row that needs valgrind is not run where valgrind is not

@@ -59,9 +59,20 @@ named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` ru
 | `semver` | Semantic versioning against the `SEMVER_BASELINE` tag; reports and never fails the gate |
 | `smoke` | The examples run and print what they should |
 | `doc` | The API docs build with no warning, and every link in `docs/` resolves |
-| `tools` | `scripts/affected.py`, `scripts/prune-targets.py` and `scripts/seed-target.py` against planted cases |
+| `tools` | `scripts/affected.py`, `scripts/prune-targets.py`, `scripts/seed-target.py` and `scripts/bounded.py` against planted cases; the bounds against a planted sleeper and an orphan that holds the output, in `scripts/ci.sh` and `scripts/test-parallel.py` |
 
-To add a check, add an executable `scripts/ci.d/<step>.sh`. A check that needs an environment of
+Every step runs under a hard bound, written in its own file as `# bound: N s`: three times its
+slowest green run, and never under a minute (the three scripts the scripts lane runs after its
+steps carry one too). `scripts/bounded.py` runs each in a process group of its own. Past its bound
+the group gets TERM, then KILL, and the step fails, named. A step that ends but leaves something
+running in its group has that stopped and named. Each test binary `scripts/test-parallel.py` runs
+is bounded the same way, at three times the slowest it has passed in (as the times file in the
+build directory records it), never under a minute, and 600 s for a binary with no passing run on
+record; its output goes to a file, so a child left holding it can't block the run.
+`DAEDALUS_BOUND_SCALE` multiplies every bound; the hosted CI runners set it to 4. A step whose
+slowest green run grows past a third of its bound gets a new bound in the same change.
+
+To add a check, add an executable `scripts/ci.d/<step>.sh` with its `# bound:` line. A check that needs an environment of
 its own gets a workflow of its own: `Portability` (other targets under qemu, and Windows), `GPU`
 (lavapipe) and `Budgets` (valgrind) are those.
 

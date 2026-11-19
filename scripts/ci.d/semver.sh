@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 60 s (its slowest green run took 0 s; no bound is under a minute)
 # Semantic versioning against the last release: cargo semver-checks from the tag named in the
 # file SEMVER_BASELINE at the repository's root. It reports and never fails the gate. Until a
 # release is called there is no baseline, and this does nothing: the owner writes the file.
