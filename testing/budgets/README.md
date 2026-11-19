@@ -20,14 +20,16 @@ message.
 
 Steady-state running allocates nothing: `alloc_fused_tick`, `alloc_plugin_node_tick`, `alloc_plugin_handover_tick`,
 `alloc_large_handle_tick`, `alloc_large_handle_moved_tick`, `alloc_detector_frame` and the handoff
-chains passed by handle or as shared bytes are all zero. A CPU output is kept for reuse by its
+chains passed by handle or as shared bytes are all zero, and so is a warm feed, step or take served
+over a socket (`alloc_socket_path`). A CPU output is kept for reuse by its
 producer, as `docs/design.md` says, host-read outputs included.
 
 ## The fields of a row
 
 - `name`: what the harness and the check call it.
 - `measure`: what is measured, in words.
-- `tool`: `callgrind`, `alloc`, `elf` or `gpu-lane`.
+- `tool`: `callgrind`, `alloc`, `elf`, `gpu-lane` or `host-test`. A `host-test` row names the test
+  that holds it to its limit in `test`, and the test runs in the gate's test step.
 - `dev`, or `dev_callgrind` and `dev_perf`: the value on `dev`. For an instruction row,
   `dev_callgrind` is `dev` measured with callgrind on the same benchmark, and `dev_perf` is the
   figure `dev` reported from `perf stat -e instructions:u`, kept for reference.
@@ -50,6 +52,10 @@ producer, as `docs/design.md` says, host-read outputs included.
   `.vector_table + .text + .rodata + .data`, and static RAM is `.data + .bss + .uninit`.
 - **GPU submits.** Counted by `testing/crates/gpu-budgets` on lavapipe. `scripts/ci.sh budgets`
   does not run it: it needs a Vulkan driver, and has its own workflow.
+- **The socket path** (`alloc_socket_path`). `core/host/tests/socket_alloc.rs` serves a client
+  over a unix socket. The listener counts what each connection's reader and writer threads
+  allocate, a few additions a request; the test installs the counting allocator. Over 1,000 warm feeds, steps and takes, each is 0. A body
+  that runs on a thread of its own is not counted, and the row claims nothing about it.
 
 A row that needs valgrind is reported as not run where valgrind is not installed. The budgets
 workflow (`.github/workflows/bench.yml`) installs it and sets `BUDGETS_REQUIRE_ALL=1`, which

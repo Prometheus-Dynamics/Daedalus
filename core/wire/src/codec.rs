@@ -17,6 +17,13 @@ impl Writer {
         Writer::default()
     }
 
+    /// A writer into `buf`, emptied first: a buffer kept from an earlier message is written over
+    /// and grows only past its capacity.
+    pub fn reusing(mut buf: Vec<u8>) -> Writer {
+        buf.clear();
+        Writer { buf, pad: 0 }
+    }
+
     /// A writer that ends every record with `pad` bytes a reader of this version doesn't know:
     /// what a message from a later version looks like to it.
     #[doc(hidden)]
@@ -223,6 +230,21 @@ impl<'a> Reader<'a> {
     pub fn bytes(&mut self) -> Result<Vec<u8>, WireError> {
         let len = self.count()?;
         Ok(self.take(len)?.to_vec())
+    }
+
+    /// A string read in place: a slice of the input, copied nowhere.
+    pub fn str_ref(&mut self) -> Result<&'a str, WireError> {
+        let len = self.count()?;
+        let raw = self.take(len)?;
+        core::str::from_utf8(raw).map_err(|_| WireError::InvalidUtf8)
+    }
+
+    /// The next byte, left unread.
+    pub fn peek_u8(&self) -> Result<u8, WireError> {
+        self.buf.get(self.pos).copied().ok_or(WireError::Truncated {
+            needed: 1,
+            remaining: 0,
+        })
     }
 
     pub fn str(&mut self) -> Result<String, WireError> {

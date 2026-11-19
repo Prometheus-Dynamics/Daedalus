@@ -29,14 +29,17 @@
 //! Graph documents are JSON text in one packet: they are configuration, not the hot path. Values
 //! are binary, each with its type, and a value whose type has no codec on both sides is refused.
 
+mod borrowed;
 mod errors;
 mod events;
 mod fields;
 mod requests;
 mod responses;
+mod trace;
 
 use std::collections::VecDeque;
 
+pub use borrowed::{ClientMsgRef, OpRef, RequestRef};
 pub use errors::{Diagnostic, ErrorCode, ServiceError, Severity};
 pub use events::{EndReason, EventBody, FaultEvent, TelemetryEvent};
 pub use fields::TypedValue;
@@ -48,6 +51,7 @@ pub use responses::{
     CacheInfo, CarryReport, HostInfo, Inspection, Names, PlanSummary, PluginInfo, PortInfo, Reply,
     RunBrief, RunInfo, RunState, StepSummary, TelemetryInfo, TelemetryRow, TraceEntry,
 };
+pub use trace::TraceRing;
 
 use crate::codec::{Reader, Writer};
 use crate::{DEFAULT_CAP, Schema, WireError};
@@ -461,55 +465,5 @@ impl WatchQueue {
             sub: self.sub,
             body,
         })
-    }
-}
-
-/// The last [`TRACE_RING`] served requests.
-#[derive(Debug, Default)]
-pub struct TraceRing {
-    entries: VecDeque<TraceEntry>,
-    next_seq: u64,
-}
-
-impl TraceRing {
-    pub fn new() -> TraceRing {
-        TraceRing::default()
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    /// Records one served request and gives it the next sequence number.
-    pub fn record(&mut self, request: &Request, error: Option<ErrorCode>) {
-        if self.entries.len() == TRACE_RING {
-            self.entries.pop_front();
-        }
-        self.entries.push_back(TraceEntry {
-            seq: self.next_seq,
-            id: request.id,
-            session: request.session.clone(),
-            op: request.op.kind(),
-            target: request.op.target(),
-            error,
-        });
-        self.next_seq += 1;
-    }
-
-    /// The newest `limit` entries, oldest first. A limit of zero is all of them.
-    pub fn recent(&self, limit: u32) -> Vec<TraceEntry> {
-        let keep = match limit {
-            0 => self.entries.len(),
-            limit => (limit as usize).min(self.entries.len()),
-        };
-        self.entries
-            .iter()
-            .skip(self.entries.len() - keep)
-            .cloned()
-            .collect()
     }
 }

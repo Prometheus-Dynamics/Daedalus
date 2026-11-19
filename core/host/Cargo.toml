@@ -15,7 +15,7 @@ std = ["daedalus-runner/std", "daedalus-value/std", "dep:serde", "dep:serde_json
 # Planning: a host plans a graph it is given. Off, the host loads only made plans.
 planner = ["std", "dep:daedalus-planner"]
 # The service listener: one host shared by many clients over a unix socket, loopback TCP or stdio.
-listen = ["std", "dep:daedalus-wire"]
+listen = ["std", "dep:daedalus-wire", "daedalus-abi/count-alloc"]
 # Allocation attribution through the counting allocator. Feature only.
 alloc-probe = ["std", "dep:daedalus-abi", "daedalus-abi/count-alloc"]
 
@@ -50,6 +50,12 @@ required-features = ["listen"]
 [[test]]
 name = "listen_made"
 required-features = ["listen"]
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "socket_alloc"
+# It stores a graph, which the host plans.
+required-features = ["listen", "planner"]
 
 [lints]
 workspace = true
