@@ -60,7 +60,7 @@ scripts_lane() {
   for script in "${trailing[@]}"; do
     echo "==> $script"
     start=$SECONDS
-    "$script" || status=1
+    python3 -I scripts/bounded.py --step "$(basename "$script")" "$script" || status=1
     echo "    $(basename "$script"): $((SECONDS - start)) s"
   done
   return $status

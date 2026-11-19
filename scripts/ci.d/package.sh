@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 264 s (three times its slowest green run, 88 s)
 # The package surface: every crate that can be published lists its files with no warning, has
 # the metadata a registry asks for, and depends on nothing that can't be published. Examples,
 # fixtures and the test crates are `publish = false` and aren't looked at.

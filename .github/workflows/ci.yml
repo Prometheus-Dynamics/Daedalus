@@ -13,6 +13,10 @@ on:
       - next
   workflow_dispatch:
 
+# The steps' bounds were measured on a 32-core machine; the hosted runners are slower.
+env:
+  DAEDALUS_BOUND_SCALE: "4"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

@@ -27,6 +27,8 @@ permissions:
 
 env:
   BENCH_ARTIFACT: criterion
+  # The steps' bounds were measured on a 32-core machine; the hosted runners are slower.
+  DAEDALUS_BOUND_SCALE: "4"
 
 jobs:
   budgets:

@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
+# bound: 60 s (its slowest green run took 6 s; no bound is under a minute)
 # The working tools check themselves against planted cases: which packages a change reaches
 # (scripts/check.sh runs those), which build directories may be deleted, what a seed keeps, and
-# what the budget table's kept measurements are keyed by.
+# what the budget table's kept measurements are keyed by, and that a step or a test binary past its
+# bound goes red, named, with nothing left running.
 set -euo pipefail
 python3 -I scripts/affected.py --self-test
 python3 -I scripts/prune-targets.py --self-test
 python3 -I scripts/seed-target.py --self-test
 python3 -I testing/crates/budget-harness/record.py --self-test
+python3 -I scripts/bounded.py --self-test
 # A build directory another checkout built in is refused before anything builds.
 planted="$(mktemp -d)"
 trap 'rm -rf "$planted"' EXIT

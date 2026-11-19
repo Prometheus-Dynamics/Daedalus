@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 60 s (its slowest green run took 13 s; no bound is under a minute)
 # Each checker must fail on its planted tree and name the rule, and pass on the clean one.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -43,7 +43,9 @@ for name in "$@"; do
   fi
   echo "==> $name"
   start=$SECONDS
-  "$file"
+  # Each step carries its bound beside its code, and runs in a process group of its own: past its
+  # bound the group is stopped and the step fails, named; what it leaves running is stopped too.
+  python3 -I scripts/bounded.py --step "$name" "$file"
   echo "    $name: $((SECONDS - start)) s"
 done
 

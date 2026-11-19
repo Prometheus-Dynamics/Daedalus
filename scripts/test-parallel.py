@@ -17,20 +17,36 @@ package, and the target's library directories on the library path.
 With DAEDALUS_TEST_PACKAGES set to package names, only those packages' binaries run, from the
 same build: scripts/check.sh runs a change's packages this way. The gate unsets it.
 
+Each binary runs under a bound: three times the slowest it has passed in, as the times file in the
+build directory records it, and never under FLOOR; a binary with no passing run on record gets
+UNKNOWN, three times the slowest any binary has passed in at a gate (192 s, the wgpu-author compile
+tests under three gates at once). Each runs in a process group of its own (scripts/bounded.py): past
+its bound the group is stopped and the binary fails, named, and what a binary leaves running when it
+ends is stopped and named. Its output goes to a file, so a child left holding it never blocks the
+run. A TERM to this runner stops every binary's group.
+
 Binaries that link trybuild run one after another: trybuild builds every crate's compile tests in
 one shared directory under the same binary names, so two at once overwrite each other's builds.
 """
 import json
 import os
+import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bounded import TIMED_OUT, Group, scaled  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
 TIMES = os.path.join(TARGET, "test-parallel-times.json")
 CARGO = os.environ.get("CARGO", "cargo")
+FLOOR = 60.0
+UNKNOWN = 600.0
 
 
 def binaries(args):
@@ -108,6 +124,10 @@ def main():
             last = json.load(file)
     except (OSError, ValueError):
         last = {}
+    # Each binary's last time, and the slowest it has passed in. A file from before keeps one
+    # number, which is both.
+    last = {name: seconds if isinstance(seconds, list) else [seconds, seconds]
+            for name, seconds in last.items()}
     built = len(found)
     # A binary renamed or merged away leaves its time behind: only the binaries built now keep one.
     current = {label(m) for m in found}
@@ -119,18 +139,51 @@ def main():
         print(f"  {len(found)} of {built} test binaries: those of DAEDALUS_TEST_PACKAGES")
     shared = [m for m in found if shares_trybuild(m)]
     jobs = [[m] for m in found if m not in shared] + ([shared] if shared else [])
-    jobs.sort(key=lambda job: -sum(last.get(label(m), 0.0) for m in job))
+    jobs.sort(key=lambda job: -sum(last.get(label(m), [0.0])[0] for m in job))
+
+    def bound(name):
+        if last.get(name, [0.0, None])[1] is None:
+            return scaled(UNKNOWN)
+        return scaled(max(FLOOR, 3 * last[name][1]))
+
+    groups, groups_lock = set(), threading.Lock()
+
+    def stop_all(signum, _frame):
+        with groups_lock:
+            running = list(groups)
+        for group in running:
+            group.stop()
+        os._exit(128 + signum)
+
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, stop_all)
 
     def run(job):
         ran = []
         for message in job:
+            name = label(message)
             start = time.monotonic()
-            done = subprocess.run(
-                [message["executable"]], cwd=os.path.dirname(message["manifest_path"]),
-                env=package_env(message, sysroot_lib), stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True, errors="replace",
-            )
-            ran.append((message, done, time.monotonic() - start))
+            with tempfile.TemporaryFile() as out:
+                group = Group([message["executable"]],
+                              cwd=os.path.dirname(message["manifest_path"]),
+                              env=package_env(message, sysroot_lib), stdout=out,
+                              stderr=subprocess.STDOUT)
+                with groups_lock:
+                    groups.add(group)
+                ended = group.wait(bound(name))
+                code, left = group.reap()
+                with groups_lock:
+                    groups.discard(group)
+                out.seek(0)
+                output = out.read().decode(errors="replace")
+            if not ended:
+                left = []
+            if left:
+                output += f"\n{name}: left {len(left)} processes running in its group: stopped them\n"
+            if not ended:
+                code = TIMED_OUT
+                output += f"\n{name}: still running at its bound of {bound(name):.0f} s: stopped it\n"
+            ran.append((message, code, output, left, time.monotonic() - start))
         return ran
 
     workers = max(1, len(os.sched_getaffinity(0)))
@@ -138,14 +191,19 @@ def main():
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for ran in pool.map(run, jobs):
-            for message, done, seconds in ran:
+            for message, code, output, left, seconds in ran:
                 name = label(message)
-                times[name] = round(seconds, 2)
-                summary = [l for l in done.stdout.splitlines() if l.startswith("test result:")]
-                status = "ok" if done.returncode == 0 else f"FAILED (exit {done.returncode})"
-                print(f"  {seconds:6.1f} s  {name}: {status} {summary[-1][12:] if summary else ''}")
-                if done.returncode != 0:
-                    failed.append((name, done.stdout))
+                slowest = last.get(name, [0.0, None])[1]
+                times[name] = [round(seconds, 2),
+                               max(slowest or 0.0, round(seconds, 2)) if code == 0 else slowest]
+                summary = [l for l in output.splitlines() if l.startswith("test result:")]
+                status = ("ok" if code == 0 else "TIMED OUT" if code == TIMED_OUT
+                          else f"FAILED (exit {code})")
+                stray = f" (left {len(left)} running: stopped)" if left else ""
+                print(f"  {seconds:6.1f} s  {name}: {status} {summary[-1][12:] if summary else ''}"
+                      f"{stray}")
+                if code != 0:
+                    failed.append((name, output))
     try:
         with open(TIMES, "w") as file:
             json.dump({**last, **times}, file, indent=0, sort_keys=True)

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# bound: 66 s (three times its slowest green run, 22 s)
 # Rule file-size: no tracked Rust file over 800 lines. Usage: check-file-sizes.sh [--root DIR]
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
