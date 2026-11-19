@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bound: 636 s (three times its slowest green run, 212 s)
+# bound: 780 s (three times its slowest green run, 260 s, in a cold build on a fresh slot)
 # The host and the daemon built without the planner: their normal dependency trees must not name
 # daedalus-planner, the planner-less host's tests must pass, and a made plan must load and run in a
 # daemon built without the planner as it runs in one built with it. The full build's test writes

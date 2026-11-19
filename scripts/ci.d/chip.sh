@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bound: 441 s (three times its slowest green run, 147 s)
+# bound: 504 s (three times its slowest green run, 168 s, in a cold build on a fresh slot)
 # Builds the blink firmware in its three modes for each chip target and checks their sizes.
 #
 # Compiled size is pinned exactly, so any change has to update this file with a reason. The pins

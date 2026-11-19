@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bound: 459 s (three times its slowest green run, 153 s)
+# bound: 732 s (three times its slowest green run, 244 s, in a cold build on a fresh slot)
 # Builds for WebAssembly without threads and runs the results under Node.
 set -euo pipefail
 

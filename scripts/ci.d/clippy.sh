@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# bound: 306 s (three times its slowest green run, 102 s)
+# bound: 441 s (three times its slowest green run, 147 s, in a cold build on a fresh slot)
 set -euo pipefail
 cargo clippy --locked --workspace --all-targets -- -D warnings
