@@ -1,7 +1,7 @@
 //! The host's lease on the GPU is asked for before the device is given work and given back when
 //! the work is done, on a real device.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

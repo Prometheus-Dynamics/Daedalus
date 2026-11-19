@@ -1,7 +1,7 @@
 //! A plugin's codecs convert its plain data to and from the host value form and the wire form.
 //! Their conversions join the registry, and a codec keeps its library open.
 
-mod support;
+use crate::support;
 
 use daedalus_abi::{PlainData, layout_hash};
 use daedalus_loader::{Direction, LoadError, Loader, PodBlock, PodError};

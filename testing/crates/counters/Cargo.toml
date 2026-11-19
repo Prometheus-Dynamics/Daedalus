@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-counters"
 description = "Runs a command under Linux hardware counters and prints them to stderr: the board's perf helper. Also `bounded`, which runs a command with a time bound on one core. Run on a board, not in the gate."
 version.workspace = true
@@ -30,3 +32,12 @@ print_stdout = "deny"
 todo = "deny"
 unimplemented = "deny"
 print_stderr = "deny"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: counts this process's file descriptors.
+[[test]]
+name = "bounded"
+path = "tests/bounded.rs"

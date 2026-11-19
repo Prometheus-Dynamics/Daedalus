@@ -1,6 +1,6 @@
 //! The fault table: a bounded reason, and no reason inherited from another step.
 
-mod support;
+use crate::support;
 
 use daedalus_abi::{REASON_CAPACITY, Slots, Step, StepCx, StepEnd, StepWord};
 use daedalus_runner::{SlotKind, SlotSpec, StepFault};

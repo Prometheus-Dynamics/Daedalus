@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use daedalus_integrity::find_program;
 
-mod support;
+use crate::support;
 
 #[test]
 fn a_bare_name_is_searched_for_on_the_path_in_order() {

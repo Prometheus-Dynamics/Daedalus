@@ -7,7 +7,7 @@
 //! added, and then the table, the header and the library all gain it. A baseline function that is
 //! removed, renamed or given another prototype fails the baseline test.
 
-mod support;
+use crate::support;
 
 use daedalus_client_capi::*;
 use std::ffi::c_char;

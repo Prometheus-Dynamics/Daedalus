@@ -2,8 +2,7 @@
 
 #![cfg(all(feature = "blob", feature = "receive"))]
 
-#[path = "shared/blob_fixture.rs"]
-mod fixture;
+use crate::fixture;
 
 use daedalus_cpu::blob::receive::{
     BlobReceiver, BlobSink, CHUNK_OVERHEAD, Progress, ReceiveError, encode_chunk,

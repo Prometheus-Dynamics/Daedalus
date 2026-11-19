@@ -58,11 +58,6 @@ struct State {
 }
 
 impl Link {
-    /// The key of the device this has open, if it has one.
-    pub(crate) fn open_key(&self) -> Option<u64> {
-        self.state().context.as_ref().map(|context| context.key)
-    }
-
     /// Adds moves to what this backend lists. One already listed, by id, is left as it is.
     pub(crate) fn offer(&self, more: impl IntoIterator<Item = Transfer>) {
         let mut typed = self.typed.lock().unwrap_or_else(PoisonError::into_inner);
@@ -157,8 +152,9 @@ impl Link {
         match opened {
             Ok(opened) => {
                 state.retry.worked();
-                if self.named.is_none() {
-                    Context::note_latest(&opened);
+                match &self.named {
+                    Some(named) => opened.own(named.slot, &named.alive),
+                    None => Context::note_latest(&opened),
                 }
                 // A device several backends share keeps the lease it has unless this one has its own.
                 if state.lease.is_some() {

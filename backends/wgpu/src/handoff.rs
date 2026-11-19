@@ -190,6 +190,7 @@ mod tests {
             slot: 1,
             name: "gpu2".into(),
             id: "wgpu.gpu2".into(),
+            alive: std::sync::Arc::default(),
         };
         let named_heap = transfers(Some(&named), true);
         let entry = named_heap

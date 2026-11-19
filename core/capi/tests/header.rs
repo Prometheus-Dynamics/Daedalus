@@ -3,7 +3,7 @@
 //! table gives it and declares nothing else, and the built library exports exactly these. And
 //! the header compiles as C11 with every warning an error.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 #[cfg(unix)]

@@ -1,6 +1,6 @@
 //! A step's cells are its own: inputs in order, then outputs in order.
 
-mod support;
+use crate::support;
 
 use std::sync::{Arc, Mutex};
 

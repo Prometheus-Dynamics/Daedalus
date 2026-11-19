@@ -71,6 +71,8 @@ pub(crate) struct Context {
     pub(crate) limits: wgpu::Limits,
     /// Unique to this device in this process.
     pub(crate) key: u64,
+    /// For a named backend's device: its slot, and a mark that backend holds while it lives.
+    owner: std::sync::OnceLock<(usize, Weak<()>)>,
     pub(crate) copies: CopyLimiter,
     staging: Mutex<StagingPool<wgpu::Buffer>>,
     shaders: Mutex<crate::shader::ShaderCache>,
@@ -221,6 +223,7 @@ impl Context {
             queue,
             submit: daedalus_vk_sys::SubmitLock::default(),
             key: NEXT_KEY.fetch_add(1, Ordering::Relaxed),
+            owner: std::sync::OnceLock::new(),
             copies: CopyLimiter::new(MAX_INFLIGHT_COPIES),
             staging: Mutex::new(StagingPool::new(options.staging)),
             shaders: Mutex::default(),
@@ -596,4 +599,20 @@ fn with_heap(
         ..record
     };
     (record, ImportState::new(writable, read_only), untried)
+}
+
+impl Context {
+    /// Marks this as the device of the named backend in `slot`, for as long as `alive` lives.
+    pub(crate) fn own(&self, slot: usize, alive: &Arc<()>) {
+        let _ = self.owner.set((slot, Arc::downgrade(alive)));
+    }
+
+    /// Which named backend this device is, while that backend is alive; 0 for any other. Nothing
+    /// is held to answer, so asking never keeps a dropped backend, or its name, alive.
+    pub(crate) fn named_slot(&self) -> usize {
+        self.owner
+            .get()
+            .filter(|(_, alive)| alive.strong_count() > 0)
+            .map_or(0, |(slot, _)| *slot)
+    }
 }

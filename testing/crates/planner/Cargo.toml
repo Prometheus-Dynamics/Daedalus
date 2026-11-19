@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-planner-tests"
 description = "The planner's tests, the only place it meets a backend."
 version.workspace = true
@@ -27,3 +29,7 @@ serde_json = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

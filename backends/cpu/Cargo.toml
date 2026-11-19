@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-cpu"
 description = "The CPU backend: typed Rust functions as steps."
 version.workspace = true
@@ -57,3 +59,52 @@ daedalus-registry = { path = "../../core/registry" }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "blob"
+path = "tests/blob.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "chip_alloc"
+path = "tests/chip_alloc.rs"
+
+# Its own process: includes generated source that names `crate::nodes`, as a chip crate's root has it.
+[[test]]
+name = "chip_param"
+path = "tests/chip_param.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "list_view"
+path = "tests/list_view.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "no_alloc"
+path = "tests/no_alloc.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "out_view"
+path = "tests/out_view.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "outputs"
+path = "tests/outputs.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "source"
+path = "tests/source.rs"
+
+# Its own process: checks generated source that names its module from the crate root.
+[[test]]
+name = "source_fresh"
+path = "tests/source_fresh.rs"

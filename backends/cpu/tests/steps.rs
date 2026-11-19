@@ -1,6 +1,6 @@
 //! Nodes run through their steps and give the values their functions compute.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

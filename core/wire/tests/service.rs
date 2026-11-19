@@ -1,7 +1,7 @@
 //! The service protocol: round trips of every op, reply, event and error code, the refusals, and
 //! the bounded watch queue and trace ring.
 
-mod service_support;
+use crate::service_support;
 
 use std::collections::HashMap;
 

@@ -1,7 +1,7 @@
 //! The surface called from Rust, as C calls it: every function on a daemon in this process with
 //! the fixture plugin loaded, and the way each call answers.
 
-mod support;
+use crate::support;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

@@ -1,6 +1,6 @@
 //! What a full edge does to its producer: held back, rejected, or an error.
 
-mod support;
+use crate::support;
 
 use std::sync::{Arc, Mutex};
 

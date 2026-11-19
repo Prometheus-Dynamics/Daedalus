@@ -1,7 +1,7 @@
 //! What may be added to the service protocol without a side built before it being refused, or
 //! taking a message to mean something else.
 
-mod service_support;
+use crate::service_support;
 
 use daedalus_wire::codec::Writer;
 use daedalus_wire::service::{

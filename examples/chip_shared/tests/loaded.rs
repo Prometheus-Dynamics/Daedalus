@@ -1,6 +1,6 @@
 //! The stored plan, through the small runner, matches the node functions.
 
-mod common;
+use crate::common;
 
 use common::{Reference, signal};
 use daedalus_chip_shared::LIBRARY;

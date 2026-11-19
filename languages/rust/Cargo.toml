@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-lang-rust"
 description = "The Rust worker SDK: serve nodes declared with #[node] over the worker wire protocol."
 version.workspace = true
@@ -29,3 +31,7 @@ path = "fixtures/serve_worker.rs"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

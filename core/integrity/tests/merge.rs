@@ -3,7 +3,7 @@
 
 #![cfg(unix)]
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::process::Command;
@@ -114,7 +114,12 @@ fn merge_from_two_processes_loses_no_entry() {
         .iter()
         .map(|prefix| {
             Command::new(&exe)
-                .args(["merge_child", "--exact", "--test-threads=1", "--nocapture"])
+                .args([
+                    &child_test_name(),
+                    "--exact",
+                    "--test-threads=1",
+                    "--nocapture",
+                ])
                 .env("DAEDALUS_INTEGRITY_MERGE_LOCK", &lock_path)
                 .env("DAEDALUS_INTEGRITY_MERGE_PREFIX", prefix)
                 .spawn()
@@ -147,4 +152,13 @@ fn update_replaces_an_approved_entry_and_keeps_the_rest() {
     assert_eq!(lock.get("a.so"), Some(&Digest::of(b"two")));
     assert_eq!(lock.get("b.so"), Some(&Digest::of(b"kept")));
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The child test's full name in this binary: `merge_child` alone, or under its module when this file
+/// is one module of a larger test binary.
+fn child_test_name() -> String {
+    match module_path!().split_once("::") {
+        Some((_, module)) => format!("{module}::merge_child"),
+        None => "merge_child".to_string(),
+    }
 }

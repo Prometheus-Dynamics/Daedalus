@@ -1,0 +1,9 @@
+[package]
+name = "fx-fine"
+version = "0.0.0"
+edition = "2024"
+autotests = false
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

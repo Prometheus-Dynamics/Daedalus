@@ -1,7 +1,7 @@
 //! Fragment passes on a real device: every target format, inputs read at the pass's own texel,
 //! rectangles, and what is refused.
 
-mod common;
+use crate::common;
 
 use daedalus_wgpu::fragment::{FragmentError, FragmentPass, FragmentRects};
 use daedalus_wgpu::{Format, Options, Storage, Texture, TextureDesc, WgpuBackend};

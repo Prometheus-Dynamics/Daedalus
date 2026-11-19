@@ -164,9 +164,9 @@ export DAEDALUS_GPU_REQUIRED=1
 if [ "${BATCH_REHEARSAL:-}" = 1 ]; then DAEDALUS_GPU_ADAPTERS=software; else DAEDALUS_GPU_ADAPTERS=hardware; fi
 export DAEDALUS_GPU_ADAPTERS
 step gpu-test-storage env DAEDALUS_DMA_HEAP_REQUIRED=1 "$B/wgpu.storage" --nocapture --test-threads=1
-step gpu-test-transfer "$B/wgpu.transfer" --nocapture --test-threads=1
+step gpu-test-transfer "$B/wgpu.all" transfer:: --nocapture --test-threads=1
 step gpu-test-region "$B/wgpu.region" --nocapture --test-threads=1
-step gpu-test-fragment "$B/wgpu.fragment" --nocapture --test-threads=1
+step gpu-test-fragment "$B/wgpu.all" fragment:: --nocapture --test-threads=1
 step gpu-test-fences "$B/wgpu.lib" fence_tests --nocapture --test-threads=1
 step gpu-test-dma-sys "$B/dma-sys.lib" --nocapture --test-threads=1
 step gpu-test-dma-kernel "$B/dma-sys.kernel" --nocapture --test-threads=1
@@ -185,7 +185,7 @@ if [ -e "$D/vvl/VkLayer_khronos_validation.json" ] || [ "${BATCH_REHEARSAL:-}" !
 export VK_LAYER_PATH="$D/vvl" VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
 export VK_KHRONOS_VALIDATION_VALIDATE_SYNC=1 VK_LAYER_VALIDATE_SYNC=1
 step validation-vk-sys "$B/vk-sys.lib" --nocapture --test-threads=1
-step validation-fragment "$B/wgpu.fragment" --nocapture --test-threads=1
+step validation-fragment "$B/wgpu.all" fragment:: --nocapture --test-threads=1
 step validation-region "$B/wgpu.region" --nocapture --test-threads=1
 step validation-raw-submit "$B/daedalus-gpu-budgets" raw-submit fragment-pass
 # A clean log means nothing unless an error would have been in it: one call that is wrong on

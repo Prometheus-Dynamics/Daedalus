@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-client"
 description = "A client for daedalusd: connect, pipeline requests, watch, reconnect."
 version.workspace = true
@@ -25,3 +27,7 @@ workspace = true
 [[test]]
 name = "json"
 required-features = ["json"]
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

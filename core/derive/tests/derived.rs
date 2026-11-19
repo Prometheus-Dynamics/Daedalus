@@ -142,7 +142,11 @@ fn an_enum_describes_its_variants() {
 
 #[test]
 fn the_default_key_is_the_lowercased_path() {
-    assert_eq!(Point2::KEY.as_str(), "rust:derived::point2");
+    // The key is the lowercased module path, which starts at this test binary's root.
+    assert_eq!(
+        Point2::KEY.as_str(),
+        format!("rust:{}::point2", module_path!())
+    );
     assert_eq!(
         Sample::KEY.as_str(),
         "rust:daedalus_author_fixture::sample::sample"

@@ -2,7 +2,7 @@
 
 #![cfg(feature = "host")]
 
-mod common;
+use crate::common;
 
 use common::{Reference, signal};
 use daedalus::prelude::{Config, LoadOptions, LoadedHost, plan};

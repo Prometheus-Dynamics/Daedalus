@@ -1,6 +1,6 @@
 //! Owned payloads: each one is dropped exactly once on every path out of the runner.
 
-mod support;
+use crate::support;
 
 use std::sync::{Arc, Mutex};
 

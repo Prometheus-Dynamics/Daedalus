@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-value"
 description = "A value's owner and memory space, the slots that hold values, and recycling."
 version.workspace = true
@@ -23,3 +25,12 @@ daedalus-abi = { path = "../abi", features = ["count-alloc"] }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "no_alloc"
+path = "tests/no_alloc.rs"

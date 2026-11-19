@@ -2,7 +2,7 @@
 //! The Python SDK's own unit tests (`sdk/tests`, run with `unittest`), with the two C libraries
 //! and the fixture plugin in the environment so the host and client tests can reach them.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::process::Command;

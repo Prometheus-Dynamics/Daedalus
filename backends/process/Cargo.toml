@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-backend-process"
 description = "The process backend: nodes served by a worker process that speaks the wire protocol."
 version.workspace = true
@@ -33,3 +35,32 @@ daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "alloc"
+path = "tests/alloc.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "by_reference"
+path = "tests/by_reference.rs"
+
+# Its own process: counts this process's file descriptors.
+[[test]]
+name = "integrity"
+path = "tests/integrity.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "out_view"
+path = "tests/out_view.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "wire_steady"
+path = "tests/wire_steady.rs"

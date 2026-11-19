@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-loader"
 description = "Plugins as dynamic libraries: open and check them, join their nodes, run their steps, retry until they load."
 version.workspace = true
@@ -33,3 +35,47 @@ print_stderr = "deny"
 print_stdout = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "alloc"
+path = "tests/alloc.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "bytes"
+path = "tests/bytes.rs"
+
+# Its own process: counts this process's file descriptors.
+[[test]]
+name = "fd_reuse"
+path = "tests/fd_reuse.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "handover"
+path = "tests/handover.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "handover_leak"
+path = "tests/handover_leak.rs"
+
+# Its own process: counts this process's file descriptors.
+[[test]]
+name = "integrity"
+path = "tests/integrity.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "owned"
+path = "tests/owned.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "reload_leak"
+path = "tests/reload_leak.rs"

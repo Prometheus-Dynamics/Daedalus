@@ -7,7 +7,7 @@
 //! struct's memory, with padding and its fields in another order. Sent as its memory's bytes it
 //! would not decode in the worker.
 
-mod support;
+use crate::support;
 
 use daedalus::layers::planner::explain::explain_plan;
 use daedalus::prelude::*;

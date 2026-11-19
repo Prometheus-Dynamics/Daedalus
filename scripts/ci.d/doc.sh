@@ -3,4 +3,4 @@
 # guide sends a reader to a path of the branch this one replaces.
 set -euo pipefail
 RUSTDOCFLAGS="-D warnings" cargo doc --locked -q --workspace --no-deps
-cargo test --locked -q -p daedalus --test docs
+cargo test --locked -q -p daedalus --test all -- docs::

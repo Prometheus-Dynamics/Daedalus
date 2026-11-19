@@ -2,7 +2,7 @@
 //! kept and exported and imported, and the faults for a run that cannot go on. Each node is a C-ABI
 //! function, as a C worker's node is, and calls the SDK's exports.
 
-mod support;
+use crate::support;
 
 use std::ffi::c_int;
 
