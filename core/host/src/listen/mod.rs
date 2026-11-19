@@ -12,6 +12,7 @@ mod dispatch;
 mod made;
 #[cfg(feature = "planner")]
 mod planning;
+mod probe;
 mod runs;
 mod session;
 mod stdio;
@@ -51,7 +52,8 @@ use daedalus_wire::service::{
     TraceRing,
 };
 
-pub use session::Channel;
+pub use probe::SocketAllocations;
+pub use session::{Channel, FIRST_PACKET_BYTES, KEPT_PACKET_BYTES, SPARE_PACKETS};
 pub use tcp::TcpAcceptor;
 #[cfg(unix)]
 pub use unix::UnixAcceptor;
@@ -207,6 +209,7 @@ pub struct ServiceHost {
     pub(crate) codecs: WireCodecs,
     serves_plugins: bool,
     started: Instant,
+    pub(crate) probe: probe::SocketProbe,
 }
 
 /// Collects what a host is made of.
@@ -267,6 +270,7 @@ impl ServiceHostBuilder {
             options: self.options,
             codecs: self.codecs,
             started: Instant::now(),
+            probe: probe::SocketProbe::new(),
         })
     }
 }
@@ -336,6 +340,20 @@ impl ServiceHost {
             codecs: WireCodecs::scalars(),
             options: ListenOptions::default(),
         }
+    }
+
+    /// What the socket path has allocated: see [`SocketAllocations`].
+    pub fn socket_allocations(&self) -> SocketAllocations {
+        self.probe.snapshot()
+    }
+
+    /// The bytes every open connection keeps in written packets' buffers for its next answers:
+    /// at most `SPARE_PACKETS` buffers of `KEPT_PACKET_BYTES` each.
+    pub fn retained_packet_bytes(&self) -> usize {
+        lock(&self.sessions)
+            .values()
+            .map(|session| session.retained_bytes())
+            .sum()
     }
 
     pub fn options(&self) -> &ListenOptions {

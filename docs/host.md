@@ -170,6 +170,13 @@ feeding an input of another.
   [plugins.md](plugins.md).
 - [`service/daedalusd/packaging`](../service/daedalusd/packaging) has the unit files and a
   sample config.
+- A warm feed, step or take allocates nothing on the socket path: its names are read in place
+  from the packet, the trace entry holds them in itself, and the answer is encoded into a buffer
+  the connection keeps. A connection keeps at most four of those, and drops one bigger than
+  64 KiB once it is written, so one large answer doesn't hold its memory. A feed is served only
+  once all of it has been read: one cut short is refused and changes nothing. A value that isn't
+  a scalar is still made by its codec, and a body that runs on a thread of its own is not part of
+  the socket path. `alloc_socket_path` in `testing/budgets` holds it to zero.
 
 An application can open the same listener on a host of its own with
 `daedalus_host::listen::ServiceHost` (the feature `listen`).

@@ -212,6 +212,8 @@ def main():
                            f"{row['limit_flash']}, {row['limit_ram']})", ok)
             elif tool == "gpu-lane":
                 print(f"  --   {name}: checked by scripts/gpu-lavapipe.sh in the GPU workflow")
+            elif tool == "host-test":
+                print(f"  --   {name}: checked by {row['test']} in the gate's test step")
             else:
                 report(name, f"unknown tool `{tool}`", False)
         for name in skipped:

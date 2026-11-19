@@ -8,8 +8,8 @@ use std::vec::Vec;
 
 use daedalus_wire::service::{
     CacheAction, CarryReport, EndReason, ErrorCode, EventBody, EventKinds, HostInfo, InspectTarget,
-    Inspection, Names, Op, PluginInfo, Reply, Request, Response, RunId, ServiceError, StartConfig,
-    StepSummary, StopMode, TelemetryEvent, TypedValue,
+    Inspection, Names, Op, OpRef, PluginInfo, Reply, RequestRef, Response, RunId, ServiceError,
+    StartConfig, StepSummary, StopMode, TelemetryEvent, TypedValue,
 };
 
 use super::runs::RunEntry;
@@ -43,6 +43,13 @@ fn carry(report: &ReloadReport) -> CarryReport {
     }
 }
 
+/// A port's type key, for a refusal's message.
+fn port_key(host: &crate::Host<'static>, port: &str, dir: crate::Dir) -> String {
+    host.port_infos()
+        .find(|info| info.name == port && info.dir == dir)
+        .map_or_else(String::new, |info| String::from(info.type_key))
+}
+
 fn port_error(error: &HostError) -> ServiceError {
     let code = match error {
         HostError::UnknownPort { .. }
@@ -57,7 +64,7 @@ fn port_error(error: &HostError) -> ServiceError {
 
 impl ServiceHost {
     /// Serves one request. The answer always carries the request's id, whatever happens.
-    pub(crate) fn dispatch(&self, session: &Arc<Session>, request: Request) -> Response {
+    pub(crate) fn dispatch(&self, session: &Arc<Session>, request: RequestRef<'_>) -> Response {
         let served = catch_unwind(AssertUnwindSafe(|| self.serve(session, &request)));
         let result = served.unwrap_or_else(|panic| {
             let what = daedalus_abi::panic_message(&*panic);
@@ -67,7 +74,7 @@ impl ServiceHost {
             ))
         });
         let code = result.as_ref().err().map(|error| error.code);
-        lock(&self.trace).record(&request, code);
+        lock(&self.trace).record_ref(&request, code);
         Response {
             id: request.id,
             result,
@@ -81,12 +88,18 @@ impl ServiceHost {
             .ok_or_else(|| refuse(ErrorCode::UnknownRun, std::format!("no run {run}")))
     }
 
-    fn serve(&self, session: &Arc<Session>, request: &Request) -> Answer {
+    fn serve(&self, session: &Arc<Session>, request: &RequestRef<'_>) -> Answer {
         if self.is_stopping() {
             return Err(refuse(ErrorCode::Stopped, "the host is shutting down"));
         }
-        let space = request.session.as_str();
-        match &request.op {
+        let space = request.session;
+        let op = match &request.op {
+            OpRef::Feed { run, port, value } => return self.feed(&self.run(*run)?, port, value),
+            OpRef::Step { run, count } => return self.step(&self.run(*run)?, *count),
+            OpRef::Take { run, port } => return self.take(&self.run(*run)?, port),
+            OpRef::Owned(op) => op,
+        };
+        match op {
             Op::Ping => Ok(Reply::Pong {
                 version: daedalus_wire::service::SERVICE_VERSION,
             }),
@@ -190,23 +203,11 @@ impl ServiceHost {
         entry.live()?;
         let mut run = lock(&entry.run);
         let host = run.host.host();
-        let key = host
-            .port_infos()
-            .find(|info| info.name == port && info.dir == crate::Dir::Input)
-            .map(|info| String::from(info.type_key))
-            .ok_or_else(|| {
-                refuse(
-                    ErrorCode::UnknownPort,
-                    std::format!("run {} has no input port `{port}`", entry.id),
-                )
-            })?;
-        let codec = self.codecs.get(&key).ok_or_else(|| {
-            refuse(
-                ErrorCode::Unsupported,
-                std::format!("port `{port}` carries `{key}`, which has no wire codec"),
-            )
-        })?;
+        // Looked up, not copied: the codec belongs to the service host, so nothing is held from
+        // the run's host past this line. A refusal looks the key up again for its message.
+        let codec = self.port_codec(host, port, crate::Dir::Input, entry.id)?;
         if codec.ty != value.ty {
+            let key = port_key(host, port, crate::Dir::Input);
             return Err(refuse(
                 ErrorCode::ValueType,
                 std::format!(
@@ -221,12 +222,48 @@ impl ServiceHost {
                 woke: outcome.woke,
                 dropped: outcome.dropped.is_some(),
             }),
-            Err(FeedRefusal::Shape) => Err(refuse(
-                ErrorCode::ValueType,
-                std::format!("the value is not a `{key}`"),
-            )),
+            Err(FeedRefusal::Shape) => {
+                let key = port_key(host, port, crate::Dir::Input);
+                Err(refuse(
+                    ErrorCode::ValueType,
+                    std::format!("the value is not a `{key}`"),
+                ))
+            }
             Err(FeedRefusal::Host(error)) => Err(port_error(&error)),
         }
+    }
+
+    /// The codec of a run's port, by the port's type key. Lookup only: a port the run doesn't
+    /// have, or a key with no codec, is refused, and nothing is added anywhere.
+    fn port_codec(
+        &self,
+        host: &crate::Host<'static>,
+        port: &str,
+        dir: crate::Dir,
+        run: RunId,
+    ) -> Result<&super::WireCodec, ServiceError> {
+        let info = host
+            .port_infos()
+            .find(|info| info.name == port && info.dir == dir)
+            .ok_or_else(|| {
+                let which = match dir {
+                    crate::Dir::Input => "input",
+                    crate::Dir::Output => "output",
+                };
+                refuse(
+                    ErrorCode::UnknownPort,
+                    std::format!("run {run} has no {which} port `{port}`"),
+                )
+            })?;
+        self.codecs.get(info.type_key).ok_or_else(|| {
+            refuse(
+                ErrorCode::Unsupported,
+                std::format!(
+                    "port `{port}` carries `{}`, which has no wire codec",
+                    info.type_key
+                ),
+            )
+        })
     }
 
     fn step(&self, entry: &Arc<RunEntry>, count: u32) -> Answer {
@@ -263,27 +300,13 @@ impl ServiceHost {
     fn take(&self, entry: &Arc<RunEntry>, port: &str) -> Answer {
         let mut run = lock(&entry.run);
         let host = run.host.host();
-        let key = host
-            .port_infos()
-            .find(|info| info.name == port && info.dir == crate::Dir::Output)
-            .map(|info| String::from(info.type_key))
-            .ok_or_else(|| {
-                refuse(
-                    ErrorCode::UnknownPort,
-                    std::format!("run {} has no output port `{port}`", entry.id),
-                )
-            })?;
         // Checked before the value is taken, so a refusal leaves it in the port.
-        let codec = self.codecs.get(&key).ok_or_else(|| {
-            refuse(
-                ErrorCode::Unsupported,
-                std::format!("port `{port}` carries `{key}`, which has no wire codec"),
-            )
-        })?;
+        let codec = self.port_codec(host, port, crate::Dir::Output, entry.id)?;
         let Some(value) = host.take_value(port).map_err(|error| port_error(&error))? else {
             return Ok(Reply::Value(None));
         };
         let wire = (codec.read)(&value).ok_or_else(|| {
+            let key = port_key(host, port, crate::Dir::Output);
             refuse(
                 ErrorCode::ValueType,
                 std::format!("the value in `{port}` is not held as a `{key}`"),

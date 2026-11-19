@@ -74,6 +74,15 @@ dev = 0
 limit = 0
 
 [[row]]
+name = "alloc_socket_path"
+measure = "socket path: 0 allocs. Allocations per warm feed, step and take on a connection's reader thread (read, decode, serve, encode, queue) and per packet on its writer thread; a body that runs on a thread of its own is not counted"
+tool = "host-test"
+test = "core/host/tests/socket_alloc.rs"
+# A new row, so it has no dev figure. Before it, this branch allocated 7, 7 and 8 times per feed,
+# step and take on the reader thread, and 0 per packet on the writer.
+limit = 0
+
+[[row]]
 name = "alloc_plugin_node_tick"
 measure = "allocations per tick of a dylib plugin's node"
 tool = "alloc"

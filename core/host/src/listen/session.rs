@@ -8,8 +8,10 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::vec::Vec;
 
+use daedalus_wire::codec::Writer;
 use daedalus_wire::service::{
-    ClientMsg, ErrorCode, Event, EventBody, Response, ServerMsg, ServiceError, SubId, WatchQueue,
+    ClientMsg, ClientMsgRef, ErrorCode, Event, EventBody, OpKind, Response, ServerMsg,
+    ServiceError, SubId, WatchQueue,
 };
 use daedalus_wire::{DEFAULT_CAP, PacketError, Schema, read_packet, write_packet};
 
@@ -52,10 +54,25 @@ enum Item {
     Event(Event),
 }
 
+/// Packet buffers a session keeps for its next answers, at most.
+pub const SPARE_PACKETS: usize = 4;
+/// A written packet buffer bigger than this is dropped, not kept: one large answer doesn't hold
+/// its memory for the rest of the connection.
+pub const KEPT_PACKET_BYTES: usize = 64 * 1024;
+/// Each kept buffer's size when the session starts. The writer hands a buffer back only once it is
+/// written, so a client that answers fast can find the reader with fewer buffers back than it
+/// keeps; starting with all of them, each big enough for a feed's, step's or take's answer of a
+/// small value, the reader then never makes one. An answer bigger than this grows the buffer it
+/// is written in, once.
+pub const FIRST_PACKET_BYTES: usize = 512;
+
 /// One client's side of the host.
 pub(crate) struct Session {
     pub(crate) id: u64,
     out: Mutex<Outbound>,
+    /// Written packets' buffers, which the next answers are encoded into: at most
+    /// [`SPARE_PACKETS`], each at most [`KEPT_PACKET_BYTES`].
+    spare: Mutex<Vec<Vec<u8>>>,
     ready: Condvar,
     close: Box<dyn Fn() + Send + Sync>,
     /// Most answers that may wait to be written.
@@ -72,10 +89,41 @@ impl Session {
                 watches: Vec::new(),
                 turn: 0,
             }),
+            spare: Mutex::new(
+                (0..SPARE_PACKETS)
+                    .map(|_| Vec::with_capacity(FIRST_PACKET_BYTES))
+                    .collect(),
+            ),
             ready: Condvar::new(),
             close,
             limit,
         }
+    }
+
+    fn spare(&self) -> MutexGuard<'_, Vec<Vec<u8>>> {
+        self.spare.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A buffer to encode an answer into: a written packet's, or a new one.
+    fn packet_buffer(&self) -> Vec<u8> {
+        self.spare().pop().unwrap_or_default()
+    }
+
+    /// Keeps a written packet's buffer for a later answer, unless enough are kept or it is
+    /// bigger than [`KEPT_PACKET_BYTES`].
+    fn give_back(&self, buf: Vec<u8>) {
+        if buf.capacity() > KEPT_PACKET_BYTES {
+            return;
+        }
+        let mut spare = self.spare();
+        if spare.len() < SPARE_PACKETS {
+            spare.push(buf);
+        }
+    }
+
+    /// The bytes the kept buffers hold.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.spare().iter().map(Vec::capacity).sum()
     }
 
     fn out(&self) -> MutexGuard<'_, Outbound> {
@@ -207,6 +255,61 @@ fn hello(
     None
 }
 
+/// Reads one request, serves it and queues its answer. False when the connection is done; the
+/// op, when the request decoded.
+fn serve_one(
+    host: &Arc<ServiceHost>,
+    session: &Arc<Session>,
+    reader: &mut Box<dyn Read + Send>,
+    buf: &mut Vec<u8>,
+    codecs: &Schema,
+    cap: u32,
+) -> (bool, Option<OpKind>) {
+    match read_packet(reader, DEFAULT_CAP, buf) {
+        Ok(()) => {}
+        Err(error @ PacketError::TooLarge { .. }) => {
+            // The body was not read, so the stream is out of step, and the request's id
+            // is not known. The answer is about the connection, under id 0, and then it
+            // is dropped.
+            session.answer(error_packet(0, ServiceError::from_packet(&error)));
+            return (false, None);
+        }
+        Err(_) => return (false, None),
+    }
+    let mut kind = None;
+    let packet = match ClientMsg::decode_ref(buf, codecs) {
+        Ok(ClientMsgRef::Request(request)) => {
+            let id = request.id;
+            kind = Some(request.op.kind());
+            let response = ServerMsg::Response(host.dispatch(session, request));
+            match response.encode_into(Writer::reusing(session.packet_buffer()), codecs) {
+                Ok(packet) if packet.len() <= cap as usize => packet,
+                Ok(packet) => error_packet(
+                    id,
+                    ServiceError::new(
+                        ErrorCode::FrameTooLarge,
+                        std::format!(
+                            "the answer is {} bytes, the client reads {cap}",
+                            packet.len()
+                        ),
+                    ),
+                ),
+                Err(error) => error_packet(id, ServiceError::from_wire(&error)),
+            }
+        }
+        Ok(ClientMsgRef::Hello(_)) => error_packet(
+            0,
+            ServiceError::new(ErrorCode::InvalidRequest, "a second hello"),
+        ),
+        // The id is read from what did decode, so the client's pipeline stays matched.
+        Err(error) => error_packet(
+            ClientMsg::request_id(buf).unwrap_or(0),
+            ServiceError::from_wire(&error),
+        ),
+    };
+    (session.answer(packet), kind)
+}
+
 /// Serves one connection until it ends. Runs the reader on this thread and the writer on its own.
 /// `refuse` turns the connection away after its hello, with that error.
 pub(crate) fn serve(host: &Arc<ServiceHost>, mut channel: Channel, refuse: Option<ServiceError>) {
@@ -229,19 +332,29 @@ pub(crate) fn serve(host: &Arc<ServiceHost>, mut channel: Channel, refuse: Optio
     let codecs = host.codec_schema();
     let writing = {
         let (session, codecs) = (Arc::clone(&session), codecs.clone());
+        let host_for_writer = Arc::clone(host);
         std::thread::Builder::new()
             .name("daedalus-session-write".into())
             .stack_size(super::SMALL_STACK)
             .spawn(move || {
                 while let Some(item) = session.next() {
-                    let packet = match item {
-                        Item::Packet(packet) => packet,
-                        Item::Event(event) => match ServerMsg::Event(event).encode(&codecs) {
-                            Ok(packet) => packet,
-                            Err(_) => continue,
-                        },
-                    };
-                    if write_packet(&mut writer, &packet, DEFAULT_CAP).is_err() {
+                    let (written, allocations) = super::probe::measured(|| {
+                        let packet = match item {
+                            Item::Packet(packet) => packet,
+                            Item::Event(event) => {
+                                let out = Writer::reusing(session.packet_buffer());
+                                match ServerMsg::Event(event).encode_into(out, &codecs) {
+                                    Ok(packet) => packet,
+                                    Err(_) => return Some(true),
+                                }
+                            }
+                        };
+                        let written = write_packet(&mut writer, &packet, DEFAULT_CAP).is_ok();
+                        session.give_back(packet);
+                        Some(written)
+                    });
+                    host_for_writer.probe.packet(allocations);
+                    if written != Some(true) {
                         break;
                     }
                 }
@@ -251,47 +364,11 @@ pub(crate) fn serve(host: &Arc<ServiceHost>, mut channel: Channel, refuse: Optio
             })
     };
     loop {
-        match read_packet(&mut reader, DEFAULT_CAP, &mut buf) {
-            Ok(()) => {}
-            Err(error @ PacketError::TooLarge { .. }) => {
-                // The body was not read, so the stream is out of step, and the request's id
-                // is not known. The answer is about the connection, under id 0, and then it
-                // is dropped.
-                session.answer(error_packet(0, ServiceError::from_packet(&error)));
-                break;
-            }
-            Err(_) => break,
-        }
-        let packet = match ClientMsg::decode(&buf, &codecs) {
-            Ok(ClientMsg::Request(request)) => {
-                let id = request.id;
-                let response = ServerMsg::Response(host.dispatch(&session, request));
-                match response.encode(&codecs) {
-                    Ok(packet) if packet.len() <= cap as usize => packet,
-                    Ok(packet) => error_packet(
-                        id,
-                        ServiceError::new(
-                            ErrorCode::FrameTooLarge,
-                            std::format!(
-                                "the answer is {} bytes, the client reads {cap}",
-                                packet.len()
-                            ),
-                        ),
-                    ),
-                    Err(error) => error_packet(id, ServiceError::from_wire(&error)),
-                }
-            }
-            Ok(ClientMsg::Hello(_)) => error_packet(
-                0,
-                ServiceError::new(ErrorCode::InvalidRequest, "a second hello"),
-            ),
-            // The id is read from what did decode, so the client's pipeline stays matched.
-            Err(error) => error_packet(
-                ClientMsg::request_id(&buf).unwrap_or(0),
-                ServiceError::from_wire(&error),
-            ),
-        };
-        if !session.answer(packet) {
+        let ((go, kind), allocations) = super::probe::measured(|| {
+            serve_one(host, &session, &mut reader, &mut buf, &codecs, cap)
+        });
+        host.probe.request(kind, allocations);
+        if !go {
             break;
         }
     }
