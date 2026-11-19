@@ -81,20 +81,27 @@ inline const uint8_t* bytes_of(std::string_view text) { return reinterpret_cast<
 // (a trace records it), so the size is not asked for first.
 constexpr std::size_t kFirstBuffer = 256 * 1024;
 
-// A text the daemon returns. The text is read into a buffer of kFirstBuffer; a text that does not fit
-// is read again into a buffer of its size, and the size is asked again if the text has grown.
-template <typename Call>
-std::string text_of(Call call) {
-    std::string text(kFirstBuffer, '\0');
+// What a call writes into a buffer the caller gives: `call` takes a buffer, its capacity and the
+// length slot, as the C calls do. The result is read into a buffer of kFirstBuffer; one that does
+// not fit is read again into a buffer of its size, and the size is asked again if it has grown.
+template <typename Buffer, typename Call>
+Buffer sized(Call call) {
+    Buffer out(kFirstBuffer, typename Buffer::value_type{});
     size_t len = 0;
-    daedalus_client_status_t status = call(reinterpret_cast<uint8_t*>(text.data()), text.size(), &len);
+    daedalus_client_status_t status = call(reinterpret_cast<uint8_t*>(out.data()), out.size(), &len);
     while (status == DAEDALUS_CLIENT_BUFFER_TOO_SMALL) {
-        text.assign(len, '\0');
-        status = call(reinterpret_cast<uint8_t*>(text.data()), text.size(), &len);
+        out.assign(len, typename Buffer::value_type{});
+        status = call(reinterpret_cast<uint8_t*>(out.data()), out.size(), &len);
     }
     check(status);
-    text.resize(len);
-    return text;
+    out.resize(len);
+    return out;
+}
+
+// A text the daemon returns.
+template <typename Call>
+std::string text_of(Call call) {
+    return sized<std::string>(call);
 }
 
 // A value a take gives: the call's `present` flag, and its value when it is set. Both are read here,
@@ -200,17 +207,11 @@ public:
     // A made plan of a stored graph: its hash and its bytes. Reads only, so a plan too big for the
     // first buffer is planned again, into a buffer of its size.
     MadePlan make_plan(std::string_view graph, const daedalus_client_config_t& config) const {
-        MadePlan made{0, std::vector<std::uint8_t>(client_detail::kFirstBuffer)};
-        size_t len = 0;
-        daedalus_client_status_t status = daedalus_client_make_plan(
-            handle_, client_detail::bytes_of(graph), graph.size(), &config, &made.hash, made.bytes.data(), made.bytes.size(), &len);
-        while (status == DAEDALUS_CLIENT_BUFFER_TOO_SMALL) {
-            made.bytes.resize(len);
-            status = daedalus_client_make_plan(handle_, client_detail::bytes_of(graph), graph.size(), &config,
-                                               &made.hash, made.bytes.data(), made.bytes.size(), &len);
-        }
-        client_detail::check(status);
-        made.bytes.resize(len);
+        MadePlan made{0, {}};
+        made.bytes = client_detail::sized<std::vector<std::uint8_t>>([&](uint8_t* buf, size_t cap, size_t* len) {
+            return daedalus_client_make_plan(handle_, client_detail::bytes_of(graph), graph.size(), &config, &made.hash,
+                                             buf, cap, len);
+        });
         return made;
     }
 
@@ -387,17 +388,10 @@ private:
 
     template <typename Call>
     static std::optional<std::vector<std::uint8_t>> take_sized(Call call) {
-        std::vector<std::uint8_t> out(client_detail::kFirstBuffer);
-        size_t len = 0;
         uint8_t present = 0;
-        daedalus_client_status_t status = call(out.data(), out.size(), &len, &present);
-        while (status == DAEDALUS_CLIENT_BUFFER_TOO_SMALL) {
-            out.resize(len);
-            status = call(out.data(), out.size(), &len, &present);
-        }
-        client_detail::check(status);
+        std::vector<std::uint8_t> out = client_detail::sized<std::vector<std::uint8_t>>(
+            [&](uint8_t* buf, size_t cap, size_t* len) { return call(buf, cap, len, &present); });
         if (!present) return std::nullopt;
-        out.resize(len);
         return out;
     }
 

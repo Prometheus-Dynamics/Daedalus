@@ -68,18 +68,27 @@ inline const uint8_t* bytes_of(std::string_view text) {
     return reinterpret_cast<const uint8_t*>(text.data());
 }
 
-// A text the library writes: its size is asked for first, then it is read into a buffer that size.
-// `call` takes a buffer and its capacity and the length slot, as the C API's text calls do.
-template <typename Call>
-std::string text_of(Call call) {
+// What the library writes into a buffer the caller gives: `call` takes a buffer, its capacity and
+// the length slot, as the C API's calls do. The size is asked for first with an empty buffer, then
+// the result is read into a buffer that size. The library is in this process, so asking is cheap.
+template <typename Buffer, typename Call>
+Buffer sized(Call call) {
+    Buffer out;
     size_t len = 0;
     daedalus_status_t status = call(nullptr, 0, &len);
-    if (status != DAEDALUS_OK && status != DAEDALUS_BUFFER_TOO_SMALL) throw HostError(status, last_error());
-    std::string text(len, '\0');
-    status = call(reinterpret_cast<uint8_t*>(text.data()), text.size(), &len);
+    while (status == DAEDALUS_BUFFER_TOO_SMALL) {
+        out.assign(len, typename Buffer::value_type{});
+        status = call(reinterpret_cast<uint8_t*>(out.data()), out.size(), &len);
+    }
     check(status);
-    text.resize(len);
-    return text;
+    out.resize(len);
+    return out;
+}
+
+// A text the library writes.
+template <typename Call>
+std::string text_of(Call call) {
+    return sized<std::string>(call);
 }
 
 // A value a take gives: the call's `present` flag, and its value when it is set. Both are read
@@ -284,20 +293,11 @@ public:
     // Takes a bytes value. The size is asked for first with an empty buffer: a value that does not
     // fit waits in the port for the second call, which reads it.
     std::optional<std::vector<uint8_t>> take_bytes(std::string_view port) {
-        size_t len = 0;
         uint8_t present = 0;
-        daedalus_status_t status = daedalus_take_bytes(
-            handle_, host_detail::bytes_of(port), port.size(), nullptr, 0, &len, &present);
-        if (status == DAEDALUS_OK) {
-            if (!present) return std::nullopt;
-            return std::vector<uint8_t>();
-        }
-        if (status != DAEDALUS_BUFFER_TOO_SMALL) host_detail::check(status);
-        std::vector<uint8_t> out(len);
-        host_detail::check(daedalus_take_bytes(
-            handle_, host_detail::bytes_of(port), port.size(), out.data(), out.size(), &len, &present));
+        std::vector<uint8_t> out = host_detail::sized<std::vector<uint8_t>>([&](uint8_t* buf, size_t cap, size_t* len) {
+            return daedalus_take_bytes(handle_, host_detail::bytes_of(port), port.size(), buf, cap, len, &present);
+        });
         if (!present) return std::nullopt;
-        out.resize(len);
         return out;
     }
 
