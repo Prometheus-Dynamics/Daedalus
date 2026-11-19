@@ -434,6 +434,16 @@ impl Context {
 
     /// Opens a device of the caller's own, with the adapters `policy` keeps.
     pub(crate) fn open_under(options: &Options, policy: Policy) -> Result<Context, OpenError> {
+        Context::open_probing(options, policy, denied_nodes)
+    }
+
+    /// As [`open_under`](Self::open_under), with `denied` finding the GPU nodes this user is
+    /// refused: a test counts its calls.
+    pub(crate) fn open_probing(
+        options: &Options,
+        policy: Policy,
+        denied: impl FnOnce() -> Option<String>,
+    ) -> Result<Context, OpenError> {
         let held = driver_lock();
         let wanted = options.apis.to_wgpu();
         let instance = LockedInstance::new(&held, wanted);
@@ -443,14 +453,17 @@ impl Context {
         }
         // With no adapter at all, the usual reason on a board is that this user may not open the
         // GPU's nodes. That is said by name, where a driver only prints it. Adapters the policy
-        // hid are named as such: the nodes may be fine.
-        let mut last = match denied_nodes() {
-            _ if adapters.is_empty() && hidden > 0 => OpenError::Hidden {
+        // hid are named as such: the nodes may be fine. The nodes are probed only then: probing
+        // opens each one, and an open that found an adapter has no use for the answer.
+        let mut last = if !adapters.is_empty() {
+            OpenError::NoAdapter
+        } else if hidden > 0 {
+            OpenError::Hidden {
                 count: hidden,
                 policy: policy.name(),
-            },
-            Some(nodes) if adapters.is_empty() => OpenError::NoAccess(nodes),
-            _ => OpenError::NoAdapter,
+            }
+        } else {
+            denied().map_or(OpenError::NoAdapter, OpenError::NoAccess)
         };
         for adapter in choose(adapters, options) {
             let info = adapter.get_info();

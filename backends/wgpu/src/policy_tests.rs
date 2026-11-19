@@ -74,3 +74,23 @@ fn hardware_hides_every_software_adapter_and_says_so() {
         }
     }
 }
+
+/// A device that opens never probes the GPU's nodes: finding which ones this user is refused
+/// opens each `/dev/dri` node for writing, which a gate pinned to a software adapter must not do.
+/// The probe is asked only when no adapter was found, the one case its answer is used.
+#[test]
+fn an_open_that_finds_an_adapter_probes_no_gpu_node() {
+    let (software, _) = enumerate(Policy::Software);
+    if software.is_empty() {
+        assert!(!required(), "this lane needs a software adapter");
+        return;
+    }
+    drop(software);
+    let probed = std::cell::Cell::new(0);
+    let opened = Context::open_probing(&Options::default(), Policy::Software, || {
+        probed.set(probed.get() + 1);
+        None
+    });
+    assert!(opened.is_ok(), "the software adapter opens");
+    assert_eq!(probed.get(), 0, "no GPU node was probed");
+}
