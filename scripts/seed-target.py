@@ -2,9 +2,17 @@
 """A seed of dependency builds, to start a new checkout's build directory from.
 
     seed-target.py save SEED   SEED becomes this checkout's build directory less the workspace's
-                               own builds: the dependencies only
+                               own builds: the dependencies only, with the key they were built at
     seed-target.py use SEED    a build directory that doesn't exist yet starts as a copy of SEED
+    seed-target.py stale SEED  exits 1 when SEED is missing or was built at another key than this
+                               checkout's: the time to save a new one
     seed-target.py --self-test
+
+A seed's key is what its builds were made from: the lock file, the toolchain, cargo's
+configuration, the build profiles and the compiler (`rustc -vV`). It is written into the seed as
+KEY_FILE when the seed is saved. A seed is only read: `use` copies it, and nothing writes into it
+after `save`. Its key never decides what is fresh: cargo checks every seeded build against the
+source, so a seed made at another key only means more to build, and `use` says so.
 
 The workspace's own builds never go in a seed. Cargo would take them as fresh in another checkout,
 and they carry the paths of the checkout that built them (`env!("CARGO_MANIFEST_DIR")`). The
@@ -23,6 +31,7 @@ The build directory is CARGO_TARGET_DIR, or `target` in this checkout. Copies sh
 where the file system can (btrfs, XFS); a seed is replaced whole, under a lock beside it.
 """
 import fcntl
+import hashlib
 import json
 import os
 import shutil
@@ -37,6 +46,10 @@ ONLY_OURS = ["doc", "test-parallel-times.json", ".daedalus-checkout"]
 HOLDING_BUILDS = ["tests", "tmp"]
 # Build directories laid out as the main one, inside it.
 BESIDE = ["variants"]
+# Written into a seed by `save`: the key its builds were made at.
+KEY_FILE = ".daedalus-seed-key"
+# The files a seed's key covers, besides the build profiles in Cargo.toml and the compiler.
+KEYED = ["Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml"]
 
 
 def target():
@@ -119,8 +132,49 @@ def strip(directory, ours):
                 remove(path)
 
 
+def profiles(manifest):
+    """The `[profile...]` tables of a manifest's text, as written."""
+    kept, inside = [], False
+    for line in manifest.splitlines():
+        if line.startswith("["):
+            inside = line.startswith("[profile")
+        if inside:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def key():
+    """What a build directory's dependency builds are made from, each part by its content's hash."""
+    def digest(data):
+        return hashlib.sha256(data if isinstance(data, bytes) else data.encode()).hexdigest()
+    parts = {}
+    for name in KEYED:
+        path = os.path.join(ROOT, name)
+        parts[name] = digest(open(path, "rb").read()) if os.path.exists(path) else None
+    parts["profiles"] = digest(profiles(open(os.path.join(ROOT, "Cargo.toml")).read()))
+    parts["rustc"] = digest(subprocess.run(["rustc", "-vV"], cwd=ROOT, check=True,
+                                           capture_output=True, text=True).stdout)
+    return parts
+
+
+def key_of(seed):
+    try:
+        with open(os.path.join(seed, KEY_FILE)) as file:
+            return json.load(file)
+    except (OSError, ValueError):
+        return None
+
+
+def differs(had, want):
+    """The parts of a key that differ, by name; every part when there is no key."""
+    if had is None:
+        return sorted(want)
+    return sorted(name for name in set(had) | set(want) if had.get(name) != want.get(name))
+
+
 def copy(source, destination):
-    subprocess.run(["cp", "-a", "--reflink=auto", source, destination], check=True)
+    # Always by reflink: a seed copied block by block costs a build directory's disk per slot.
+    subprocess.run(["cp", "-a", "--reflink=always", source, destination], check=True)
 
 
 def save(seed):
@@ -136,6 +190,8 @@ def save(seed):
         os.rmdir(fresh)
         copy(source, fresh)
         strip(fresh, ours)
+        with open(os.path.join(fresh, KEY_FILE), "w") as file:
+            json.dump(key(), file, indent=0, sort_keys=True)
         old = seed + ".old"
         remove(old)
         if os.path.exists(seed):
@@ -149,8 +205,16 @@ def save(seed):
 def use(seed):
     seed = os.path.abspath(seed)
     destination = target()
-    if os.path.exists(destination) or not os.path.isdir(seed):
+    if os.path.exists(destination):
         return 0
+    if not os.path.isdir(seed):
+        print(f"seed: no seed at {seed}: {destination} starts empty, and every dependency builds",
+              file=sys.stderr)
+        return 0
+    other = differs(key_of(seed), key())
+    if other:
+        print(f"seed: {seed} was built at another {', '.join(other)}: what changed builds again",
+              file=sys.stderr)
     with open(seed + ".lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_SH)
         parent = os.path.dirname(destination)
@@ -222,14 +286,38 @@ def self_test():
             if os.path.exists(path):
                 print(f"seed self-test: our {os.path.relpath(path, top)} was kept", file=sys.stderr)
                 failed = 1
+    # A key names each part that differs, and a seed with no key differs in every part.
+    want = {"Cargo.lock": "a", "rustc": "b", "profiles": "c"}
+    for had, names in ((dict(want), []), ({**want, "Cargo.lock": "z"}, ["Cargo.lock"]),
+                       ({**want, "rustc": "z", "profiles": "y"}, ["profiles", "rustc"]),
+                       (None, ["Cargo.lock", "profiles", "rustc"])):
+        if differs(had, want) != names:
+            print(f"seed self-test: a key {had} against {want} differs in {differs(had, want)}, "
+                  f"not {names}", file=sys.stderr)
+            failed = 1
+    if profiles("[a]\nx = 1\n[profile.dev]\nopt-level = 1\n[b]\ny = 2\n") != \
+            "[profile.dev]\nopt-level = 1":
+        print("seed self-test: the profiles were not read from the manifest alone", file=sys.stderr)
+        failed = 1
     if not failed:
         print("seed self-test: only the dependencies' builds were kept")
     return failed
 
 
+def stale(seed):
+    other = differs(key_of(os.path.abspath(seed)), key())
+    if other:
+        print(f"seed: {seed} is stale: {', '.join(other)}")
+        return 1
+    print(f"seed: {seed} was built at this checkout's key")
+    return 0
+
+
 def main(args):
     if args == ["--self-test"]:
         return self_test()
+    if len(args) == 2 and args[0] == "stale":
+        return stale(args[1])
     if len(args) == 2 and args[0] == "save":
         return save(args[1])
     if len(args) == 2 and args[0] == "use":

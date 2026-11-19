@@ -297,7 +297,7 @@ def self_test():
             scripts = os.path.dirname(me)
             tree = os.path.join(tmp, "tree")
             os.makedirs(os.path.join(tree, "scripts", "ci.d"))
-            for name in ("ci.sh", "bounded.py", "test-parallel.py"):
+            for name in ("ci.sh", "bounded.py", "test-parallel.py", "fixture-locks.sh"):
                 shutil.copy(os.path.join(scripts, name), os.path.join(tree, "scripts", name))
             plant = (f"sleep 600 & echo $! >> {pids}; (sleep 600 & echo $! >> {pids}; wait) & "
                      f"echo $! >> {pids}; sleep 600")
@@ -332,6 +332,10 @@ def self_test():
                     "target": {"kind": ["test"], "name": name}}))
             cargo = os.path.join(tree, "cargo")
             write(cargo, "#!/bin/sh\ncat <<'EOF'\n" + "\n".join(artifacts) + "\nEOF\n")
+            # The sleeper's committed slowest green run, 400 s, bounds it at 1200 s (4 s scaled),
+            # where its build directory has no record of it (600 s, 2 s scaled).
+            write(os.path.join(tree, "scripts", "test-slowest.json"),
+                  json.dumps({"planted test sleeper": 400.0}))
             os.remove(pids)
             code, out, took, ended = capture(
                 [sys.executable, "-I", os.path.join(tree, "scripts", "test-parallel.py")], 30,
@@ -339,11 +343,11 @@ def self_test():
             started += planted(pids)
             check("a test binary past its bound fails, named",
                   code == 1 and "planted test sleeper: TIMED OUT" in out
-                  and "planted test sleeper: still running at its bound of 2 s" in out)
+                  and "planted test sleeper: still running at its bound of 4 s" in out)
             check("a binary's orphan is stopped and named, and the binary still passes",
                   "planted test orphan: ok" in out and "(left 2 running: stopped)" in out)
             check("the run's output ends within the bound and the grace",
-                  ended and took < 2 + GRACE + 3)
+                  ended and took < 4 + GRACE + 3)
             check("nothing the binaries started is left running", gone(planted(pids)))
 
             # A step that leaves a file in its TMPDIR fails, naming it; a clean step passes. Both

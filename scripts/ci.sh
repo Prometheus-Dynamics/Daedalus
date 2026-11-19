@@ -21,6 +21,7 @@ fi
 if [[ -n "${DAEDALUS_TARGET_SEED:-}" ]]; then
   scripts/seed-target.py use "$DAEDALUS_TARGET_SEED"
 fi
+scripts/fixture-locks.sh
 target="${CARGO_TARGET_DIR:-target}"
 mkdir -p "$target"
 owner="$(cat "$target/.daedalus-checkout" 2>/dev/null || true)"

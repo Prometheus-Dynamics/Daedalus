@@ -59,16 +59,17 @@ named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` ru
 | `semver` | Semantic versioning against the `SEMVER_BASELINE` tag; reports and never fails the gate |
 | `smoke` | The examples run and print what they should |
 | `doc` | The API docs build with no warning, and every link in `docs/` resolves |
-| `tools` | `scripts/affected.py`, `scripts/prune-targets.py`, `scripts/seed-target.py` and `scripts/bounded.py` against planted cases; the bounds against a planted sleeper and an orphan that holds the output, in `scripts/ci.sh` and `scripts/test-parallel.py` |
+| `tools` | `scripts/affected.py`, `scripts/prune-targets.py`, `scripts/seed-target.py`, `scripts/fixture-locks.sh` and `scripts/bounded.py` against planted cases; the bounds against a planted sleeper and an orphan that holds the output, in `scripts/ci.sh` and `scripts/test-parallel.py` |
 
 Every step runs under a hard bound, written in its own file as `# bound: N s`: three times its
 slowest green run, and never under a minute (the three scripts the scripts lane runs after its
 steps carry one too). `scripts/bounded.py` runs each in a process group of its own. Past its bound
 the group gets TERM, then KILL, and the step fails, named. A step that ends but leaves something
 running in its group has that stopped and named. Each test binary `scripts/test-parallel.py` runs
-is bounded the same way, at three times the slowest it has passed in (as the times file in the
-build directory records it), never under a minute, and 600 s for a binary with no passing run on
-record; its output goes to a file, so a child left holding it can't block the run.
+is bounded the same way, at three times the slowest it has passed in, never under a minute, and
+600 s for a binary with no passing run on record. The slowest is the larger of the build directory's
+times file and `scripts/test-slowest.json`, each binary's slowest green run in cold gates on fresh
+slots, committed: a warm build directory's own record can be one quick pass; its output goes to a file, so a child left holding it can't block the run.
 `DAEDALUS_BOUND_SCALE` multiplies every bound; the hosted CI runners set it to 4. A step whose
 slowest green run grows past a third of its bound gets a new bound in the same change. The slowest
 run is a cold one: a fresh checkout with an empty build directory, as a gate on a new machine runs.
@@ -79,8 +80,8 @@ a `TMPDIR` every gate run shares pile up until unrelated steps fail. A cache mea
 run (the budget fixture's copies) goes in `DAEDALUS_GATE_TMPDIR`, the gate's own `TMPDIR`.
 
 Time a step, or the gate, in the environment the merge gate runs it in: `CARGO_INCREMENTAL=0`, the
-same job count and cores, and no dependency seed. An incremental build in a warm checkout is a
-different measurement, and a cut that only holds there is not one.
+same job count and cores, and the seed it starts from (or none, for a cold build). An incremental
+build in a warm checkout is a different measurement, and a cut that only holds there is not one.
 
 To add a check, add an executable `scripts/ci.d/<step>.sh` with its `# bound:` line. A check that needs an environment of
 its own gets a workflow of its own: `Portability` (other targets under qemu, and Windows), `GPU`
@@ -109,6 +110,17 @@ save SEED` keeps this checkout's build directory, less the workspace's own build
 The workspace's own builds never go in a seed: they carry the paths of the checkout that built
 them. Cargo checks every seeded build against the source, so an old seed only means more to build.
 The build directories inside it, trybuild's and the test fixtures' under `tmp`, are seeded the same way.
+A seed is copied by reflink, so a copy costs only the blocks a build then changes, and nothing
+writes into a seed once it is saved. `save` records the key its builds were made at (the lock file,
+the toolchain, cargo's configuration, the build profiles and `rustc -vV`); `stale SEED` exits 1 when
+this checkout's key differs, which is when a new seed is worth building, from an empty build
+directory and apart from any gate that uses one. The key never decides what is fresh: a seed made
+at an older lock file was shown to rebuild exactly the dependency that changed and the packages
+that depend on it.
+
+The test fixtures build on their own, outside the workspace, and their lock files aren't committed.
+`scripts/fixture-locks.sh` gives a fixture with none a lock made from the root one, before the gate's
+lanes start, so a fixture builds the workspace's versions of what they share.
 
 ## Adding a backend
 

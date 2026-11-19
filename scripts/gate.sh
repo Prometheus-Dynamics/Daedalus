@@ -37,6 +37,8 @@ done
 if [[ -n "${DAEDALUS_TARGET_SEED:-}" ]]; then
   scripts/seed-target.py use "$DAEDALUS_TARGET_SEED"
 fi
+# The fixtures' lock files too: lanes that build a fixture and a lane that reads its lock run at once.
+scripts/fixture-locks.sh
 
 logs="$(mktemp -d)"
 # Each lane runs in a process group of its own, whose id is the lane's pid, captured as it starts.

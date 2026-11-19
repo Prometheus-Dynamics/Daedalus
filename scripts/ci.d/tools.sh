@@ -8,6 +8,7 @@ set -euo pipefail
 python3 -I scripts/affected.py --self-test
 python3 -I scripts/prune-targets.py --self-test
 python3 -I scripts/seed-target.py --self-test
+scripts/fixture-locks.sh --self-test
 python3 -I testing/crates/budget-harness/record.py --self-test
 python3 -I scripts/bounded.py --self-test
 # A build directory another checkout built in is refused before anything builds.
