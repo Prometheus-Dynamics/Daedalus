@@ -52,7 +52,7 @@ named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` ru
 | `chip` | The firmware builds and their flash and RAM |
 | `wasm` | The WebAssembly builds, run under Node |
 | `gpu-async-blocking`, `gpu-driver-lock` | Two rules of the GPU backend |
-| `budgets` | The budget table: instructions, allocations, firmware sizes |
+| `budgets` | The budget table: instructions, allocations, firmware sizes. A measurement is kept in the build directory under a key of everything it was measured from, and used again while that is unchanged; `BUDGETS_FRESH=1` measures again |
 | `capability` | The audit of what the earlier branch could do |
 | `packaging` | The daemon's unit files and sample config |
 | `package` | Every publishable crate lists its files with no warning and has the registry metadata |

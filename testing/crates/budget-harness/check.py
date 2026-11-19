@@ -3,6 +3,11 @@
 
     check.py             measure and check every row this machine can, then the planted rows
     check.py --self-test only the planted rows: each must fail
+    check.py --fresh     measure again, whatever was measured before (or BUDGETS_FRESH=1)
+
+What is measured is kept in the build directory under a key of everything it was measured from
+(record.py), and used again while the key is the same: the binaries are the same bytes then, so
+are their counts. The limits are checked every time.
 
 A row whose tool is missing is reported as not run. With BUDGETS_REQUIRE_ALL=1, as in the
 budgets workflow, a row that could not be run is a failure.
@@ -12,13 +17,23 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import importlib.util
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
 HARNESS = os.path.join(TARGET, "release", "daedalus-budget-harness")
-FIXTURE_DIR = os.path.join(TARGET, "tmp", "dylib-fixture")
+# The fixture's dependencies are outside its workspace, so cargo hashes their absolute paths into
+# its symbols: built in the checkout, the library would differ by checkout. The budgets build it from
+# a copy at a path named by the key instead, the same for every checkout with these inputs.
+FIXTURE_DIR = os.path.join(TARGET, "tmp", "dylib-fixture-budgets")
+COPIES = os.path.join(tempfile.gettempdir(), "daedalus-budgets")
+RECORD = os.path.join(TARGET, "budgets-record.json")
+_spec = importlib.util.spec_from_file_location("record", os.path.join(os.path.dirname(__file__), "record.py"))
+record = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(record)
 REQUIRE_ALL = os.environ.get("BUDGETS_REQUIRE_ALL") == "1"
 LOW, HIGH = 1000, 3000
 
@@ -32,9 +47,28 @@ def run(args, **kwargs):
     return subprocess.run(args, cwd=ROOT, check=True, text=True, **kwargs)
 
 
-def build():
+def fixture_copy(key):
+    """The fixture's sources at COPIES/<key>: made once, whole, by a rename, and never changed."""
+    copy = os.path.join(COPIES, key[:16])
+    if not os.path.isdir(copy):
+        making = f"{copy}.{os.getpid()}"
+        for path in record.fixture_files():
+            os.makedirs(os.path.dirname(os.path.join(making, path)), exist_ok=True)
+            shutil.copy2(os.path.join(ROOT, path), os.path.join(making, path))
+        try:
+            os.rename(making, copy)
+        except OSError:  # another checkout with the same inputs made it first
+            shutil.rmtree(making, ignore_errors=True)
+    # The newest few are kept.
+    for old in sorted(os.scandir(COPIES), key=lambda e: e.stat().st_mtime, reverse=True)[8:]:
+        if old.is_dir() and "." not in old.name:
+            shutil.rmtree(old.path, ignore_errors=True)
+    return copy
+
+
+def build(key):
     run(["cargo", "build", "-q", "--release", "-p", "daedalus-budget-harness"], env=CODE_ENV)
-    manifest = os.path.join(ROOT, "testing", "fixtures", "dylib", "Cargo.toml")
+    manifest = os.path.join(fixture_copy(key), "testing", "fixtures", "dylib", "Cargo.toml")
     run(["cargo", "build", "-q", "--manifest-path", manifest, "--target-dir", FIXTURE_DIR])
     return os.path.join(FIXTURE_DIR, "debug", "libdaedalus_dylib_fixture.so")
 
@@ -95,20 +129,39 @@ def sections(path):
     return flash, ram
 
 
-def firmware(row):
-    values = []
-    for target in row["targets"]:
-        run(["cargo", "build", "-q", "--target", target, "--profile", "chip",
-             "-p", "daedalus-chip-blink", "--bins"], env=CODE_ENV)
-        values.append((target, *sections(os.path.join(TARGET, target, "chip", row["binary"]))))
-    return values
+def firmware(row, target):
+    """(flash, ram) of the row's binary built for `target`."""
+    run(["cargo", "build", "-q", "--target", target, "--profile", "chip",
+         "-p", "daedalus-chip-blink", "--bins"], env=CODE_ENV)
+    return sections(os.path.join(TARGET, target, "chip", row["binary"]))
+
+
+def measure(rows, wanted, self_test, have_valgrind, values, key):
+    """Fills `values` with what this run needs and it doesn't hold yet. True when it built."""
+    elf = [(row, target) for row in rows if row["tool"] == "elf" and not self_test
+           for target in row["targets"]]
+    missing_ir = [c for c in wanted if have_valgrind and c not in values.get("ir", {})]
+    missing_elf = [(row, t) for row, t in elf if f"{row['binary']} {t}" not in values.get("elf", {})]
+    if not (missing_ir or missing_elf or "planted_alloc" not in values
+            or (not self_test and "alloc" not in values)):
+        return False
+    fixture = build(key)
+    if missing_ir and have_valgrind:
+        values.setdefault("ir", {}).update(instructions_of(missing_ir, fixture))
+    if not self_test and "alloc" not in values:
+        values["alloc"] = allocations(fixture)
+    if "planted_alloc" not in values:
+        values["planted_alloc"] = allocations(fixture, planted=True)["alloc_fused_tick"]
+    for row, target in missing_elf:
+        flash, ram = firmware(row, target)
+        values.setdefault("elf", {})[f"{row['binary']} {target}"] = [flash, ram]
+    return True
 
 
 def main():
     with open(os.path.join(ROOT, "testing", "budgets", "budgets.toml"), "rb") as file:
         rows = tomllib.load(file)["row"]
     self_test = "--self-test" in sys.argv[1:]
-    fixture = build()
     have_valgrind = shutil.which("valgrind") is not None
     failures, skipped = [], []
 
@@ -117,14 +170,23 @@ def main():
         if not ok:
             failures.append(name)
 
-    measured = {}
     # Every callgrind row, and the planted pair, counted at once.
     wanted = [] if self_test else [row["command"] for row in rows if row["tool"] == "callgrind"]
     if have_valgrind:
         wanted += ["chain {n} 16", "chain {n} 16 extra"]
-    counted_ir = instructions_of(wanted, fixture) if have_valgrind else {}
+    wanted = list(dict.fromkeys(wanted))
+    key = record.key()
+    fresh = "--fresh" in sys.argv[1:] or os.environ.get("BUDGETS_FRESH") == "1"
+    values = {} if fresh else (record.load(RECORD, key) or {})
+    if measure(rows, wanted, self_test, have_valgrind, values, key):
+        record.save(RECORD, key, values)
+        print(f"  measured, kept under {key[:12]}")
+    else:
+        print(f"  measured before from the same inputs ({key[:12]}): used again; --fresh measures again")
+    counted_ir = values.get("ir", {})
+    measured = {}
     if not self_test:
-        counted = allocations(fixture)
+        counted = values["alloc"]
         for row in rows:
             name, tool = row["name"], row["tool"]
             if tool == "callgrind":
@@ -141,7 +203,8 @@ def main():
                 value = counted[name]
                 report(name, f"{value} allocations (limit {row['limit']})", value <= row["limit"])
             elif tool == "elf":
-                for target, flash, ram in firmware(row):
+                for target in row["targets"]:
+                    flash, ram = values["elf"][f"{row['binary']} {target}"]
                     ok = flash <= row["limit_flash"] and ram <= row["limit_ram"]
                     report(f"{name} {target}", f"{flash} B flash, {ram} B RAM (limit "
                            f"{row['limit_flash']}, {row['limit_ram']})", ok)
@@ -156,7 +219,7 @@ def main():
 
     # The planted regressions: a check that cannot fail checks nothing.
     planted_failures = []
-    planted = allocations(fixture, planted=True)["alloc_fused_tick"]
+    planted = values["planted_alloc"]
     limit = next(row["limit"] for row in rows if row["name"] == "alloc_fused_tick")
     if planted <= limit:
         planted_failures.append("a stage that allocates every tick passed the allocation row")
