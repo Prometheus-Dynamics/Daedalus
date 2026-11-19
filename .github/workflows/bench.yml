@@ -47,6 +47,9 @@ jobs:
       - run: ./scripts/ci.sh budgets
         env:
           BUDGETS_REQUIRE_ALL: "1"
+          # The local gate uses a measurement again while its inputs are the same; here every row
+          # is measured, whatever the restored build directory kept.
+          BUDGETS_FRESH: "1"
 
   timings:
     runs-on: ubuntu-latest

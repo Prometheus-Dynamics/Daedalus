@@ -61,9 +61,14 @@ merges, and that run is the proof.
   hope.
 - Heavy jobs at once never outnumber the cores they are given (`taskset`, `CARGO_BUILD_JOBS`). More
   build or test chains than cores makes every one of them slower and flakier.
-- A worker starts warm. The next item reuses a kept worktree and its build directory once the
-  previous item has landed; otherwise the build directory starts from the seed
-  (`DAEDALUS_TARGET_SEED`, see `docs/development.md`). Never a cold build per item.
+- A worker starts warm, in a kept slot: a worktree at a fixed path with a build directory of its
+  own beside it. Slots are made once, from the seed (`DAEDALUS_TARGET_SEED`, see
+  `docs/development.md`), and kept. A worker takes a free slot and moves it to the item's base
+  commit (`git checkout --detach <base>`, then the item's branch); it never deletes the slot or
+  moves its path. Cargo keys its builds by absolute path, so a slot at the same path rebuilds only
+  what the item changes, and a new path rebuilds the whole workspace. One worker in a slot at a
+  time; more workers at once than slots means making another slot, never sharing one. Never a cold
+  build per item.
 - A brief names the exact base commit and the files in scope, and is small enough to finish in one
   context. Long work hands off through a written state file, so a worker that runs out of room costs
   minutes, not the item.
