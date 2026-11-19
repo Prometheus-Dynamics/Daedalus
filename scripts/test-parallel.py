@@ -17,8 +17,12 @@ package, and the target's library directories on the library path.
 With DAEDALUS_TEST_PACKAGES set to package names, only those packages' binaries run, from the
 same build: scripts/check.sh runs a change's packages this way. The gate unsets it.
 
-Each binary runs under a bound: three times the slowest it has passed in, as the times file in the
-build directory records it, and never under FLOOR; a binary with no passing run on record gets
+Each binary runs under a bound: three times the slowest it has passed in, and never under FLOOR.
+The slowest is the larger of two records: the times file in the build directory, and SLOWEST, the
+slowest green run of each binary in gates on fresh slots under load, committed with the tree. A
+build directory's own record is too short to bound a binary by alone: a warm one that has seen one
+quick pass stopped a binary at 83 s that passes in 67 s cold. A binary with no passing run on
+either record gets
 UNKNOWN, three times the slowest any binary has passed in at a gate (192 s, the wgpu-author compile
 tests under three gates at once). Each runs in a process group of its own (scripts/bounded.py): past
 its bound the group is stopped and the binary fails, named, and what a binary leaves running when it
@@ -45,6 +49,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
 TIMES = os.path.join(TARGET, "test-parallel-times.json")
 CARGO = os.environ.get("CARGO", "cargo")
+# The slowest green run of each binary in cold and loaded gates (`scripts/ci.sh` in a fresh slot).
+SLOWEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test-slowest.json")
 FLOOR = 60.0
 UNKNOWN = 600.0
 
@@ -141,10 +147,17 @@ def main():
     jobs = [[m] for m in found if m not in shared] + ([shared] if shared else [])
     jobs.sort(key=lambda job: -sum(last.get(label(m), [0.0])[0] for m in job))
 
+    try:
+        with open(SLOWEST) as file:
+            committed = json.load(file)
+    except (OSError, ValueError):
+        committed = {}
+
     def bound(name):
-        if last.get(name, [0.0, None])[1] is None:
+        slowest = max(last.get(name, [0.0, None])[1] or 0.0, committed.get(name, 0.0))
+        if not slowest:
             return scaled(UNKNOWN)
-        return scaled(max(FLOOR, 3 * last[name][1]))
+        return scaled(max(FLOOR, 3 * slowest))
 
     groups, groups_lock = set(), threading.Lock()
 
