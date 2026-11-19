@@ -1,6 +1,6 @@
 //! The generated module matches the node functions.
 
-mod common;
+use crate::common;
 
 #[allow(dead_code)]
 mod generated {

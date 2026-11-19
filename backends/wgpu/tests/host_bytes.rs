@@ -1,7 +1,7 @@
 //! An author's own type across the host boundary: what the backend lists for it, and the two
 //! steps run on a real device.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

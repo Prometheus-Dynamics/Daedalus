@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-capi"
 description = "The C surface: load plugins, compile a graph, push, tick and take, from any language that calls C."
 version.workspace = true
@@ -35,3 +37,12 @@ print_stderr = "deny"
 print_stdout = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "surface"
+path = "tests/surface.rs"

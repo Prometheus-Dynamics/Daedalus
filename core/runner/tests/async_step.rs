@@ -1,7 +1,7 @@
 //! A body returns `Pending` with a fence backed by a future. The future completes on another
 //! thread, and the consumers wake once.
 
-mod support;
+use crate::support;
 
 use std::future::Future;
 use std::pin::Pin;

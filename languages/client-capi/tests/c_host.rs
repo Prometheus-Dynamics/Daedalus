@@ -3,7 +3,7 @@
 
 #![cfg(unix)]
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::process::Command;

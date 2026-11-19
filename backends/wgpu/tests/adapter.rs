@@ -2,7 +2,7 @@
 
 #![allow(clippy::print_stderr)] // which adapter opened is this test's record
 
-mod common;
+use crate::common;
 
 #[test]
 fn this_adapter_classifies_and_reports_its_limits() {

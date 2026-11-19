@@ -1,6 +1,6 @@
 //! The canonical fixtures, through the fixture worker, in two rounds each.
 
-mod support;
+use crate::support;
 
 use daedalus_worker_conformance::run_all;
 

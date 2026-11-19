@@ -2,7 +2,7 @@
 
 #![cfg(target_os = "linux")]
 
-mod support;
+use crate::support;
 
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;

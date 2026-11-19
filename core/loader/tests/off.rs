@@ -1,7 +1,7 @@
 //! Off, the default, checks nothing: a loader made with it loads a library as it always did, on
 //! every platform.
 
-mod support;
+use crate::support;
 
 use daedalus_integrity::{Integrity, Mode};
 use daedalus_loader::Loader;

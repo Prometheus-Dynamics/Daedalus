@@ -1,7 +1,7 @@
 //! Output reuse: unchanged inputs replay, a change reruns, and an upstream change invalidates the
 //! chain. Replays are by handle and failed runs store nothing.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};

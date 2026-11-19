@@ -97,7 +97,7 @@ impl UploadStep {
     /// Whether `storage` is on a device other than this step's: a named one when this is the
     /// default's step, or any other when this is a named one's.
     fn is_foreign(&self, storage: &Storage) -> bool {
-        crate::devices::slot_of(storage.context.key) != self.slot
+        storage.context.named_slot() != self.slot
     }
 
     /// A buffer on this step's device holding the bytes of `foreign`, read through the host.

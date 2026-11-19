@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 
 use daedalus_abi::Step;
 use daedalus_runner::{MaskError, SlotKind, SlotSpec};

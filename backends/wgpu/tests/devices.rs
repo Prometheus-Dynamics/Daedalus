@@ -1,7 +1,7 @@
 //! Two devices in one process: each a backend of its own to the planner, with its own memory,
 //! and the only way between them the one through the host.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

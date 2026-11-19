@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-wire"
 description = "The worker wire protocol: framing, typed values and the worker messages."
 version.workspace = true
@@ -17,3 +19,12 @@ daedalus-registry = { path = "../registry" }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "alloc"
+path = "tests/alloc.rs"

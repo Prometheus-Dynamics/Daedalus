@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-lang-node"
 description = "The Node worker SDK, and the check that runs the canonical fixtures through it."
 version.workspace = true
@@ -15,3 +17,7 @@ daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

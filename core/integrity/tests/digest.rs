@@ -1,6 +1,6 @@
 //! SHA-256 vectors, the text form of a digest, and hashing a file.
 
-mod support;
+use crate::support;
 
 use std::io::Write;
 

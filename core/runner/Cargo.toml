@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-runner"
 description = "Walks a solved step list with no heap: the tick loop, dirty bits, and slot queues."
 version.workspace = true
@@ -45,3 +47,37 @@ print_stderr = "deny"
 print_stdout = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "cancel"
+path = "tests/cancel.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "fence"
+path = "tests/fence.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "lanes_alloc"
+path = "tests/lanes_alloc.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "no_alloc"
+path = "tests/no_alloc.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "progress_handle"
+path = "tests/progress_handle.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "telemetry"
+path = "tests/telemetry.rs"

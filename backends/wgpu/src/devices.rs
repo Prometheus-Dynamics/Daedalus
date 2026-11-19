@@ -23,6 +23,8 @@ pub(crate) struct Named {
     pub(crate) name: Arc<str>,
     /// The backend's id, `wgpu.<name>`.
     pub(crate) id: String,
+    /// Held by the backend alone: its device knows whose it is by this, without holding it.
+    pub(crate) alive: Arc<()>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,13 +67,6 @@ pub(crate) fn link(slot: usize) -> Option<Arc<Link>> {
     let named = NAMED.lock().unwrap_or_else(PoisonError::into_inner);
     let (_, link) = named.get(slot.checked_sub(1)?)?.as_ref()?;
     link.upgrade()
-}
-
-/// Which named device has the open device `key`, or 0 when none does.
-pub(crate) fn slot_of(key: u64) -> usize {
-    (1..=MAX_NAMED)
-        .find(|&slot| link(slot).is_some_and(|link| link.open_key() == Some(key)))
-        .unwrap_or(0)
 }
 
 /// The device a transfer of `slot` goes to: the named one, or for slot 0 the device a backend
@@ -118,6 +113,7 @@ impl WgpuBackend {
                 slot: free + 1,
                 id: format!("wgpu.{name}"),
                 name: Arc::clone(&name),
+                alive: Arc::default(),
             },
         ));
         named[free] = Some((name, Arc::downgrade(&link)));

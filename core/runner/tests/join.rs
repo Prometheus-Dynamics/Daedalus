@@ -1,6 +1,6 @@
 //! Joins, held inputs and fan-in order, with plain-function steps.
 
-mod support;
+use crate::support;
 
 use std::sync::{Arc, Mutex};
 

@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalusd"
 description = "The Daedalus daemon: one host, served to clients over a unix socket, loopback TCP or stdio."
 version.workspace = true
@@ -36,3 +38,7 @@ daedalus-graph = { path = "../../core/graph" }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

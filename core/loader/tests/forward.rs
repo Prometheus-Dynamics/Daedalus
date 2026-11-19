@@ -2,7 +2,7 @@
 //! runner moves the value when the node is its only reader, and takes another reference when it
 //! isn't. Either way nothing is copied and nothing is released twice.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

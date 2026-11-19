@@ -2,8 +2,7 @@
 
 #![cfg(feature = "blob")]
 
-#[path = "shared/blob_fixture.rs"]
-mod fixture;
+use crate::fixture;
 
 use daedalus_cpu::blob::{
     ConstDesc, Interpreter, Library, LoadError, ParamDesc, PlanDesc, ScalarKind, Source, encode,

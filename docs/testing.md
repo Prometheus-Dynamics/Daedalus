@@ -47,7 +47,13 @@ directly, not through cargo, so the repo's default does not reach it.
 
 ## Where tests live
 
-- A crate's own tests are in its `tests/`.
+- A crate's own tests are in its `tests/`. Where a crate has more than one such file, they are
+  modules of one test binary, `tests/all.rs`, which is one link instead of one per file. A file
+  that needs a process to itself (it installs a global allocator, counts the process's file
+  descriptors, runs trybuild, or includes generated source that names the crate root) is a
+  `[[test]]` of its own in the crate's `Cargo.toml`, with the reason beside it. Such a crate sets
+  `autotests = false`, and the boundary check refuses a test file that is in neither. To run one
+  file's tests: `cargo test -p <crate> --test all -- <file>::`.
 - A core crate cannot depend on a backend, so tests that need both are in `testing/crates/`:
   `planner` (the planner with the simulated backend), `conformance` (the rules every backend
   keeps), `worker-conformance` (the fixtures every language's worker serves).

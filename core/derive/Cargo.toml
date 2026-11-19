@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-derive"
 description = "Derives for config types and named types."
 version.workspace = true
@@ -24,3 +26,12 @@ trybuild = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: runs trybuild, which the runner keeps one at a time.
+[[test]]
+name = "ui"
+path = "tests/ui.rs"

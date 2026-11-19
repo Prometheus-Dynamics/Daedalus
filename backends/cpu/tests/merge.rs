@@ -2,7 +2,7 @@
 
 #![cfg(feature = "merge")]
 
-mod common;
+use crate::common;
 
 use common::value;
 use daedalus_abi::testing::run_once;

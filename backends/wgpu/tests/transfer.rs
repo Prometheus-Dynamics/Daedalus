@@ -1,7 +1,7 @@
 //! The moves between the host and the device: what the backend offers the planner, and each
 //! step run on a real device.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

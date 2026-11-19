@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-lang-cpp-sdk"
 description = "The C worker SDK's API, in Rust: the functions of daedalus_worker.h, built as a static library that a C or C++ worker links."
 version.workspace = true
@@ -29,3 +31,7 @@ print_stderr = "deny"
 print_stdout = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

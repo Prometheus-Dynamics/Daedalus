@@ -31,8 +31,8 @@ echo "  trees: no daedalus-backend-process in the daemon built without workers"
 
 # The full build's test writes the made plan that uses a worker, which the lean build refuses by name.
 # So the full run comes first.
-cargo test --locked -q -p daedalusd --features workers --test workers ||
+cargo test --locked -q -p daedalusd --features workers --test all -- workers:: ||
   fail "the daemon with workers: its worker tests fail"
-cargo test --locked -q -p daedalusd --no-default-features --test workers ||
+cargo test --locked -q -p daedalusd --no-default-features --test all -- workers:: ||
   fail "the daemon without workers: its worker test fails"
 echo "  daedalusd without workers: a config that names workers is refused, and a made plan that needs one is refused"

@@ -6,7 +6,7 @@
 //! against the wire's corpus; this client's codec is the Rust one, so the corpus is checked by the
 //! Rust client's tests instead.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::process::Command;

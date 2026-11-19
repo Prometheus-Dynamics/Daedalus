@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-client-capi"
 description = "The client's C surface: connect to the daemon, feed, step, take and watch, from any language that calls C."
 version.workspace = true
@@ -34,3 +36,12 @@ print_stderr = "deny"
 print_stdout = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: reads a count of the whole process (devices opened, live handles) that other tests move.
+[[test]]
+name = "surface_errors"
+path = "tests/surface_errors.rs"

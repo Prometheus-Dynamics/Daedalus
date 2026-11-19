@@ -30,7 +30,7 @@ const BUNDLE: [&str; 14] = [
     "vk-sys.lib",
     "wgpu-conformance.lib",
 ];
-const WGPU_TESTS: [&str; 5] = ["storage", "transfer", "region", "fragment", "lib"];
+const WGPU_TESTS: [&str; 4] = ["storage", "all", "region", "lib"];
 
 /// Programs the test stands in for instead of linking the host's: they would read this machine.
 const STOOD_IN: [&str; 4] = ["dmesg", "findmnt", "systemctl", "vulkaninfo"];

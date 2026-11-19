@@ -2,7 +2,7 @@
 //! crate's own codec writes, each value outside its type's range is refused, and each malformed
 //! byte string is refused on decode.
 
-mod support;
+use crate::support;
 
 use std::ffi::{c_int, c_void};
 use std::ptr;

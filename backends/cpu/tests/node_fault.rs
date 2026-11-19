@@ -1,6 +1,6 @@
 //! An `Err` from a node becomes a fault that names the node and says why.
 
-mod common;
+use crate::common;
 
 use common::{NODE, call, inline, step_of};
 use daedalus_abi::{Slot, StepCx, StepEnd};

@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-host"
 description = "The host around one loaded graph: feed, step, take and drain typed ports."
 version.workspace = true
@@ -51,3 +53,22 @@ required-features = ["listen"]
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "host_io"
+path = "tests/host_io.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "probe"
+path = "tests/probe.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "telemetry"
+path = "tests/telemetry.rs"

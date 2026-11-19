@@ -1,6 +1,6 @@
 //! Opening, joining, running and retiring plugins built as dynamic libraries.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};

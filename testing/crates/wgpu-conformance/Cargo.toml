@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-wgpu-conformance"
 description = "The wgpu backend against the backend rules, on a real device: what the lavapipe lane runs."
 version.workspace = true
@@ -21,3 +23,7 @@ daedalus-gpu-budgets = { path = "../gpu-budgets" }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

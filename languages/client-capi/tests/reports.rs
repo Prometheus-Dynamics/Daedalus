@@ -2,7 +2,7 @@
 //! a reload's carry, read back by `daedalus_client_report`; and the two that give text as written,
 //! `daedalus_client_plan_raw` and `daedalus_client_graph_text`.
 
-mod support;
+use crate::support;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 

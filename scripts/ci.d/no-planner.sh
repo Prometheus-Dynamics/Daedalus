@@ -36,7 +36,7 @@ cargo test --locked -q -p daedalus-host --no-default-features --features listen 
   fail "the planner-less host's tests fail"
 echo "  daedalus-host without the planner: its tests pass"
 
-cargo test --locked -q -p daedalusd --test made || fail "made plan with the planner: the daemon test fails"
-cargo test --locked -q -p daedalusd --no-default-features --test made ||
+cargo test --locked -q -p daedalusd --test all -- made:: || fail "made plan with the planner: the daemon test fails"
+cargo test --locked -q -p daedalusd --no-default-features --test all -- made:: ||
   fail "made plan without the planner: the daemon test fails"
 echo "  daedalusd: a made plan runs the same with and without the planner"

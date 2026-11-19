@@ -1,6 +1,6 @@
 //! Supervision: exits, hangs, oversize packets, stderr floods, and what the registry refuses.
 
-mod support;
+use crate::support;
 
 use std::time::Duration;
 

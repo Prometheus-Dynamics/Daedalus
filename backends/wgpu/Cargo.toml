@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-wgpu"
 description = "The wgpu backend: one device, opened on first use, behind the process-wide driver lock."
 version.workspace = true
@@ -33,3 +35,37 @@ workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 daedalus-dma-sys = { path = "../dma-sys" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: counts this process's file descriptors.
+[[test]]
+name = "every_adapter"
+path = "tests/every_adapter.rs"
+
+# Its own process: reads a count of the whole process (devices opened, live handles) that other tests move.
+[[test]]
+name = "planning"
+path = "tests/planning.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "region"
+path = "tests/region.rs"
+
+# Its own process: reads a count of the whole process (devices opened, live handles) that other tests move.
+[[test]]
+name = "shared"
+path = "tests/shared.rs"
+
+# Its own process: installs its own global allocator.
+[[test]]
+name = "storage"
+path = "tests/storage.rs"
+
+# Its own process: reads a count of the whole process (devices opened, live handles) that other tests move.
+[[test]]
+name = "stress"
+path = "tests/stress.rs"

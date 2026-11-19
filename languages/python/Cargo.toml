@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-lang-python"
 description = "The Python worker SDK, and the check that runs the canonical fixtures through it."
 version.workspace = true
@@ -19,3 +21,12 @@ daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: counts this process's file descriptors.
+[[test]]
+name = "integrity"
+path = "tests/integrity.rs"

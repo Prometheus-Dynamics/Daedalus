@@ -1,6 +1,6 @@
 //! A graph gives a list or a struct as a constant, and the node gets the decoded value.
 
-mod common;
+use crate::common;
 
 use common::{NODE, call, step_with, value};
 use daedalus_abi::{Slot, StepCx, StepEnd};

@@ -1,7 +1,7 @@
 //! A step that stops a parallel tick raises the cancel word for the steps running beside it, and
 //! the tick clears the word again if it raised it.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -1,4 +1,6 @@
 [package]
+# The integration tests are listed below: see tests/all.rs.
+autotests = false
 name = "daedalus-wgpu-author"
 description = "What #[node] expands to for a shader body: the WGSL is read here, at expansion."
 version.workspace = true
@@ -28,3 +30,12 @@ trybuild = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
+
+# Its own process: runs trybuild, which the runner keeps one at a time.
+[[test]]
+name = "ui"
+path = "tests/ui.rs"

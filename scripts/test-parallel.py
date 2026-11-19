@@ -109,6 +109,9 @@ def main():
     except (OSError, ValueError):
         last = {}
     built = len(found)
+    # A binary renamed or merged away leaves its time behind: only the binaries built now keep one.
+    current = {label(m) for m in found}
+    last = {name: seconds for name, seconds in last.items() if name in current}
     only = os.environ.get("DAEDALUS_TEST_PACKAGES")
     if only is not None:
         wanted = set(only.split())

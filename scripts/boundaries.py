@@ -282,6 +282,37 @@ def check_glob_folders(root):
                 report("glob-folders", rel(root, path), 0, "only README.md may sit directly here")
 
 
+def check_tests_listed(root):
+    """A crate that lists its own tests (`autotests = false`) lists every one of them.
+
+    Each file directly under tests/ is a `[[test]]` of its own, or a module another test file brings
+    in with `#[path = "..."]` or `mod name;`. A file in neither would never be built or run.
+    """
+    for crate in crate_dirs(root):
+        base = os.path.join(root, crate)
+        tests = os.path.join(base, "tests")
+        try:
+            with open(os.path.join(base, "Cargo.toml"), "rb") as f:
+                manifest = tomllib.load(f)
+        except (FileNotFoundError, tomllib.TOMLDecodeError):
+            continue
+        if manifest.get("package", {}).get("autotests") is not False or not os.path.isdir(tests):
+            continue
+        listed = {os.path.normpath(t.get("path", f"tests/{t.get('name')}.rs")) for t in manifest.get("test", [])}
+        files = sorted(f for f in os.listdir(tests) if f.endswith(".rs"))
+        for name in files:
+            with open(os.path.join(tests, name)) as f:
+                source = f.read()
+            for found in re.finditer(r'#\[path\s*=\s*"([^"]+)"\]', source):
+                listed.add(os.path.normpath(os.path.join("tests", found.group(1))))
+            for found in re.finditer(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(?:r#)?(\w+)\s*;", source, re.M):
+                listed.add(os.path.join("tests", found.group(1) + ".rs"))
+        for name in files:
+            if os.path.join("tests", name) not in listed:
+                report("tests-listed", rel(root, os.path.join(tests, name)), 0,
+                       "not a [[test]] in Cargo.toml nor a module of one: it would never run")
+
+
 def tracked_files(root):
     done = subprocess.run(["git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "."],
                           capture_output=True, text=True)
@@ -327,6 +358,7 @@ def main():
     check_glob_folders(root)
     check_gpu_default(root)
     check_names(root)
+    check_tests_listed(root)
     for rule, path, line, detail in violations:
         print(f"{rule}: {path}:{line}: {detail}")
     sys.exit(1 if violations else 0)
