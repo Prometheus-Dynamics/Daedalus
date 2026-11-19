@@ -43,6 +43,11 @@ A backend says which forms it can produce, and a plan in a form one of its backe
 fails with the backend's name. The CPU backend gives all three. The GPU backend, the process
 backend and a plugin's backend give steps only.
 
+A plan that moves a value between backends, by a `#[transfer]` or a backend's own move, has the
+steps form only. A blob or a source file runs each backend's own code and has no step for a move,
+so `Planned::blob` and `Planned::source` refuse it with `PlanError::TransferUnavailable`, naming
+the move. The same plan still explains, and runs as steps.
+
 ## Explaining and caching
 
 - `daedalus_planner::explain::explain_plan(&planned)` says why each node went where it did:
