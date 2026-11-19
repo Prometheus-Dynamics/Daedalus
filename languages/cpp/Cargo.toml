@@ -14,7 +14,6 @@ daedalus-backend-process = { path = "../../backends/process" }
 [dev-dependencies]
 daedalus-capi = { path = "../../core/capi" }
 daedalus-client-capi = { path = "../client-capi" }
-daedalus-drive-conformance = { path = "../../testing/crates/drive-conformance" }
 daedalus-lang-cpp-sdk = { path = "../cpp-sdk" }
 daedalus-wire = { path = "../../core/wire" }
 daedalus-worker-conformance = { path = "../../testing/crates/worker-conformance" }

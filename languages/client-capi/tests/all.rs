@@ -6,6 +6,9 @@
 #[cfg(unix)]
 #[path = "c_host.rs"]
 mod c_host;
+#[cfg(unix)]
+#[path = "cxx_client.rs"]
+mod cxx_client;
 #[path = "header.rs"]
 mod header;
 #[path = "reports.rs"]

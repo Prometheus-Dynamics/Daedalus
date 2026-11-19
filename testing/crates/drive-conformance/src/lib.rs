@@ -251,7 +251,7 @@ use std::fmt;
 
 pub use corpus::{bodies as corpus_bodies, path as corpus_path};
 pub use run::{
-    bless, build_fixture, codec_golden as codec_golden_path, run_codec_check, run_driver,
+    bless, build_fixture, codec_golden as codec_golden_path, coverage, run_codec_check, run_driver,
     transcript,
 };
 pub use scenario::{Scenario, golden_dir, graphs_dir, load_all as load_scenarios};

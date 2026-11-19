@@ -8,9 +8,6 @@ mod behaviour;
 #[path = "conformance.rs"]
 mod conformance;
 #[cfg(unix)]
-#[path = "drive.rs"]
-mod drive;
-#[cfg(unix)]
 #[path = "headers.rs"]
 mod headers;
 #[path = "native.rs"]
