@@ -70,7 +70,8 @@ is bounded the same way, at three times the slowest it has passed in (as the tim
 build directory records it), never under a minute, and 600 s for a binary with no passing run on
 record; its output goes to a file, so a child left holding it can't block the run.
 `DAEDALUS_BOUND_SCALE` multiplies every bound; the hosted CI runners set it to 4. A step whose
-slowest green run grows past a third of its bound gets a new bound in the same change.
+slowest green run grows past a third of its bound gets a new bound in the same change. The slowest
+run is a cold one: a fresh checkout with an empty build directory, as a gate on a new machine runs.
 
 Each step also runs with a `TMPDIR` of its own, an empty directory made in the gate's and removed
 when the step ends. A step that leaves anything in it fails, and the names are listed: leftovers in

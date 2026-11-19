@@ -37,13 +37,21 @@ SET_BY_THE_BUILD = {"CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL",
 KEPT = 8
 
 
+def cargo_metadata(args):
+    """`cargo metadata`'s answer, or an exit that carries what cargo said."""
+    done = subprocess.run(args, cwd=ROOT, capture_output=True, text=True)
+    if done.returncode != 0:
+        sys.exit(f"record: {' '.join(args)} exited {done.returncode}:\n{done.stderr.strip()}")
+    return json.loads(done.stdout)
+
+
 @functools.cache
 def closure_dirs(manifest, roots):
     """The directories, relative to ROOT, of the path packages `roots` are built from."""
     args = ["cargo", "metadata", "--format-version", "1", "--locked"]
     if manifest:
         args += ["--manifest-path", os.path.join(ROOT, manifest)]
-    meta = json.loads(subprocess.run(args, cwd=ROOT, check=True, capture_output=True, text=True).stdout)
+    meta = cargo_metadata(args)
     by_id = {p["id"]: p for p in meta["packages"]}
     nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
     todo = [p["id"] for p in meta["packages"] if p["name"] in roots]
@@ -165,8 +173,7 @@ def self_test():
     harness_dirs = closure_dirs(None, MEASURED)
     fixture_dirs = closure_dirs(FIXTURE, ("daedalus-dylib-fixture",))
     inside = sorted(set(harness_dirs) | set(fixture_dirs))
-    meta = json.loads(subprocess.run(["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked"],
-                                     cwd=ROOT, check=True, capture_output=True, text=True).stdout)
+    meta = cargo_metadata(["cargo", "metadata", "--format-version", "1", "--no-deps", "--locked"])
     leaves = sorted(os.path.relpath(os.path.dirname(p["manifest_path"]), ROOT) for p in meta["packages"])
     leaf = next(d for d in leaves if d not in inside and not any(d.startswith(i + "/") for i in inside))
     some = lambda d: next(p for p in files_of([d], {}) if p.endswith(".rs"))

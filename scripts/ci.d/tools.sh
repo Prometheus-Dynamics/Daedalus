@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bound: 60 s (its slowest green run took 6 s; no bound is under a minute)
+# bound: 81 s (three times its slowest green run, 27 s, in a cold build on a fresh slot)
 # The working tools check themselves against planted cases: which packages a change reaches
 # (scripts/check.sh runs those), which build directories may be deleted, what a seed keeps, and
 # what the budget table's kept measurements are keyed by, and that a step or a test binary past its

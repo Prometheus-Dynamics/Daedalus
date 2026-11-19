@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bound: 174 s (three times its slowest green run, 58 s)
+# bound: 372 s (three times its slowest green run, 124 s, in a cold build on a fresh slot)
 # The daemon built without `workers` links no process backend: its normal dependency tree must not
 # name daedalus-backend-process, and its worker tests must pass there: a config that names workers
 # is refused at --check-config, and a made plan that needs a worker is refused at bind. The
