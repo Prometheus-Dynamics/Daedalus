@@ -97,12 +97,12 @@ mod kinds {
     }
 }
 
-/// An import is listed for a type only where the device takes that type's kind of fd: a device
-/// that imports writable dma-bufs and not read-only ones lists the first and not the second, so
-/// a read-only value is planned as a copy there and never as an import that would be refused.
+/// A type's move is an import only where the device takes that type's kind of fd: a device that
+/// imports writable dma-bufs and not read-only ones plans the first as an import and the second
+/// as the copy the same move makes, never as an import that would be refused. Both are there.
 #[test]
-fn an_import_is_listed_only_for_the_kind_of_fd_the_device_takes() {
-    use daedalus_backend::Backend;
+fn a_move_is_an_import_only_for_the_kind_of_fd_the_device_takes() {
+    use daedalus_backend::{Backend, TransferCost};
     let _turn = turn();
     for index in 0..8 {
         let backend = WgpuBackend::open(Options {
@@ -116,17 +116,23 @@ fn an_import_is_listed_only_for_the_kind_of_fd_the_device_takes() {
         }
         let caps = backend.caps().expect("open");
         let name = caps.adapter.name.clone();
-        let listed = |key: &str| {
-            backend
-                .transfers()
+        let imports = |key: &str| {
+            let transfers = backend.transfers();
+            let found = transfers
                 .iter()
-                .any(|transfer| transfer.id.contains("import") && transfer.id.ends_with(key))
+                .find(|transfer| transfer.id.contains("import") && transfer.id.ends_with(key))
+                .unwrap_or_else(|| panic!("{name}: {key} has its move onto the device"));
+            found.cost == TransferCost::Import
         };
-        // Listed where the device takes that kind of fd, and where nothing has tried: on a
+        // An import where the device takes that kind of fd, and where nothing has tried: on a
         // machine whose heap doesn't open, the first dma-buf it is handed is the trial.
         let may = |read_only: bool| backend.dmabuf_import(read_only) != Some(false);
-        assert_eq!(listed("t:writable"), may(false), "{name}: a writable type");
-        assert_eq!(listed("t:only_read"), may(true), "{name}: a read-only type");
+        assert_eq!(imports("t:writable"), may(false), "{name}: a writable type");
+        assert_eq!(
+            imports("t:only_read"),
+            may(true),
+            "{name}: a read-only type"
+        );
         // Where the heap opens, the answers are known when the device opens.
         if caps.dma_heap {
             assert_eq!(backend.dmabuf_import(false), Some(true), "{name}");

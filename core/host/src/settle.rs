@@ -30,6 +30,11 @@ pub struct Waited {
     pub ticks: u32,
     /// Steps still held on a fence when the wait ended.
     pub pending: usize,
+    /// Step bodies that returned a fault during the wait. A fault is not an error of the wait:
+    /// the step's recovery decides what follows, and a graph whose step faulted settles all the
+    /// same, with nothing out of that step. This says it happened; the host's fault reports
+    /// say which step and why.
+    pub faults: u32,
 }
 
 /// What a runner has left to do: whether a step is woken for a later tick, and how many steps are
@@ -50,8 +55,9 @@ pub(crate) fn settle<T, E>(
     let deadline = Instant::now() + timeout;
     let mut backoff = MIN_BACKOFF;
     let mut ticks = 0;
+    let mut faults = 0u32;
     loop {
-        tick(target)?;
+        faults = faults.saturating_add(tick(target)?.faults);
         ticks += 1;
         let left = work(target);
         let now = Instant::now();
@@ -67,6 +73,7 @@ pub(crate) fn settle<T, E>(
                 outcome,
                 ticks,
                 pending: left.pending,
+                faults,
             });
         }
         if left.woken {
@@ -91,6 +98,7 @@ impl Host<'_> {
     }
 
     /// Ticks until the host is settled, or `timeout` passes, waiting on fences without spinning.
+    /// A step that faults doesn't end the wait: [`Waited::faults`] counts them.
     pub fn step_until_settled(&mut self, timeout: Duration) -> Result<Waited, HostError> {
         settle(
             self,
@@ -116,5 +124,38 @@ impl LoadedHost {
                 pending: loaded.host.pending(),
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A target whose first tick has a step fault and whose second settles.
+    struct Faulting {
+        ticks: u32,
+    }
+
+    #[test]
+    fn a_wait_counts_the_faults_of_its_ticks() {
+        let mut target = Faulting { ticks: 0 };
+        let waited = settle(
+            &mut target,
+            Duration::from_secs(5),
+            |target| {
+                target.ticks += 1;
+                Ok::<_, ()>(TickReport {
+                    faults: u32::from(target.ticks == 1),
+                    ..TickReport::default()
+                })
+            },
+            |target| Work {
+                woken: target.ticks < 2,
+                pending: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(waited.outcome, WaitOutcome::Settled);
+        assert_eq!((waited.ticks, waited.faults), (2, 1));
     }
 }

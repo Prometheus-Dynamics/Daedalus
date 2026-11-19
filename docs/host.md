@@ -35,7 +35,10 @@ let doubled = host.take_copy::<i64>("doubled")?;
 - **Wait.** A step can finish a tick with work still running on a device. It is held on a fence
   until the work is done, and its consumers wait with it. `step_until_settled(timeout)` ticks until
   nothing is held and nothing is woken, or until `timeout` passes, and returns a `Waited` with the
-  outcome, the ticks it ran and the steps still held. Between two ticks it sleeps only when a fence
+  outcome, the ticks it ran, the steps still held, and how many step bodies faulted. A fault
+  doesn't end the wait or make it an error: the step's recovery decides what follows, and a graph
+  whose step faulted settles with nothing out of that step, so a caller checks `faults` (and the
+  host's fault reports for which step and why). Between two ticks it sleeps only when a fence
   is the one thing left, starting at 50 µs and never sleeping more than 2 ms. `pending()` counts the
   held steps, and `is_settled()` says whether the host has nothing held and nothing woken.
 - **Take.** `take::<T>(port)` and `take_copy::<T>(port)` take the oldest value out of an output

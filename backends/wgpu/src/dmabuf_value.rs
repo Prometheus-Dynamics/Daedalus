@@ -2,10 +2,12 @@
 //!
 //! A dma-buf the device can import is used in place: nothing is copied, and the device reads the
 //! memory the exporter wrote. [`DmaBufBacked`] says that a type's values are one, once, and
-//! [`WgpuBackend::with_dmabuf`] lists the move that imports a value's dma-buf. The move is offered
-//! only while the open device imports dma-bufs, and the planner takes it over the byte copy the
-//! type's [`HostBytes`](crate::HostBytes) would give, which is what a device that can't import
-//! gets. Whoever hands a dma-buf over answers for its contents being readable by a device.
+//! [`WgpuBackend::with_dmabuf`] lists the type's move onto the device. On a device that imports
+//! that kind of dma-buf the move is an import; on one that refuses it, it is costed as the copy
+//! its step then makes, from the dma-buf through a read-only mapping, unless the type has a byte
+//! upload of its own ([`HostBytes`](crate::HostBytes)), which then copies it. So a dma-buf type
+//! needs nothing else to reach any device. Whoever hands a dma-buf over answers for its contents
+//! being readable by a device.
 //!
 //! The value comes from the host's memory, or from the dma-buf space of `daedalus-dmabuf`, which
 //! is where a node that declares its output a dma-buf puts it.
@@ -270,9 +272,11 @@ fn make_import<T: DmaBufBacked>(slot: usize) -> Make {
 
 impl WgpuBackend {
     /// This backend, also importing a `T`'s dma-buf in place when a CPU node or the host hands a
-    /// shader a `T`. Listed only while the open device imports dma-bufs; a device that doesn't
-    /// takes the upload of the type's bytes instead, so a `T` should be [`HostBytes`](crate::HostBytes)
-    /// as well.
+    /// shader a `T`. On a device that refuses `T`'s kind of dma-buf (a software renderer maps a
+    /// buffer for writing, so it refuses one whose fd only allows reading) the same move copies
+    /// the value's bytes, and is costed as a copy; a `T` that is also
+    /// [`HostBytes`](crate::HostBytes) is copied by that upload instead. A `T` needs nothing else
+    /// to reach the device.
     #[must_use]
     pub fn with_dmabuf<T: DmaBufBacked>(self) -> WgpuBackend {
         let device = self.device_name();

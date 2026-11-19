@@ -123,8 +123,11 @@ and never what they mean. Movers don't know what they move.
   backend's `with_dmabuf::<T>()` imports into a device buffer from `dmabuf` and from the host.
 - A value that starts part-way into its dma-buf says where with `offset()`, and is imported at
   that offset. Several values can share one buffer.
-- A type whose fds only allow reading says so with `const READ_ONLY: bool = true`. A backend
-  lists its import of such a type only on a device that takes a read-only fd.
+- A type whose fds only allow reading says so with `const READ_ONLY: bool = true`. A device
+  that refuses that kind of fd (a software renderer maps a buffer for writing) gets the same
+  move, costed as a copy: its step reads the value through a read-only mapping and copies it.
+  A type that also has a byte upload (`with_bytes::<T>()`) is copied by that instead. A type
+  with `with_dmabuf::<T>()` reaches every device with nothing else listed.
 - Whoever makes a value answers for its contents being readable by whatever is given it.
 
 `backends/dma-sys` is the binding to the dma-buf and dma-heap kernel interfaces (`DmaBuf`,

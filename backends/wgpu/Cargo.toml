@@ -45,6 +45,11 @@ path = "tests/all.rs"
 name = "every_adapter"
 path = "tests/every_adapter.rs"
 
+# Its own process: sets the shared device's answer for read-only dma-bufs, which other tests read.
+[[test]]
+name = "import_refused"
+path = "tests/import_refused.rs"
+
 # Its own process: reads a count of the whole process (devices opened, live handles) that other tests move.
 [[test]]
 name = "planning"
