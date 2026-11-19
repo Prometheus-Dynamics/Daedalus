@@ -176,6 +176,11 @@ def verdict(problems, lines):
 
 def self_test():
     """A good run passes and each planted fault fails for its own reason."""
+    with tempfile.TemporaryDirectory() as scratch:
+        return planted_runs(scratch)
+
+
+def planted_runs(scratch):
     failed = []
 
     def expect(name, got, want):
@@ -186,7 +191,7 @@ def self_test():
             print("       problems:", got[0])
 
     def linux(files):
-        directory = tempfile.mkdtemp()
+        directory = tempfile.mkdtemp(dir=scratch)
         for name, text in files.items():
             open(os.path.join(directory, name), "w").write(text)
         return judge_linux(directory)
@@ -201,7 +206,7 @@ def self_test():
     expect("linux: an empty run fails", linux({}), "nothing was run")
 
     def pico(text):
-        handle, path = tempfile.mkstemp()
+        handle, path = tempfile.mkstemp(dir=scratch)
         os.write(handle, text.encode())
         os.close(handle)
         return judge_pico(path)
@@ -218,7 +223,7 @@ def self_test():
     expect("pico: too deep a stack fails", pico(good + report("compiled", stack=4000)), "stack")
     expect("pico: a short run fails", pico(good + report("loaded", ticks=7)), "ticks")
     def measure(files):
-        directory = tempfile.mkdtemp()
+        directory = tempfile.mkdtemp(dir=scratch)
         for name, text in files.items():
             open(os.path.join(directory, name), "w").write(text)
         return judge_measure(directory)

@@ -20,13 +20,20 @@ zombie, so no other process can take that id and be signalled by mistake.
 
 DAEDALUS_BOUND_SCALE multiplies every bound, for a machine slower than the one the bounds were
 measured on (the hosted CI runners).
+
+A step (`--step`) runs with a TMPDIR of its own: an empty directory made in the gate's TMPDIR,
+removed when the step ends. A step that leaves anything in it fails, and the names are printed:
+tests that leak into a TMPDIR shared by every gate run fill it until unrelated steps fail. A cache
+that must outlive one gate run goes in DAEDALUS_GATE_TMPDIR, the gate's own TMPDIR, by name.
 """
 import os
 import re
 import select
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -137,7 +144,8 @@ def bound_of(script):
 def main(argv):
     if argv[:1] == ["--self-test"]:
         return self_test()
-    if argv[:1] == ["--step"] and len(argv) == 3:
+    step = argv[:1] == ["--step"] and len(argv) == 3
+    if step:
         bound = bound_of(argv[2])
         if bound is None:
             print(f"bounded: {argv[2]} has no `# bound: N s` line: every step the gate runs "
@@ -150,10 +158,29 @@ def main(argv):
     bound, name, command = scaled(argv[0]), argv[1], argv[2:]
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, raise_stopped)
+    if not step:
+        try:
+            return run(command, bound, name)
+        except Stopped as stopped:
+            return 128 + stopped.signum
+    gate_tmp = os.environ.get("DAEDALUS_GATE_TMPDIR") or tempfile.gettempdir()
+    # A short name: a unix socket's path must stay under 108 bytes.
+    own = tempfile.mkdtemp(prefix=f"s-{re.sub(r'[^a-z0-9]', '', name.lower())[:8]}.",
+                           dir=gate_tmp)
+    env = {**os.environ, "TMPDIR": own, "DAEDALUS_GATE_TMPDIR": gate_tmp}
     try:
-        return run(command, bound, name)
+        code = run(command, bound, name, env=env)
     except Stopped as stopped:
-        return 128 + stopped.signum
+        code = 128 + stopped.signum
+    finally:
+        left = sorted(os.listdir(own))
+        shutil.rmtree(own, ignore_errors=True)
+    if left:
+        shown = ", ".join(left[:20]) + (f", and {len(left) - 20} more" if len(left) > 20 else "")
+        print(f"{name}: left {len(left)} entries in its TMPDIR: {shown}", file=sys.stderr)
+        if code == 0:
+            code = 1
+    return code
 
 
 def gone(pids):
@@ -318,6 +345,29 @@ def self_test():
             check("the run's output ends within the bound and the grace",
                   ended and took < 2 + GRACE + 3)
             check("nothing the binaries started is left running", gone(planted(pids)))
+
+            # A step that leaves a file in its TMPDIR fails, naming it; a clean step passes. Both
+            # TMPDIRs are removed, and a step's TMPDIR is not the gate's.
+            gate_tmp = os.path.join(tmp, "gate-tmp")
+            os.makedirs(gate_tmp)
+            step_env = {**os.environ, "TMPDIR": gate_tmp}
+            step_env.pop("DAEDALUS_GATE_TMPDIR", None)
+            for name, body in (("leaky", 'touch "$TMPDIR/planted-leftover"; mkdir "$TMPDIR/d"'),
+                               ("clean", 'f="$TMPDIR/x"; touch "$f"; rm "$f"; '
+                                         'test "$TMPDIR" != "$DAEDALUS_GATE_TMPDIR"')):
+                write(os.path.join(tmp, f"{name}.sh"),
+                      f"#!/usr/bin/env bash\n# bound: 60 s (planted)\n{body}\n")
+                os.chmod(os.path.join(tmp, f"{name}.sh"), 0o755)
+            code, out, _, _ = capture(
+                [sys.executable, "-I", me, "--step", "leaky", os.path.join(tmp, "leaky.sh")], 30,
+                env=step_env)
+            check("a step that leaves files in its TMPDIR fails, naming them",
+                  code == 1 and "leaky: left 2 entries in its TMPDIR: d, planted-leftover" in out)
+            code, out, _, _ = capture(
+                [sys.executable, "-I", me, "--step", "clean", os.path.join(tmp, "clean.sh")], 30,
+                env=step_env)
+            check("a step that cleans up passes, in a TMPDIR of its own", code == 0)
+            check("no step's TMPDIR is left in the gate's", os.listdir(gate_tmp) == [])
 
             # A command that ends within its bound runs as it would alone.
             code, out, _, ended = capture(

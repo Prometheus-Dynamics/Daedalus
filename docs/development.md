@@ -72,6 +72,15 @@ record; its output goes to a file, so a child left holding it can't block the ru
 `DAEDALUS_BOUND_SCALE` multiplies every bound; the hosted CI runners set it to 4. A step whose
 slowest green run grows past a third of its bound gets a new bound in the same change.
 
+Each step also runs with a `TMPDIR` of its own, an empty directory made in the gate's and removed
+when the step ends. A step that leaves anything in it fails, and the names are listed: leftovers in
+a `TMPDIR` every gate run shares pile up until unrelated steps fail. A cache meant to outlive one
+run (the budget fixture's copies) goes in `DAEDALUS_GATE_TMPDIR`, the gate's own `TMPDIR`.
+
+Time a step, or the gate, in the environment the merge gate runs it in: `CARGO_INCREMENTAL=0`, the
+same job count and cores, and no dependency seed. An incremental build in a warm checkout is a
+different measurement, and a cut that only holds there is not one.
+
 To add a check, add an executable `scripts/ci.d/<step>.sh` with its `# bound:` line. A check that needs an environment of
 its own gets a workflow of its own: `Portability` (other targets under qemu, and Windows), `GPU`
 (lavapipe) and `Budgets` (valgrind) are those.
