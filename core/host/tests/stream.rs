@@ -2,15 +2,15 @@
 //! steps.
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::time::Duration;
 
 use daedalus_abi::{OwnedStep, Slots, Step, StepCx, StepEnd};
 use daedalus_host::stream::{
-    StreamErrorPolicy, StreamExecutionMode, StreamFeed, StreamGraph, StreamGraphState,
+    StreamErrorPolicy, StreamExecutionMode, StreamFeed, StreamGraph, StreamGraphState, StreamHost,
     StreamWorkerConfig, StreamWorkerStopError,
 };
-use daedalus_host::{Dir, Host, PortSpec, Ports};
+use daedalus_host::{Dir, FeedOutcome, Host, HostError, PortSpec, Ports, TickReport};
 use daedalus_plan::Span;
 use daedalus_runner::{Memory, Plan, Recovery, Runner, SlotKind, SlotSpec, StepMeta};
 use daedalus_types::{SpaceIndex, TypeIndex, TypeKey};
@@ -22,16 +22,84 @@ const SP: SpaceIndex = SpaceIndex(0);
 static KEY: TypeKey = TypeKey::new("demo.a");
 static TYPES: [TypeKey; 1] = [TypeKey::new("demo.a")];
 
-/// Passes `in` to `out` and counts its calls. While a gate is set it waits on that gate first.
+/// Holds a body until the test opens it, and lets the test wait until a body is held. Once open
+/// it stays open, so no later body can park where nothing will release it.
+#[derive(Default)]
+struct Gate {
+    /// Whether it is open, and how many bodies are held.
+    state: Mutex<(bool, u32)>,
+    changed: Condvar,
+}
+
+impl Gate {
+    fn pass(&self) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.1 += 1;
+        self.changed.notify_all();
+        while !state.0 {
+            state = self
+                .changed
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        state.1 -= 1;
+    }
+
+    /// Returns once a body is held. A body that never comes fails the test after a while.
+    fn parked(&self) {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let (state, waited) = self
+            .changed
+            .wait_timeout_while(state, Duration::from_secs(30), |state| state.1 == 0)
+            .unwrap_or_else(PoisonError::into_inner);
+        assert!(
+            !waited.timed_out() && state.1 > 0,
+            "no body reached the gate"
+        );
+    }
+
+    fn open(&self) {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner).0 = true;
+        self.changed.notify_all();
+    }
+}
+
+/// Passes `in` to `out` and counts its calls. While a gate is set it passes that gate first.
 struct Echo {
     calls: Arc<AtomicU32>,
-    gate: Option<Arc<Barrier>>,
+    gate: Option<Arc<Gate>>,
+}
+
+/// A host that sends its step count on `done` when it is dropped. A worker drops its host when
+/// it ends, even when nobody joins it, so this is the test's word that the worker has ended.
+struct Ended {
+    host: Host<'static>,
+    calls: Arc<AtomicU32>,
+    done: mpsc::Sender<u32>,
+}
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        let _ = self.done.send(self.calls.load(Ordering::Relaxed));
+    }
+}
+
+impl StreamHost for Ended {
+    fn feed(&mut self, port: &str, value: Value) -> Result<FeedOutcome, HostError> {
+        self.host.feed(port, value)
+    }
+    fn step(&mut self) -> Result<TickReport, HostError> {
+        self.host.step()
+    }
+    fn take_value(&mut self, port: &str) -> Result<Option<Value>, HostError> {
+        self.host.take_value(port)
+    }
 }
 
 impl OwnedStep for Echo {
     fn run(&mut self, slots: &mut Slots, _: &mut StepCx) -> StepEnd {
         if let Some(gate) = &self.gate {
-            gate.wait();
+            gate.pass();
         }
         self.calls.fetch_add(1, Ordering::Relaxed);
         let value = *slots.cell(0).unwrap();
@@ -46,7 +114,7 @@ fn leak<T>(values: Vec<T>) -> &'static mut [T] {
 }
 
 /// `in` and `other` feed slots 0 and 1; `out` reads slot 2. Only `in` wakes the step.
-fn host(calls: &Arc<AtomicU32>, gate: Option<Arc<Barrier>>) -> Host<'static> {
+fn host(calls: &Arc<AtomicU32>, gate: Option<Arc<Gate>>) -> Host<'static> {
     let specs: &'static [SlotSpec] = leak(
         [8, 8, 64]
             .map(|cap| SlotSpec {
@@ -136,11 +204,11 @@ fn value(bytes: &'static [u8]) -> Value {
     }
 }
 
-fn graph(calls: &Arc<AtomicU32>, gate: Option<Arc<Barrier>>) -> StreamGraph<Host<'static>> {
+fn graph(calls: &Arc<AtomicU32>, gate: Option<Arc<Gate>>) -> StreamGraph<Host<'static>> {
     StreamGraph::new(host(calls, gate), &["in", "other"], &["out"])
 }
 
-fn spawn(graph: &mut StreamGraph<Host<'static>>) {
+fn spawn<H: StreamHost>(graph: &mut StreamGraph<H>) {
     graph.spawn_continuous(StreamWorkerConfig::default().with_idle_sleep(Duration::from_millis(1)));
 }
 
@@ -232,49 +300,81 @@ fn a_worker_pauses_resumes_and_shuts_down_under_pressure() {
 #[test]
 fn the_worker_holds_no_lock_while_a_body_runs() {
     let calls = Arc::new(AtomicU32::new(0));
-    let gate = Arc::new(Barrier::new(2));
+    let gate = Arc::new(Gate::default());
     let mut graph = graph(&calls, Some(Arc::clone(&gate)));
     let input = graph.input("in").unwrap();
     spawn(&mut graph);
     assert_eq!(input.feed(value(b"first")), StreamFeed::Accepted);
-    // The body is parked on the gate. A feed and a stats read must still return.
-    while calls.load(Ordering::Relaxed) == 0 {
-        assert_eq!(input.feed(value(b"later")), StreamFeed::Accepted);
-        gate.wait();
-    }
-    assert!(input.stats().accepted >= 2);
-    let _ = graph.stop_timeout(Duration::from_secs(5));
+    gate.parked();
+    // The body is held at the gate. A feed and a stats read must still return.
+    assert_eq!(input.feed(value(b"later")), StreamFeed::Accepted);
+    assert_eq!(input.stats().accepted, 2);
+    assert_eq!(calls.load(Ordering::Relaxed), 0, "the body is still held");
+    gate.open();
+    let stopped = graph.stop().unwrap();
+    assert!(stopped.last_error.is_none());
 }
 
 #[test]
 fn a_stop_timeout_reports_a_slow_body_without_deadlocking() {
     let calls = Arc::new(AtomicU32::new(0));
-    let gate = Arc::new(Barrier::new(2));
+    let gate = Arc::new(Gate::default());
     let mut graph = graph(&calls, Some(Arc::clone(&gate)));
     let input = graph.input("in").unwrap();
     spawn(&mut graph);
     input.feed(value(b"parks the body"));
-    std::thread::sleep(Duration::from_millis(20));
+    gate.parked();
     let result = graph.stop_timeout(Duration::from_millis(20)).unwrap();
     assert!(matches!(
         result,
         Err(StreamWorkerStopError::SlowBody { .. })
     ));
-    gate.wait();
+    gate.open();
+}
+
+/// A stop that arrives while a body is held ends the worker as soon as that body returns: the
+/// values still queued behind it are not run.
+#[test]
+fn a_stop_while_a_body_is_held_ends_the_worker_once_the_body_returns() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let gate = Arc::new(Gate::default());
+    let (done, ended) = mpsc::channel();
+    let ended_host = Ended {
+        host: host(&calls, Some(Arc::clone(&gate))),
+        calls: Arc::clone(&calls),
+        done,
+    };
+    let mut graph = StreamGraph::new(ended_host, &["in", "other"], &["out"]);
+    let input = graph.input("in").unwrap();
+    spawn(&mut graph);
+    input.feed(value(b"held"));
+    gate.parked();
+    input.feed(value(b"queued behind it"));
+    let result = graph.stop_timeout(Duration::ZERO).unwrap();
+    assert!(matches!(
+        result,
+        Err(StreamWorkerStopError::SlowBody { .. })
+    ));
+    assert_eq!(calls.load(Ordering::Relaxed), 0, "the body is still held");
+    gate.open();
+    let ran = ended
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the worker ends once its body returns");
+    assert_eq!(ran, 1, "only the held body ran after the stop");
 }
 
 #[test]
 fn dropping_the_graph_requests_a_stop_without_waiting_for_a_slow_body() {
     let calls = Arc::new(AtomicU32::new(0));
-    let gate = Arc::new(Barrier::new(2));
+    let gate = Arc::new(Gate::default());
     let mut graph = graph(&calls, Some(Arc::clone(&gate)));
     let input = graph.input("in").unwrap();
     spawn(&mut graph);
     input.feed(value(b"parks the body"));
-    std::thread::sleep(Duration::from_millis(20));
+    gate.parked();
     drop(graph);
-    // The drop returned while the body is still parked; release it so the worker can finish.
-    gate.wait();
+    // The drop returned while the body is still held; release it so the worker can finish.
+    gate.open();
 }
 
 #[test]

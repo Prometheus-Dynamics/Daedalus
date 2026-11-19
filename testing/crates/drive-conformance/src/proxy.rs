@@ -53,6 +53,11 @@ pub fn start(upstream: SocketAddr, mode: Mode) -> io::Result<SocketAddr> {
 
 fn relay(client: TcpStream, upstream: SocketAddr, mode: Mode) -> io::Result<()> {
     let server = TcpStream::connect(upstream)?;
+    // Each side sends small packets and waits for the answer. Without TCP_NODELAY, every small
+    // write behind an unacknowledged one waits for the peer's delayed ACK, about 40 ms. The
+    // client and the host listener set it on their own sockets; the proxy's two must too.
+    client.set_nodelay(true)?;
+    server.set_nodelay(true)?;
     let mut requests_in = client.try_clone()?;
     let mut requests_out = server.try_clone()?;
     thread::spawn(move || {
