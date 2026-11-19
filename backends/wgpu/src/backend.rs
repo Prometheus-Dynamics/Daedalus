@@ -87,15 +87,23 @@ impl Link {
         }
     }
 
-    /// The imports worth planning on a device: those of each kind of fd `may` says yes to.
+    /// Every type's move onto the device by its dma-buf, costed by what its step will do: an
+    /// import of each kind of fd `may` says yes to, and a copy of the rest. The step copies a
+    /// value the device refuses, so a dma-buf type always has a move of its own: the any-type
+    /// upload reads a cell's bytes, and a typed value has none there.
     #[cfg(target_os = "linux")]
     fn dma(&self, may: impl Fn(bool) -> bool) -> Vec<Transfer> {
         self.dma
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .filter(|(_, read_only)| may(*read_only))
-            .map(|(transfer, _)| transfer.clone())
+            .map(|(transfer, read_only)| {
+                let mut transfer = transfer.clone();
+                if !may(*read_only) {
+                    transfer.cost = daedalus_backend::TransferCost::Copy;
+                }
+                transfer
+            })
             .collect()
     }
 
@@ -464,16 +472,31 @@ impl Backend for WgpuBackend {
             .open_context()
             .is_some_and(|context| context.record.dma_heap);
         let mut table = crate::handoff::transfers(self.link.named.as_ref(), heap);
-        // An import is planned where the device takes that kind of fd, and where nothing has
-        // tried yet: a process that can't allocate from a heap learns it from the first dma-buf
-        // it is handed, and the import's own step copies if that one is refused.
+        let offered = self.link.offered();
+        // A dma-buf type's move is an import where the device takes that kind of fd, and where
+        // nothing has tried yet (no device open, or a process that can't allocate from a heap
+        // learns it from the first dma-buf it is handed). Where the device refuses that kind it
+        // is costed as the copy its step makes, and kept only for a type with no byte upload of
+        // its own onto the device: one that has one ([`HostBytes`](crate::HostBytes)) is copied
+        // by that, as it says.
         #[cfg(target_os = "linux")]
-        if let Some(context) = self.open_context() {
-            table.extend(self.link.dma(|read_only| context.imports.may(read_only)));
+        {
+            let context = self.open_context();
+            let dma = self.link.dma(|read_only| {
+                context
+                    .as_ref()
+                    .is_none_or(|context| context.imports.may(read_only))
+            });
+            table.extend(dma.into_iter().filter(|transfer| {
+                transfer.cost != daedalus_backend::TransferCost::Copy
+                    || !offered
+                        .iter()
+                        .any(|own| own.key == transfer.key && own.to == transfer.to)
+            }));
         }
         #[cfg(not(target_os = "linux"))]
         let _ = heap;
-        table.extend(self.link.offered());
+        table.extend(offered);
         table
     }
 

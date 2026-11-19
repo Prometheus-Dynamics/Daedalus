@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use daedalus_abi::testing::{release, run_once};
 use daedalus_abi::{Slot, Slots, StepCx, StepEnd};
-use daedalus_backend::{Backend, CompileCx};
+use daedalus_backend::{Backend, CompileCx, TransferCost};
 use daedalus_dma_sys::{Access, DmaHeap};
 use daedalus_runner::{drop_owned, put_typed, take_typed};
 use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey, Typed};
@@ -79,11 +79,15 @@ fn cx() -> CompileCx<'static> {
     }
 }
 
-fn listed(backend: &WgpuBackend, key: &str) -> bool {
-    backend
-        .transfers()
+/// Whether the move of `key` onto the device is planned as an import. Where the device refuses
+/// that kind of dma-buf the same move is there, costed as the copy its step makes.
+fn imports(backend: &WgpuBackend, key: &str) -> bool {
+    let transfers = backend.transfers();
+    let found = transfers
         .iter()
-        .any(|transfer| transfer.id.starts_with("wgpu.import:") && transfer.id.ends_with(key))
+        .find(|transfer| transfer.id.starts_with("wgpu.import:") && transfer.id.ends_with(key))
+        .expect("a dma-buf type always has its move onto the device");
+    found.cost == TransferCost::Import
 }
 
 /// Runs the planned import of `value` and gives the bytes the device has for it.
@@ -143,12 +147,12 @@ fn the_first_dma_buf_settles_whether_a_device_imports_and_a_refused_one_is_copie
             let before = backend.dmabuf_import(read_only);
             if before == Some(false) {
                 // The device has no dma-buf import at all, and that is known without trying.
-                assert!(!listed(&backend, key), "{name}: no import to plan");
+                assert!(!imports(&backend, key), "{name}: no import to plan");
                 continue;
             }
             assert_eq!(before, None, "{name}: unknown until a dma-buf arrives");
             assert!(
-                listed(&backend, key),
+                imports(&backend, key),
                 "{name}: the import is planned while unknown"
             );
             let version = backend.version();
@@ -172,12 +176,12 @@ fn the_first_dma_buf_settles_whether_a_device_imports_and_a_refused_one_is_copie
             let copied = backend.transfer_stats().expect("open").uploads - uploads;
             if answer == Some(true) {
                 assert_eq!(copied, 0, "{name}: imported in place");
-                assert!(listed(&backend, key));
+                assert!(imports(&backend, key));
             } else {
                 assert_eq!(copied, 1, "{name}: refused, so copied once");
                 assert!(
-                    !listed(&backend, key),
-                    "{name}: the next plan doesn't import"
+                    !imports(&backend, key),
+                    "{name}: the next plan copies through the same move"
                 );
             }
             eprintln!(
@@ -214,7 +218,7 @@ fn a_host_can_say_or_try_before_the_first_value() {
         }
         assert_eq!(said.dmabuf_import(false), Some(false));
         assert!(
-            !listed(&said, "t:unknown_writable"),
+            !imports(&said, "t:unknown_writable"),
             "said no: nothing to plan"
         );
         drop(said);
@@ -225,9 +229,9 @@ fn a_host_can_say_or_try_before_the_first_value() {
             .try_dmabuf_import(produced(&heap, false), false)
             .expect("opens");
         assert_eq!(tried.dmabuf_import(false), Some(answer));
-        assert_eq!(listed(&tried, "t:unknown_writable"), answer);
-        // Where it imports, a value that follows goes in place. Where it doesn't, no import is
-        // planned, and the value takes the copy the planner has for its type.
+        assert_eq!(imports(&tried, "t:unknown_writable"), answer);
+        // Where it imports, a value that follows goes in place. Where it doesn't, the same move
+        // is planned as the copy its step makes.
         if answer {
             let bytes = through_the_import(&tried, Writable(produced(&heap, false)));
             assert_eq!(bytes, pattern());
@@ -417,7 +421,7 @@ fn a_process_with_no_heap_is_told_what_happens_and_nothing_fails() {
 /// `bytes` given to the device as a value with no dma-buf, by whichever move is planned for it:
 /// the import where one is, and otherwise the upload of its bytes.
 fn through_the_import_or_upload(backend: &WgpuBackend, bytes: &[u8]) -> Vec<u8> {
-    if listed(backend, NoFd::KEY.as_str()) {
+    if imports(backend, NoFd::KEY.as_str()) {
         return through_the_import(backend, NoFd(Some(bytes.to_vec())));
     }
     let storage = Storage::new(backend, bytes.len() as u64).expect("a buffer");
