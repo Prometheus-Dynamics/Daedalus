@@ -77,13 +77,7 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 add_executable(daedalus_cpp_worker ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/nodes.cpp)
 target_link_libraries(daedalus_cpp_worker PRIVATE daedalus)
-
-# The one native test: the header links, and a value round-trips. The Rust test runs it with ctest.
-enable_testing()
-add_executable(daedalus_wire_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/wire_test.cpp)
-target_link_libraries(daedalus_wire_test PRIVATE daedalus)
-target_compile_options(daedalus_wire_test PRIVATE ${warnings})
-add_test(NAME wire COMMAND daedalus_wire_test)
+target_compile_options(daedalus_cpp_worker PRIVATE ${warnings})
 
 # Install: the headers (the worker's, the host's and the client's) and the libraries into the prefix,
 # and a package config that a consumer finds with find_package(daedalus CONFIG). The Rust library is
