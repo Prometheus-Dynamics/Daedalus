@@ -8,6 +8,10 @@
 #   scripts/ci.d/smoke.sh --self-test   only the self-test: a planted example with a wrong golden
 #                                       line must fail on the comparison, and a right one must pass
 set -euo pipefail
+# Its `-p` builds of the daemon and the examples have features of their own, and would replace the
+# binaries the test step's tests run, so they go in a build directory of their own, which lets
+# this step run beside the test step (the ship lane of scripts/gate.sh).
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/ship"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly EXAMPLES=(quickstart basics host metrics)
