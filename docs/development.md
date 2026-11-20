@@ -38,10 +38,11 @@ crate is making its directory.
 ## The gate
 
 `scripts/gate.sh` is what every change must pass, and what CI runs. It runs every step in
-`scripts/ci.d/`, in four lanes at once: the cargo steps for this machine one after another, the
-steps whose builds never replace what those run (the daemon built with other features, in
-`variants` inside the build directory, and the budget table), the steps that build only for other
-targets, and the checks that build nothing. A new step must be
+`scripts/ci.d/`, in five lanes at once: the cargo steps for this machine one after another; what
+a release ships (the crates packaged, the daemon's packaging files and the examples run, built in
+`ship` inside the build directory); the steps whose builds never replace what the first lane runs
+(the daemon built with other features, in `variants` inside the build directory, and the budget
+table); the steps that build only for other targets; and the checks that build nothing. A new step must be
 named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` runs one by name:
 
 | Step | What it checks |

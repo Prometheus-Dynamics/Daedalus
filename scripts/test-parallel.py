@@ -29,6 +29,13 @@ its bound the group is stopped and the binary fails, named, and what a binary le
 ends is stopped and named. Its output goes to a file, so a child left holding it never blocks the
 run. A TERM to this runner stops every binary's group.
 
+Some tests build a fixture with cargo, each into a directory of its own under the test target
+directory. Those builds are made here first, each with the command its tests use, before any
+binary runs: a test's own build then finds everything fresh, and a fixture that has to be rebuilt
+after a change is not timed against a binary's bound. A fixture that fails to build fails the step,
+named. After the run, a build directory under the test target directory that FIXTURES doesn't name
+fails the step too, so a test that starts building a fixture of its own is added here.
+
 Binaries that link trybuild run one after another: trybuild builds every crate's compile tests in
 one shared directory under the same binary names, so two at once overwrite each other's builds.
 """
@@ -53,6 +60,49 @@ CARGO = os.environ.get("CARGO", "cargo")
 SLOWEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test-slowest.json")
 FLOOR = 60.0
 UNKNOWN = 600.0
+# CARGO_TARGET_TMPDIR, where the tests build their fixtures.
+TEST_TMP = os.path.join(TARGET, "tmp")
+# Each fixture the tests build: the directory under TEST_TMP, the arguments after `cargo build -q`
+# (run from the workspace root), and the compiler flags added to RUSTFLAGS. They are the commands
+# in the tests: testing/crates/drive-conformance/src/run.rs and the tests' support files
+# (core/loader/tests/support.rs builds the baseline and the old fixture, service/daedalus-ctl/tests/ctl.rs
+# the daemon, backends/process/tests/support.rs and service/daedalusd/tests/workers.rs the worker).
+FIXTURES = [
+    ("dylib-fixture", ["--manifest-path", "testing/fixtures/dylib/Cargo.toml"], None),
+    ("dylib-fixture-baseline", ["--manifest-path", "testing/fixtures/dylib/Cargo.toml"],
+     "--cfg daedalus_abi_baseline"),
+    ("dylib-old-fixture", ["--manifest-path", "testing/fixtures/dylib-old/Cargo.toml"], None),
+    ("worker-fixture", ["-p", "daedalus-worker-fixture"], None),
+    ("ctl-daemon", ["--manifest-path", "Cargo.toml", "-p", "daedalusd"], None),
+]
+# Build directories under TEST_TMP that other steps make, beside this one: not the tests'.
+NOT_TESTS = {"dylib-fixture-budgets"}  # the budgets step, testing/crates/budget-harness/check.py
+
+
+def build_fixtures():
+    """Builds every fixture in FIXTURES, side by side. The names of those that failed, with output."""
+    def build(fixture):
+        name, args, flags = fixture
+        env = dict(os.environ)
+        if flags:
+            env["RUSTFLAGS"] = (env.get("RUSTFLAGS", "") + " " + flags).strip()
+        done = subprocess.run([CARGO, "build", "-q", *args, "--target-dir",
+                               os.path.join(TEST_TMP, name)], cwd=ROOT, env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        return name, done.returncode, done.stdout
+    with ThreadPoolExecutor(max_workers=len(FIXTURES)) as pool:
+        return [(name, output) for name, code, output in pool.map(build, FIXTURES) if code != 0]
+
+
+def unlisted_fixtures():
+    """Build directories under TEST_TMP that FIXTURES doesn't name: cargo marks its own."""
+    named = {name for name, _, _ in FIXTURES} | NOT_TESTS
+    try:
+        entries = os.listdir(TEST_TMP)
+    except OSError:
+        return []
+    return sorted(e for e in entries if e not in named
+                  and os.path.exists(os.path.join(TEST_TMP, e, "CACHEDIR.TAG")))
 
 
 def binaries(args):
@@ -199,6 +249,15 @@ def main():
             ran.append((message, code, output, left, time.monotonic() - start))
         return ran
 
+    started = time.monotonic()
+    broken = build_fixtures()
+    for name, output in broken:
+        print(f"\n---- fixture {name} ----\n{output}", end="")
+    if broken:
+        print("\ntest: the fixtures did not build: " + ", ".join(name for name, _ in broken))
+        return 1
+    print(f"  {len(FIXTURES)} fixtures built in {time.monotonic() - started:.0f} s")
+
     workers = max(1, len(os.sched_getaffinity(0)))
     failed, times = [], {}
     started = time.monotonic()
@@ -226,6 +285,11 @@ def main():
           f" {len(shared)} sharing trybuild's build one after another")
     for name, output in failed:
         print(f"\n---- {name} ----\n{output}", end="")
+    unlisted = unlisted_fixtures()
+    if unlisted:
+        print("\ntest: a test built a fixture that scripts/test-parallel.py FIXTURES doesn't build"
+              " first: " + ", ".join(unlisted))
+        return 1
     if failed:
         print(f"\ntest: {len(failed)} of {len(found)} binaries failed: "
               + ", ".join(name for name, _ in failed))

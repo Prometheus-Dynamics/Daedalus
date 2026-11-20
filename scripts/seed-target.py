@@ -23,9 +23,9 @@ every seeded build against the source, so an old seed only means more to build.
 Some builds have a build directory of their own inside this one: trybuild's (`tests/trybuild`, one
 project per crate named `<crate>-tests`) and the fixtures tests build (`tmp/<name>`). Their
 dependency builds go in the seed the same way. The rest of `tests` and `tmp` is ours, and so are
-trybuild's projects, whose manifests name this checkout's paths. A step that builds the daemon
-with other features has a build directory of its own beside the main one (`variants`), and it is
-seeded the same way as the main one.
+trybuild's projects, whose manifests name this checkout's paths. The steps that build the daemon
+or the examples with features of their own have build directories of their own beside the main
+one (`variants`, `ship`), and they are seeded the same way as the main one.
 
 The build directory is CARGO_TARGET_DIR, or `target` in this checkout. Copies share their blocks
 where the file system can (btrfs, XFS); a seed is replaced whole, under a lock beside it.
@@ -45,7 +45,7 @@ ONLY_OURS = ["doc", "test-parallel-times.json", ".daedalus-checkout"]
 # Ours, except the build directories inside them.
 HOLDING_BUILDS = ["tests", "tmp"]
 # Build directories laid out as the main one, inside it.
-BESIDE = ["variants"]
+BESIDE = ["variants", "ship"]
 # Written into a seed by `save`: the key its builds were made at.
 KEY_FILE = ".daedalus-seed-key"
 # The files a seed's key covers, besides the build profiles in Cargo.toml and the compiler.

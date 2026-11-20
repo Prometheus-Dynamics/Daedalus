@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # The check every PR into next must pass. CI runs exactly this.
 #
-# The steps run in four lanes at once, and each lane runs its steps one after another:
+# The steps run in five lanes at once, and each lane runs its steps one after another:
 #   host:    the cargo steps that build for this machine into the build directory, and run what
 #            they build.
+#   ship:    what a release ships: the crates packaged, the daemon's packaging files, and the
+#            examples run. Their `-p` builds have features of their own and would replace the
+#            binaries the host lane's tests run, so packaging and smoke build in `ship` in the build
+#            directory. Packaging a crate builds in `package` there already.
 #   beside:  the steps whose builds never replace a binary the host lane's tests run. The host and
 #            the daemon built without the planner or workers build in a directory of their own
 #            (`variants` in the build directory); the budget table builds release binaries, the
@@ -18,7 +22,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # The gate runs every test binary, whatever a caller's scripts/check.sh setting says.
 unset DAEDALUS_TEST_PACKAGES
 
-host=(clippy test chip doc package packaging smoke semver)
+host=(clippy test chip doc)
+ship=(package packaging smoke semver)
 beside=(no-planner no-workers budgets)
 cross=(boundaries nostd wasm)
 scripts=(format capability gpu-async-blocking gpu-driver-lock tools)
@@ -27,7 +32,7 @@ trailing=(scripts/check-file-sizes.sh scripts/check-workspace-deps.sh testing/bo
 # A step in scripts/ci.d that no lane names is a mistake: it would never run.
 for file in scripts/ci.d/*.sh; do
   name="$(basename "$file" .sh)"
-  if [[ " ${host[*]} ${beside[*]} ${cross[*]} ${scripts[*]} " != *" $name "* ]]; then
+  if [[ " ${host[*]} ${ship[*]} ${beside[*]} ${cross[*]} ${scripts[*]} " != *" $name "* ]]; then
     echo "gate: scripts/ci.d/$name.sh is in no lane of scripts/gate.sh" >&2
     exit 2
   fi
@@ -69,7 +74,7 @@ scripts_lane() {
 }
 
 start=$SECONDS
-lanes=(host beside cross scripts)
+lanes=(host ship beside cross scripts)
 pids=()
 for lane in "${lanes[@]}"; do
   if [[ $lane == scripts ]]; then
