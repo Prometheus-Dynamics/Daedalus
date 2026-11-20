@@ -50,8 +50,63 @@ def rel(root, path):
     return os.path.relpath(path, root)
 
 
+# Where blank_comments_and_strings can have something to blank: a slash, a quote, or a raw
+# string's opening (`r"`, `r#"`, `br"`).
+TRIGGER = re.compile(r'[/"\']|b?r#*"')
+
+
 def blank_comments_and_strings(text, keep_strings=False):
     """Replaces comments, and string contents unless kept, with spaces. Newlines and offsets stay."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        # Only a slash, a quote, or a raw string's `r` can start what is blanked: the text up to
+        # the next one is copied whole. At that position the checks below are the same as ever.
+        if not (m := TRIGGER.search(text, i)):
+            out.append(text[i:])
+            break
+        if m.start() > i:
+            out.append(text[i:m.start()])
+            i = m.start()
+        c, d = text[i], text[i + 1] if i + 1 < n else ""
+        if c == "/" and d == "/":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif c == "/" and d == "*":
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif text.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            out.append(re.sub(r"[^\n]", " ", text[i:j]))
+            i = j
+        elif (m := re.match(r'(?<![\w])b?r(#*)"', text[i:i + 12])) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
+            close = '"' + m.group(1)
+            j = text.find(close, i + m.end())
+            j = n if j < 0 else j + len(close)
+            out.append(text[i:j] if keep_strings else re.sub(r"[^\n]", " ", text[i:j]))
+            i = j
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1] if keep_strings else '"' + re.sub(r"[^\n]", " ", text[i + 1:j]) + '"')
+            i = j + 1
+        elif c == "'" and (m := re.match(r"'(\\.[^']*|[^\\'])'", text[i:i + 14])):
+            out.append(" " * m.end())
+            i += m.end()
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def blank_one_at_a_time(text, keep_strings=False):
+    """blank_comments_and_strings as it was, one character at a time: the self-test's oracle."""
     out, i, n = [], 0, len(text)
     while i < n:
         c, d = text[i], text[i + 1] if i + 1 < n else ""
@@ -90,6 +145,30 @@ def blank_comments_and_strings(text, keep_strings=False):
             out.append(c)
             i += 1
     return "".join(out)
+
+
+# The pieces Rust source is cut from where comments and literals start and end, nested and broken.
+TRICKY = ["/", "*", "//", "/*", "*/", '"', "'", "\\", "\\\"", "r", "b", "br", "r#", "#", '"#',
+          "x", "_", "a1", " ", "\n", "'a'", "'\\n'", "'ab", "&'a", "r\"", "r#\"", "br#\""]
+
+
+def self_test():
+    """The fast scan blanks exactly what the one-character-at-a-time scan did, on random tricky text."""
+    import random
+    rng, bad = random.Random(20261120), 0
+    for case in range(4000):
+        text = "".join(rng.choice(TRICKY) for _ in range(rng.randint(0, 40)))
+        for keep in (False, True):
+            if blank_comments_and_strings(text, keep) != blank_one_at_a_time(text, keep):
+                bad += 1
+                print(f"boundaries: case {case} (keep_strings={keep}) differs from the oracle: {text!r}", file=sys.stderr)
+    # The test can fail: an oracle that blanked nothing would differ.
+    if blank_one_at_a_time("a // b", False) == "a // b":
+        print("boundaries: the oracle blanks nothing", file=sys.stderr)
+        bad += 1
+    if bad:
+        sys.exit(1)
+    print("boundaries: the fast scan matches the per-character oracle on 4000 tricky cases")
 
 
 def blank_gated_items(text):
@@ -347,7 +426,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     parser.add_argument("--no-build", action="store_true", help="skip the heap-free target builds")
+    parser.add_argument("--self-test", action="store_true", help="check the fast scan against its oracle")
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
     root = os.path.abspath(args.root)
     packages = cargo_metadata(root)["packages"]
     check_core_deps(root, packages)
