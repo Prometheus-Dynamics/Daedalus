@@ -1,8 +1,8 @@
 # Run sheet: the next CM5 batch (raze2, V3D)
 
-One batched session on the CM5, for five figures: E13, E9, E14, E6 and E11, in that order. Nothing else
-is in this batch. C1 needs no board time (see C1.md, correction 2026-11-20). D2, I3, the ListView fan and
-the other GPU tests are out of it.
+One batched session on the CM5, for six figures: E13, E9, E14, E6, ticks (D2 and I2) and E11, in that
+order. Nothing else is in this batch. C1 needs no board time (see C1.md, correction 2026-11-20). I3, the
+ListView fan and the other GPU tests are out of it.
 
 ## Rules set before the run
 
@@ -28,9 +28,9 @@ applies them as written. These three were chosen and approved beforehand, not fi
 On the host, from a clone on NVMe:
 
 1. `VVL_DIR=<unpacked aarch64 layer> scripts/board/batch.sh build`. It builds the bundle under
-   `$CARGO_TARGET_DIR/board/batch`: `daedalus-gpu-budgets`, `bounded`, the `vk-sys` unit tests
-   (`vk-sys.lib`), the wgpu `all` and `region` tests, the layer, `batch-on-board.sh` and
-   `figures/*.sh`.
+   `$CARGO_TARGET_DIR/board/batch`: `daedalus-gpu-budgets`, `daedalus-budget-harness`, its `ticks`
+   bench (`ticks-bench`), `bounded`, the `vk-sys` unit tests (`vk-sys.lib`), the wgpu `all` and
+   `region` tests, the layer, `batch-on-board.sh` and `figures/*.sh`.
 2. `scripts/board/batch.sh rehearse` on this machine first. It must pass.
 3. Only after the board's keeper gives the word: `BOARD_SSH=<board> scripts/board/batch.sh go`. It
    copies the bundle to `/tmp/dd-batch`, runs `sh ./batch-on-board.sh` there detached under both GPU
@@ -38,7 +38,8 @@ On the host, from a clone on NVMe:
 4. `scripts/board/judge.py figures $CARGO_TARGET_DIR/board/batch/results`. It applies the rules below
    and says PASS or FAIL with the reason.
 
-On the board the script runs: preflight, E13, E9, E14, E6, E11. Each figure is `sh figures/<f>.sh`.
+On the board the script runs: preflight, E13, E9, E14, E6, ticks, E11. Ticks is the CPU's figure and
+runs whatever E13 said; the GPU figures run only when E13 opened. Each figure is `sh figures/<f>.sh`.
 Every step runs under `bin/bounded 900` (`BATCH_SECONDS`), with `DAEDALUS_GPU_REQUIRED=1` and
 `DAEDALUS_GPU_ADAPTERS=hardware`. Each figure writes `results/<f>.txt` and `results/<f>-gate.txt`. The
 run ends with a GPU check (`results/gpu-health.txt`) and `results/done`.
@@ -75,7 +76,8 @@ each was checked with `sh -n` (bash) and `bash --posix -n` only.
   `UNASSIGNED-`; the layer's own "layer active" note does not count). Every step exits 0.
 - Fails it: no `VUID-` line in `e13-planted.txt`; any validation line in a clean run; no layer in the
   bundle. If the planted call goes unnamed, E9, E14, E6 and E11 do not run, and each of their results
-  says `not run: E13 did not open: ...`. Those count as failures too.
+  says `not run: E13 did not open: ...`. Those count as failures too. Ticks, the CPU's figure, still
+  runs.
 
 ## E9: the fence a dma-buf exports while V3D writes it
 
@@ -130,6 +132,33 @@ each was checked with `sh -n` (bash) and `bash --posix -n` only.
 - Fails it: a merged fragment of more than one submit or pass; merged above unmerged; fewer than three
   rounds.
 - Dropped: the box 3x3 comparison. The pixel vocabulary is out of Daedalus by the user's ruling.
+
+## Ticks (D2 and I2): the CPU tick, before E11
+
+The 2026-11-11 figures predate the landed work since, the zero-allocation socket path among it, so
+D2 and I2 close on rows from this run.
+
+- Commands (`figures/ticks.sh`), three rounds, 10,000,000 ticks each (`BATCH_TICKS`):
+  `bin/daedalus-budget-harness chain <ticks> 16`, `chain <ticks> 16 unfused`, `chain <ticks> 1` and
+  `idle <ticks> 16`. Each prints its wall time in nanoseconds a tick (`Instant` around the loop).
+  Then `bin/ticks-bench --bench --noplot` filtered to `idle_tick_16`, `fused_chain_16_tick`,
+  `unfused_chain_16_tick` and `detector_frame`, with `CRITERION_HOME` under the bundle.
+- Expected, from 2026-11-11 at 6245c925: a tick of 1,115 ns merged, 1,960 ns unmerged, 395 ns for one
+  stage and 35 ns idle (wall clock); criterion 34.9 ns, 1.112 µs, 1.921 µs and 1.225 µs.
+- Pass, on the median of the three rounds and on criterion's medians:
+  - per stage with the 1-stage tick subtracted ((16-stage − 1-stage) ÷ 15), merged is below unmerged;
+  - criterion's fused tick is below its unfused tick;
+  - neither a tick ÷ 16 is worse than the reference's 498 ns merged and 655 ns unmerged, in the wall
+    runs and in criterion's;
+  - `detector_frame` is at most the reference's 7 µs.
+- Reported, not judged: a figure more than 1.25 times its 2026-11-11 value is listed, and D2 and I2 give
+  the reason with it, as D2 asks of a number that gets worse.
+- Fails it: fewer than three rounds; a criterion median missing; merged not below unmerged; a
+  per-stage figure worse than the reference's; a detector frame above 7 µs.
+- D2 and I2 close on this run's rows. The PMU counts from `counters` (2026-11-16 and 11-17) stand in
+  for callgrind, which is not on the board; they are aarch64 counts and not compared with dev's x86
+  callgrind 27,064. The RX 6800 XT row is dropped, not pending: by rule no gate or bench opens the
+  desktop GPU.
 
 ## E11: device loss by the driver, last
 

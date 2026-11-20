@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The batched CM5 measurement session: the figures E13, E9, E14, E6 and E11, in that order, with
-# E11 last. The run sheet is testing/board-runs/run-sheet.md; scripts/board/judge.py figures
+# The batched CM5 measurement session: the figures E13, E9, E14, E6, ticks (D2 and I2) and E11, in
+# that order, with E11 last. The run sheet is testing/board-runs/run-sheet.md; scripts/board/judge.py figures
 # applies its pass rules to the results.
 #
 #   scripts/board/batch.sh build      builds the bundle under $CARGO_TARGET_DIR/board/batch
@@ -58,10 +58,26 @@ for line in sys.stdin:
 ' "$BIN/$prefix" "$@"
 }
 
+bench() { # package, bench name, dest: copies that bench binary (criterion's, built --no-run)
+  cargo bench --no-run "${target_args[@]}" -p "$1" --bench "$2" --message-format=json 2>>"$LOG" |
+    python3 -c '
+import json, shutil, sys
+for line in sys.stdin:
+    try:
+        m = json.loads(line)
+    except ValueError:
+        continue
+    if m.get("executable") and "bench" in m["target"]["kind"] and m["target"]["name"] == sys.argv[1]:
+        shutil.copy(m["executable"], sys.argv[2])
+' "$2" "$BIN/$3"
+  [[ -x "$BIN/$3" ]] || die "the $2 bench of $1 did not build: see $LOG"
+}
+
 # The bundle, one list of programs for both: kind board (cross-built for aarch64, `bounded`
 # static) or rehearsal (plain native builds of this machine). $2 is the directory the bundle is
 # made in. Only what the figures run is in it: the GPU budgets tool, `bounded`, the vk-sys unit
-# tests (E13's planted and clean runs) and the wgpu fragment and region tests (E13's clean runs).
+# tests (E13's planted and clean runs), the wgpu fragment and region tests (E13's clean runs), and
+# the budget harness with its ticks bench (the ticks figure, D2 and I2).
 bundle() {
   local kind="$1" root="$2" release small vvl
   local BIN="$root/bundle/bin" LOG="$root/build.log" target_args=()
@@ -86,6 +102,10 @@ bundle() {
   cargo build --release "${target_args[@]}" -p daedalus-gpu-budgets --bin daedalus-gpu-budgets 2>>"$LOG" ||
     die "the build failed: see $LOG"
   cp "$release/daedalus-gpu-budgets" "$BIN/"
+  cargo build --release "${target_args[@]}" -p daedalus-budget-harness --bin daedalus-budget-harness 2>>"$LOG" ||
+    die "the build failed: see $LOG"
+  cp "$release/daedalus-budget-harness" "$BIN/"
+  bench daedalus-budget-harness ticks ticks-bench
   tests daedalus-wgpu wgpu all region
   tests daedalus-vk-sys vk-sys lib
   # `bounded`: a static musl build on a board (zig brings its C runtime, as run.sh does); a plain

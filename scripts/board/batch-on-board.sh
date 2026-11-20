@@ -1,8 +1,9 @@
 #!/bin/sh
 # The batched CM5 measurement session, run on the board from its own directory by
-# scripts/board/batch.sh. The order is fixed: preflight, E13, E9, E14, E6, E11. Each figure is a
-# script under figures/ and writes results/<figure>.txt and results/<figure>-gate.txt. The run
-# sheet is testing/board-runs/run-sheet.md, and scripts/board/judge.py figures applies its rules.
+# scripts/board/batch.sh. The order is fixed: preflight, E13, E9, E14, E6, ticks (D2 and I2), E11.
+# Each figure is a script under figures/ and writes results/<figure>.txt and
+# results/<figure>-gate.txt. The run sheet is testing/board-runs/run-sheet.md, and
+# scripts/board/judge.py figures applies its rules.
 # This script writes nothing outside its directory, starts no service, and kills nothing. The
 # caller holds the board's GPU locks for the whole run.
 # Two switches are for a rehearsal on another machine (batch.sh rehearse) and are never set on a
@@ -92,8 +93,9 @@ case "$e13" in
   skipped*) [ "${BATCH_REHEARSAL:-}" = 1 ] && go=yes || go=no ;;
   *) go=no ;;
 esac
-for f in e9 e14 e6 e11; do
-  if [ "$go" = yes ]; then
+for f in e9 e14 e6 ticks e11; do
+  # The ticks figure is the CPU's (D2 and I2): it runs whatever E13 said.
+  if [ "$go" = yes ] || [ "$f" = ticks ]; then
     sh "$D/figures/$f.sh"
   else
     echo "not run: E13 did not open: $e13" > "$R/$f-gate.txt"

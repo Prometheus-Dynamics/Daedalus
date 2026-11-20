@@ -15,12 +15,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The bundle's programs, as `batch.sh` makes it. Each stand-in notes its arguments in `calls`.
-const BUNDLE: [&str; 3] = ["vk-sys.lib", "wgpu.all", "wgpu.region"];
+const BUNDLE: [&str; 5] = [
+    "vk-sys.lib",
+    "wgpu.all",
+    "wgpu.region",
+    "daedalus-budget-harness",
+    "ticks-bench",
+];
 
 /// Programs the test stands in for instead of linking the host's: they would read this machine.
 const STOOD_IN: [&str; 4] = ["dmesg", "findmnt", "systemctl", "vulkaninfo"];
 
-/// The figures after E13, each of which runs only when E13 opened.
+/// The GPU figures after E13, each of which runs only when E13 opened. Ticks, the CPU's, runs
+/// whatever E13 said.
 const AFTER_E13: [&str; 4] = ["e9", "e14", "e6", "e11"];
 
 struct Board {
@@ -172,7 +179,7 @@ fn every_step_runs_with_only_the_boards_commands() {
     );
     assert!(board.result("e13-gate.txt").starts_with("open"));
     let results = board.results();
-    for figure in ["e13", "e9", "e14", "e6", "e11"] {
+    for figure in ["e13", "e9", "e14", "e6", "ticks", "e11"] {
         let name = format!("{figure}.txt");
         assert!(results.iter().any(|(file, _)| *file == name), "{name}");
     }
@@ -196,6 +203,8 @@ fn every_step_runs_with_only_the_boards_commands() {
     assert!(at("planted") < at("dma-fence"));
     assert!(at("dma-fence") < at("dma-steady"));
     assert!(at("dma-steady") < at("elements"));
+    assert!(at("elements") < at("daedalus-budget-harness chain"));
+    assert!(at("daedalus-budget-harness idle") < at("ticks-bench"));
     assert!(!calls.contains("grind"), "{calls}");
     assert!(
         board
@@ -257,6 +266,8 @@ fn an_unnamed_planted_call_stops_every_gpu_figure_after_e13() {
     for section in ["dma-fence", "dma-steady", "elements", "grind", "raw-submit"] {
         assert!(!calls.contains(section), "{section} ran: {calls}");
     }
+    assert!(board.result("ticks-gate.txt").starts_with("open"));
+    assert!(calls.contains("ticks-bench"), "{calls}");
 }
 
 #[test]

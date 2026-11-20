@@ -22,6 +22,14 @@ PENDING_SHARE = 0.9
 STEADY_BUFFERS, STEADY_IMPORTS, ALLOCATIONS_MAX = 8, 1000, 50
 # E11 (b): resets the kernel has to have made before "the device survives" is a finding.
 RESETS_MIN = 3
+# Ticks (D2 and I2): the reference's per-stage figures on the CM5, its detector frame, and the 2026-11-11
+# board figures this run is set beside (reported, not judged: D2 asks for the reason of a worse one).
+DEV_MERGED_NS, DEV_UNMERGED_NS, DEV_DETECTOR_NS = 498, 655, 7000
+EARLIER = {"merged": 1115, "unmerged": 1960, "one": 395, "idle": 35,
+           "fused_chain_16_tick": 1112, "unfused_chain_16_tick": 1921, "idle_tick_16": 34.9, "detector_frame": 1225}
+WORSE = 1.25
+BENCHES = ("idle_tick_16", "fused_chain_16_tick", "unfused_chain_16_tick", "detector_frame")
+UNITS = {"ps": 0.001, "ns": 1.0, "µs": 1000.0, "us": 1000.0, "ms": 1e6, "s": 1e9}
 NODE_COUNTS = (4, 8)
 FORMS = ("fragment merged", "fragment unmerged", "compute merged", "compute unmerged")
 
@@ -282,6 +290,49 @@ def judge_e11(directory, rehearsal):
     return figure
 
 
+def judge_ticks(directory, rehearsal):
+    figure = Figure("ticks", rehearsal)
+    text = figure.ran(directory)
+    if text is None:
+        return figure
+    wall = {}
+    for stages, form, each in re.findall(r"^chain: (\d+) stages (merged|unmerged), \d+ ticks, sum \d+, ([\d.]+) ns a tick", text, re.M):
+        wall.setdefault("one" if stages == "1" else form, []).append(float(each))
+    wall["idle"] = [float(each) for each in re.findall(r"^idle: 16 stages, \d+ ticks, \d+ idle, ([\d.]+) ns a tick", text, re.M)]
+    if any(len(wall.get(kind, [])) < 3 for kind in ("merged", "unmerged", "one", "idle")):
+        figure.fail("fewer than three rounds of the wall-clock runs")
+        return figure
+    mid = {kind: sorted(runs)[len(runs) // 2] for kind, runs in wall.items()}
+    merged, unmerged = (mid["merged"] - mid["one"]) / 15, (mid["unmerged"] - mid["one"]) / 15
+    figure.say(f"wall, a tick: merged {mid['merged']:.1f} ns, unmerged {mid['unmerged']:.1f} ns, "
+               f"1 stage {mid['one']:.1f} ns, idle {mid['idle']:.2f} ns")
+    figure.say(f"per stage, 1 stage subtracted: merged {merged:.1f} ns, unmerged {unmerged:.1f} ns; "
+               f"a tick / 16: merged {mid['merged'] / 16:.1f} ns, unmerged {mid['unmerged'] / 16:.1f} ns")
+    if merged >= unmerged:
+        figure.fail("wall: merged per stage is not below unmerged")
+    if mid["merged"] / 16 > DEV_MERGED_NS or mid["unmerged"] / 16 > DEV_UNMERGED_NS:
+        figure.fail(f"wall: a per-stage figure is worse than the reference's ({DEV_MERGED_NS} and {DEV_UNMERGED_NS} ns)")
+    bench = {}
+    for name in BENCHES:
+        found = re.search(rf"^{name}\s+time:\s+\[\S+ \S+ ([\d.]+) (\S+) ", text, re.M)
+        if found and found.group(2) in UNITS:
+            bench[name] = float(found.group(1)) * UNITS[found.group(2)]
+        else:
+            figure.fail(f"no criterion median for {name}")
+    if len(bench) == len(BENCHES):
+        figure.say("criterion medians: " + ", ".join(f"{name} {bench[name]:.1f} ns" for name in BENCHES))
+        if bench["fused_chain_16_tick"] >= bench["unfused_chain_16_tick"]:
+            figure.fail("criterion: fused is not below unfused")
+        if bench["fused_chain_16_tick"] / 16 > DEV_MERGED_NS or bench["unfused_chain_16_tick"] / 16 > DEV_UNMERGED_NS:
+            figure.fail(f"criterion: a per-stage figure is worse than the reference's ({DEV_MERGED_NS} and {DEV_UNMERGED_NS} ns)")
+        if bench["detector_frame"] > DEV_DETECTOR_NS:
+            figure.fail(f"criterion: detector_frame is above the reference's {DEV_DETECTOR_NS} ns")
+    for name, now in list(mid.items()) + list(bench.items()):
+        if now > EARLIER[name] * WORSE:
+            figure.say(f"worse than 2026-11-11: {name} {now:.1f} ns against {EARLIER[name]} ns: D2 and I2 give the reason")
+    return figure
+
+
 def judge_figures(directory, rehearsal=False):
     """The batch's preflight, end and GPU check, then each figure's rule."""
     problems, lines = [], [f"mode: {'rehearsal' if rehearsal else 'board'}"]
@@ -300,7 +351,7 @@ def judge_figures(directory, rehearsal=False):
     software = sorted(name for name in adapters if re.search(r"llvmpipe|lavapipe", name, re.I))
     if software and not rehearsal:
         problems.append(f"a step ran on a software adapter: {', '.join(software)}")
-    for judge in (judge_e13, judge_e9, judge_e14, judge_e6, judge_e11):
+    for judge in (judge_e13, judge_e9, judge_e14, judge_e6, judge_ticks, judge_e11):
         figure = judge(directory, rehearsal)
         lines.extend(figure.lines)
         problems.extend(figure.problems)
@@ -347,6 +398,22 @@ def grind(lost="not-fired", known="correct", same="yes", wait="finished", reopen
     return block("e11-hang", f"grind: summary: wait={wait} lost_callback={lost} known_run={known} same_device={same} reopen_s={reopen}")
 
 
+def ticks_round(n, merged=1100.0, unmerged=1900.0, one=400.0, idle=35.0):
+    return (block(f"ticks-merged-{n}", f"chain: 16 stages merged, 10000000 ticks, sum 1, {merged:.2f} ns a tick")
+            + block(f"ticks-unmerged-{n}", f"chain: 16 stages unmerged, 10000000 ticks, sum 1, {unmerged:.2f} ns a tick")
+            + block(f"ticks-one-{n}", f"chain: 1 stages merged, 10000000 ticks, sum 1, {one:.2f} ns a tick")
+            + block(f"ticks-idle-{n}", f"idle: 16 stages, 10000000 ticks, 10000000 idle, {idle:.2f} ns a tick"))
+
+
+TICKS_BENCH = block("ticks-bench", "\n".join([
+    "idle_tick_16            time:   [34.512 ns 34.900 ns 35.301 ns]",
+    "fused_chain_16_tick     time:   [1.1050 µs 1.1120 µs 1.1190 µs]",
+    "unfused_chain_16_tick   time:   [1.9100 µs 1.9210 µs 1.9320 µs]",
+    "detector_frame          time:   [1.2200 µs 1.2250 µs 1.2300 µs]",
+]))
+TICKS_GOOD = "".join(ticks_round(n) for n in (1, 2, 3)) + TICKS_BENCH
+
+
 E11_RESETS = "e11: v3d resets in the kernel log: start 5, end 8, during E11 3\n"
 E11_B = "".join(grind() for _ in range(3)) + E11_RESETS
 
@@ -365,6 +432,8 @@ def board_run():
         "e14.txt": E14_GOOD,
         "e6-gate.txt": "open: run\n",
         "e6.txt": "".join(block(f"e6-elements-{n}", e6_round()) for n in (1, 2, 3)),
+        "ticks-gate.txt": "open: run\n",
+        "ticks.txt": TICKS_GOOD,
         "e11-gate.txt": "open: the watchdog is armed\n",
         "e11.txt": E11_B,
     }
@@ -426,6 +495,19 @@ def planted_figures(scratch, expect):
     expect("figures: E6 merged slower than unmerged fails", judged(planted(e6_txt=slow)), "slower")
     short = "".join(block(f"e6-elements-{n}", e6_round()) for n in (1, 2))
     expect("figures: E6 two rounds only fails", judged(planted(e6_txt=short)), "three rounds")
+    # Ticks
+    flat = "".join(ticks_round(n, merged=1900.0) for n in (1, 2, 3)) + TICKS_BENCH
+    expect("figures: ticks merged not below unmerged fails", judged(planted(ticks_txt=flat)), "merged per stage")
+    slow = "".join(ticks_round(n, merged=9000.0, unmerged=12000.0) for n in (1, 2, 3)) + TICKS_BENCH
+    expect("figures: ticks worse than the reference fails", judged(planted(ticks_txt=slow)), "worse than the reference")
+    expect("figures: ticks two rounds only fails",
+           judged(planted(ticks_txt="".join(ticks_round(n) for n in (1, 2)) + TICKS_BENCH)), "three rounds")
+    expect("figures: ticks with no criterion median fails",
+           judged(planted(ticks_txt=TICKS_GOOD.replace("detector_frame  ", "detector_gone   "))), "detector_frame")
+    expect("figures: ticks fused not below unfused fails",
+           judged(planted(ticks_txt=TICKS_GOOD.replace("1.1120 µs", "2.5000 µs"))), "fused is not below")
+    expect("figures: ticks a slow detector frame fails",
+           judged(planted(ticks_txt=TICKS_GOOD.replace("1.2250 µs", "7.5000 µs"))), "detector_frame is above")
     # E11
     expect("figures: E11 fired with a wrong known run fails",
            judged(planted(e11_txt=grind(lost="fired", known="wrong", same="no") + E11_RESETS)), "no reopened device")

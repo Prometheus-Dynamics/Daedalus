@@ -17,6 +17,7 @@
 use std::hint::black_box;
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::Instant;
 
 use daedalus_abi::counting::{CountingAlloc, counted};
 use daedalus_budget_harness::detector::{detector, frame, picture};
@@ -34,6 +35,11 @@ static ALLOC: CountingAlloc = CountingAlloc;
 
 /// Ticks run before anything is counted, so pools and queues are at their steady size.
 const WARM_UP: u64 = 64;
+
+/// The wall time of the loop since `start`, in nanoseconds a tick (the board's per-stage figure).
+fn per_tick(start: Instant, ticks: u64) -> f64 {
+    start.elapsed().as_nanos() as f64 / ticks.max(1) as f64
+}
 
 fn number(text: Option<&String>, default: u64) -> Result<u64, String> {
     match text {
@@ -198,10 +204,12 @@ fn run(args: &[String]) -> Result<(), String> {
             // One value through first, so every queue has been used, and then nothing.
             chain_tick(&mut host, 1);
             let mut idle = 0;
+            let start = Instant::now();
             for _ in 0..ticks {
                 idle += u64::from(black_box(idle_tick(&mut host)));
             }
-            println!("idle: {stages} stages, {ticks} ticks, {idle} idle");
+            let each = per_tick(start, ticks);
+            println!("idle: {stages} stages, {ticks} ticks, {idle} idle, {each:.2} ns a tick");
             if idle != ticks {
                 return Err("a tick with nothing fed was not idle".to_owned());
             }
@@ -216,10 +224,15 @@ fn run(args: &[String]) -> Result<(), String> {
             let merge = args.get(3).map(String::as_str) != Some("unfused");
             let mut host = chain(stages, kind, merge);
             let mut sum = 0u64;
+            let start = Instant::now();
             for value in 0..ticks {
                 sum = sum.wrapping_add(black_box(chain_tick(&mut host, value)));
             }
-            println!("chain: {stages} stages, {ticks} ticks, sum {sum}");
+            let each = per_tick(start, ticks);
+            let form = if merge { "merged" } else { "unmerged" };
+            println!(
+                "chain: {stages} stages {form}, {ticks} ticks, sum {sum}, {each:.2} ns a tick"
+            );
         }
         "detector" => {
             let frames = number(args.get(1), 0)?;
