@@ -27,8 +27,8 @@ applies them as written. These three were chosen and approved beforehand, not fi
 
 On the host, from a clone on NVMe:
 
-1. `VVL_DIR=<unpacked aarch64 layer> scripts/board/batch.sh build`. It builds the bundle under
-   `$CARGO_TARGET_DIR/board/batch`: `daedalus-gpu-budgets`, `daedalus-budget-harness`, its `ticks`
+1. `VVL_DIR=/mnt/nvme-wd/scratch/vgl/vvl/aarch64 scripts/board/batch.sh build`, with the layer
+   recorded under "What the board needs". It builds the bundle under `$CARGO_TARGET_DIR/board/batch`: `daedalus-gpu-budgets`, `daedalus-budget-harness`, its `ticks`
    bench (`ticks-bench`), `bounded`, the `vk-sys` unit tests (`vk-sys.lib`), the wgpu `all` and
    `region` tests, the layer, `batch-on-board.sh` and `figures/*.sh`.
 2. `scripts/board/batch.sh rehearse` on this machine first. It must pass.
@@ -200,8 +200,21 @@ D2 and I2 close on rows from this run.
 - The aarch64 Khronos validation layer, as `VVL_DIR` on the host: a directory with
   `libVkLayer_khronos_validation.so` and `VkLayer_khronos_validation.json` (its `library_path` relative
   to the json). It is not in this repo, and the earlier batches did not record where theirs came from.
-  It has to come from the board's keeper, or be built from the Khronos Vulkan-ValidationLayers sources
-  for aarch64, for a Vulkan 1.3 loader.
+  This batch's layer, built 2026-11-20 and kept outside the repo:
+  - Source: Khronos Vulkan-ValidationLayers, tag `v1.4.354`, commit
+    `ccaf4c149d8730338012614a5be8080d0b92e95f`, with the dependencies its `scripts/known_good.json`
+    pins (Vulkan-Headers and Vulkan-Utility-Libraries `v1.4.354`, SPIRV-Headers `1e770e7d`,
+    SPIRV-Tools `902e360d`). The tag matches the header version the board's driver reports
+    (Vulkan 1.3.354).
+  - Build: cross-built on the host with `zig c++ -target aarch64-linux-gnu.2.36` (the bundle's glibc),
+    Release, tests off, no window-system support (xcb, xlib and wayland off), stripped. The highest
+    glibc symbol it needs is GLIBC_2.34. Its json's `library_path` is `./libVkLayer_khronos_validation.so`.
+  - Path: `VVL_DIR=/mnt/nvme-wd/scratch/vgl/vvl/aarch64` (the build script is
+    `/mnt/nvme-wd/scratch/vgl/vvl/tools/build.sh`).
+  - sha256: `libVkLayer_khronos_validation.so`
+    `5820de1620046e13e6c5c72138c0a693daedb50a2bee57420d0aba5967eb7f1b`;
+    `VkLayer_khronos_validation.json`
+    `0d09368222e25d301a501410bd49e865e93ab12c7f3f961859cd16fd10981e98`.
 - The locks: `go` holds both `/run/lock/raze-gpu.lock` and `/run/lock/board-gpu.lock` for the whole run
   (`BOARD_LOCKS`, both by default).
 - Other software on the board: only that it holds neither GPU lock during the run. The bundle depends
