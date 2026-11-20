@@ -1,8 +1,9 @@
 //! A made plan through the daemon as a process. A daemon with the planner makes the plan of a graph
 //! with the dylib fixture loaded, and runs a value through it. A daemon with `plan_dir` loads the
 //! made plan from its directory, with no graph and no planner needed, and must give the same
-//! value. The lean build runs the second half alone, against the plan the first half wrote, so
-//! the full run before it (`cargo test` without `--no-default-features`) must come first.
+//! value. The full build does both in one test, in order. The lean build runs the second half
+//! alone, against the plan the full run left, so the full run (`cargo test` without
+//! `--no-default-features`) must come first.
 
 #![cfg(unix)]
 
@@ -155,33 +156,42 @@ fn script(client: &Client, graph: &str) -> Vec<String> {
     seen
 }
 
+/// Writes `bytes` to `path` whole: a reader sees the old file or the new one, never a part.
+#[cfg(feature = "planner")]
+fn write_whole(path: &Path, bytes: &[u8]) {
+    let part = path.with_extension("part");
+    std::fs::write(&part, bytes).unwrap();
+    std::fs::rename(&part, path).unwrap();
+}
+
+/// One test, in order: the first daemon makes the plan and runs the graph, then a daemon with
+/// `plan_dir` runs the stored plan and must give the same values. The plan and the values are
+/// left in `shared()` for the lean build's test.
 #[cfg(feature = "planner")]
 #[test]
-fn a_plan_made_by_the_planner_runs_the_same_as_its_graph() {
-    let dir = scratch("make");
-    let out = shared();
-    let (_daemon, client) = start(&dir, None);
+fn a_made_plan_from_a_plan_dir_runs_the_same_as_its_graph() {
+    let made = scratch("make");
+    let (daemon, client) = start(&made, None);
     client.put_graph("g", &graph("fixture.pass")).unwrap();
     let (_hash, bytes) = client.make_plan("g", StartConfig::default()).unwrap();
-    std::fs::write(out.join("g.plan"), &bytes).unwrap();
     let from_graph = script(&client, "g");
-    std::fs::write(out.join("expected.txt"), from_graph.join("\n")).unwrap();
     assert_eq!(from_graph.len(), 3);
     assert!(
         from_graph.iter().all(|line| line.contains("Some")),
         "{from_graph:?}"
     );
-}
+    drop(client);
+    drop(daemon);
 
-#[cfg(feature = "planner")]
-#[test]
-fn a_daemon_with_a_plan_dir_runs_the_stored_plan_with_the_same_values() {
     let dir = scratch("load");
     let plans = scratch("load-plans");
-    std::fs::copy(shared().join("g.plan"), plans.join("g.plan")).unwrap();
+    std::fs::write(plans.join("g.plan"), &bytes).unwrap();
     let (_daemon, client) = start(&dir, Some(&plans));
-    let expected = std::fs::read_to_string(shared().join("expected.txt")).unwrap();
-    assert_eq!(script(&client, "g").join("\n"), expected);
+    assert_eq!(script(&client, "g"), from_graph);
+
+    let out = shared();
+    write_whole(&out.join("g.plan"), &bytes);
+    write_whole(&out.join("expected.txt"), from_graph.join("\n").as_bytes());
 }
 
 /// The lean build has no planner: the stored plan runs, and planning ops are refused.
