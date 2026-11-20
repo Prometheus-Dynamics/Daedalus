@@ -5,6 +5,8 @@ pub mod allocations;
 #[cfg(target_os = "linux")]
 pub mod baselines;
 pub mod chains;
+#[cfg(target_os = "linux")]
+pub mod dmabuf;
 pub mod fences;
 pub mod gaps;
 pub mod grind;

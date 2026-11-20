@@ -5,6 +5,7 @@
 //! is the safe part: the ring is made on the backend's device with the device's own submit
 //! lock, so a raw submit never overlaps one of wgpu's. Linux and Vulkan only.
 
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 
 use daedalus_vk_sys::ash::vk;
@@ -101,6 +102,9 @@ impl Storage {
 pub use daedalus_vk_sys::block::Block as RawBlock;
 /// Where a raw block is placed, by the names [`Storage`] places by.
 pub use daedalus_vk_sys::memory::Placement as RawPlacement;
+/// A sync fd held as a semaphore that a raw submit waits on, on the device. See
+/// [`WgpuBackend::import_sync_fd`].
+pub use daedalus_vk_sys::semaphore::Semaphore as RawSemaphore;
 
 impl WgpuBackend {
     /// A raw block of `size` bytes in `placement`, made on this backend's device. Its memory is
@@ -108,6 +112,15 @@ impl WgpuBackend {
     pub fn raw_block(&self, size: u64, placement: RawPlacement) -> Result<RawBlock, RawError> {
         let context = self.context().map_err(RawError::Open)?;
         RawBlock::new(&context.device, size, placement)
+            .map_err(|error| RawError::Vulkan(error.to_string()))
+    }
+
+    /// The sync fd `fence` (a sync_file, such as one a dma-buf exports) as a semaphore a raw
+    /// submit on this backend's device can wait on. The semaphore owns the fd from here. Refused
+    /// where the device can't import a sync fd.
+    pub fn import_sync_fd(&self, fence: OwnedFd) -> Result<RawSemaphore, RawError> {
+        let context = self.context().map_err(RawError::Open)?;
+        RawSemaphore::import_sync_fd(&context.device, Some(fence))
             .map_err(|error| RawError::Vulkan(error.to_string()))
     }
 }
@@ -122,4 +135,25 @@ pub fn raw_copy(
 ) -> Result<(), RawError> {
     daedalus_vk_sys::block::copy_into(submitter, source.wgpu_buffer(), block, bytes)
         .map_err(|error| RawError::Vulkan(error.to_string()))
+}
+
+/// [`raw_copy`], with the copy's submit waiting on the device for each of `waits`, and no host wait
+/// before it. `meanwhile` runs after the submit and before the host waits for the copy.
+pub fn raw_copy_after(
+    submitter: &Submitter,
+    source: &Storage,
+    block: &RawBlock,
+    bytes: u64,
+    waits: &[&RawSemaphore],
+    meanwhile: impl FnOnce(),
+) -> Result<(), RawError> {
+    daedalus_vk_sys::block::copy_into_after(
+        submitter,
+        source.wgpu_buffer(),
+        block,
+        bytes,
+        waits,
+        meanwhile,
+    )
+    .map_err(|error| RawError::Vulkan(error.to_string()))
 }

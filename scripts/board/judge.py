@@ -4,6 +4,10 @@
   judge.py linux <results dir>   a Linux board: one <name>.out and <name>.exit for each test binary
   judge.py pico <log file>       the Pico firmware's defmt log
   judge.py measure <results dir> a measurement run: that every figure is there, and what it is
+  judge.py figures [--rehearsal] <results dir>
+                                 the batched GPU figures (scripts/board/batch-on-board.sh), by the
+                                 rules of testing/board-runs/run-sheet.md. With --rehearsal a step
+                                 that can't run off the board may say `skipped:`, and E11 not run.
   judge.py --self-test           the judges against planted runs, good and bad
 
 A judge reads only files. It runs nothing and touches no board, so the same run can be judged
@@ -14,6 +18,10 @@ import os
 import re
 import sys
 import tempfile
+
+# Its rules for the batch's figures are beside it, found however it is run (`python3 -I` too).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from judge_figures import judge_figures, planted_figures  # noqa: E402
 
 RESULT = re.compile(r"test result: (\w+)\. (\d+) passed; (\d+) failed; (\d+) ignored")
 REPORT = re.compile(
@@ -264,6 +272,7 @@ def planted_runs(scratch):
     expect("measure: a lean run that never loaded a plan fails", measure(no_plan), "no daemon_rss_idle_kb figure")
     crashed = dict(whole, **{"timings.txt": whole["timings.txt"] + "thread main panicked\n"})
     expect("measure: a panic fails", measure(crashed), "panicked")
+    planted_figures(scratch, expect)
     if failed:
         print(f"judge: self-test failed: {len(failed)} cases")
         return 1
@@ -278,6 +287,12 @@ def main(argv):
         return verdict(*judge_linux(argv[2]))
     if len(argv) == 3 and argv[1] == "measure":
         return verdict(*judge_measure(argv[2]))
+    if len(argv) in (3, 4) and argv[1] == "figures":
+        rehearsal = argv[2:-1] == ["--rehearsal"]
+        if len(argv) == 4 and not rehearsal:
+            print(__doc__)
+            return 2
+        return verdict(*judge_figures(argv[-1], rehearsal))
     if len(argv) == 3 and argv[1] == "pico":
         return verdict(*judge_pico(argv[2]))
     print(__doc__)

@@ -200,6 +200,7 @@ impl Context {
             // Dropping the device calls this too, and that isn't a loss.
             if reason != wgpu::DeviceLostReason::Destroyed {
                 flag.store(true, Ordering::Release);
+                crate::driver::note_driver_loss(format!("{reason:?}: {message}"));
                 record.record(format!("the device was lost: {message}"));
             }
         });

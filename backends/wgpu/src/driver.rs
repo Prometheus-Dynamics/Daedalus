@@ -18,6 +18,8 @@ use daedalus_vk_sys::adapters::{Policy, filter};
 static BUSY: Mutex<bool> = Mutex::new(false);
 static FREED: Condvar = Condvar::new();
 static DEVICES: AtomicU64 = AtomicU64::new(0);
+/// What the drivers' device-lost callbacks reported in this process, oldest first.
+static LOSSES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Held while a graphics driver is being set up. Dropping it releases the lock. It is `Send`, and
 /// taking it twice on one thread deadlocks.
@@ -51,6 +53,24 @@ impl Drop for DriverGuard {
 }
 
 impl daedalus_vk_sys::DriverHeld for DriverGuard {}
+
+/// What the driver's device-lost callback reported in this process, one line for each loss, oldest
+/// first. A wait that times out marks its device lost without the driver's report, so that isn't
+/// here: this is the driver's own word.
+pub fn driver_losses() -> Vec<String> {
+    LOSSES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+}
+
+/// Records a loss the driver reported. Called from the device-lost callback.
+pub(crate) fn note_driver_loss(line: String) {
+    LOSSES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(line);
+}
 
 /// How many devices this process has opened here. Adopted devices aren't counted.
 pub fn devices_created() -> u64 {
