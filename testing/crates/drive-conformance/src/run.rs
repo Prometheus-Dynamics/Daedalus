@@ -10,10 +10,10 @@ use crate::scenario::{self, Proxy, Scenario};
 use crate::serve::{Serving, Transport, library_under, tcp_addr};
 use crate::{Failure, corpus, proxy};
 
-/// One scenario at a time in this process. The fixture library keeps state in statics (the gated
-/// node's poll count), and every host in the process loads the same library, so two scenarios
-/// running together would see each other's state.
-static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Transcripts run side by side, at most this many at once. Each runs its own host, and a host
+/// that loads plugins loads its own copy of the fixture library (`PrivateLibrary`), so the
+/// library's statics (the gated node's poll count) are never shared between two transcripts.
+const AT_ONCE: usize = 4;
 
 /// How long a driver may take to answer one scenario before it is stopped.
 const LIMIT: Duration = Duration::from_secs(30);
@@ -21,31 +21,61 @@ const LIMIT: Duration = Duration::from_secs(30);
 /// Runs `cmd` over every scenario and every transport. Each answer is compared with the golden
 /// transcript of its scenario. `fixture` is the built plugin library (`build_fixture`).
 pub fn run_driver(cmd: Command, fixture: &Path) -> Vec<Failure> {
-    let mut failures = Vec::new();
     let scenarios = match scenario::load_all() {
         Ok(scenarios) => scenarios,
         Err(error) => return vec![Failure::plain("scenarios", error)],
     };
+    let mut failures = Vec::new();
+    let mut runs = Vec::new();
     for scenario in &scenarios {
-        let golden = match golden(&scenario.name) {
-            Ok(golden) => golden,
-            Err(error) => {
-                failures.push(Failure::plain(&scenario.name, error));
-                continue;
+        match golden(&scenario.name) {
+            Ok(golden) => {
+                let golden = std::sync::Arc::new(golden);
+                for transport in transports_for(scenario) {
+                    runs.push((scenario, transport, golden.clone()));
+                }
             }
-        };
-        for transport in transports_for(scenario) {
-            match transcript(&cmd, scenario, transport, fixture) {
-                Ok(got) => compare(scenario, transport, &golden, &got, &mut failures),
-                Err(error) => failures.push(Failure {
-                    scenario: scenario.name.clone(),
-                    transport: label(scenario, transport),
-                    line: None,
-                    expected: "a transcript".to_owned(),
-                    got: error,
-                }),
-            }
+            Err(error) => failures.push(Failure::plain(&scenario.name, error)),
         }
+    }
+    // Each run's failures in its own place, so the list reads in scenario order however the
+    // runs interleave.
+    let found: Vec<std::sync::Mutex<Vec<Failure>>> = runs
+        .iter()
+        .map(|_| std::sync::Mutex::new(Vec::new()))
+        .collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..AT_ONCE.min(runs.len()) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((scenario, transport, golden)) = runs.get(index) else {
+                        break;
+                    };
+                    let mut mine = Vec::new();
+                    match transcript(&cmd, scenario, *transport, fixture) {
+                        Ok(got) => compare(scenario, *transport, golden, &got, &mut mine),
+                        Err(error) => mine.push(Failure {
+                            scenario: scenario.name.clone(),
+                            transport: label(scenario, *transport),
+                            line: None,
+                            expected: "a transcript".to_owned(),
+                            got: error,
+                        }),
+                    }
+                    *found[index]
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = mine;
+                }
+            });
+        }
+    });
+    for slot in found {
+        failures.extend(
+            slot.into_inner()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
     }
     failures
 }
@@ -130,15 +160,14 @@ pub fn transcript(
     transport: Transport,
     fixture: &Path,
 ) -> Result<String, String> {
+    let library = PrivateLibrary::copy(fixture, scenario.plugins)?;
+    let fixture = library.path();
     let mut lines = Vec::new();
     for (_, line) in &scenario.commands {
         lines.push(scenario::expand(line, fixture, &scenario::graphs_dir())?);
     }
     let mut input = lines.join("\n");
     input.push('\n');
-    let _one_at_a_time = SERIAL
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let serving = Serving::start(transport, scenario.plugins)?;
     let mode = match scenario.proxy {
         Proxy::None => None,
@@ -157,6 +186,53 @@ pub fn transcript(
     serving.finish();
     // The answers name the fixture and the graphs by their paths, which differ per machine.
     result.map(|text| normalize(&text, fixture))
+}
+
+/// The fixture library a transcript's host loads: a copy of its own, in a directory of its own,
+/// under the same file name. A library loaded from another path is another load, with statics of
+/// its own. The directory is removed when the transcript ends. A host that loads no plugins uses
+/// the fixture's path as it is, and nothing is copied.
+struct PrivateLibrary {
+    path: PathBuf,
+    dir: Option<PathBuf>,
+}
+
+impl PrivateLibrary {
+    fn copy(fixture: &Path, plugins: bool) -> Result<PrivateLibrary, String> {
+        if !plugins {
+            return Ok(PrivateLibrary {
+                path: fixture.to_path_buf(),
+                dir: None,
+            });
+        }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "dd-drive-lib-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let name = fixture.file_name().ok_or("the fixture has no file name")?;
+        std::fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        let library = PrivateLibrary {
+            path: dir.join(name),
+            dir: Some(dir),
+        };
+        std::fs::copy(fixture, &library.path)
+            .map_err(|error| format!("copy {}: {error}", fixture.display()))?;
+        Ok(library)
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for PrivateLibrary {
+    fn drop(&mut self) {
+        if let Some(dir) = &self.dir {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
 }
 
 /// The answers with the fixture's path as `{plugin}` and the graph directory as `{graphs}`. A path
