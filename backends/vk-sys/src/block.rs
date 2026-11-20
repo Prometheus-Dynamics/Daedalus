@@ -13,7 +13,8 @@ use ash::vk;
 use crate::Error;
 use crate::device::Raw;
 use crate::memory::{Placement, handle, place};
-use crate::submit::Submitter;
+use crate::semaphore::Semaphore;
+use crate::submit::{Submitter, Ticket};
 
 /// How long a copy may take before it is reported as a timeout. A copy that fails outright, such
 /// as on a lost device, is reported the same way: the wait can't tell them apart.
@@ -144,6 +145,20 @@ pub fn copy_into(
     block: &Block,
     bytes: u64,
 ) -> Result<(), Error> {
+    copy_into_after(submitter, source, block, bytes, &[], || {})
+}
+
+/// [`copy_into`], with the copy's submit waiting on the device for each of `waits` (at most
+/// [`crate::submit::MAX_WAITS`]), not on the host. `meanwhile` runs on this thread after the submit
+/// and before the host waits for the copy, so a caller can watch what the copy waits for.
+pub fn copy_into_after(
+    submitter: &Submitter,
+    source: &wgpu::Buffer,
+    block: &Block,
+    bytes: u64,
+    waits: &[&Semaphore],
+    meanwhile: impl FnOnce(),
+) -> Result<(), Error> {
     if bytes == 0 || bytes > block.size || bytes > source.size() {
         return Err(Error::Range);
     }
@@ -155,12 +170,23 @@ pub fn copy_into(
         // submitter's barriers order the copy with the work around it.
         unsafe { device.cmd_copy_buffer(commands, from, to, &[region]) };
     };
-    // SAFETY: the recording is valid on the submitter's device. `source` and `block` are borrowed
-    // until the wait below has returned, so both outlive the work that uses them.
-    let ticket = unsafe { submitter.submit(record, &[]) }?;
-    if ticket.wait(COPY_WAIT) {
+    // SAFETY: the recording is valid on the submitter's device. `source`, `block` and `waits` are
+    // borrowed until the wait below has returned, so all of them outlive the work that uses them.
+    let ticket = WaitOnDrop(unsafe { submitter.submit(record, waits) }?);
+    meanwhile();
+    if ticket.0.wait(COPY_WAIT) {
         Ok(())
     } else {
         Err(Error::Vulkan(vk::Result::TIMEOUT))
+    }
+}
+
+/// A ticket the host waits for when it drops, so a `meanwhile` that panics can't let the borrowed
+/// buffers go while the device still uses them.
+struct WaitOnDrop<'a>(Ticket<'a>);
+
+impl Drop for WaitOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.wait(COPY_WAIT);
     }
 }

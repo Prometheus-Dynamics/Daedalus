@@ -11,14 +11,22 @@
 //!   the device's limits, and the transfer, submit and allocation costs the budgets name.
 //! - `fences`: polls of a ticket, and the time source a timed pass reports on the device.
 //! - `alloc16`: a 16 MiB buffer per memory hint, with a first write and uninitialised.
-//! - `elements`, `busy`, `cached`, `heap-read`, `heap-probe`, `heap-alone`: the element forms,
-//!   the busy answer, and the host-cached and dma-heap reads. `cached` makes its host-cached
-//!   buffer with the dma-heap on and off; `DAEDALUS_CACHED_HEAP=on` or `off` runs one of them.
+//! - `elements`, `busy`, `cached`, `heap-read`, `heap-probe`, `heap-alone`: the element forms, with
+//!   the submits and passes of each (the `e6` lines), the busy answer, and the host-cached and
+//!   dma-heap reads. `cached` makes its host-cached buffer with the dma-heap on and off;
+//!   `DAEDALUS_CACHED_HEAP=on` or `off` runs one of them.
 //! - `region8`, `region-batch`: a region of eight nodes as one submit, and as eight. `region-batch`
 //!   uses the add and triple shaders of the region test, over 1000 words.
 //! - `fragment-pass`, `raw-submit`, `timer-source`: a fragment pass, the record and submit of one
 //!   dispatch on the wgpu path and on a raw Vulkan chain, and the timer source of a timed pass.
 //! - `dma-1mib`: a 1 MiB dma-heap buffer's allocate, map, read and write, and its export_fence.
+//! - `dma-fence`: a 1 MiB dma-heap buffer imported into the device, a GPU write that outlives its
+//!   export, and the fence exported right after the submit: whether it is a sync_file, whether it was
+//!   unsignalled at export, its time to signal, and a CPU read of the dma-buf after the signal (E9).
+//!   Then a second device copies the same dma-buf out in a submit that waits on the exported fence,
+//!   with no host wait (E14). The GPU write's rounds are calibrated, not set.
+//! - `dma-steady`: eight dma-heap buffers imported in rotation for 1000 imports, with the allocations
+//!   per import and the cache hits the backend's import count gives.
 //! - `baselines`: the no-Daedalus floors of two board rows, E2 (a storage's first write of 16 MiB)
 //!   and E3 (a 16 MiB readback into host-mapped memory). Each Daedalus row is timed next to the
 //!   same work in raw Vulkan, interleaved round by round in one process, with the per-round

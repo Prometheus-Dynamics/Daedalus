@@ -54,7 +54,7 @@ pub use caps::{CapsRecord, ComputeCaps, ComputeFeatures, Need};
 pub use context::OpenError;
 #[cfg(target_os = "linux")]
 pub use dmabuf_value::{DmaBufBacked, dma_heap_fd};
-pub use driver::{DriverGuard, devices_created, driver_lock, with_driver_lock};
+pub use driver::{DriverGuard, devices_created, driver_lock, driver_losses, with_driver_lock};
 pub use fence::Ticket;
 pub use host_bytes::HostBytes;
 pub use import_state::{DmaBufStatus, NoTrial, WhyCopied};
@@ -67,7 +67,9 @@ pub use memory::{
 pub use pool::TempPoolLimits;
 pub use profile::{DeviceProfile, Family, vendor_ids};
 #[cfg(target_os = "linux")]
-pub use raw::{Arg, Chain, RawBlock, RawError, RawPlacement, raw_copy};
+pub use raw::{
+    Arg, Chain, RawBlock, RawError, RawPlacement, RawSemaphore, raw_copy, raw_copy_after,
+};
 pub use staging::{StagingConfig, StagingStats};
 pub use storage_pool::{StoragePool, StoragePoolStats};
 pub use texture::{Format, Texture, TextureDesc, TextureError};

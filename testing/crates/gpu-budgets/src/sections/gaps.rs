@@ -1,6 +1,7 @@
 //! The timings the board procedures asked for that had no harness: the fragment form of an element
 //! chain beside its buffer forms at 1280x800, the busy answer of a run, and the host-cached
-//! buffer at 16 MiB. Each is the median of the runs after warm-up.
+//! buffer at 16 MiB. Each is the median of the runs after warm-up. The element forms also count
+//! the submits and passes of one run of each form (the `e6` lines).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -129,6 +130,93 @@ pub(crate) fn element_forms(backend: &WgpuBackend) {
             ms(fragment),
             ms(compute_merged),
             ms(compute_apart)
+        );
+
+        // The same chain as one fragment pass per node, each waited for before the next. Pass i
+        // reads the texture pass i-1 wrote, so the two textures swap at each node.
+        let apart_passes: Vec<_> = records
+            .iter()
+            .map(|record| {
+                fragment_pass(backend, &[spec(record)], Format::Rgba16Uint).expect("a pass")
+            })
+            .collect();
+        let bindings: Vec<_> = apart_passes
+            .iter()
+            .enumerate()
+            .map(|(at, pass)| {
+                let src = if at % 2 == 0 { &source } else { &target };
+                pass.bind(&[src], &[]).expect("binds")
+            })
+            .collect();
+        let fragment_apart = median(WARM, RUNS, || {
+            for (at, (pass, binding)) in apart_passes.iter().zip(&bindings).enumerate() {
+                let dst = if at % 2 == 0 { &target } else { &source };
+                pass.run_bound(binding, &[dst])
+                    .expect("draws")
+                    .wait()
+                    .expect("finishes");
+            }
+        });
+
+        // Submits and passes, counted once per form: a run of each, outside the timing.
+        let (_, c_fragment) = daedalus_wgpu_conformance::measure(backend, || {
+            pass.run_bound(&binding, &[&target])
+                .expect("draws")
+                .wait()
+                .expect("finishes");
+        });
+        let (_, c_apart) = daedalus_wgpu_conformance::measure(backend, || {
+            for (at, (pass, binding)) in apart_passes.iter().zip(&bindings).enumerate() {
+                let dst = if at % 2 == 0 { &target } else { &source };
+                pass.run_bound(binding, &[dst])
+                    .expect("draws")
+                    .wait()
+                    .expect("finishes");
+            }
+        });
+        let c_merged = run(
+            backend,
+            &mut merged,
+            &[daedalus_wgpu_conformance::In::Buffer(&input)],
+            1,
+        )
+        .counted;
+        let mut c_units = daedalus_wgpu_conformance::Counted::default();
+        let mut current = Arc::clone(&input);
+        for unit in units.iter_mut() {
+            let ran = run(
+                backend,
+                unit,
+                &[daedalus_wgpu_conformance::In::Buffer(&current)],
+                1,
+            );
+            c_units.submits += ran.counted.submits;
+            c_units.passes += ran.counted.passes;
+            current = ran.outputs.into_iter().next().flatten().expect("an output");
+        }
+        println!(
+            "e6 nodes {count} fragment merged: median {:.4} ms, submits {}, passes {}",
+            ms(fragment),
+            c_fragment.submits,
+            c_fragment.passes
+        );
+        println!(
+            "e6 nodes {count} fragment unmerged, one pass per node: median {:.4} ms, submits {}, passes {}",
+            ms(fragment_apart),
+            c_apart.submits,
+            c_apart.passes
+        );
+        println!(
+            "e6 nodes {count} compute merged: median {:.4} ms, submits {}, passes {}",
+            ms(compute_merged),
+            c_merged.submits,
+            c_merged.passes
+        );
+        println!(
+            "e6 nodes {count} compute unmerged, one region per node: median {:.4} ms, submits {}, passes {}",
+            ms(compute_apart),
+            c_units.submits,
+            c_units.passes
         );
     }
 }

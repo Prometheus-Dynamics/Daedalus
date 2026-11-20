@@ -10,7 +10,11 @@
 //! the work past the bound. `DAEDALUS_GRIND_ELEMENTS` is the number of invocations (default 64).
 //! `DAEDALUS_GRIND_BOUND_MS` lowers the wait bound for a test of the path on a device whose driver
 //! resets a long job before 5 s; the default is the backend's own bound.
-//! If the wait does not pass the bound, the section says so and does not claim the path ran.
+//! If the wait does not pass the bound, the section says so and does not claim the path ran. Then
+//! a known run on the device as it stands says whether a driver that reset the job early left the
+//! device working. Either way the driver's own device-lost reports are printed, and one last line,
+//! `grind: summary: wait=... lost_callback=... known_run=... same_device=... reopen_s=...`, is the
+//! record a judge reads.
 
 use std::time::{Duration, Instant};
 
@@ -129,6 +133,27 @@ fn device_changed(backend: &WgpuBackend, elements: u32, before: u64) -> bool {
         .unwrap_or(false)
 }
 
+/// What the known run gave: `correct`, `wrong`, or `none` when it could not run at all.
+fn outcome_word(result: &Result<bool, String>) -> &'static str {
+    match result {
+        Ok(true) => "correct",
+        Ok(false) => "wrong",
+        Err(_) => "none",
+    }
+}
+
+/// The driver's device-lost reports so far, one line each, printed as they stand.
+fn report_losses(when: &str) -> bool {
+    let losses = daedalus_wgpu::driver_losses();
+    if losses.is_empty() {
+        println!("grind: device-lost callback {when}: not fired");
+    }
+    for line in &losses {
+        println!("grind: device-lost callback {when}: fired: {line}");
+    }
+    !losses.is_empty()
+}
+
 pub fn run() {
     let rounds = env_u32("DAEDALUS_GRIND_ROUNDS", 4_000_000_000);
     let repeat = env_u32("DAEDALUS_GRIND_REPEAT", 4);
@@ -168,9 +193,44 @@ pub fn run() {
     let took = started.elapsed();
     let error = match waited {
         Ok(()) => {
+            // The driver may have reset the hung job before the bound (V3D does, about half a
+            // second in). Then the wait succeeds, and the question is whether the device still
+            // works: the known run is on this same device, without a reopen.
             println!(
-                "grind: the wait finished in {:.2} s, inside the bound: the timeout path did not run. Raise DAEDALUS_GRIND_REPEAT or DAEDALUS_GRIND_ROUNDS and run again. A driver that resets a long job early can also finish a wait this way: check the driver's log for a ring reset.",
+                "grind: the wait finished in {:.2} s, inside the bound: the timeout path did not run",
                 took.as_secs_f64()
+            );
+            let lost = report_losses("after the wait");
+            // A storage made now opens a new device if the old one was lost, so the time to the
+            // known run's answer is the reopen time when the device changed.
+            let reopen = Instant::now();
+            let same = !device_changed(&backend, elements, before);
+            println!(
+                "grind: same device after the wait: {}",
+                if same { "yes" } else { "no" }
+            );
+            let known = known_run(&backend, elements);
+            let reopen_s = if same {
+                "none".to_string()
+            } else {
+                format!("{:.3}", reopen.elapsed().as_secs_f64())
+            };
+            let which = if same {
+                "the same device"
+            } else {
+                "a reopened device"
+            };
+            match &known {
+                Ok(true) => println!("grind: known run on {which} after the wait: correct"),
+                Ok(false) => println!("grind: known run on {which} after the wait: wrong values"),
+                Err(error) => println!("grind: known run on {which} after the wait: {error}"),
+            }
+            let lost = report_losses("after the known run") || lost;
+            println!(
+                "grind: summary: wait=finished lost_callback={} known_run={} same_device={} reopen_s={reopen_s}",
+                if lost { "fired" } else { "not-fired" },
+                outcome_word(&known),
+                if same { "yes" } else { "no" },
             );
             return;
         }
@@ -182,6 +242,7 @@ pub fn run() {
         "grind: the wait failed after {:.2} s: {error} (timeout: {timed_out})",
         took.as_secs_f64()
     );
+    report_losses("at the failed wait");
 
     // The next run on the same shader and buffers: a fault, or the device's own refusal.
     match submit(&backend, &buffer, 0, 0) {
@@ -192,8 +253,10 @@ pub fn run() {
     // Each try opens the device again if it has to, after the backend's own retry time.
     let reopen = Instant::now();
     let mut outcome = None;
+    let mut last = Err("no try made".to_string());
     for attempt in 1..=TRIES {
-        match known_run(&backend, elements) {
+        last = known_run(&backend, elements);
+        match &last {
             Ok(true) => {
                 outcome = Some(attempt);
                 break;
@@ -207,14 +270,20 @@ pub fn run() {
         let pause = backend.retry_in().unwrap_or(Duration::from_secs(1));
         std::thread::sleep(pause.min(Duration::from_secs(5)));
     }
-    match outcome {
-        Some(attempt) => println!(
-            "grind: the known run on the reopened device is correct on try {attempt}, {:.3} s from the failed wait; a new device: {}",
-            reopen.elapsed().as_secs_f64(),
-            device_changed(&backend, elements, before)
-        ),
-        None => println!("grind: the known run was not correct within {TRIES} tries"),
-    }
+    let changed = device_changed(&backend, elements, before);
+    let reopen_s = match outcome {
+        Some(attempt) => {
+            let reopen_s = reopen.elapsed().as_secs_f64();
+            println!(
+                "grind: the known run on the reopened device is correct on try {attempt}, {reopen_s:.3} s from the failed wait; a new device: {changed}"
+            );
+            format!("{reopen_s:.3}")
+        }
+        None => {
+            println!("grind: the known run was not correct within {TRIES} tries");
+            "none".to_string()
+        }
+    };
 
     // Whether the abandoned work on the old device ever finishes: watched for a while, not waited on.
     let mut finished = None;
@@ -233,4 +302,12 @@ pub fn run() {
     } else {
         println!("grind: the abandoned work did not finish within {WATCH:?} of watching");
     }
+    let lost = report_losses("at the end");
+    println!(
+        "grind: summary: wait={} lost_callback={} known_run={} same_device={} reopen_s={reopen_s}",
+        if timed_out { "timed-out" } else { "failed" },
+        if lost { "fired" } else { "not-fired" },
+        outcome_word(&last),
+        if changed { "no" } else { "yes" },
+    );
 }
