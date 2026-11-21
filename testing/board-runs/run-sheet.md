@@ -27,7 +27,7 @@ applies them as written. These three were chosen and approved beforehand, not fi
 
 On the host, from a clone on NVMe:
 
-1. `VVL_DIR=/mnt/nvme-wd/scratch/vgl/vvl/aarch64 scripts/board/batch.sh build`, with the layer
+1. `VVL_DIR=/mnt/nvme-wd/daedalus-vvl/aarch64 scripts/board/batch.sh build`, with the layer
    recorded under "What the board needs". It builds the bundle under `$CARGO_TARGET_DIR/board/batch`: `daedalus-gpu-budgets`, `daedalus-budget-harness`, its `ticks`
    bench (`ticks-bench`), `bounded`, the `vk-sys` unit tests (`vk-sys.lib`), the wgpu `all` and
    `region` tests, the layer, `batch-on-board.sh` and `figures/*.sh`.
@@ -215,27 +215,23 @@ D2 and I2 close on rows from this run.
   lists it).
 - For E11: the systemd runtime watchdog armed on the hardware watchdog (`RuntimeWatchdogUSec` not 0;
   it was 15 s on 2026-11-16), so a wedged kernel returns the board by itself.
-- The aarch64 Khronos validation layer, as `VVL_DIR` on the host: a directory with
-  `libVkLayer_khronos_validation.so` and `VkLayer_khronos_validation.json` (its `library_path` relative
-  to the json). It is not in this repo, and the earlier batches did not record where theirs came from.
-  This batch's layer, built 2026-11-20 and kept outside the repo:
+- The aarch64 Khronos validation layer, as `VVL_DIR` on the host: the directory
+  `scripts/vvl-build.sh --arch aarch64 --out DIR` makes. `batch.sh build` refuses a layer whose
+  `libVkLayer_khronos_validation.so` hash isn't the one in `scripts/vvl.pin`.
   - Source: Khronos Vulkan-ValidationLayers, tag `v1.4.354`, commit
-    `ccaf4c149d8730338012614a5be8080d0b92e95f`, with the dependencies its `scripts/known_good.json`
-    pins (Vulkan-Headers and Vulkan-Utility-Libraries `v1.4.354`, SPIRV-Headers `1e770e7d`,
-    SPIRV-Tools `902e360d`). The tag matches the header version the board's driver reports
-    (Vulkan 1.3.354).
-  - Build: cross-built on the host with `zig c++ -target aarch64-linux-gnu.2.36` (the bundle's glibc),
-    Release, tests off, no window-system support (xcb, xlib and wayland off), linked with
-    `-z nodelete`, stripped. The highest glibc symbol it needs is GLIBC_2.34. Without `-z nodelete`
-    (the 2026-11-20 batch) a destructor of zig's static libc++ ran after the loader unloaded the
-    layer, and every process that made a device exited 139 (E13, 2026-11-20); the same build for
-    x86_64 shows it on lavapipe and passes with the flag. Its json's `library_path` is `./libVkLayer_khronos_validation.so`.
-  - Path: `VVL_DIR=/mnt/nvme-wd/scratch/vgl/vvl/aarch64` (the build script is
-    `/mnt/nvme-wd/scratch/vgl/vvl/tools/build.sh`).
-  - sha256: `libVkLayer_khronos_validation.so`
-    `4833dd1ba02bdff6489f692fe3079f37a0f0cec1ca0e5824b8273bd13a307a8c`;
-    `VkLayer_khronos_validation.json`
-    `0d09368222e25d301a501410bd49e865e93ab12c7f3f961859cd16fd10981e98`.
+    `ccaf4c149d8730338012614a5be8080d0b92e95f` (`scripts/vvl.pin`), with the dependencies its
+    `scripts/known_good.json` pins (Vulkan-Headers and Vulkan-Utility-Libraries `v1.4.354`,
+    SPIRV-Headers `1e770e7d`, SPIRV-Tools `902e360d`). The tag matches the header version the board's
+    driver reports (Vulkan 1.3.354).
+  - Build: `zig c++ -target aarch64-linux-gnu.2.36` (the bundle's glibc), Release, tests off, no
+    window-system support, linked with `-z nodelete`, stripped. Without `-z nodelete` a destructor of
+    zig's static libc++ ran after the loader unloaded the layer, and every process that made a device
+    exited 139 (E13, 2026-11-20). The gate's x86_64 layer (`scripts/ci.d/vvl.sh`) comes from the same
+    script.
+  - sha256 of `libVkLayer_khronos_validation.so`:
+    `4833dd1ba02bdff6489f692fe3079f37a0f0cec1ca0e5824b8273bd13a307a8c`. The script's build on
+    2026-11-20 is byte for byte the layer the second 2026-11-20 session ran.
+  - On this machine: `VVL_DIR=/mnt/nvme-wd/daedalus-vvl/aarch64`.
 - The locks: `go` holds both `/run/lock/raze-gpu.lock` and `/run/lock/board-gpu.lock` for the whole run
   (`BOARD_LOCKS`, both by default).
 - Other software on the board: only that it holds neither GPU lock during the run. The bundle depends

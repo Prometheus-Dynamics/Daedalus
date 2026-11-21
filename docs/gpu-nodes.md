@@ -97,6 +97,10 @@ The backend closes that gap itself. After every submit that used a dma-buf from 
 
 Where no sync fd can be had, or the kernel refuses it, the host waits for the device before the run hands anything on. That is slower and still right, and it is counted and named. `backend.sync_stats()` counts the submits that attached and the buffers they attached to, the host waits and the last one's reason, the producer waits, and the host time spent.
 
+The fence is attached after every submit, not only when a value leaves the host's ordering: that is always right, and it is cheap. On V3D (Raze #2, 2026-11-20, E9) attaching took 65 to 87 µs of host time a submit (the empty submit, the fd export and the ioctl). A one-round write took 2.58 ms from submit to done with attaching on and off alike, so no device-side cost showed. The `sync_stats()` counters let a consumer see this cost in its own pipeline.
+
+A second device that reads the buffer is ordered after the write even when it doesn't wait. On V3D (E14, 2026-11-20), once the fence was attached, the kernel made a second device's copy out of the buffer wait for the write, although the copy's submit waited on nothing: 50 of 50 such copies saw the finished write. A consumer that waits on the exported fence itself is still the rule, and other drivers may not do this.
+
 What Daedalus guarantees for a value made from an outside dma-buf: **its owner is let go no earlier than the last submit that read or wrote the buffer has finished.** That holds even when the value itself is dropped while that submit is pending. The owner is whatever the value holds to keep the memory its own, such as a lease on a producer's ring.
 
 **The ring rule.** A producer lends its values from a ring of buffers, as leases (a frame is one such value). It doesn't reuse a buffer while a lease on it is held. A consumer that imports a held value into a device must not give the lease back until that device's read has signalled. Daedalus keeps this rule for its own devices through the guarantee above. Anyone else who takes such a buffer does one of these:

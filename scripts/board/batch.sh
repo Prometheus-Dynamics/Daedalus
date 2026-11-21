@@ -13,8 +13,8 @@
 #                                     it, brings the results back, and takes everything off
 #
 # Settings: BOARD_SSH (where the board is) and BOARD_SSH_CONFIG (an ssh config of its own, as in
-# run.sh); VVL_DIR, an unpacked Khronos validation layer for aarch64 (libVkLayer_khronos_validation.so
-# and VkLayer_khronos_validation.json; not in this repo); BOARD_LOCKS, the board's GPU lock files,
+# run.sh); VVL_DIR, the aarch64 Khronos validation layer scripts/vvl-build.sh builds, whose hash has
+# to be the one in scripts/vvl.pin (libVkLayer_khronos_validation.so and VkLayer_khronos_validation.json); BOARD_LOCKS, the board's GPU lock files,
 # space-separated (default both, /run/lock/raze-gpu.lock and /run/lock/board-gpu.lock). The
 # rehearsal takes, when set, VVL_DIR_NATIVE (an unpacked layer for this machine); without it E13
 # says it skipped, and why.
@@ -92,6 +92,12 @@ bundle() {
     release="$CARGO_TARGET_DIR/$target/release"
     small="$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release"
     vvl="$VVL_DIR"
+    # The board runs under the pinned layer only (scripts/vvl.pin, built by scripts/vvl-build.sh).
+    local pinned have
+    pinned=$(bash -c 'source scripts/vvl.pin; echo "$VVL_SHA256_AARCH64"')
+    have=$(sha256sum "$vvl/libVkLayer_khronos_validation.so" 2>/dev/null | cut -d' ' -f1)
+    [[ -n "$have" && "$have" == "$pinned" ]] ||
+      die "the layer in $vvl has sha256 ${have:-(none)}, not the pinned ${pinned:-(none)} (scripts/vvl.pin)"
     export ZIG_TARGET=aarch64-linux-gnu.2.36
     export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$PWD/scripts/board/zigcc.sh"
     export CC_aarch64_unknown_linux_gnu="$PWD/scripts/board/zigcc.sh"
@@ -233,8 +239,16 @@ rehearse() {
   [[ "$verdict" == 0 ]] || exit 1
 }
 
+# Closes the shared ssh connection a config with ControlMaster keeps open, so a session leaves no
+# connection to the board behind, on every way out of `go`. It talks only to the local control
+# socket: nothing new is opened to the board.
+close_mux() {
+  "${ssh_to[@]}" -O exit "${BOARD_SSH:-}" > /dev/null 2>&1 || true
+}
+
 go() {
   [[ -d "$out/bundle/bin" ]] || die "build the bundle first"
+  trap close_mux EXIT
   mkdir -p "$out/results"
   on_board "test ! -e $dir" || die "$dir is already on the board: look before removing it"
   # BATCH_FIGURES picks the figures after E13 (E13 always runs first); unset runs them all.

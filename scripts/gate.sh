@@ -22,7 +22,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # The gate runs every test binary, whatever a caller's scripts/check.sh setting says.
 unset DAEDALUS_TEST_PACKAGES
 
-host=(clippy test chip doc)
+host=(clippy test vvl chip doc)
 ship=(package packaging smoke semver)
 beside=(no-planner no-workers budgets)
 cross=(boundaries nostd wasm)
