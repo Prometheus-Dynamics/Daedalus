@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the Khronos validation layer at the tag and commit scripts/vvl.pin names, for x86_64 (the
-# gate's lavapipe step, scripts/ci.d/vvl.sh) or aarch64 (the board's batch, VVL_DIR). Both are built
-# with zig against glibc 2.36, the board's, so the two layers come from one recipe.
+# gate's lavapipe steps vvl and vvl-wgpu, scripts/vvl-run.py) or aarch64 (the board's batch,
+# VVL_DIR). Both are built with zig against glibc 2.36, the board's, so the two layers come from
+# one recipe.
 #
 #   scripts/vvl-build.sh --arch x86_64|aarch64 --out DIR [--work DIR] [--src DIR]
 #
