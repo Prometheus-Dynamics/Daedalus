@@ -495,8 +495,10 @@ stays, for sharing identical upstream nodes between graphs in one Host. The regi
 owned declarations that a worker sends when it starts.
 
 **Where things live.**
-- There is no frame type, no frame library, and no dependency on Lemnos. Device selection is in
-  the wgpu backend. Format conversions and colorimetry are not carried: they belong to whoever owns
+- There is no frame type and no frame library. The only crates from the Lemnos repository are the
+  three libc-only shared-memory crates the process workers use (`shm-fdpass`, `shm-ring-buffers`,
+  `shm-ring-holds`); `scripts/boundaries.py` allows exactly those. Device selection is in the wgpu
+  backend. Format conversions and colorimetry are not carried: they belong to whoever owns
   the type.
 - There is no library of byte kernels (copy, hex, base64, CRC, float conversions) and no
   acceleration matrix for one. Nothing in Daedalus calls such functions: a node that needs one

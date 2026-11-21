@@ -12,7 +12,7 @@ The only crate that calls the kernel's dma-buf, dma-heap and sync_file interface
 | `DmaBufRef::identity` | `fstat`: the device and inode, which name the buffer however many fds it has |
 | `DmaBufRef::map`, `map_read_only` | `mmap` shared, unmapped on drop |
 | `begin_cpu_access`, `end_cpu_access` | `DMA_BUF_IOCTL_SYNC` |
-| `export_fence` | `DMA_BUF_IOCTL_EXPORT_SYNC_FILE`, Linux 6.0 and later |
+| `export_fence` | `DMA_BUF_IOCTL_EXPORT_SYNC_FILE`, Linux 6.0 and later; only work a driver attached to the buffer (not V3D's Vulkan writes to an imported dma-buf) |
 | `import_fence` | `DMA_BUF_IOCTL_IMPORT_SYNC_FILE` |
 | `SyncFence::from_fd`, `is_sync_file` | `SYNC_IOC_FILE_INFO` |
 | `SyncFence::wait`, `is_signaled` | `poll` for `POLLIN` |

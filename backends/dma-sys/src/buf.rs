@@ -190,6 +190,11 @@ impl<'a> DmaBufRef<'a> {
 
     /// A fence for the work now pending on the buffer: `Read` gives the writers a reader has to
     /// wait for, `Write` everyone a writer has to wait for. Needs Linux 6.0.
+    ///
+    /// It holds only the work a driver attached to the buffer. A Vulkan device that imported the
+    /// dma-buf need not attach its own: on V3D (v3dv, 2026-11-20) a fence exported right after a
+    /// long GPU write was already signalled. A reader of such a write waits on the writer's own
+    /// fence instead, handed over or attached here with [`import_fence`](Self::import_fence).
     pub fn export_fence(&self, access: Access) -> Result<SyncFence, Error> {
         let mut request = SyncFileArg {
             flags: access.flags() as u32,
