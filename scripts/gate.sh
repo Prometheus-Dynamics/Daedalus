@@ -26,7 +26,7 @@ host=(clippy test vvl chip doc)
 ship=(package packaging smoke semver)
 beside=(no-planner no-workers budgets)
 cross=(boundaries nostd wasm)
-scripts=(format capability gpu-async-blocking gpu-driver-lock tools)
+scripts=(format capability gpu-async-blocking gpu-driver-lock tools vvl-wgpu)
 trailing=(scripts/check-file-sizes.sh scripts/check-workspace-deps.sh testing/boundary/run.sh)
 
 # A step in scripts/ci.d that no lane names is a mistake: it would never run.

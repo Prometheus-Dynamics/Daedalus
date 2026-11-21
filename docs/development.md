@@ -53,7 +53,7 @@ named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` ru
 | `chip` | The firmware builds and their flash and RAM |
 | `wasm` | The WebAssembly builds, run under Node |
 | `gpu-async-blocking`, `gpu-driver-lock` | Two rules of the GPU backend |
-| `vvl` | The `vk-sys` tests on lavapipe under the Khronos validation layer pinned in `scripts/vvl.pin` (built by `scripts/vvl-build.sh`, found at `DAEDALUS_VVL_DIR`, refused unless its hash is the pinned one). The planted call has to be named first; then any validation line fails. With no layer it says `not run` and fails, except on a CI runner, which has none |
+| `vvl` | The `vk-sys` tests on lavapipe under the Khronos validation layer pinned in `scripts/vvl.pin` (built by `scripts/vvl-build.sh`, found at `DAEDALUS_VVL_DIR`, refused unless its hash is the pinned one). It runs the binaries the `test` step built (`scripts/vvl-run.py`). The planted call has to be named first; then any validation line fails. With no layer it says `not run` and fails, except on a CI runner, which has none |
 | `budgets` | The budget table: instructions, allocations, firmware sizes. A measurement is kept in the build directory under a key of everything it was measured from, and used again while that is unchanged; `BUDGETS_FRESH=1` measures again |
 | `capability` | The audit of what the earlier branch could do |
 | `packaging` | The daemon's unit files and sample config |
@@ -62,6 +62,7 @@ named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` ru
 | `smoke` | The examples run and print what they should |
 | `doc` | The API docs build with no warning, and every link in `docs/` resolves |
 | `tools` | `scripts/affected.py`, `scripts/prune-targets.py`, `scripts/seed-target.py`, `scripts/fixture-locks.sh` and `scripts/bounded.py` against planted cases; the bounds against a planted sleeper and an orphan that holds the output, in `scripts/ci.sh` and `scripts/test-parallel.py` |
+| `vvl-wgpu` | The `daedalus-wgpu` tests, every one that opens a device, the same way as `vvl`. Last in the scripts lane, off the critical path: it waits for the `test` step's build and reuses its binaries |
 
 Every step runs under a hard bound, written in its own file as `# bound: N s`: three times its
 slowest green run, and never under a minute (the three scripts the scripts lane runs after its
