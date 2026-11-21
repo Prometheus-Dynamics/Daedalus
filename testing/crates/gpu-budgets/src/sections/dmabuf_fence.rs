@@ -28,6 +28,10 @@ use super::dmabuf::{
 };
 use super::{RUNS, WARM, median_of, ms};
 
+/// How many times over the calibrated write is taken. On V3D (2026-11-20) the bare calibration gave
+/// 16 rounds, and a plain read right after the submit still saw the GPU's values in 12 of 50.
+const MARGIN: u32 = 8;
+
 /// What the CPU writes before each run. No `FILL` value at every sampled word is this.
 pub(super) const SENTINEL: u32 = 0x5e17_1e1a;
 
@@ -59,8 +63,9 @@ fn plain_read(map: &Mapping, out: &mut [u8]) -> Result<(), String> {
 }
 
 /// The rounds for which the GPU's write is still running after a 1 MiB read right after its
-/// submit: they double until three runs in a row are. `Err` with the reason when even a write of
-/// `LONG_ENOUGH` or the cap has finished by then.
+/// submit: they double until three runs in a row are, and are then taken `MARGIN` times over, so a
+/// write that is only just long enough doesn't let a few early reads through. `Err` with the reason
+/// when even a write of `LONG_ENOUGH` or the cap has finished by then.
 fn calibrate(shader: &Shader, storage: &Storage, map: &Mapping) -> Result<u32, String> {
     let mut rounds = ROUNDS_START;
     let mut bytes = vec![0u8; BYTES as usize];
@@ -75,7 +80,7 @@ fn calibrate(shader: &Shader, storage: &Storage, map: &Mapping) -> Result<u32, S
             longest = longest.max(started.elapsed());
         }
         if all {
-            return Ok(rounds);
+            return Ok(rounds.saturating_mul(MARGIN).min(ROUNDS_CAP));
         }
         if longest >= LONG_ENOUGH * 4 || rounds >= ROUNDS_CAP {
             return Err(format!(
@@ -141,16 +146,22 @@ fn runs(
                 continue;
             }
         };
-        let fence = buf.as_ref().export_fence(Access::Read);
+        // Sampled at once: a fence looked at after the read could have signalled since.
+        let fence = buf.as_ref().export_fence(Access::Read).map(|fence| {
+            (
+                is_sync_file(fence.as_fd()),
+                matches!(fence.is_signaled(), Ok(false)),
+            )
+        });
         let read = read(&mut bytes);
         ticket.wait().ok();
         if round < WARM {
             continue;
         }
         match fence {
-            Ok(fence) => {
-                tally.sync_files += usize::from(is_sync_file(fence.as_fd()));
-                tally.unsignalled += usize::from(matches!(fence.is_signaled(), Ok(false)));
+            Ok((sync_file, unsignalled)) => {
+                tally.sync_files += usize::from(sync_file);
+                tally.unsignalled += usize::from(unsignalled);
             }
             Err(error) => tally.failures.push(format!("export_fence: {error}")),
         }
@@ -260,9 +271,9 @@ pub fn fence_after_write() {
         },
         &buf,
     );
-    let off_time = match off {
+    let off_time = match &off {
         Ok(off) => {
-            let unattached = runs(&off, &buf, &map, rounds, 3000, |out| {
+            let unattached = runs(off, &buf, &map, rounds, 3000, |out| {
                 cpu_read(&buf, &map, out)
             });
             println!(
@@ -271,11 +282,11 @@ pub fn fence_after_write() {
                 unattached.sentinel
             );
             failures("(c)", &unattached);
-            short_write(&off)
+            short_write(off)
         }
         Err(reason) => {
             println!("dma-fence: (c) skipped: {reason}");
-            Err(reason)
+            Err(reason.clone())
         }
     };
     let per_attach = if attaches > 0 {
@@ -293,5 +304,17 @@ pub fn fence_after_write() {
             "dma-fence: attach cost: host {per_attach:.0} ns a submit; submit to done not measured: {reason}"
         ),
     }
-    device_side_wait(&on.backend, &on.shader, &on.storage, &buf, &map, rounds);
+    // The planted copy with no wait needs a producer that attaches nothing: V3D's kernel makes a
+    // second device's job wait on a fence attached to the buffer even when the job itself doesn't
+    // (2026-11-20, 0 of 50 copies saw the sentinel).
+    let planted = off.as_ref().ok().map(|off| (&off.shader, &*off.storage));
+    device_side_wait(
+        &on.backend,
+        &on.shader,
+        &on.storage,
+        &buf,
+        &map,
+        rounds,
+        planted,
+    );
 }

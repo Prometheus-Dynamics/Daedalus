@@ -93,7 +93,10 @@ case "$e13" in
   skipped*) [ "${BATCH_REHEARSAL:-}" = 1 ] && go=yes || go=no ;;
   *) go=no ;;
 esac
-for f in e9 e14 e6 ticks e11; do
+# The figures after E13: all of them, or the list the host put in figures.list (BATCH_FIGURES).
+figures="e9 e14 e6 ticks e11"
+[ -f "$D/figures.list" ] && figures=$(cat "$D/figures.list")
+for f in $figures; do
   # The ticks figure is the CPU's (D2 and I2): it runs whatever E13 said.
   if [ "$go" = yes ] || [ "$f" = ticks ]; then
     sh "$D/figures/$f.sh"

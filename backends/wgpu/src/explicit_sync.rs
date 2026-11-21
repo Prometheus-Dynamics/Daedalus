@@ -94,29 +94,30 @@ pub(crate) fn after_submit(context: &Context) {
         return;
     }
     let counts = &context.sync;
-    // The owners stay until the device has finished what was submitted so far: a fence signal
-    // covers every earlier submit on the queue, raw ones included.
-    let held = taken.clone();
-    context.queue.on_submitted_work_done(move || drop(held));
+    counts.reap();
     if context.no_fence_attach {
+        // Only for a figure: the owners stay until wgpu's own work so far is done.
         counts.skipped.fetch_add(1, Ordering::Relaxed);
+        context.queue.on_submitted_work_done(move || drop(taken));
         return;
     }
     let started = std::time::Instant::now();
-    let signalled = daedalus_vk_sys::semaphore::signal_sync_fd(
-        &context.device,
-        &context.queue,
-        &context.submit,
-    );
+    let signalled = match context.sync_fd_signal() {
+        Ok(signal) => signal
+            .signal(&context.submit)
+            .map_err(|error| error.to_string()),
+        Err(why) => Err(why.to_string()),
+    };
     let fence = match signalled {
         Ok(Some(fd)) => SyncFence::from_fd(fd).map_err(|error| error.to_string()),
-        // The work had already finished: nothing is left for anyone to wait on.
+        // The work had already finished: nothing is left for anyone to wait on, and the owners
+        // can go.
         Ok(None) => {
             counts.already_done.fetch_add(1, Ordering::Relaxed);
             counts.note_time(started);
             return;
         }
-        Err(error) => Err(error.to_string()),
+        Err(why) => Err(why),
     };
     let attached = fence.and_then(|fence| {
         for external in &taken {
@@ -126,17 +127,19 @@ pub(crate) fn after_submit(context: &Context) {
                 .import_fence(&fence, external.access)
                 .map_err(|error| format!("the kernel refused the fence: {error}"))?;
         }
-        Ok(())
+        Ok(fence)
     });
     match attached {
-        Ok(()) => {
+        Ok(fence) => {
             counts.attaches.fetch_add(1, Ordering::Relaxed);
             counts
                 .buffers
                 .fetch_add(taken.len() as u64, Ordering::Relaxed);
+            counts.hold(&context.queue, fence, taken);
         }
         Err(why) => {
-            // Nothing to attach: the device is waited for here, before anyone sees the buffers.
+            // Nothing to attach: the device is waited for here, before anyone sees the buffers,
+            // and the owners can go after it.
             counts.host_waits.fetch_add(1, Ordering::Relaxed);
             *counts.why.lock().unwrap_or_else(PoisonError::into_inner) = Some(why);
             let _ = context.wait("a dma-buf the device used, with no fence to attach");
@@ -144,6 +147,10 @@ pub(crate) fn after_submit(context: &Context) {
     }
     counts.note_time(started);
 }
+
+/// Owners kept until the sync fd attached for their submit signals. That fd covers every submit
+/// before it on the queue, raw ones included, which wgpu's own callback doesn't.
+type Held = Vec<(SyncFence, Vec<Arc<External>>)>;
 
 /// Waits, on the host, for what a dma-buf's producer still has pending on it before the device
 /// is given the buffer. A CPU producer has nothing pending, which costs one ioctl and one poll.
@@ -170,9 +177,32 @@ pub(crate) struct Counters {
     skipped: AtomicU64,
     nanos: AtomicU64,
     why: Mutex<Option<String>>,
+    /// Owners whose submit's fd hadn't signalled when wgpu's callback for it ran.
+    held: Arc<Mutex<Held>>,
 }
 
 impl Counters {
+    /// Keeps `owners` until `fence` signals: looked at when wgpu says its work so far is done,
+    /// and after that at every later attach and poll.
+    fn hold(&self, queue: &wgpu::Queue, fence: SyncFence, owners: Vec<Arc<External>>) {
+        let held = Arc::clone(&self.held);
+        queue.on_submitted_work_done(move || {
+            if !fence.is_signaled().unwrap_or(true) {
+                held.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push((fence, owners));
+            }
+        });
+    }
+
+    /// Lets go of the owners whose fence has signalled.
+    pub(crate) fn reap(&self) {
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        if !held.is_empty() {
+            held.retain(|(fence, _)| !fence.is_signaled().unwrap_or(true));
+        }
+    }
+
     fn note_time(&self, started: std::time::Instant) {
         let nanos = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         self.nanos.fetch_add(nanos, Ordering::Relaxed);

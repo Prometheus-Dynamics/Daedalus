@@ -361,7 +361,14 @@ fn a_sync_fd_signalled_after_earlier_work_exports_where_the_device_can() {
         let submitter = Submitter::new(&device, &queue, &lock, 1).expect("a submitter");
         // SAFETY: nothing is recorded.
         let earlier = unsafe { submitter.submit(|_, _| {}, &[]) }.expect("a submit");
-        let fd = match crate::semaphore::signal_sync_fd(&device, &queue, &lock) {
+        let signal = match crate::semaphore::SyncFdSignal::new(&device, &queue) {
+            Ok(signal) => signal,
+            Err(error) => {
+                assert_eq!(error, Error::NoSyncFdExport);
+                continue;
+            }
+        };
+        let fd = match signal.signal(&lock) {
             Ok(fd) => fd,
             Err(error) => {
                 assert_eq!(error, Error::NoSyncFdExport);
@@ -379,12 +386,32 @@ fn a_sync_fd_signalled_after_earlier_work_exports_where_the_device_can() {
 }
 
 #[test]
+fn a_signaller_uses_a_semaphore_again_once_its_submit_is_done() {
+    for (device, queue) in devices() {
+        let lock = SubmitLock::default();
+        let Ok(signal) = crate::semaphore::SyncFdSignal::new(&device, &queue) else {
+            continue;
+        };
+        for _ in 0..4 {
+            let fd = signal.signal(&lock).expect("a sync fd");
+            let semaphore = Semaphore::import_sync_fd(&device, fd).expect("imports");
+            let submitter = Submitter::new(&device, &queue, &lock, 1).expect("a submitter");
+            // SAFETY: nothing is recorded, and the semaphore outlives the wait below.
+            let ticket = unsafe { submitter.submit(|_, _| {}, &[&semaphore]) }.expect("a submit");
+            assert!(ticket.wait(Duration::from_secs(30)));
+        }
+        // Each signal's submit was done before the next, so one semaphore served them all.
+        assert_eq!(signal.kept(), 1);
+    }
+}
+
+#[test]
 fn work_submitted_after_a_closed_gate_finishes_only_once_it_opens() {
     for (device, queue) in devices() {
         let lock = SubmitLock::default();
         let submitter = Submitter::new(&device, &queue, &lock, 1).expect("a submitter");
-        let gate = crate::gate::HostGate::new(&device, &queue, &lock).expect("a gate");
-        gate.hold().expect("the wait is submitted");
+        let gate = crate::gate::HostGate::new(&device, &queue).expect("a gate");
+        gate.hold(&lock).expect("the wait is submitted");
         // SAFETY: nothing is recorded.
         let after = unsafe { submitter.submit(|_, _| {}, &[]) }.expect("a submit");
         // A fence covers everything earlier in submission order: the gate is still closed.
