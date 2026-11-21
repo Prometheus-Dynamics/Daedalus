@@ -382,7 +382,16 @@ def judge_figures(directory, rehearsal=False):
     software = sorted(name for name in adapters if re.search(r"llvmpipe|lavapipe", name, re.I))
     if software and not rehearsal:
         problems.append(f"a step ran on a software adapter: {', '.join(software)}")
+    # A session of some figures only (BATCH_FIGURES) says which in figures.txt; the others aren't
+    # judged, and the verdict names what it covers. With no figures.txt every figure is judged.
+    session = (read(directory, "figures.txt") or "").split()
+    if session:
+        lines.append(f"figures in this session: {' '.join(session)}")
     for judge in (judge_e13, judge_e9, judge_e14, judge_e6, judge_ticks, judge_e11):
+        name = judge.__name__.removeprefix("judge_")
+        if session and name not in session:
+            lines.append(f"{name.upper() if name != 'ticks' else name}: not in this session")
+            continue
         figure = judge(directory, rehearsal)
         lines.extend(figure.lines)
         problems.extend(figure.problems)
@@ -578,5 +587,13 @@ def planted_figures(scratch, expect):
         e11_gate_txt="not run: rehearsal on lavapipe\n",
         e11_txt="e11: not run: rehearsal on lavapipe\n",
     )
+    # A session of some figures only.
+    some = {name: text for name, text in good.items() if not name.startswith(("e6", "ticks", "e11"))}
+    some["figures.txt"] = "e13 e9 e14\n"
+    expect("figures: a session of E13, E9 and E14 passes on those", judged(some), None)
+    expect("figures: a figure the session names with no result fails",
+           judged(dict(some, **{"figures.txt": "e13 e9 e14 e6\n"})), "no result file")
+    expect("figures: with no figures.txt every figure is judged",
+           judged({name: text for name, text in some.items() if name != "figures.txt"}), "no result file")
     expect("figures: a rehearsal with its reasons passes", judged(rehearsal, rehearsal=True), None)
     expect("figures: the same results fail as a board run", judged(rehearsal), "skipped on the board")
