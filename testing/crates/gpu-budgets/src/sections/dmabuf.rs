@@ -14,6 +14,10 @@
 //! the backend did not import again: the backend's own import count is the only number used.
 //!
 //! Where a step can't be taken here, its line says `skipped:` with the reason.
+//!
+//! On V3D the exported fence does not carry the device's write (2026-11-20: v3dv attaches nothing
+//! to an imported dma-buf), so both fence steps skip there. They are measured again on the writer's
+//! own sync fd.
 
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::sync::Arc;

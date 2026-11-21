@@ -36,6 +36,10 @@ ssh_to=(ssh -o BatchMode=yes)
 [[ -z "${BOARD_SSH_CONFIG:-}" ]] || ssh_to=(ssh -F "$BOARD_SSH_CONFIG" -o BatchMode=yes)
 die() { echo "batch: $*" >&2; exit 1; }
 on_board() { "${ssh_to[@]}" "${BOARD_SSH:?set BOARD_SSH}" "$@"; }
+take() { # source, destination: a file the bundle needs, or the build stops naming it
+  [[ -f "$1" ]] || die "the bundle needs $1, and it is not there"
+  cp "$1" "$2"
+}
 LEFT_OUT=""
 
 # Dynamic scope: tests() writes into the bundle that bundle() is making (BIN, LOG).
