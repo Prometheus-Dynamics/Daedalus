@@ -331,6 +331,16 @@ cells for what it returns, so a chain of stages that take and return values make
 warm. A panic in a body leaves nothing behind: a cell that was taken holds nothing, and dropping it
 frees only what was not taken.
 
+### A dma-buf a device has touched
+
+A device's work on a dma-buf from outside is attached to the buffer as a fence after every submit
+that used it, and the value's owner (for a value lent from a producer's ring, its lease) is let go
+no earlier than that submit has finished. The ring rule follows from it: a producer doesn't reuse
+a buffer while a lease on it is held, and a consumer that imports a held value into a device gives
+the lease back only once that device's read has signalled. Where no fence can be had, the host
+waits for the device instead, and says so in its counts. See "When the device is done with a
+dma-buf" in `docs/gpu-nodes.md`.
+
 ### Memory backends
 
 A backend doesn't have to run nodes. A memory backend declares memory spaces and the handlers

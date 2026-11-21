@@ -194,6 +194,10 @@ pub struct Storage {
     /// Set for device memory this backend allocated itself.
     #[cfg(target_os = "linux")]
     fresh: Option<Fresh>,
+    /// The dma-buf from outside under this value, where it is one: every submit that uses the
+    /// buffer attaches its fence to it, and keeps the value's owner until it is done.
+    #[cfg(target_os = "linux")]
+    external: Option<Arc<crate::explicit_sync::External>>,
     pub(crate) context: Arc<Context>,
 }
 
@@ -274,6 +278,8 @@ impl Storage {
             mapping: None,
             #[cfg(target_os = "linux")]
             fresh: None,
+            #[cfg(target_os = "linux")]
+            external: None,
             context,
         })
     }
@@ -302,6 +308,7 @@ impl Storage {
                 filled: Mutex::new(filled),
                 map,
             }),
+            external: None,
             context: Arc::clone(context),
         })
     }
@@ -323,6 +330,10 @@ impl Storage {
             && !fresh.seen.load(Ordering::Acquire)
         {
             self.show(fresh);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(external) = &self.external {
+            crate::explicit_sync::touch(external);
         }
         &self.raw
     }
@@ -386,7 +397,27 @@ impl Storage {
             space: SPACE_DEVICE,
             mapping: None,
             fresh: None,
+            external: None,
             context,
+        }
+    }
+
+    /// One value's buffer over an import of its dma-buf: the same device memory, and the same
+    /// identity for the bind group cache, with the value's own dma-buf and owner beside it.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn of_value(
+        imported: &Storage,
+        external: crate::explicit_sync::External,
+    ) -> Storage {
+        Storage {
+            raw: imported.raw.clone(),
+            size: imported.size,
+            id: imported.id,
+            space: imported.space,
+            mapping: None,
+            fresh: None,
+            external: Some(Arc::new(external)),
+            context: Arc::clone(&imported.context),
         }
     }
 
@@ -472,6 +503,8 @@ impl Storage {
             }),
             #[cfg(target_os = "linux")]
             fresh: None,
+            #[cfg(target_os = "linux")]
+            external: None,
             context,
         })
     }
@@ -522,6 +555,7 @@ impl Storage {
                 space,
                 mapping: mapping.map(|map| Mapping::Device(Arc::new(map))),
                 fresh: None,
+                external: None,
                 context,
             }),
             Err(Error::NotVulkan) => Storage::zeroed(context, size),
@@ -667,6 +701,7 @@ impl Storage {
             context.queue.submit([encoder.finish()]);
             context.until_done(lease);
         }
+        context.after_submit();
         {
             // Mapping flushes pending writes, which is a submit.
             let _held = context.submit.lock();

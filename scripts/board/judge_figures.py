@@ -18,6 +18,9 @@ LAYER_STATUS = re.compile(r"CreateInstance-status-message|Khronos Validation Lay
 # E9 and E14's shares of 50 runs: the write is calibrated to outlive its export in all of them, and
 # a few signalled early mean a barely long enough write, not a wrong fence.
 PENDING_SHARE = 0.9
+# E9 and E14's planted early readers: of 50 runs, the share a reader that doesn't wait must catch.
+# Fewer means the figure can't tell a reader that waits from one that doesn't.
+CAUGHT_SHARE = 0.9
 # E14: eight buffers, 1000 imports, and the reference's top of 44-50 allocations per import.
 STEADY_BUFFERS, STEADY_IMPORTS, ALLOCATIONS_MAX = 8, 1000, 50
 # E11 (b): resets the kernel has to have made before "the device survives" is a finding.
@@ -151,11 +154,34 @@ def judge_e9(directory, rehearsal):
     if skip:
         figure.skipped(skip.group(1))
         return figure
+    attached = find(figure, text, r"dma-fence: fence attached: (\d+) of (\d+) submits; host waits (\d+)", "attach")
+    if attached:
+        got, submits, waits = (int(value) for value in attached.groups())
+        figure.say(f"fence attached on {got} of {submits} submits, host waits {waits}")
+        if got + waits < submits:
+            figure.fail(f"{submits - got - waits} submits neither attached a fence nor waited on the host")
+        why = re.search(r"^dma-fence: host wait: (.*)$", text, re.M)
+        if waits and not why:
+            figure.fail("host waits with no reason named")
+        elif why:
+            figure.say(f"host wait: {why.group(1)}")
+    exports = find(figure, text, r"dma-fence: sync_file: (\d+) of (\d+) exports; unsignalled at export: (\d+) of (\d+)", "exports")
+    if exports:
+        files, runs, pending, _ = (int(value) for value in exports.groups())
+        figure.say(f"sync_file {files} of {runs}, unsignalled at export {pending} of {runs}")
+        if files < runs:
+            figure.fail(f"sync_file: {files} of {runs}")
+        if pending < PENDING_SHARE * runs:
+            figure.fail(f"unsignalled at export: {pending} of {runs}, needs {PENDING_SHARE:.0%}: the attached fence doesn't follow the write")
     rules = [
-        (r"dma-fence: sync_file: (\d+) of (\d+) exports", "sync_file", 1.0),
-        (r"dma-fence: unsignalled at export: (\d+) of (\d+)", "unsignalled at export", PENDING_SHARE),
-        (r"dma-fence: time to signal from the export, (\d+) of (\d+) signalled", "time to signal", 1.0),
-        (r"dma-fence: cpu read after the signal sees the GPU's values: (\d+) of (\d+)", "cpu read", 1.0),
+        (r"dma-fence: \(a\) the CPU read in the sync bracket, no other wait, sees the GPU's values: (\d+) of (\d+)",
+         "(a) the waiting reader saw the GPU's values", 1.0),
+        (r"dma-fence: \(b\) planted: a plain read right after the submit sees the sentinel: (\d+) of (\d+)",
+         "(b) the planted early reader saw the sentinel", CAUGHT_SHARE),
+        (r"dma-fence: \(c\) planted: attaching off: signalled at export (\d+) of (\d+)",
+         "(c) with attaching off, the fence was signalled at export", CAUGHT_SHARE),
+        (r"dma-fence: \(c\) planted: attaching off: .*the bracketed read sees the sentinel: (\d+) of (\d+)",
+         "(c) with attaching off, the bracketed read saw the sentinel", CAUGHT_SHARE),
     ]
     for pattern, what, need in rules:
         match = find(figure, text, pattern, what)
@@ -163,10 +189,13 @@ def judge_e9(directory, rehearsal):
             got, runs = share(match)
             figure.say(f"{what}: {got} of {runs}")
             if runs == 0 or got < need * runs:
-                figure.fail(f"{what}: {got} of {runs}, needs {need:.0%}")
-    signal = re.search(r"time to signal from the export.*?: median ([\d.]+) ms", text)
-    if signal:
-        figure.say(f"time to signal, median {signal.group(1)} ms")
+                figure.fail(f"{what}: {got} of {runs}, needs {need:.0%}"
+                            + ("" if need == 1.0 else ": the figure can't catch an early reader"))
+    cost = re.search(r"^dma-fence: attach cost: (.*)$", text, re.M)
+    if cost:
+        figure.say(f"attach cost: {cost.group(1)}")
+    else:
+        figure.fail("no attach cost line")
     return figure
 
 
@@ -199,6 +228,8 @@ def judge_e14(directory, rehearsal):
     rules = [
         (r"dma-wait: producer still writing at the consumer's submit: (\d+) of (\d+)", "producer pending", PENDING_SHARE),
         (r"dma-wait: the consumer's copy saw the GPU's values: (\d+) of (\d+)", "copy correct", 1.0),
+        (r"dma-wait: planted: the consumer's copy with no wait saw the sentinel: (\d+) of (\d+)",
+         "planted copy with no wait saw the sentinel", CAUGHT_SHARE),
     ]
     for pattern, what, need in rules:
         match = find(figure, text, pattern, what)
@@ -367,10 +398,13 @@ def block(name, output, code=0):
 E13_CLEAN = "".join(block(f"e13-clean-{name}", "test result: ok. 3 passed; 0 failed") for name in ("vk-sys", "fragment", "region", "raw-submit"))
 E9_GOOD = block("e9-fence", "\n".join([
     "dma-fence: import: the device imported the 1 MiB dma-heap buffer in place",
-    "dma-fence: sync_file: 50 of 50 exports; export failures 0",
-    "dma-fence: unsignalled at export: 50 of 50",
-    "dma-fence: time to signal from the export, 50 of 50 signalled, 0 late: median 12.0000 ms (p99 13, best 11, n 50)",
-    "dma-fence: cpu read after the signal sees the GPU's values: 50 of 50",
+    "dma-fence: GPU write: 256 loop rounds per word, sized so the write outlives a read right after its submit",
+    "dma-fence: fence attached: 55 of 55 submits; host waits 0",
+    "dma-fence: sync_file: 50 of 50 exports; unsignalled at export: 50 of 50",
+    "dma-fence: (a) the CPU read in the sync bracket, no other wait, sees the GPU's values: 50 of 50",
+    "dma-fence: (b) planted: a plain read right after the submit sees the sentinel: 50 of 50",
+    "dma-fence: (c) planted: attaching off: signalled at export 50 of 50; the bracketed read sees the sentinel: 50 of 50",
+    "dma-fence: attach cost: host 41000 ns a submit; a short write, submit to done: median 0.4100 ms attached, 0.3600 ms not",
 ]))
 E14_GOOD = block("e14-steady", "\n".join([
     "dma-steady: 8 buffers of 1 MiB, 1000 imports in rotation: device imports 8, cache hits 992, copies 0",
@@ -379,6 +413,7 @@ E14_GOOD = block("e14-steady", "\n".join([
     "dma-wait: producer still writing at the consumer's submit: 50 of 50",
     "dma-wait: the consumer's copy saw the GPU's values: 50 of 50",
     "dma-wait: copy done after the fence signalled (the device-side wait's cost and the copy): median 0.3000 ms (p99 1, best 0, n 50)",
+    "dma-wait: planted: the consumer's copy with no wait saw the sentinel: 50 of 50",
 ]))
 
 
@@ -475,8 +510,22 @@ def planted_figures(scratch, expect):
            judged(planted(e9_txt=E9_GOOD.replace("unsignalled at export: 50", "unsignalled at export: 3"))), "unsignalled at export")
     expect("figures: E9 not a sync_file fails",
            judged(planted(e9_txt=E9_GOOD.replace("sync_file: 50 of 50", "sync_file: 0 of 50"))), "sync_file")
-    expect("figures: E9 a wrong CPU read fails",
-           judged(planted(e9_txt=E9_GOOD.replace("values: 50 of 50", "values: 49 of 50"))), "cpu read")
+    expect("figures: E9 a waiting reader that once saw the sentinel fails",
+           judged(planted(e9_txt=E9_GOOD.replace("GPU's values: 50 of 50", "GPU's values: 49 of 50"))), "(a)")
+    expect("figures: E9 a planted early reader that saw the GPU's values fails",
+           judged(planted(e9_txt=E9_GOOD.replace("submit sees the sentinel: 50", "submit sees the sentinel: 30"))),
+           "can't catch an early reader")
+    expect("figures: E9 attaching off with the fence still pending fails",
+           judged(planted(e9_txt=E9_GOOD.replace("signalled at export 50", "signalled at export 2"))), "attaching off, the fence")
+    expect("figures: E9 attaching off with the read still right fails",
+           judged(planted(e9_txt=E9_GOOD.replace("read sees the sentinel: 50", "read sees the sentinel: 0"))), "attaching off, the bracketed")
+    expect("figures: E9 submits that neither attached nor waited fail",
+           judged(planted(e9_txt=E9_GOOD.replace("attached: 55 of 55", "attached: 40 of 55"))), "neither attached")
+    expect("figures: E9 a host wait with no reason fails",
+           judged(planted(e9_txt=E9_GOOD.replace("attached: 55 of 55 submits; host waits 0", "attached: 50 of 55 submits; host waits 5"))),
+           "no reason named")
+    expect("figures: E9 with no attach cost fails",
+           judged(planted(e9_txt=E9_GOOD.replace("attach cost", "attach price"))), "attach cost")
     expect("figures: E9 a step that crashed fails",
            judged(planted(e9_txt=E9_GOOD.replace("== exit 0", "== exit 101"))), "exited 101")
     # E14
@@ -486,6 +535,9 @@ def planted_figures(scratch, expect):
            judged(planted(e14_txt=E14_GOOD.replace("median 30", "median 61"))), "allocations")
     expect("figures: E14 a copy that missed the GPU's values fails",
            judged(planted(e14_txt=E14_GOOD.replace("GPU's values: 50 of 50", "GPU's values: 40 of 50"))), "copy correct")
+    expect("figures: E14 a planted copy with no wait that saw the GPU's values fails",
+           judged(planted(e14_txt=E14_GOOD.replace("no wait saw the sentinel: 50", "no wait saw the sentinel: 10"))),
+           "planted copy")
     expect("figures: E14 a producer done before the consumer fails",
            judged(planted(e14_txt=E14_GOOD.replace("submit: 50 of 50", "submit: 0 of 50"))), "producer pending")
     # E6

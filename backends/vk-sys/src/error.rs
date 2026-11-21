@@ -11,6 +11,8 @@ pub enum Error {
     NoDmaBufImport,
     /// The device was opened without sync fd import.
     NoSyncFdImport,
+    /// The device can't export a sync fd from a semaphore.
+    NoSyncFdExport,
     /// No memory type fits the request.
     NoMemoryType,
     /// A size or range that can't be used.
@@ -37,6 +39,7 @@ impl fmt::Display for Error {
             Error::NotVulkan => f.write_str("not a Vulkan device"),
             Error::NoDmaBufImport => f.write_str("the device can't import a dma-buf"),
             Error::NoSyncFdImport => f.write_str("the device can't import a sync fd"),
+            Error::NoSyncFdExport => f.write_str("the device can't export a sync fd"),
             Error::NoMemoryType => f.write_str("no memory type fits"),
             Error::Range => f.write_str("a size or range that can't be used"),
             Error::Fd => f.write_str("the fd was refused"),

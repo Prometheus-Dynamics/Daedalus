@@ -303,6 +303,7 @@ impl Texture {
             context.queue.submit([encoder.finish()]);
             context.until_done(lease);
         }
+        context.after_submit();
         {
             let _held = context.submit.lock();
             staging

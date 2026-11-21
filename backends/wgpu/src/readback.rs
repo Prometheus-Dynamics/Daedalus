@@ -93,6 +93,7 @@ impl OwnedStep for ReadbackStep {
                 .queue
                 .on_submitted_work_done(move || finished.finish());
         }
+        context.after_submit();
         context.moved.download(size);
         put_typed(out, UNSTAMPED.0, UNSTAMPED.1, target);
         StepEnd::Pending(Ticket::new(state, context, None).into_fence())

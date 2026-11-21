@@ -12,6 +12,10 @@ pub mod devices;
 #[cfg(target_os = "linux")]
 mod dmabuf_value;
 mod driver;
+#[cfg(target_os = "linux")]
+mod explicit_sync;
+#[cfg(all(test, target_os = "linux"))]
+mod explicit_sync_tests;
 mod fence;
 #[cfg(test)]
 mod fence_tests;
@@ -55,6 +59,8 @@ pub use context::OpenError;
 #[cfg(target_os = "linux")]
 pub use dmabuf_value::{DmaBufBacked, dma_heap_fd};
 pub use driver::{DriverGuard, devices_created, driver_lock, driver_losses, with_driver_lock};
+#[cfg(target_os = "linux")]
+pub use explicit_sync::SyncStats;
 pub use fence::Ticket;
 pub use host_bytes::HostBytes;
 pub use import_state::{DmaBufStatus, NoTrial, WhyCopied};

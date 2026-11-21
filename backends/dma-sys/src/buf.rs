@@ -193,8 +193,9 @@ impl<'a> DmaBufRef<'a> {
     ///
     /// It holds only the work a driver attached to the buffer. A Vulkan device that imported the
     /// dma-buf need not attach its own: on V3D (v3dv, 2026-11-20) a fence exported right after a
-    /// long GPU write was already signalled. A reader of such a write waits on the writer's own
-    /// fence instead, handed over or attached here with [`import_fence`](Self::import_fence).
+    /// long GPU write was already signalled. The writer's own fence is then attached here with
+    /// [`import_fence`](Self::import_fence), which the wgpu backend does after every submit that
+    /// used an imported dma-buf.
     pub fn export_fence(&self, access: Access) -> Result<SyncFence, Error> {
         let mut request = SyncFileArg {
             flags: access.flags() as u32,

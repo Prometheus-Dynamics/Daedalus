@@ -17,6 +17,8 @@ pub mod device;
 #[cfg(target_os = "linux")]
 mod error;
 #[cfg(target_os = "linux")]
+pub mod gate;
+#[cfg(target_os = "linux")]
 pub mod memory;
 #[cfg(all(test, target_os = "linux"))]
 mod planted;

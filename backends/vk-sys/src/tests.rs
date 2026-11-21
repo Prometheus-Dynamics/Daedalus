@@ -355,6 +355,48 @@ fn a_signaled_fence_imports_where_the_device_can_and_a_submit_waits_on_it() {
 }
 
 #[test]
+fn a_sync_fd_signalled_after_earlier_work_exports_where_the_device_can() {
+    for (device, queue) in devices() {
+        let lock = SubmitLock::default();
+        let submitter = Submitter::new(&device, &queue, &lock, 1).expect("a submitter");
+        // SAFETY: nothing is recorded.
+        let earlier = unsafe { submitter.submit(|_, _| {}, &[]) }.expect("a submit");
+        let fd = match crate::semaphore::signal_sync_fd(&device, &queue, &lock) {
+            Ok(fd) => fd,
+            Err(error) => {
+                assert_eq!(error, Error::NoSyncFdExport);
+                continue;
+            }
+        };
+        // The fd is a sync fd a submit can wait on, or none when the signal had already
+        // happened, and it signals: the earlier work is done.
+        let semaphore = Semaphore::import_sync_fd(&device, fd).expect("imports");
+        // SAFETY: nothing is recorded, and the semaphore outlives the wait below.
+        let ticket = unsafe { submitter.submit(|_, _| {}, &[&semaphore]) }.expect("a submit");
+        assert!(ticket.wait(Duration::from_secs(30)));
+        assert!(earlier.is_done());
+    }
+}
+
+#[test]
+fn work_submitted_after_a_closed_gate_finishes_only_once_it_opens() {
+    for (device, queue) in devices() {
+        let lock = SubmitLock::default();
+        let submitter = Submitter::new(&device, &queue, &lock, 1).expect("a submitter");
+        let gate = crate::gate::HostGate::new(&device, &queue, &lock).expect("a gate");
+        gate.hold().expect("the wait is submitted");
+        // SAFETY: nothing is recorded.
+        let after = unsafe { submitter.submit(|_, _| {}, &[]) }.expect("a submit");
+        // A fence covers everything earlier in submission order: the gate is still closed.
+        assert!(!after.wait(Duration::from_millis(100)));
+        assert!(!gate.passed(Duration::ZERO));
+        gate.open().expect("opens");
+        assert!(after.wait(Duration::from_secs(30)));
+        assert!(gate.passed(Duration::from_secs(30)));
+    }
+}
+
+#[test]
 fn a_device_reports_what_it_was_opened_with() {
     for (device, _queue) in devices() {
         let extras = Extras::of(&device).expect("a Vulkan device");
