@@ -125,6 +125,43 @@ impl WgpuBackend {
     }
 }
 
+/// Work held back on a backend's device until the host opens it: from [`WgpuBackend::raw_hold`]
+/// on, everything submitted on the device's queue (wgpu's own submits too) is done only after
+/// [`RawGate::open`]. A gate dropped closed opens. See `daedalus_vk_sys::gate`.
+pub struct RawGate(daedalus_vk_sys::gate::HostGate);
+
+impl RawGate {
+    /// Opens the gate: the held work runs.
+    pub fn open(&self) -> Result<(), RawError> {
+        self.0
+            .open()
+            .map_err(|error| RawError::Vulkan(error.to_string()))
+    }
+
+    /// Whether the held wait has passed, up to `timeout`.
+    pub fn passed(&self, timeout: std::time::Duration) -> bool {
+        self.0.passed(timeout)
+    }
+}
+
+impl WgpuBackend {
+    /// Holds this backend's queue: what is submitted on it from here waits, on the device, until
+    /// the gate opens. For figures and tests that need work to be pending for as long as they
+    /// say, not as long as the device takes. A submit behind the gate may block in the submit
+    /// call itself until the gate opens: lavapipe's does for wgpu's submits, whose binary
+    /// semaphores Mesa's queue waits for there. So submit held work from another thread than
+    /// the one that opens the gate. A device that exports a sync fd for a held submit may also
+    /// block in the export (lavapipe does), so a device with attaching on shouldn't be held.
+    pub fn raw_hold(&self) -> Result<RawGate, RawError> {
+        let context = self.context().map_err(RawError::Open)?;
+        let gate = daedalus_vk_sys::gate::HostGate::new(&context.device, &context.queue)
+            .map_err(|error| RawError::Vulkan(error.to_string()))?;
+        gate.hold(&context.submit)
+            .map_err(|error| RawError::Vulkan(error.to_string()))?;
+        Ok(RawGate(gate))
+    }
+}
+
 /// Copies the first `bytes` of `source` into `block`, in a raw submit of its own on `submitter`,
 /// and waits for the copy. The submitter, the storage and the block all come from one backend.
 pub fn raw_copy(

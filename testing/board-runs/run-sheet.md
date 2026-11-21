@@ -10,7 +10,7 @@ Every pass rule below is fixed here before the session, and the judge (`scripts/
 applies them as written. These three were chosen and approved beforehand, not fitted to the results:
 
 - A share "at least 45 of 50" (E9's fence unsignalled at export, E14's producer still writing at the
-  consumer's submit, and the planted early readers of E9 (b) and (c) and E14 seeing the sentinel): a
+  consumer's submit, the planted early readers of E9 (b) and (c), and E14's held plant): a
   write calibrated to be just long enough may finish before a few of them. Every other share is 50 of 50.
 - E14's allocations per import: at most 50, the top of the reference's 44 to 50.
 - E14's second device is opened by naming the adapter, so the board opens two devices on V3D.
@@ -119,18 +119,38 @@ from one that doesn't.
   dma-buf and the value's owner (two allocations; the 2026-11-20 median was 1).
 - Device-side wait: a second device on the same GPU imports the same dma-buf and copies it out, in a
   raw submit that waits on the fence exported at the first device's submit, which the backend attached.
-  The host waits for nothing before that submit. Planted: the same copy with no wait, after the CPU
-  wrote the sentinel and a device with attaching off wrote the buffer, must see the sentinel. With
-  the fence attached, V3D's kernel makes even that copy wait (2026-11-20).
+  The host waits for nothing before that submit.
+- Planted (`dmabuf_plant.rs`), ruled 2026-11-21. The CPU writes the sentinel, a device with attaching
+  off is held on its own queue (`raw_hold`), and its write is submitted behind the hold from a thread
+  of its own. Then the consumer copies with no wait and the copy finishes, and only then does the
+  hold open (after 2 s at most, if the copy can't finish while it is closed). The copy runs from
+  this process and from a second process, which is given the dma-buf over a Unix socket
+  (`SCM_RIGHTS`), as a consumer in another process gets one. The same copy with the write not held,
+  submitted and running, is recorded as V3D's order. The 2026-11-20 and 2026-11-21 runs saw that
+  order, the copy after the write, with no fence on the buffer.
 - Expected: 8 imports, 992 hits, 0 copies. Allocations per import after the first eight: about 3. The
-  copy done after the fence signals: near the reference's 0.2 ms wait (E14), plus a 1 MiB copy. The
-  planted copy sees the sentinel in all 50.
+  copy done after the fence signals: near the reference's 0.2 ms wait (E14), plus a 1 MiB copy.
+- The two outcomes of the held plant, set before the run (each needs at least 45 of 50, with the held
+  write submitted before the copy in at least 45 of 50, or the copy overtook nothing):
+  - **A**: the copy sees the sentinel. The plant catches a consumer that doesn't wait, and E14 has a
+    real pass rule: this process's held copy sees the sentinel. The not-held order then holds only
+    for work already running when the copy is submitted.
+  - **B**: the copy sees the GPU's values and could finish only once the hold opened. One V3D runs a
+    later job behind earlier held work, beyond submission order. The plant becomes a recorded
+    observation on boards with one V3D. For two devices in separate processes, B guarantees that a
+    consumer's job submitted after a producer's write on the same V3D runs after it, whatever it
+    waits on. B doesn't guarantee anything for a consumer that submits before the producer does,
+    for CPU access (a mapping still needs the sync bracket), or for another GPU, another engine or
+    another driver, and nothing in Vulkan or the kernel promises it. Waiting on the exported fence
+    stays the rule.
 - Pass: imports 8, hits 992, copies 0; the median allocations per import after the first eight at most
   50; the producer still writing at the consumer's submit in at least 45 of 50; the copy correct in 50
-  of 50; the planted copy with no wait sees the sentinel in at least 45 of 50; both steps exit 0.
+  of 50; the held plant gives outcome A or B in this process and in the second process; no plant
+  failures; both steps exit 0.
 - Fails it: `dma-steady: skipped:` or `dma-wait: skipped:` on the board (for the wait, also a device
   that can't import a sync fd: `VK_KHR_external_semaphore_fd`); more imports than buffers; more than 50
-  allocations; a copy that read stale bytes; a planted copy that saw the GPU's values.
+  allocations; a copy that read stale bytes; a held plant that is neither A nor B, or whose write
+  wasn't submitted before the copy; no second process (`dma-wait: second process: skipped:`).
 - Dropped: the producer-frame tests (tiled, UIF or SAND, XRGB, NV12). Daedalus contains no camera, image
   or frame-layout code, by the user's ruling.
 

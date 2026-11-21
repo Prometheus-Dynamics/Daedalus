@@ -18,6 +18,9 @@ B="$D/bin"
 SECONDS_MAX="${BATCH_SECONDS:-900}"
 mkdir -p "$R"
 export D R B SECONDS_MAX
+# Programs that make files of their own (E14's socket to its second process) make them here.
+mkdir -p "$D/tmp"
+export TMPDIR="$D/tmp"
 
 # Before anything is measured: every command the scripts name is here, every program in the
 # bundle starts, and every script parses. A miss ends the run here, with nothing else touched.

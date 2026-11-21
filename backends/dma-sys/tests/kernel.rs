@@ -176,3 +176,47 @@ fn a_heap_that_isnt_there_says_so_in_words() {
     }
     assert!(NoHeap::Denied.to_string().contains("may not open"));
 }
+
+/// A dma-buf handed to another process arrives as an fd of its own to the same buffer: the same
+/// identity, and what one side writes the other reads. Here both ends are this process.
+#[test]
+fn fds_cross_a_unix_socket_as_the_same_buffers() {
+    use daedalus_dma_sys::{MAX_FDS, recv_fds, send_fds};
+    use std::os::unix::net::UnixStream;
+    let (left, right) = UnixStream::pair().expect("a socket pair");
+    let first = DmaBuf::memfd("pass-first", 4096).expect("a memfd");
+    let second = DmaBuf::memfd("pass-second", 8192).expect("a memfd");
+    send_fds(&left, b"two", &[first.as_fd(), second.as_fd()]).expect("sent");
+    let mut bytes = [0u8; 16];
+    let (read, fds) = recv_fds(&right, &mut bytes).expect("received");
+    assert_eq!(&bytes[..read], b"two");
+    assert_eq!(fds.len(), 2);
+    let got: Vec<DmaBuf> = fds.into_iter().map(DmaBuf::from_fd).collect();
+    assert_eq!(got[0].as_ref().identity(), first.as_ref().identity());
+    assert_eq!(got[1].as_ref().identity(), second.as_ref().identity());
+    assert_eq!(got[1].as_ref().len(), Ok(8192));
+    first
+        .as_ref()
+        .map()
+        .expect("maps")
+        .write(0, b"seen")
+        .expect("written");
+    let mut seen = [0u8; 4];
+    got[0]
+        .as_ref()
+        .map()
+        .expect("maps")
+        .read(0, &mut seen)
+        .expect("read");
+    assert_eq!(&seen, b"seen");
+
+    // A message with no fds, an empty message and too many fds.
+    send_fds(&left, b"x", &[]).expect("sent with none");
+    let (read, fds) = recv_fds(&right, &mut bytes).expect("received");
+    assert_eq!((read, fds.len()), (1, 0));
+    assert_eq!(send_fds(&left, b"", &[first.as_fd()]), Err(Error::Range));
+    let many: Vec<_> = (0..=MAX_FDS).map(|_| first.as_fd()).collect();
+    assert_eq!(send_fds(&left, b"x", &many), Err(Error::Range));
+    drop(left);
+    assert_eq!(recv_fds(&right, &mut bytes).map(|(read, _)| read), Ok(0));
+}

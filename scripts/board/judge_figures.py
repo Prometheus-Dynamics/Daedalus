@@ -228,8 +228,6 @@ def judge_e14(directory, rehearsal):
     rules = [
         (r"dma-wait: producer still writing at the consumer's submit: (\d+) of (\d+)", "producer pending", PENDING_SHARE),
         (r"dma-wait: the consumer's copy saw the GPU's values: (\d+) of (\d+)", "copy correct", 1.0),
-        (r"dma-wait: planted: the consumer's copy with no wait saw the sentinel: (\d+) of (\d+)",
-         "planted copy with no wait saw the sentinel", CAUGHT_SHARE),
     ]
     for pattern, what, need in rules:
         match = find(figure, text, pattern, what)
@@ -241,7 +239,72 @@ def judge_e14(directory, rehearsal):
     wait = re.search(r"dma-wait: copy done after the fence signalled.*?: median ([\d.]+) ms", text)
     if wait:
         figure.say(f"wait: copy done {wait.group(1)} ms after the signal (reference 0.2 ms)")
+    judge_e14_plant(figure, text)
     return figure
+
+
+PLANT = (r"^dma-wait: {label}: the copy with no wait saw the sentinel (\d+) of (\d+), the GPU's values "
+         r"(\d+), neither (\d+)(?:; it waited for the hold (\d+); the write was submitted before the copy (\d+))?$")
+
+
+def plant_outcome(figure, text, label, need_submitted):
+    """The outcome of one held plant, as the run sheet sets it out before the run: A, the copy saw the
+    sentinel (the plant catches a consumer that doesn't wait); B, it saw the GPU's values and waited for
+    the hold (one V3D orders a later job behind held work); None, neither, which fails."""
+    match = re.search(PLANT.format(label=re.escape(label)), text, re.M)
+    if not match:
+        figure.fail(f"plant: no '{label}' line")
+        return None
+    sentinel, runs, gpu, other, waited, submitted = (int(v or 0) for v in match.groups())
+    figure.say(f"plant: {label}: sentinel {sentinel} of {runs}, GPU's values {gpu}, neither {other}, "
+               f"waited for the hold {waited}, write submitted first {submitted}")
+    if runs == 0:
+        figure.fail(f"plant: {label}: no runs")
+        return None
+    if need_submitted and submitted < CAUGHT_SHARE * runs:
+        figure.fail(f"plant: {label}: the held write was submitted before the copy in {submitted} of {runs}, "
+                    f"needs {CAUGHT_SHARE:.0%}: the copy didn't overtake a submitted write")
+        return None
+    if sentinel >= CAUGHT_SHARE * runs:
+        return "A"
+    if gpu >= CAUGHT_SHARE * runs and waited >= CAUGHT_SHARE * runs:
+        return "B"
+    figure.fail(f"plant: {label}: neither outcome (A: sentinel, B: GPU's values after waiting for the hold, "
+                f"each {CAUGHT_SHARE:.0%})")
+    return None
+
+
+OUTCOMES = {
+    "A": "A: a copy that doesn't wait sees the sentinel, so the plant catches it",
+    "B": "B: one V3D runs the copy after held work, so the plant is an observation here, not a rule",
+}
+
+
+def judge_e14_plant(figure, text):
+    skip = re.search(r"^dma-wait: planted: skipped: (.*)$", text, re.M)
+    if skip:
+        figure.skipped(f"plant: {skip.group(1)}")
+        return
+    for line in re.findall(r"^dma-wait: (.*): failures (\d+), the last: (.*)$", text, re.M):
+        figure.fail(f"plant: {line[0]}: {line[1]} failures, the last: {line[2]}")
+    here = plant_outcome(figure, text, "planted, held, this process", not figure.rehearsal)
+    if here:
+        figure.say(f"plant: outcome {OUTCOMES[here]}")
+    peer = re.search(r"^dma-wait: second process: skipped: (.*)$", text, re.M)
+    if peer:
+        figure.skipped(f"second process: {peer.group(1)}")
+    else:
+        there = plant_outcome(figure, text, "planted, held, second process", not figure.rehearsal)
+        if there:
+            figure.say(f"plant: second process: outcome {OUTCOMES[there]}")
+        if here and there and here != there:
+            figure.say(f"plant: the second process's outcome {there} differs from this process's {here}")
+    for label in ("order, not held, this process", "order, not held, second process"):
+        match = re.search(PLANT.format(label=re.escape(label)), text, re.M)
+        if match:
+            sentinel, runs, gpu, other = (int(v) for v in match.groups()[:4])
+            figure.say(f"order: {label.removeprefix('order, ')}: GPU's values {gpu} of {runs}, "
+                       f"sentinel {sentinel}, neither {other}")
 
 
 def judge_e6(directory, rehearsal):
@@ -422,8 +485,14 @@ E14_GOOD = block("e14-steady", "\n".join([
     "dma-wait: producer still writing at the consumer's submit: 50 of 50",
     "dma-wait: the consumer's copy saw the GPU's values: 50 of 50",
     "dma-wait: copy done after the fence signalled (the device-side wait's cost and the copy): median 0.3000 ms (p99 1, best 0, n 50)",
-    "dma-wait: planted: the consumer's copy with no wait saw the sentinel: 50 of 50",
+    "dma-wait: planted, held, this process: the copy with no wait saw the sentinel 50 of 50, the GPU's values 0, neither 0; it waited for the hold 0; the write was submitted before the copy 50",
+    "dma-wait: order, not held, this process: the copy with no wait saw the sentinel 0 of 50, the GPU's values 50, neither 0",
+    "dma-wait: planted, held, second process: the copy with no wait saw the sentinel 50 of 50, the GPU's values 0, neither 0; it waited for the hold 0; the write was submitted before the copy 50",
+    "dma-wait: order, not held, second process: the copy with no wait saw the sentinel 0 of 50, the GPU's values 50, neither 0",
 ]))
+E14_B = (E14_GOOD
+         .replace("sentinel 50 of 50, the GPU's values 0, neither 0; it waited for the hold 0",
+                  "sentinel 0 of 50, the GPU's values 50, neither 0; it waited for the hold 50"))
 
 
 def e6_round():
@@ -544,9 +613,20 @@ def planted_figures(scratch, expect):
            judged(planted(e14_txt=E14_GOOD.replace("median 30", "median 61"))), "allocations")
     expect("figures: E14 a copy that missed the GPU's values fails",
            judged(planted(e14_txt=E14_GOOD.replace("GPU's values: 50 of 50", "GPU's values: 40 of 50"))), "copy correct")
-    expect("figures: E14 a planted copy with no wait that saw the GPU's values fails",
-           judged(planted(e14_txt=E14_GOOD.replace("no wait saw the sentinel: 50", "no wait saw the sentinel: 10"))),
-           "planted copy")
+    expect("figures: E14 outcome B, the copy after the held write, passes as an observation",
+           judged(planted(e14_txt=E14_B)), None)
+    mixed = E14_GOOD.replace("sentinel 50 of 50, the GPU's values 0, neither 0; it waited for the hold 0",
+                             "sentinel 25 of 50, the GPU's values 25, neither 0; it waited for the hold 0", 1)
+    expect("figures: E14 a held plant that is neither outcome fails", judged(planted(e14_txt=mixed)), "neither outcome")
+    late = E14_GOOD.replace("submitted before the copy 50", "submitted before the copy 3", 1)
+    expect("figures: E14 a held write not submitted before the copy fails", judged(planted(e14_txt=late)),
+           "didn't overtake")
+    alone = re.sub(r"dma-wait: planted, held, second process.*\n", "dma-wait: second process: skipped: no socket\n",
+                   E14_GOOD)
+    expect("figures: E14 with no second process fails on a board", judged(planted(e14_txt=alone)), "second process")
+    broken = E14_GOOD.replace("dma-wait: order, not held, this process",
+                              "dma-wait: planted, held, this process: failures 2, the last: lost\ndma-wait: order, not held, this process", 1)
+    expect("figures: E14 plant failures fail", judged(planted(e14_txt=broken)), "failures")
     expect("figures: E14 a producer done before the consumer fails",
            judged(planted(e14_txt=E14_GOOD.replace("submit: 50 of 50", "submit: 0 of 50"))), "producer pending")
     # E6

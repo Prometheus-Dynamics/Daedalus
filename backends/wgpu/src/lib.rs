@@ -74,7 +74,7 @@ pub use pool::TempPoolLimits;
 pub use profile::{DeviceProfile, Family, vendor_ids};
 #[cfg(target_os = "linux")]
 pub use raw::{
-    Arg, Chain, RawBlock, RawError, RawPlacement, RawSemaphore, raw_copy, raw_copy_after,
+    Arg, Chain, RawBlock, RawError, RawGate, RawPlacement, RawSemaphore, raw_copy, raw_copy_after,
 };
 pub use staging::{StagingConfig, StagingStats};
 pub use storage_pool::{StoragePool, StoragePoolStats};

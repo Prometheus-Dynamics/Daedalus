@@ -16,6 +16,7 @@ The only crate that calls the kernel's dma-buf, dma-heap and sync_file interface
 | `import_fence` | `DMA_BUF_IOCTL_IMPORT_SYNC_FILE` |
 | `SyncFence::from_fd`, `is_sync_file` | `SYNC_IOC_FILE_INFO` |
 | `SyncFence::wait`, `is_signaled` | `poll` for `POLLIN` |
+| `send_fds`, `recv_fds` | `sendmsg` and `recvmsg` with `SCM_RIGHTS` on a Unix socket: a dma-buf or sync_file handed to another process, which gets its own fds (close-on-exec) to the same files |
 
 A `SyncFence` can only be made from an fd the kernel says is a sync_file. Handing a GPU driver some other fd as a fence has hung one: a pipe never signals.
 
