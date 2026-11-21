@@ -19,7 +19,7 @@ use std::sync::Arc;
 use daedalus_abi::{OwnedStep, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{CompileCx, Refusal, Transfer, TransferCost};
 pub use daedalus_dmabuf::DmaBufBacked;
-use daedalus_runner::{UNSTAMPED, put_typed, typed_view};
+use daedalus_runner::{UNSTAMPED, put_typed, share_typed, typed_view};
 
 use crate::backend::WgpuBackend;
 use crate::buffer::Storage;
@@ -83,9 +83,10 @@ impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
             put_typed(out, UNSTAMPED.0, UNSTAMPED.1, storage);
             return StepEnd::Done;
         };
-        let Ok(fd) = dmabuf.try_clone_to_owned() else {
+        let (Ok(fd), Ok(own)) = (dmabuf.try_clone_to_owned(), dmabuf.try_clone_to_owned()) else {
             return fault(cx, "an import couldn't take the value's dma-buf");
         };
+        let owner = share_typed(input);
         // In place where the device takes this kind of fd, or where nothing has tried yet:
         // then this value is the trial. A value the device refuses is copied, not faulted, and
         // a refusal that is the device's is remembered, so the next plan takes the copy.
@@ -123,7 +124,16 @@ impl<T: DmaBufBacked> OwnedStep for ImportStep<T> {
             }
         }
         let storage = match storage {
-            Some(storage) => storage,
+            // In place: this value's own buffer over the import, which carries the dma-buf and
+            // the value's owner, so each submit that uses it attaches its fence and keeps the
+            // owner until it is done. What the producer still has pending is waited for first.
+            Some(imported) => {
+                let own = daedalus_dma_sys::DmaBuf::from_fd(own);
+                crate::explicit_sync::before_first_use(&context, &own);
+                let external =
+                    crate::explicit_sync::External::new(own, T::READ_ONLY, owner, &context);
+                Arc::new(Storage::of_value(&imported, external))
+            }
             None => match copy_bytes(&context, dmabuf, offset, want) {
                 Ok(copied) => copied,
                 Err(error) => return fault(cx, &format!("a dma-buf couldn't be copied: {error}")),

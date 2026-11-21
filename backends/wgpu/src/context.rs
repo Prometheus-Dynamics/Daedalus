@@ -90,6 +90,12 @@ pub(crate) struct Context {
     passes: AtomicU64,
     dispatches: AtomicU64,
     pub(crate) moved: crate::transfer::Counters,
+    /// How the device's work on outside dma-bufs was attached to them.
+    #[cfg(target_os = "linux")]
+    pub(crate) sync: crate::explicit_sync::Counters,
+    /// Set when the host asked for no fence on outside dma-bufs. See [`Options::no_fence_attach`].
+    #[cfg(target_os = "linux")]
+    pub(crate) no_fence_attach: bool,
     pub(crate) temp: Mutex<TempPool>,
     /// Set when bytes were given to the queue to write, which reach the device only with the
     /// queue's next submit.
@@ -216,6 +222,10 @@ impl Context {
             passes: AtomicU64::new(0),
             dispatches: AtomicU64::new(0),
             moved: crate::transfer::Counters::default(),
+            #[cfg(target_os = "linux")]
+            sync: crate::explicit_sync::Counters::default(),
+            #[cfg(target_os = "linux")]
+            no_fence_attach: options.no_fence_attach,
             record: caps,
             imports,
             untried,
@@ -256,6 +266,14 @@ impl Context {
         if let Some(lease) = lease {
             self.queue.on_submitted_work_done(move || drop(lease));
         }
+    }
+
+    /// Attaches the fence of what was just submitted to the dma-bufs from outside that this
+    /// thread bound for it. Called after every submit, with the submit lock let go.
+    #[inline]
+    pub(crate) fn after_submit(&self) {
+        #[cfg(target_os = "linux")]
+        crate::explicit_sync::after_submit(self);
     }
 
     pub(crate) fn count_submit(&self) {
@@ -383,6 +401,12 @@ impl Context {
             }
             _ => Err(self.timed_out(what)),
         }
+    }
+
+    /// The bound on any wait the backend makes.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn wait_timeout(&self) -> std::time::Duration {
+        self.wait_timeout
     }
 
     pub(crate) fn timed_out(&self, what: &'static str) -> WaitError {

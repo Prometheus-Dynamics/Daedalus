@@ -128,6 +128,7 @@ impl RegionStep {
             }
             chained.place.hold(lease);
         }
+        self.context.after_submit();
         self.context.count_submit();
         self.context.count_pass();
         Ok(Some(chained.place.fence()))

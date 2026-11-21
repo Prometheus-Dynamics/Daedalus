@@ -368,6 +368,7 @@ impl FragmentPass {
                 .queue
                 .on_submitted_work_done(move || finished.finish());
         }
+        context.after_submit();
         Ticket::new(state, Arc::clone(context), None)
     }
 

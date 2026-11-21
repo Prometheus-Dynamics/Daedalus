@@ -7,6 +7,8 @@ pub mod baselines;
 pub mod chains;
 #[cfg(target_os = "linux")]
 pub mod dmabuf;
+#[cfg(target_os = "linux")]
+pub mod dmabuf_fence;
 pub mod fences;
 pub mod gaps;
 pub mod grind;

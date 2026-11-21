@@ -10,8 +10,8 @@ Every pass rule below is fixed here before the session, and the judge (`scripts/
 applies them as written. These three were chosen and approved beforehand, not fitted to the results:
 
 - A share "at least 45 of 50" (E9's fence unsignalled at export, E14's producer still writing at the
-  consumer's submit): a write calibrated to be just long enough may finish before a few exports. Every
-  other share is 50 of 50.
+  consumer's submit, and the planted early readers of E9 (b) and (c) and E14 seeing the sentinel): a
+  write calibrated to be just long enough may finish before a few of them. Every other share is 50 of 50.
 - E14's allocations per import: at most 50, the top of the reference's 44 to 50.
 - E14's second device is opened by naming the adapter, so the board opens two devices on V3D.
 
@@ -79,20 +79,34 @@ each was checked with `sh -n` (bash) and `bash --posix -n` only.
   says `not run: E13 did not open: ...`. Those count as failures too. Ticks, the CPU's figure, still
   runs.
 
-## E9: the fence a dma-buf exports while V3D writes it
+## E9: the device's fence on an imported dma-buf, with planted early readers
+
+Reworked 2026-11-20 for explicit sync. The 2026-11-20 run found that v3dv attaches nothing to an
+imported dma-buf, so the backend now attaches each submit's fence itself (`docs/gpu-nodes.md`, "When the
+device is done with a dma-buf"). This figure measures that, and proves it can tell a reader that waits
+from one that doesn't.
 
 - Command (`figures/e9.sh`): `bin/daedalus-gpu-budgets dma-fence`. The E9 lines start `dma-fence:`.
 - What it does: a 1 MiB dma-heap buffer (with 64 KiB room past it) is imported into the device. The GPU
-  writes it with a loop whose length is calibrated until three writes in a row are still running when
-  the fence is exported. The fence is exported right after each submit. 50 runs after 5 warm-ups.
-- Expected: every export a sync_file, unsignalled at export in all 50 runs. The time to signal is about
-  the calibrated write's length, so it is not comparable to the idle figure of 0.0017 ms (E9, 2026-11-16
-  and 2026-11-17), which was on a buffer nothing was writing. The CPU read sees the GPU's values in all
-  50 (the 1 MiB read itself was 0.09 to 0.11 ms, E9 2026-11-16 and 2026-11-17).
-- Pass: sync_file in 50 of 50 exports; unsignalled at export in at least 45 of 50; all 50 signalled
-  within 5 s; the CPU read correct in 50 of 50; the step exits 0.
-- Fails it: `dma-fence: skipped:` on the board (the import refused or copied, or the fence signalled at
-  export: V3D's work not on the dma-buf's fence); any share under its bar; a crash.
+  writes it with a loop whose length is calibrated until three writes in a row are still running after a
+  1 MiB read made right after the submit. Before each run the CPU writes a sentinel over the buffer,
+  inside a write sync. 50 runs after 5 warm-ups for each of:
+  - (a) the CPU reads inside the read sync, with no other wait, right after the submit;
+  - (b) planted: a plain read of the mapping right after the submit, with no sync;
+  - (c) planted: as (a), on a second device opened with attaching turned off
+    (`Options::no_fence_attach`).
+  Then the attach cost: the host's time per attach from `sync_stats()`, and the submit-to-done time of a
+  one-round write with attaching on and off.
+- Expected: a fence attached on every submit, no host wait. The fence exported at the submit is a
+  sync_file and unsignalled in all 50. (a) sees the GPU's values in all 50. (b) and (c) see the sentinel
+  in all 50, and in (c) the fence was signalled at export.
+- Pass: attached plus host waits covers every submit, and a host wait names its reason; sync_file 50 of
+  50; unsignalled at export at least 45 of 50; (a) 50 of 50; (b) at least 45 of 50; both (c) shares at
+  least 45 of 50; an attach cost line; the step exits 0.
+- Fails it: `dma-fence: skipped:` on the board; (a) seeing the sentinel even once; (b) or (c) under 45,
+  which means the figure can't catch an early reader; a host wait with no reason; a crash.
+- Reported, not judged: the attach cost, for the coordinator's ruling on attaching per submit or only
+  when a value leaves the host's ordering.
 
 ## E14: steady imports and the device-side wait
 
@@ -100,19 +114,21 @@ each was checked with `sh -n` (bash) and `bash --posix -n` only.
   `bin/daedalus-gpu-budgets dma-fence` again for its `dma-wait:` lines.
 - Steady state: eight 1 MiB dma-heap buffers imported in rotation for 1000 imports. Cache hits are the
   rotations less the backend's import count (`TransferStats.imports`), which grows only on a real
-  import.
+  import. Each import now also makes the value's own buffer over the kept import, which carries the
+  dma-buf and the value's owner (two allocations; the 2026-11-20 median was 1).
 - Device-side wait: a second device on the same GPU imports the same dma-buf and copies it out, in a
-  raw submit that waits on the fence exported while the first device is still writing. The host waits
-  for nothing before that submit.
-- Expected: 8 imports, 992 hits, 0 copies. Allocations per import after the first eight: at most the
-  reference's 44 to 50 (E14). The copy done after the fence signals: near the reference's 0.2 ms wait
-  (E14), plus a 1 MiB copy. No earlier next figure for either.
+  raw submit that waits on the fence exported at the first device's submit, which the backend attached.
+  The host waits for nothing before that submit. Planted: the same copy with no wait, after the CPU
+  wrote the sentinel, must see the sentinel.
+- Expected: 8 imports, 992 hits, 0 copies. Allocations per import after the first eight: about 3. The
+  copy done after the fence signals: near the reference's 0.2 ms wait (E14), plus a 1 MiB copy. The
+  planted copy sees the sentinel in all 50.
 - Pass: imports 8, hits 992, copies 0; the median allocations per import after the first eight at most
   50; the producer still writing at the consumer's submit in at least 45 of 50; the copy correct in 50
-  of 50; both steps exit 0.
+  of 50; the planted copy with no wait sees the sentinel in at least 45 of 50; both steps exit 0.
 - Fails it: `dma-steady: skipped:` or `dma-wait: skipped:` on the board (for the wait, also a device
   that can't import a sync fd: `VK_KHR_external_semaphore_fd`); more imports than buffers; more than 50
-  allocations; a copy that read stale bytes.
+  allocations; a copy that read stale bytes; a planted copy that saw the GPU's values.
 - Dropped: the producer-frame tests (tiled, UIF or SAND, XRGB, NV12). Daedalus contains no camera, image
   or frame-layout code, by the user's ruling.
 

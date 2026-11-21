@@ -524,6 +524,7 @@ impl Shader {
                 timer.map();
             }
         }
+        context.after_submit();
         context.inflight().started(Arc::clone(&state));
         Ok(Run::Started(Ticket::new(
             state,

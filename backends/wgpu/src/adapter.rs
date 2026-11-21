@@ -143,6 +143,11 @@ pub struct Options {
     /// ago is let go, and its value is imported again when it next comes. With 0 nothing is
     /// kept, and every value is imported as it comes.
     pub kept_imports: usize,
+    /// Leaves the device's fence off the dma-bufs from outside that it uses in place. Only for a
+    /// figure that shows it can tell an attached fence from none: with this set, anyone outside
+    /// the host's own ordering may see such a buffer before the device is done with it.
+    #[doc(hidden)]
+    pub no_fence_attach: bool,
     /// What an earlier run learned about the adapter, so planning can use it before a device
     /// opens.
     pub known: Option<crate::CapsRecord>,
@@ -172,6 +177,7 @@ impl Default for Options {
             no_dma_heap: false,
             no_heap_access: false,
             kept_imports: DEFAULT_KEPT_IMPORTS,
+            no_fence_attach: false,
             known: None,
             hints: crate::MemoryHints::default(),
             staging: crate::StagingConfig::default(),

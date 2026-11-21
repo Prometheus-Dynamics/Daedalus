@@ -305,6 +305,28 @@ impl WgpuBackend {
         self.open_context().map(|context| context.moved.stats())
     }
 
+    /// How the device's work on dma-bufs from outside was attached to them, and where the host
+    /// waited instead. `None` while no device is open.
+    #[cfg(target_os = "linux")]
+    pub fn sync_stats(&self) -> Option<crate::SyncStats> {
+        self.open_context().map(|context| context.sync.stats())
+    }
+
+    /// Attaches the fence of what was just submitted to every dma-buf from outside that this
+    /// thread bound since its last submit: call it after a raw submit that bound a [`Storage`]
+    /// through [`Storage::raw_buffer`] or [`Storage::wgpu_buffer`]. The backend's own submits do
+    /// this themselves.
+    ///
+    /// [`Storage`]: crate::Storage
+    /// [`Storage::raw_buffer`]: crate::Storage::raw_buffer
+    /// [`Storage::wgpu_buffer`]: crate::Storage::wgpu_buffer
+    #[cfg(target_os = "linux")]
+    pub fn attach_after_submit(&self) {
+        if let Some(context) = self.open_context() {
+            crate::explicit_sync::after_submit(&context);
+        }
+    }
+
     pub(crate) fn context(&self) -> Result<Arc<Context>, OpenError> {
         self.link.context()
     }

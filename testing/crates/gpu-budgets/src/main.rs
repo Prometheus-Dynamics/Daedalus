@@ -219,7 +219,7 @@ fn main() -> std::process::ExitCode {
             #[cfg(target_os = "linux")]
             "dma-1mib" => sections::timings::dma_1mib(),
             #[cfg(target_os = "linux")]
-            "dma-fence" => sections::dmabuf::fence_after_write(),
+            "dma-fence" => sections::dmabuf_fence::fence_after_write(),
             #[cfg(target_os = "linux")]
             "dma-steady" => sections::dmabuf::steady_imports(),
             #[cfg(not(target_os = "linux"))]

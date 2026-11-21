@@ -89,6 +89,23 @@ The trial at open needs a buffer, and so a dma-heap the process can open. On a b
 
 A host that knows can say so before the first value, so that one isn't special: `backend.assume_dmabuf_import(read_only, imports)`, or `backend.try_dmabuf_import(fd, read_only)` with a buffer the producer supplies. `backend.dmabuf_import(read_only)` gives the answer so far, `None` while nothing has tried. `Options::no_heap_access` opens a device as such a process would, on any machine.
 
+### When the device is done with a dma-buf
+
+A Vulkan driver need not tell the kernel about its work on a dma-buf it imported. On V3D (Raze #2, 2026-11-20) a fence exported from the buffer right after a long GPU write had already signalled. So anyone outside the host's own step ordering could see the buffer before the device was done with it: a worker given it by descriptor, the host's caller, a CPU mapping, another device, or the producer writing it again.
+
+The backend closes that gap itself. After every submit that used a dma-buf from outside, it asks the device for a sync fd that signals when that submit is done, and attaches it to the buffer (`DMA_BUF_IOCTL_IMPORT_SYNC_FILE`). It attaches a read where the value's fd only allows reading, and a write otherwise. Everyone who honours a dma-buf's fences then waits for the device, and nothing travels beside the buffer: not on the wire, and not in a worker's protocol. Before the device is first given such a buffer, the backend also waits for what the producer still has pending on it (`export_fence(Read)`). A CPU producer has nothing pending, so that costs one ioctl and one poll.
+
+Where no sync fd can be had, or the kernel refuses it, the host waits for the device before the run hands anything on. That is slower and still right, and it is counted and named. `backend.sync_stats()` counts the submits that attached and the buffers they attached to, the host waits and the last one's reason, the producer waits, and the host time spent.
+
+What Daedalus guarantees for a value made from an outside dma-buf: **its owner is let go no earlier than the last submit that read or wrote the buffer has finished.** That holds even when the value itself is dropped while that submit is pending. The owner is whatever the value holds to keep the memory its own, such as a lease on a producer's ring.
+
+**The ring rule.** A producer lends its values from a ring of buffers, as leases (a frame is one such value). It doesn't reuse a buffer while a lease on it is held. A consumer that imports a held value into a device must not give the lease back until that device's read has signalled. Daedalus keeps this rule for its own devices through the guarantee above. Anyone else who takes such a buffer does one of these:
+
+- **A CPU reader or writer** maps the buffer only inside `DMA_BUF_IOCTL_SYNC` begin and end, where the kernel waits on the attached fences. A plain mmap read with no bracket isn't ordered.
+- **A device that ignores the kernel's fences** (v3dv and others) exports the buffer's fence before its first access (`Read` to read, `Write` to write) and waits on it, then attaches its own completion after its last access. This is what the backend does.
+- **A producer that reuses buffers** waits for `export_fence(Write)`, which covers every reader and writer, before writing a buffer again. V4L2's QBUF doesn't wait on a dma-buf's fences, so a camera's owner polls that fence before queueing the buffer again.
+- **The host's caller** taking a dma-buf value does what a CPU reader does, or hands the fd to something that honours the kernel's fences.
+
 ### On a machine with no dma-heap, and nothing else installed
 
 Daedalus needs nothing beside itself to run. It depends on no device service, no camera stack

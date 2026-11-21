@@ -1,23 +1,18 @@
-//! The dma-buf sections of two board figures, E9 and E14. Each imports dma-heap buffers into the
+//! The dma-buf parts of two board figures, E9 and E14. Each imports dma-heap buffers into the
 //! device with the backend's own dma-buf import (the step a `with_dmabuf` type plans), and keeps
-//! its own fd of the same dma-buf to export fences from and to map.
+//! its own fd of the same dma-buf to export fences from and to map. E9 itself is in
+//! `dmabuf_fence`; this file has the imports and the GPU write it uses, and E14.
 //!
-//! `dma-fence` (E9): a 1 MiB dma-heap buffer is imported, the GPU writes it with work that is still
-//! running when the fence is exported, and the fence is exported right after the submit. It prints
-//! whether the fence is a sync_file, whether it was unsignalled at export, how long it takes to
-//! signal from the export, and whether a CPU read of the dma-buf after the signal sees the GPU's
-//! values. Then the device-side wait (E14): a second device imports the same dma-buf, and a copy
-//! out of it is submitted there waiting on the exported fence, with no host wait before it.
+//! The device-side wait (E14): a second device imports the dma-buf E9 writes, and a copy out of it
+//! is submitted there waiting on the fence exported at the write's submit, with no host wait before
+//! it. The backend attached the write's fence to the buffer, so the export carries it. A planted
+//! copy with no wait must see the sentinel the CPU wrote before the write.
 //!
 //! `dma-steady` (E14): eight buffers are imported in rotation for 1000 imports. It prints the
 //! allocations per import (the counting allocator) and the cache hits, which are the rotations
 //! the backend did not import again: the backend's own import count is the only number used.
 //!
 //! Where a step can't be taken here, its line says `skipped:` with the reason.
-//!
-//! On V3D the exported fence does not carry the device's write (2026-11-20: v3dv attaches nothing
-//! to an imported dma-buf), so both fence steps skip there. They are measured again on the writer's
-//! own sync fd.
 
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::sync::Arc;
@@ -27,7 +22,7 @@ use daedalus_abi::counting::counted;
 use daedalus_abi::testing::run_once;
 use daedalus_abi::{Slot, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{Backend, CompileCx};
-use daedalus_dma_sys::{Access, DmaBuf, DmaHeap, Mapping, SyncFence, is_sync_file};
+use daedalus_dma_sys::{Access, DmaBuf, DmaHeap, Mapping, SyncFence};
 use daedalus_runner::{drop_owned, put_typed, take_typed};
 use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey, Typed};
 use daedalus_wgpu::shader::{BindingKind, BindingSpec, Bound, Dispatch, Run, Shader, ShaderSpec};
@@ -38,26 +33,26 @@ use daedalus_wgpu::{
 use super::{RUNS, WARM, line_ms, summary};
 
 /// One value: 1 MiB, the size the record names.
-const BYTES: u64 = 1 << 20;
+pub(super) const BYTES: u64 = 1 << 20;
 /// Allocated past the value, for the memory a device needs behind an imported buffer beyond its
 /// bytes (V3D needs some).
-const ROOM: u64 = 64 << 10;
+pub(super) const ROOM: u64 = 64 << 10;
 /// The CPU checks every 997th word, which spreads the samples over every workgroup.
-const SAMPLE_STEP: usize = 997;
+pub(super) const SAMPLE_STEP: usize = 997;
 /// Imports in the steady rotation, and how many buffers are in it.
 const STEADY_IMPORTS: usize = 1000;
 const STEADY_BUFFERS: usize = 8;
 /// The calibration doubles the loop rounds from here, and stops at the cap, or once one run of the
 /// write takes `LONG_ENOUGH`: a fence still signalled at export then doesn't follow the device.
-const ROUNDS_START: u32 = 16;
-const ROUNDS_CAP: u32 = 1 << 20;
-const LONG_ENOUGH: Duration = Duration::from_millis(50);
+pub(super) const ROUNDS_START: u32 = 16;
+pub(super) const ROUNDS_CAP: u32 = 1 << 20;
+pub(super) const LONG_ENOUGH: Duration = Duration::from_millis(50);
 /// The longest a fence or a copy is waited for.
-const SIGNAL_BOUND: Duration = Duration::from_secs(5);
+pub(super) const SIGNAL_BOUND: Duration = Duration::from_secs(5);
 
 /// The GPU's write: each word is a hash of its index and the run's seed, with `rounds` loops. Its
 /// work grows with `rounds`, so a long enough run is still going when its fence is exported.
-static FILL: ShaderSpec = ShaderSpec {
+pub(super) static FILL: ShaderSpec = ShaderSpec {
     name: "dmabuf-fill",
     entry: "main",
     source: "
@@ -149,7 +144,7 @@ fn cx() -> CompileCx<'static> {
 
 /// A device that imports this section's dma-bufs, opened with `options`, and the planned import
 /// step for them.
-fn open_importing(options: Options) -> Result<(WgpuBackend, Step), String> {
+pub(super) fn open_importing(options: Options) -> Result<(WgpuBackend, Step), String> {
     let backend = WgpuBackend::open(options).with_dmabuf::<Part>();
     backend
         .start()
@@ -165,7 +160,7 @@ fn open_importing(options: Options) -> Result<(WgpuBackend, Step), String> {
 
 /// The value of `buf` in the device, through `step`. The device buffer it gives is the dma-buf's
 /// memory once the device imports it; a device that copies gives a copy.
-fn import_whole(step: &mut Step, buf: &DmaBuf) -> Result<Arc<Storage>, String> {
+pub(super) fn import_whole(step: &mut Step, buf: &DmaBuf) -> Result<Arc<Storage>, String> {
     let part = Part {
         fd: buf
             .try_clone()
@@ -189,7 +184,7 @@ fn import_whole(step: &mut Step, buf: &DmaBuf) -> Result<Arc<Storage>, String> {
 
 /// Imports `buf` through `step`, and says why not unless the device took it in place: one more
 /// import in the backend's count, and no copy.
-fn import_in_place(
+pub(super) fn import_in_place(
     backend: &WgpuBackend,
     step: &mut Step,
     buf: &DmaBuf,
@@ -208,7 +203,12 @@ fn import_in_place(
 }
 
 /// Submits one run of `FILL` over `storage`, waiting out a device that is busy with another run.
-fn fill(shader: &Shader, storage: &Storage, rounds: u32, seed: u32) -> Result<Ticket, String> {
+pub(super) fn fill(
+    shader: &Shader,
+    storage: &Storage,
+    rounds: u32,
+    seed: u32,
+) -> Result<Ticket, String> {
     let mut config = [0u8; 8];
     config[..4].copy_from_slice(&rounds.to_le_bytes());
     config[4..].copy_from_slice(&seed.to_le_bytes());
@@ -224,7 +224,7 @@ fn fill(shader: &Shader, storage: &Storage, rounds: u32, seed: u32) -> Result<Ti
 }
 
 /// Whether the first 1 MiB of `bytes` holds what `FILL` gives at the sampled words.
-fn sampled_correct(bytes: &[u8], rounds: u32, seed: u32) -> bool {
+pub(super) fn sampled_correct(bytes: &[u8], rounds: u32, seed: u32) -> bool {
     let words = bytes.as_chunks::<4>().0;
     (0..words.len())
         .step_by(SAMPLE_STEP)
@@ -232,7 +232,7 @@ fn sampled_correct(bytes: &[u8], rounds: u32, seed: u32) -> bool {
 }
 
 /// The dma-buf's first 1 MiB, read by the CPU through its own mapping, inside a read sync.
-fn cpu_read(buf: &DmaBuf, map: &Mapping, out: &mut [u8]) -> Result<(), String> {
+pub(super) fn cpu_read(buf: &DmaBuf, map: &Mapping, out: &mut [u8]) -> Result<(), String> {
     let buf = buf.as_ref();
     buf.begin_cpu_access(Access::Read)
         .map_err(|error| error.to_string())?;
@@ -242,151 +242,19 @@ fn cpu_read(buf: &DmaBuf, map: &Mapping, out: &mut [u8]) -> Result<(), String> {
     read
 }
 
-/// Finds the rounds for which the GPU's write is still running when its fence is exported: the
-/// rounds double until three runs in a row are unsignalled at export. `Err` with the reason when
-/// the write runs `LONG_ENOUGH` or reaches the cap and its fence is still signalled at export.
-fn calibrate(shader: &Shader, storage: &Storage, buf: &DmaBuf) -> Result<u32, String> {
-    let mut rounds = ROUNDS_START;
-    loop {
-        let (mut all, mut longest) = (true, Duration::ZERO);
-        for seed in 0..3 {
-            let started = Instant::now();
-            let ticket = fill(shader, storage, rounds, seed)?;
-            let fence = buf
-                .as_ref()
-                .export_fence(Access::Read)
-                .map_err(|error| format!("export_fence: {error}"))?;
-            all &= matches!(fence.is_signaled(), Ok(false));
-            ticket.wait().map_err(|error| error.to_string())?;
-            longest = longest.max(started.elapsed());
-        }
-        if all {
-            return Ok(rounds);
-        }
-        if longest >= LONG_ENOUGH || rounds >= ROUNDS_CAP {
-            return Err(format!(
-                "the exported fence was signalled at export after a GPU write of {:.1} ms ({rounds} loop rounds): this device's work is not on the dma-buf's fence",
-                longest.as_secs_f64() * 1e3
-            ));
-        }
-        rounds *= 2;
-    }
-}
-
-/// E9, then the device-side wait of E14, on a 1 MiB dma-heap buffer. Prints `dma-fence:` and
-/// `dma-wait:` lines.
-pub fn fence_after_write() {
-    let skip = |reason: String| {
-        println!("dma-fence: skipped: {reason}");
-        println!("dma-wait: skipped: no E9 fence to wait on: {reason}");
-    };
-    let heap = match DmaHeap::open("system") {
-        Ok(heap) => heap,
-        Err(error) => return skip(format!("no /dev/dma_heap/system: {error}")),
-    };
-    let buf = match heap.allocate(BYTES + ROOM) {
-        Ok(buf) => buf,
-        Err(error) => return skip(format!("no dma-heap buffer: {error}")),
-    };
-    let map = match buf.as_ref().map_read_only() {
-        Ok(map) => map,
-        Err(error) => return skip(format!("the dma-buf doesn't map: {error}")),
-    };
-    let (backend, mut step) = match open_importing(Options::default()) {
-        Ok(opened) => opened,
-        Err(reason) => return skip(reason),
-    };
-    let storage = match import_in_place(&backend, &mut step, &buf) {
-        Ok(storage) => storage,
-        Err(reason) => return skip(reason),
-    };
-    println!("dma-fence: import: the device imported the 1 MiB dma-heap buffer in place");
-    let shader = match Shader::load(&backend, &FILL) {
-        Ok(shader) => shader,
-        Err(error) => return skip(format!("the GPU write doesn't load: {error}")),
-    };
-    let rounds = match calibrate(&shader, &storage, &buf) {
-        Ok(rounds) => rounds,
-        Err(reason) => return skip(reason),
-    };
-    println!(
-        "dma-fence: GPU write: {rounds} loop rounds per word, sized so the write outlives its export"
-    );
-
-    let (mut signal, mut sync_files, mut unsignalled, mut correct) = (Vec::new(), 0, 0, 0);
-    let (mut exports, mut late, mut failures) = (0, 0, Vec::new());
-    for round in 0..(WARM + RUNS) {
-        let seed = 1000 + round as u32;
-        let ticket = match fill(&shader, &storage, rounds, seed) {
-            Ok(ticket) => ticket,
-            Err(reason) => return skip(format!("the GPU write failed: {reason}")),
-        };
-        let fence = buf.as_ref().export_fence(Access::Read);
-        let exported = Instant::now();
-        let fence = match fence {
-            Ok(fence) => fence,
-            Err(error) => {
-                failures.push(format!("export_fence: {error}"));
-                ticket.wait().ok();
-                continue;
-            }
-        };
-        let still = matches!(fence.is_signaled(), Ok(false));
-        let done = fence.wait(SIGNAL_BOUND).unwrap_or(false);
-        let took = exported.elapsed();
-        ticket.wait().ok();
-        let mut bytes = vec![0u8; BYTES as usize];
-        let ok = match cpu_read(&buf, &map, &mut bytes) {
-            Ok(()) => sampled_correct(&bytes, rounds, seed),
-            Err(reason) => {
-                failures.push(format!("cpu read: {reason}"));
-                false
-            }
-        };
-        if round < WARM {
-            continue;
-        }
-        exports += 1;
-        sync_files += usize::from(is_sync_file(fence.as_fd()));
-        unsignalled += usize::from(still);
-        correct += usize::from(ok);
-        if done {
-            signal.push(took);
-        } else {
-            late += 1;
-        }
-    }
-    println!(
-        "dma-fence: sync_file: {sync_files} of {exports} exports; export failures {}",
-        RUNS - exports
-    );
-    println!("dma-fence: unsignalled at export: {unsignalled} of {RUNS}");
-    if signal.is_empty() {
-        println!("dma-fence: time to signal: none signalled within {SIGNAL_BOUND:?}");
-    } else {
-        println!(
-            "dma-fence: time to signal from the export, {} of {RUNS} signalled, {late} late: {}",
-            signal.len(),
-            line_ms(summary(&mut signal))
-        );
-    }
-    println!("dma-fence: cpu read after the signal sees the GPU's values: {correct} of {RUNS}");
-    if let Some(last) = failures.last() {
-        println!("dma-fence: failures {}, the last: {last}", failures.len());
-    }
-    device_side_wait(&backend, &shader, &storage, &buf, rounds);
-}
-
 /// E14's device-side wait: a second device imports the same dma-buf and copies it out, in a submit
 /// that waits on the fence exported while the first device is still writing. The host waits for
-/// nothing before that submit.
-fn device_side_wait(
+/// nothing before that submit. Then the planted run: the same copy with no wait must see the
+/// sentinel the CPU wrote before the write, or the figure can't catch a consumer that doesn't wait.
+pub(super) fn device_side_wait(
     producer: &WgpuBackend,
     shader: &Shader,
     storage: &Storage,
     buf: &DmaBuf,
+    map: &Mapping,
     rounds: u32,
 ) {
+    use super::dmabuf_fence::{prefill, saw_sentinel};
     let skip = |reason: String| println!("dma-wait: skipped: {reason}");
     let adapter = match producer.start() {
         Ok(record) => record.adapter.name,
@@ -415,6 +283,9 @@ fn device_side_wait(
     let (mut pending, mut correct, mut failures) = (0, 0, Vec::new());
     for round in 0..(WARM + RUNS) {
         let seed = 5000 + round as u32;
+        if let Err(reason) = prefill(buf, map) {
+            return skip(format!("the sentinel prefill: {reason}"));
+        }
         let ticket = match fill(shader, storage, rounds, seed) {
             Ok(ticket) => ticket,
             Err(reason) => return skip(format!("the GPU write failed: {reason}")),
@@ -450,6 +321,7 @@ fn device_side_wait(
             submitted = host.elapsed();
             signalled = signal_instant(&watched);
         });
+        consumer.attach_after_submit();
         let done = Instant::now();
         ticket.wait().ok();
         let mut bytes = vec![0u8; BYTES as usize];
@@ -493,10 +365,44 @@ fn device_side_wait(
     if let Some(last) = failures.last() {
         println!("dma-wait: failures {}, the last: {last}", failures.len());
     }
+    let (mut early, mut failures) = (0, Vec::new());
+    for round in 0..(WARM + RUNS) {
+        let seed = 7000 + round as u32;
+        if let Err(reason) = prefill(buf, map) {
+            return skip(format!("the sentinel prefill: {reason}"));
+        }
+        let ticket = match fill(shader, storage, rounds, seed) {
+            Ok(ticket) => ticket,
+            Err(reason) => return skip(format!("the GPU write failed: {reason}")),
+        };
+        let copied = raw_copy_after(&submitter, &source, &block, BYTES, &[], || {});
+        consumer.attach_after_submit();
+        ticket.wait().ok();
+        let mut bytes = vec![0u8; BYTES as usize];
+        let seen = copied
+            .map_err(|error| error.to_string())
+            .and_then(|()| block.read(0, &mut bytes).map_err(|error| error.to_string()));
+        if round < WARM {
+            continue;
+        }
+        match seen {
+            Ok(()) => early += usize::from(saw_sentinel(&bytes)),
+            Err(reason) => failures.push(reason),
+        }
+    }
+    println!(
+        "dma-wait: planted: the consumer's copy with no wait saw the sentinel: {early} of {RUNS}"
+    );
+    if let Some(last) = failures.last() {
+        println!(
+            "dma-wait: planted failures {}, the last: {last}",
+            failures.len()
+        );
+    }
 }
 
 /// When `fence` signals, seen from this thread, or `None` past the bound.
-fn signal_instant(fence: &SyncFence) -> Option<Instant> {
+pub(super) fn signal_instant(fence: &SyncFence) -> Option<Instant> {
     fence
         .wait(SIGNAL_BOUND)
         .ok()
