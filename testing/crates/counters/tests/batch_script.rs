@@ -396,3 +396,38 @@ fn a_figure_list_runs_e13_and_only_the_figures_named() {
         "{calls}"
     );
 }
+
+/// `batch.sh go` closes its shared ssh connection on the way out, even when it stops early: here
+/// the stand-in `ssh` says the run's directory is already on the board, so `go` stops at once.
+#[test]
+fn go_closes_its_ssh_connection_on_every_way_out() {
+    let root = std::env::temp_dir().join(format!("dd-batch-go-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let (path, target) = (root.join("path"), root.join("target"));
+    fs::create_dir_all(&path).expect("the PATH directory");
+    fs::create_dir_all(target.join("board/batch/bundle/bin")).expect("a built bundle");
+    let calls = root.join("ssh-calls");
+    script(
+        &path.join("ssh"),
+        &format!("echo \"$*\" >> '{}'; exit 1", calls.display()),
+    );
+    let host_path = std::env::var("PATH").unwrap_or_default();
+    let status = Command::new("bash")
+        .arg(repo().join("scripts/board/batch.sh"))
+        .arg("go")
+        .env("PATH", format!("{}:{host_path}", path.display()))
+        .env("CARGO_TARGET_DIR", &target)
+        .env("BOARD_SSH", "board")
+        .status()
+        .expect("batch.sh runs");
+    let seen = fs::read_to_string(&calls).unwrap_or_default();
+    let _ = fs::remove_dir_all(&root);
+    assert!(!status.success(), "go stops: {seen}");
+    assert!(seen.contains("test ! -e /tmp/dd-batch"), "{seen}");
+    assert!(
+        seen.lines()
+            .last()
+            .is_some_and(|line| line.contains("-O exit board")),
+        "the last ssh call closes the connection: {seen}"
+    );
+}

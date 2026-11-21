@@ -1,0 +1,8 @@
+# The Khronos validation layer the gate and the board run under. scripts/vvl-build.sh builds it;
+# scripts/ci.d/vvl.sh refuses a layer whose hash isn't the one recorded here for its arch.
+VVL_REPO=https://github.com/KhronosGroup/Vulkan-ValidationLayers
+VVL_TAG=v1.4.354
+VVL_COMMIT=ccaf4c149d8730338012614a5be8080d0b92e95f
+# sha256 of libVkLayer_khronos_validation.so as scripts/vvl-build.sh built it.
+VVL_SHA256_X86_64=2ab483b214be61888e44d3054c655dc1a2b38d1a612f1a28ac0655d9ed11ed8d
+VVL_SHA256_AARCH64=4833dd1ba02bdff6489f692fe3079f37a0f0cec1ca0e5824b8273bd13a307a8c
