@@ -368,3 +368,31 @@ fn a_rehearsal_never_reaches_the_e11_block() {
     );
     assert!(!board.calls().contains("grind"), "no grind ran");
 }
+
+#[test]
+fn a_figure_list_runs_e13_and_only_the_figures_named() {
+    let board = board("list", GPU_ANSWERS, true);
+    fs::write(board.root.join("run/figures.list"), "e9 e14\n").expect("the list is written");
+    assert_eq!(board.run(), Some(0));
+    assert!(board.result("e13-gate.txt").starts_with("open"));
+    for figure in ["e9", "e14"] {
+        assert!(
+            board
+                .result(&format!("{figure}-gate.txt"))
+                .starts_with("open"),
+            "{figure} ran"
+        );
+    }
+    for figure in ["e6", "ticks", "e11"] {
+        assert!(
+            board.result(&format!("{figure}.txt")).is_empty(),
+            "{figure} was left out"
+        );
+    }
+    let calls = board.calls();
+    assert!(calls.contains("dma-fence"), "{calls}");
+    assert!(
+        !calls.contains("elements") && !calls.contains("ticks-bench"),
+        "{calls}"
+    );
+}

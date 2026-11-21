@@ -118,8 +118,9 @@ fn a_value_dropped_while_a_submit_that_reads_it_is_pending_holds_its_owner_until
     let shader = Shader::load(&backend, &BUMP).expect("loads");
     let base = Storage::new(&backend, BYTES).expect("a buffer");
     let dmabuf = DmaBuf::memfd("external", BYTES).expect("memfd");
-    let gate = HostGate::new(&context.device, &context.queue, &context.submit).expect("a gate");
-    gate.hold().expect("the gate holds the queue");
+    let gate = HostGate::new(&context.device, &context.queue).expect("a gate");
+    gate.hold(&context.submit)
+        .expect("the gate holds the queue");
     let owner: Arc<dyn Any + Send + Sync> = Arc::new(());
     let kept: Weak<dyn Any + Send + Sync> = Arc::downgrade(&owner);
     let storage = value(&base, &dmabuf, true, owner, &context);
@@ -241,8 +242,9 @@ fn a_host_that_turns_attaching_off_gets_no_fence_and_a_count_of_it() {
     };
     let shader = Shader::load(&backend, &BUMP).expect("loads");
     let base = Storage::new(&backend, BYTES).expect("a buffer");
-    let gate = HostGate::new(&context.device, &context.queue, &context.submit).expect("a gate");
-    gate.hold().expect("the gate holds the queue");
+    let gate = HostGate::new(&context.device, &context.queue).expect("a gate");
+    gate.hold(&context.submit)
+        .expect("the gate holds the queue");
     let storage = value(&base, &dmabuf, false, Arc::new(()), &context);
     let ticket = run(&shader, &storage);
     // Nothing was attached, so the buffer looks idle while the device still has it.

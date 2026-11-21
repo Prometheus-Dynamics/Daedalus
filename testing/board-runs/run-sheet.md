@@ -32,7 +32,8 @@ On the host, from a clone on NVMe:
    bench (`ticks-bench`), `bounded`, the `vk-sys` unit tests (`vk-sys.lib`), the wgpu `all` and
    `region` tests, the layer, `batch-on-board.sh` and `figures/*.sh`.
 2. `scripts/board/batch.sh rehearse` on this machine first. It must pass.
-3. Only after the board's keeper gives the word: `BOARD_SSH=<board> scripts/board/batch.sh go`. It
+3. Only after the board's keeper gives the word: `BOARD_SSH=<board> scripts/board/batch.sh go`. `BATCH_FIGURES` picks the figures
+   after E13 (for example `BATCH_FIGURES="e9 e14"`); unset runs them all. E13 always runs first. It
    copies the bundle to `/tmp/dd-batch`, runs `sh ./batch-on-board.sh` there detached under both GPU
    locks, brings `results/` back, and removes `/tmp/dd-batch`.
 4. `scripts/board/judge.py figures $CARGO_TARGET_DIR/board/batch/results`. It applies the rules below
@@ -89,7 +90,7 @@ from one that doesn't.
 - Command (`figures/e9.sh`): `bin/daedalus-gpu-budgets dma-fence`. The E9 lines start `dma-fence:`.
 - What it does: a 1 MiB dma-heap buffer (with 64 KiB room past it) is imported into the device. The GPU
   writes it with a loop whose length is calibrated until three writes in a row are still running after a
-  1 MiB read made right after the submit. Before each run the CPU writes a sentinel over the buffer,
+  1 MiB read made right after the submit, then taken 8 times over. Before each run the CPU writes a sentinel over the buffer,
   inside a write sync. 50 runs after 5 warm-ups for each of:
   - (a) the CPU reads inside the read sync, with no other wait, right after the submit;
   - (b) planted: a plain read of the mapping right after the submit, with no sync;
@@ -119,7 +120,8 @@ from one that doesn't.
 - Device-side wait: a second device on the same GPU imports the same dma-buf and copies it out, in a
   raw submit that waits on the fence exported at the first device's submit, which the backend attached.
   The host waits for nothing before that submit. Planted: the same copy with no wait, after the CPU
-  wrote the sentinel, must see the sentinel.
+  wrote the sentinel and a device with attaching off wrote the buffer, must see the sentinel. With
+  the fence attached, V3D's kernel makes even that copy wait (2026-11-20).
 - Expected: 8 imports, 992 hits, 0 copies. Allocations per import after the first eight: about 3. The
   copy done after the fence signals: near the reference's 0.2 ms wait (E14), plus a 1 MiB copy. The
   planted copy sees the sentinel in all 50.

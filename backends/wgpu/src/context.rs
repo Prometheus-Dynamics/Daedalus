@@ -96,6 +96,9 @@ pub(crate) struct Context {
     /// Set when the host asked for no fence on outside dma-bufs. See [`Options::no_fence_attach`].
     #[cfg(target_os = "linux")]
     pub(crate) no_fence_attach: bool,
+    /// Signals the sync fds attached to outside dma-bufs, made at the first attach.
+    #[cfg(target_os = "linux")]
+    signal: std::sync::OnceLock<Result<daedalus_vk_sys::semaphore::SyncFdSignal, String>>,
     pub(crate) temp: Mutex<TempPool>,
     /// Set when bytes were given to the queue to write, which reach the device only with the
     /// queue's next submit.
@@ -226,6 +229,8 @@ impl Context {
             sync: crate::explicit_sync::Counters::default(),
             #[cfg(target_os = "linux")]
             no_fence_attach: options.no_fence_attach,
+            #[cfg(target_os = "linux")]
+            signal: std::sync::OnceLock::new(),
             record: caps,
             imports,
             untried,
@@ -309,6 +314,20 @@ impl Context {
         {
             self.mark_lost(&why);
         }
+        #[cfg(target_os = "linux")]
+        self.sync.reap();
+    }
+
+    /// What signals the sync fds attached to outside dma-bufs, or why there is none.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn sync_fd_signal(&self) -> Result<&daedalus_vk_sys::semaphore::SyncFdSignal, &str> {
+        self.signal
+            .get_or_init(|| {
+                daedalus_vk_sys::semaphore::SyncFdSignal::new(&self.device, &self.queue)
+                    .map_err(|error| error.to_string())
+            })
+            .as_ref()
+            .map_err(String::as_str)
     }
 
     /// Notes that the queue was given `bytes` to write. Past [`WRITE_BUDGET`] the queue is

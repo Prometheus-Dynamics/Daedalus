@@ -237,6 +237,15 @@ go() {
   [[ -d "$out/bundle/bin" ]] || die "build the bundle first"
   mkdir -p "$out/results"
   on_board "test ! -e $dir" || die "$dir is already on the board: look before removing it"
+  # BATCH_FIGURES picks the figures after E13 (E13 always runs first); unset runs them all.
+  rm -f "$out/bundle/figures.list"
+  if [[ -n "${BATCH_FIGURES:-}" ]]; then
+    local f
+    for f in $BATCH_FIGURES; do
+      [[ " e9 e14 e6 ticks e11 " == *" $f "* ]] || die "BATCH_FIGURES: no figure $f (e9 e14 e6 ticks e11)"
+    done
+    echo "$BATCH_FIGURES" > "$out/bundle/figures.list"
+  fi
   tar -C "$out/bundle" -cf - . | on_board "mkdir -p $dir && tar -C $dir -xf -" ||
     die "couldn't reach the board. If it asked for a password or its host key changed, stop and tell its keeper: type nothing."
   # Detached, so a dropped connection doesn't end it; both GPU locks for the whole run.

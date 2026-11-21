@@ -1,107 +1,122 @@
 //! Device work the host holds back until it says go.
 //!
-//! A gate submits, on the device's queue, a command buffer that waits for an event only the host
-//! sets. A fence or semaphore signalled by a later submit covers everything earlier in submission
-//! order, so until the gate opens nothing signalled after it signals. That makes "work still
-//! pending" a state a test sets and ends, instead of a race against how fast the device is.
+//! A gate submits, on the device's queue, an empty batch that waits for a timeline semaphore only
+//! the host signals. A fence or semaphore signalled by a later submit covers everything earlier in
+//! submission order, so until the gate opens nothing signalled after it signals. That makes "work
+//! still pending" a state a test sets and ends, instead of a race against how fast the device is.
+//!
+//! A timeline semaphore may be waited on before anything signals it; an event may not be set by the
+//! host while a command waits on it, so an event can't do this.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use ash::vk;
+use wgpu::hal::api::Vulkan;
 
 use crate::device::Raw;
-use crate::submit::Submitter;
 use crate::{Error, SubmitLock};
 
 /// A closed gate on a device's queue. See the module doc.
 pub struct HostGate {
     /// Set when the host opens the gate, or on drop.
     opened: AtomicBool,
-    /// Submits the waits. Declared before `kept`: its drop waits for every wait to finish, and
-    /// only then is the event destroyed.
-    submitter: Submitter,
-    kept: Event,
-}
-
-/// Destroys the event once nothing waits on it.
-struct Event {
-    raw: vk::Event,
     device: ash::Device,
-    /// The event is the device's.
+    queue: vk::Queue,
+    /// The timeline the wait is on: 0 while closed, 1 once open.
+    timeline: vk::Semaphore,
+    /// Signalled once the wait has passed.
+    passed: vk::Fence,
+    /// Whether a wait was submitted, so drop knows whether to wait for it.
+    held: AtomicBool,
+    /// The semaphore and fence are the device's.
     _keep: wgpu::Device,
-}
-
-impl Drop for Event {
-    fn drop(&mut self) {
-        // SAFETY: made in `HostGate::new`. The submitter, dropped first, waited for every
-        // command buffer that waits on it.
-        unsafe { self.device.destroy_event(self.raw, None) };
-    }
 }
 
 impl HostGate {
     /// A closed gate. Nothing waits on it until [`HostGate::hold`].
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        lock: &SubmitLock,
-    ) -> Result<Self, Error> {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, Error> {
         let raw = Raw::of(device).ok_or(Error::NotVulkan)?;
-        let submitter = Submitter::new(device, queue, lock, 1)?;
-        // SAFETY: a plain event on a live device, destroyed by `Event`'s drop.
-        let event = unsafe {
+        // SAFETY: reads the queue's handle.
+        let queue_handle = unsafe { queue.as_hal::<Vulkan>() }
+            .ok_or(Error::NotVulkan)?
+            .as_raw();
+        let mut kind = vk::SemaphoreTypeCreateInfo::default()
+            .semaphore_type(vk::SemaphoreType::TIMELINE)
+            .initial_value(0);
+        let info = vk::SemaphoreCreateInfo::default().push_next(&mut kind);
+        // SAFETY: a timeline semaphore on a live device, destroyed in `Drop` once the wait on it
+        // has passed.
+        let timeline = unsafe { raw.device.create_semaphore(&info, None) }?;
+        // SAFETY: a fence on a live device, destroyed in `Drop`.
+        let passed = match unsafe {
             raw.device
-                .create_event(&vk::EventCreateInfo::default(), None)
-        }?;
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+        } {
+            Ok(fence) => fence,
+            Err(error) => {
+                // SAFETY: made above and never used.
+                unsafe { raw.device.destroy_semaphore(timeline, None) };
+                return Err(error.into());
+            }
+        };
         Ok(HostGate {
             opened: AtomicBool::new(false),
-            submitter,
-            kept: Event {
-                raw: event,
-                device: raw.device,
-                _keep: device.clone(),
-            },
+            device: raw.device,
+            queue: queue_handle,
+            timeline,
+            passed,
+            held: AtomicBool::new(false),
+            _keep: device.clone(),
         })
     }
 
     /// Submits the wait: from here, everything submitted on the queue after it signals only once
-    /// the gate opens. One wait at a time; a gate already open lets the wait straight through.
-    pub fn hold(&self) -> Result<(), Error> {
-        let event = self.kept.raw;
-        let record = |device: &ash::Device, buffer: vk::CommandBuffer| {
-            // SAFETY: recording into the submitter's command buffer. The event is set only
-            // from the host, which the HOST source stage says.
-            unsafe {
-                device.cmd_wait_events(
-                    buffer,
-                    &[event],
-                    vk::PipelineStageFlags::HOST,
-                    vk::PipelineStageFlags::ALL_COMMANDS,
-                    &[vk::MemoryBarrier::default()
-                        .src_access_mask(vk::AccessFlags::HOST_WRITE)
-                        .dst_access_mask(vk::AccessFlags::MEMORY_READ)],
-                    &[],
-                    &[],
-                );
-            }
-        };
-        // SAFETY: the recording waits on an event this gate keeps alive until the submitter,
-        // dropped first, has waited for the submit.
-        unsafe { self.submitter.submit(record, &[]) }.map(|_| ())
-    }
-
-    /// Opens the gate: what waits on it runs, and what was submitted after it can finish.
-    pub fn open(&self) -> Result<(), Error> {
-        self.opened.store(true, Ordering::Release);
-        // SAFETY: an event of this device, set from the host.
-        unsafe { self.kept.device.set_event(self.kept.raw) }?;
+    /// the gate opens. Once per gate.
+    pub fn hold(&self, lock: &SubmitLock) -> Result<(), Error> {
+        if self.held.swap(true, Ordering::AcqRel) {
+            return Err(Error::Range);
+        }
+        let waits = [self.timeline];
+        let values = [1u64];
+        let stages = [vk::PipelineStageFlags::ALL_COMMANDS];
+        let mut timeline =
+            vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values);
+        let submit = vk::SubmitInfo::default()
+            .wait_semaphores(&waits)
+            .wait_dst_stage_mask(&stages)
+            .push_next(&mut timeline);
+        let _held = lock.lock();
+        // SAFETY: the queue is the device's, under its submit lock. The batch is empty and only
+        // waits; the semaphore and fence outlive it (drop opens the gate and waits for the fence).
+        let submitted = unsafe { self.device.queue_submit(self.queue, &[submit], self.passed) };
+        if let Err(error) = submitted {
+            self.held.store(false, Ordering::Release);
+            return Err(error.into());
+        }
         Ok(())
     }
 
-    /// Whether the wait has finished, up to `timeout`.
+    /// Opens the gate: the wait passes, and what was submitted after it can finish.
+    pub fn open(&self) -> Result<(), Error> {
+        self.opened.store(true, Ordering::Release);
+        let info = vk::SemaphoreSignalInfo::default()
+            .semaphore(self.timeline)
+            .value(1);
+        // SAFETY: a timeline semaphore of this device, signalled from the host to a value above
+        // its current one.
+        unsafe { self.device.signal_semaphore(&info) }?;
+        Ok(())
+    }
+
+    /// Whether the wait has passed, up to `timeout`. True when nothing was held.
     pub fn passed(&self, timeout: Duration) -> bool {
-        self.submitter.wait_idle_for(timeout)
+        if !self.held.load(Ordering::Acquire) {
+            return true;
+        }
+        let nanos = u64::try_from(timeout.as_nanos()).unwrap_or(u64::MAX);
+        // SAFETY: the fence of the wait's submit.
+        unsafe { self.device.wait_for_fences(&[self.passed], true, nanos) }.is_ok()
     }
 }
 
@@ -110,6 +125,15 @@ impl Drop for HostGate {
         // A gate dropped closed opens, so the queue isn't held forever.
         if !self.opened.load(Ordering::Acquire) {
             let _ = self.open();
+        }
+        if self.held.load(Ordering::Acquire) {
+            // SAFETY: the fence of the wait's submit, which can now pass.
+            let _ = unsafe { self.device.wait_for_fences(&[self.passed], true, u64::MAX) };
+        }
+        // SAFETY: nothing uses either now.
+        unsafe {
+            self.device.destroy_fence(self.passed, None);
+            self.device.destroy_semaphore(self.timeline, None);
         }
     }
 }
