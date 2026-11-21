@@ -207,12 +207,15 @@ D2 and I2 close on rows from this run.
     SPIRV-Tools `902e360d`). The tag matches the header version the board's driver reports
     (Vulkan 1.3.354).
   - Build: cross-built on the host with `zig c++ -target aarch64-linux-gnu.2.36` (the bundle's glibc),
-    Release, tests off, no window-system support (xcb, xlib and wayland off), stripped. The highest
-    glibc symbol it needs is GLIBC_2.34. Its json's `library_path` is `./libVkLayer_khronos_validation.so`.
+    Release, tests off, no window-system support (xcb, xlib and wayland off), linked with
+    `-z nodelete`, stripped. The highest glibc symbol it needs is GLIBC_2.34. Without `-z nodelete`
+    (the 2026-11-20 batch) a destructor of zig's static libc++ ran after the loader unloaded the
+    layer, and every process that made a device exited 139 (E13, 2026-11-20); the same build for
+    x86_64 shows it on lavapipe and passes with the flag. Its json's `library_path` is `./libVkLayer_khronos_validation.so`.
   - Path: `VVL_DIR=/mnt/nvme-wd/scratch/vgl/vvl/aarch64` (the build script is
     `/mnt/nvme-wd/scratch/vgl/vvl/tools/build.sh`).
   - sha256: `libVkLayer_khronos_validation.so`
-    `5820de1620046e13e6c5c72138c0a693daedb50a2bee57420d0aba5967eb7f1b`;
+    `4833dd1ba02bdff6489f692fe3079f37a0f0cec1ca0e5824b8273bd13a307a8c`;
     `VkLayer_khronos_validation.json`
     `0d09368222e25d301a501410bd49e865e93ab12c7f3f961859cd16fd10981e98`.
 - The locks: `go` holds both `/run/lock/raze-gpu.lock` and `/run/lock/board-gpu.lock` for the whole run
