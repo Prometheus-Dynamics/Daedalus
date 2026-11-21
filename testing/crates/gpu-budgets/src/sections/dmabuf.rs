@@ -246,9 +246,9 @@ pub(super) fn cpu_read(buf: &DmaBuf, map: &Mapping, out: &mut [u8]) -> Result<()
 
 /// E14's device-side wait: a second device imports the same dma-buf and copies it out, in a submit
 /// that waits on the fence exported while the first device is still writing. The host waits for
-/// nothing before that submit. Then the planted run: the same copy with no wait, after a write by
-/// `planted`, a device with attaching off, must see the sentinel the CPU wrote before the write, or
-/// the figure can't catch a consumer that doesn't wait.
+/// nothing before that submit. Then the planted runs (`dmabuf_plant`): the same copy with no wait,
+/// after a write by `planted`, a device with attaching off, held and not held, from this process
+/// and from a second one.
 pub(super) fn device_side_wait(
     producer: &WgpuBackend,
     shader: &Shader,
@@ -256,16 +256,16 @@ pub(super) fn device_side_wait(
     buf: &DmaBuf,
     map: &Mapping,
     rounds: u32,
-    planted: Option<(&Shader, &Storage)>,
+    planted: Option<super::dmabuf_plant::Producer>,
 ) {
-    use super::dmabuf_fence::{prefill, saw_sentinel};
+    use super::dmabuf_fence::prefill;
     let skip = |reason: String| println!("dma-wait: skipped: {reason}");
     let adapter = match producer.start() {
         Ok(record) => record.adapter.name,
         Err(error) => return skip(format!("no producer device: {error}")),
     };
     let (consumer, mut step) = match open_importing(Options {
-        adapter: Some(adapter),
+        adapter: Some(adapter.clone()),
         ..Options::default()
     }) {
         Ok(opened) => opened,
@@ -369,44 +369,20 @@ pub(super) fn device_side_wait(
     if let Some(last) = failures.last() {
         println!("dma-wait: failures {}, the last: {last}", failures.len());
     }
-    let Some((planted_shader, planted_storage)) = planted else {
+    let Some(planted) = planted else {
         println!("dma-wait: planted: skipped: no producer with attaching off");
         return;
     };
-    let (mut early, mut failures) = (0, Vec::new());
-    for round in 0..(WARM + RUNS) {
-        let seed = 7000 + round as u32;
-        if let Err(reason) = prefill(buf, map) {
-            return skip(format!("the sentinel prefill: {reason}"));
-        }
-        let ticket = match fill(planted_shader, planted_storage, rounds, seed) {
-            Ok(ticket) => ticket,
-            Err(reason) => return skip(format!("the GPU write failed: {reason}")),
-        };
+    let local = || {
         let copied = raw_copy_after(&submitter, &source, &block, BYTES, &[], || {});
         consumer.attach_after_submit();
-        ticket.wait().ok();
         let mut bytes = vec![0u8; BYTES as usize];
-        let seen = copied
+        copied
             .map_err(|error| error.to_string())
-            .and_then(|()| block.read(0, &mut bytes).map_err(|error| error.to_string()));
-        if round < WARM {
-            continue;
-        }
-        match seen {
-            Ok(()) => early += usize::from(saw_sentinel(&bytes)),
-            Err(reason) => failures.push(reason),
-        }
-    }
-    println!(
-        "dma-wait: planted: the consumer's copy with no wait saw the sentinel: {early} of {RUNS}"
-    );
-    if let Some(last) = failures.last() {
-        println!(
-            "dma-wait: planted failures {}, the last: {last}",
-            failures.len()
-        );
-    }
+            .and_then(|()| block.read(0, &mut bytes).map_err(|error| error.to_string()))
+            .map(|()| bytes)
+    };
+    super::dmabuf_plant::run(&planted, buf, map, rounds, &adapter, &local);
 }
 
 /// When `fence` signals, seen from this thread, or `None` past the bound.

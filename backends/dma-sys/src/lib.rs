@@ -5,6 +5,7 @@
 mod buf;
 mod heap;
 mod ident;
+mod pass;
 mod sync;
 mod uapi;
 
@@ -13,6 +14,7 @@ use std::fmt;
 pub use buf::{Access, DmaBuf, DmaBufRef, Lent, Mapping};
 pub use heap::{DmaHeap, NoHeap};
 pub use ident::Identity;
+pub use pass::{MAX_FDS, recv_fds, send_fds};
 pub use sync::{SyncFence, is_sync_file};
 
 /// Why a call failed.

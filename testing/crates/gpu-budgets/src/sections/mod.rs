@@ -9,6 +9,10 @@ pub mod chains;
 pub mod dmabuf;
 #[cfg(target_os = "linux")]
 pub mod dmabuf_fence;
+#[cfg(target_os = "linux")]
+pub mod dmabuf_peer;
+#[cfg(target_os = "linux")]
+mod dmabuf_plant;
 pub mod fences;
 pub mod gaps;
 pub mod grind;

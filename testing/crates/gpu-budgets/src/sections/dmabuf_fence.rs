@@ -304,10 +304,12 @@ pub fn fence_after_write() {
             "dma-fence: attach cost: host {per_attach:.0} ns a submit; submit to done not measured: {reason}"
         ),
     }
-    // The planted copy with no wait needs a producer that attaches nothing: V3D's kernel makes a
-    // second device's job wait on a fence attached to the buffer even when the job itself doesn't
-    // (2026-11-20, 0 of 50 copies saw the sentinel).
-    let planted = off.as_ref().ok().map(|off| (&off.shader, &*off.storage));
+    // The planted copy with no wait follows a write by a producer that attaches nothing.
+    let planted = off.as_ref().ok().map(|off| super::dmabuf_plant::Producer {
+        backend: &off.backend,
+        shader: &off.shader,
+        storage: &off.storage,
+    });
     device_side_wait(
         &on.backend,
         &on.shader,

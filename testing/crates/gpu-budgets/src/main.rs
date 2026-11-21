@@ -182,6 +182,11 @@ fn readback(backend: &WgpuBackend) {
 
 fn main() -> std::process::ExitCode {
     let asked: Vec<String> = std::env::args().skip(1).collect();
+    // E14's consumer in a second process: this program again (sections::dmabuf_peer).
+    #[cfg(target_os = "linux")]
+    if asked.first().map(String::as_str) == Some(sections::dmabuf_peer::PEER) {
+        return sections::dmabuf_peer::serve(&asked[1..]);
+    }
     if let Some(unknown) = asked.iter().find(|name| !SECTIONS.contains(&name.as_str())) {
         println!("no section `{unknown}`: the sections are {SECTIONS:?}");
         return std::process::ExitCode::FAILURE;

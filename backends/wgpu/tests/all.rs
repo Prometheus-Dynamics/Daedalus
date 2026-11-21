@@ -23,5 +23,8 @@ mod import_offset;
 mod import_unknown;
 #[path = "lease.rs"]
 mod lease;
+#[cfg(target_os = "linux")]
+#[path = "raw_gate.rs"]
+mod raw_gate;
 #[path = "transfer.rs"]
 mod transfer;

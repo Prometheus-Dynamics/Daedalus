@@ -97,9 +97,12 @@ impl HostGate {
         Ok(())
     }
 
-    /// Opens the gate: the wait passes, and what was submitted after it can finish.
+    /// Opens the gate: the wait passes, and what was submitted after it can finish. Opening an
+    /// open gate does nothing: the timeline is signalled once.
     pub fn open(&self) -> Result<(), Error> {
-        self.opened.store(true, Ordering::Release);
+        if self.opened.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
         let info = vk::SemaphoreSignalInfo::default()
             .semaphore(self.timeline)
             .value(1);
