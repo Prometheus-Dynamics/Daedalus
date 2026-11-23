@@ -48,6 +48,18 @@
         {
           "additionalProperties": false,
           "properties": {
+            "kind": {
+              "const": "per_tick"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
             "capacity": {
               "type": "integer"
             },

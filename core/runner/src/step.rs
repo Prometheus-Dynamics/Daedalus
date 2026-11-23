@@ -79,6 +79,10 @@ pub struct Queue {
     /// finished. It isn't counted in `len`, so no reader sees it until the step's fence is
     /// ready and it is shown, and the values before it stay readable meanwhile.
     pub hidden: bool,
+    /// What the queue holds is released when the tick ends, unless a reader was held back.
+    pub per_tick: bool,
+    /// A reader of this per-tick queue was held back this tick. Only set while a tick ends.
+    pub spared: bool,
 }
 
 impl Queue {

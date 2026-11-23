@@ -99,6 +99,7 @@ pub fn json_schema() -> Value {
             "edge_policy": { "oneOf": [
                 object(json!({ "kind": { "const": "fifo" } }), &["kind"]),
                 object(json!({ "kind": { "const": "latest_only" } }), &["kind"]),
+                object(json!({ "kind": { "const": "per_tick" } }), &["kind"]),
                 object(json!({
                     "kind": { "const": "bounded" },
                     "capacity": { "type": "integer" },

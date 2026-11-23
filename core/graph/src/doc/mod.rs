@@ -276,6 +276,8 @@ pub enum EdgePolicyDoc {
         capacity: u32,
         overflow: String,
     },
+    /// See [`crate::EdgePolicy::PerTick`].
+    PerTick,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -338,6 +340,7 @@ impl From<crate::EdgePolicy> for EdgePolicyDoc {
         match policy {
             crate::EdgePolicy::Fifo => EdgePolicyDoc::Fifo,
             crate::EdgePolicy::LatestOnly => EdgePolicyDoc::LatestOnly,
+            crate::EdgePolicy::PerTick => EdgePolicyDoc::PerTick,
             crate::EdgePolicy::Bounded { capacity, overflow } => EdgePolicyDoc::Bounded {
                 capacity,
                 overflow: overflow.into(),

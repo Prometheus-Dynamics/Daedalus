@@ -199,15 +199,21 @@ struct Wires {
 }
 
 impl Wires {
-    fn queue(&mut self, ty: String, policy: &EdgePolicyDoc, fifo: u32, label: String) -> Feed {
-        let (capacity, overflow) = queue_shape(policy, fifo);
+    fn queue(
+        &mut self,
+        ty: String,
+        (policy, reader): (&EdgePolicyDoc, NodeIndex),
+        fifo: u32,
+        label: String,
+    ) -> Result<Feed, Refusal> {
+        let (capacity, overflow) = queue_shape(policy, fifo, reader)?;
         self.queues.push(QueueEdge {
             ty,
             capacity,
             overflow,
             label,
         });
-        Feed::Queue(self.queues.len() - 1)
+        Ok(Feed::Queue(self.queues.len() - 1))
     }
 }
 
@@ -290,7 +296,7 @@ fn wires(
                 body_of(edge.to.node, cx)?.id,
                 edge.to.port.0
             );
-            wires.queue(ty, edge.policy, cx.fifo_capacity, label)
+            wires.queue(ty, (edge.policy, edge.to.node), cx.fifo_capacity, label)?
         };
         wires.feeds.push((edge.to, feed));
         wires.drains.push((edge.from, feed));
@@ -303,7 +309,12 @@ fn wires(
             binding.name,
             body_of(binding.port.node, cx)?.id
         );
-        let Feed::Queue(edge) = wires.queue(ty.clone(), binding.policy, cx.fifo_capacity, label)
+        let Feed::Queue(edge) = wires.queue(
+            ty.clone(),
+            (binding.policy, binding.port.node),
+            cx.fifo_capacity,
+            label,
+        )?
         else {
             continue;
         };
@@ -329,7 +340,12 @@ fn wires(
             body_of(binding.port.node, cx)?.id,
             binding.name
         );
-        let Feed::Queue(edge) = wires.queue(ty.clone(), binding.policy, cx.fifo_capacity, label)
+        let Feed::Queue(edge) = wires.queue(
+            ty.clone(),
+            (binding.policy, binding.port.node),
+            cx.fifo_capacity,
+            label,
+        )?
         else {
             continue;
         };

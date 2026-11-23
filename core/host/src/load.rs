@@ -316,6 +316,7 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
         // A slot a kept rule can't apply to stays on the default.
         let _ = runner.set_pressure(slot, rule.pressure);
         let _ = runner.set_blocking(slot, rule.blocking);
+        let _ = runner.set_per_tick(slot, rule.per_tick);
     }
     // A slot that keeps its value, for several readers or as a held input's context, holds the
     // newest one, so a new one replaces it.

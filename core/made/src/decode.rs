@@ -560,6 +560,7 @@ fn read_policy(r: &mut Reader<'_>) -> Result<EdgePolicyDoc, WireError> {
             capacity: r.u32()?,
             overflow: r.str()?,
         },
+        3 => EdgePolicyDoc::PerTick,
         tag => {
             return Err(WireError::BadTag {
                 what: "edge policy",

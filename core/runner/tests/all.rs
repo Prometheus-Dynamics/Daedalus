@@ -22,6 +22,8 @@ mod join;
 mod lanes;
 #[path = "owned.rs"]
 mod owned;
+#[path = "per_tick.rs"]
+mod per_tick;
 #[path = "positions.rs"]
 mod positions;
 #[path = "reuse.rs"]

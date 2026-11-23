@@ -18,7 +18,7 @@ use super::c21_host_policy::Test;
 
 /// [`Test`] under another id, over the same memory: a node of each is a region of its own, so the
 /// edge between them is a slot with the queue its policy makes.
-struct Other;
+pub(crate) struct Other;
 
 impl Backend for Other {
     fn id(&self) -> &str {

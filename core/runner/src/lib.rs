@@ -50,6 +50,7 @@ mod nested;
 mod owned;
 #[cfg(feature = "std")]
 pub mod owned_run;
+mod per_tick;
 mod policy;
 mod probe;
 mod progress;
@@ -199,6 +200,8 @@ pub struct Runner<'a> {
     #[cfg(feature = "alloc")]
     details: Option<alloc::sync::Arc<detail::DetailStore>>,
     any_blocking: bool,
+    /// Whether any slot is per-tick, so the end of a tick costs nothing when none is.
+    any_per_tick: bool,
     /// The reuse table, for a plan with a reusable step.
     reuse: Option<reuse::Table<'a>>,
     /// Timing, when a host attached a probe.
@@ -330,6 +333,7 @@ impl<'a> Runner<'a> {
             progress: &[],
             fault_log: fault_log::FaultLog::NONE,
             any_blocking: false,
+            any_per_tick: false,
             reuse: None,
             probe: None,
         })

@@ -73,6 +73,12 @@ pub enum EdgePolicy {
         capacity: u32,
         overflow: &'static str,
     },
+    /// One value, the newest, that lives for the tick it was sent in: a reader that runs later in
+    /// that tick gets it, and one that runs on a later tick gets nothing, so an `Option<T>` input
+    /// on this edge is `None` unless its value was sent this tick. A reader that could not run
+    /// when it was sent (it was waiting on its own work, backing off, held by a full output or
+    /// switched out by the host) still gets it in the first tick it can run.
+    PerTick,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

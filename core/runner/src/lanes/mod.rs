@@ -469,10 +469,7 @@ impl Runner<'_> {
         match error {
             Some(error) => Err(error),
             None => {
-                for word in 0..words {
-                    self.dirty[word] |= self.carry[word];
-                    self.carry[word] = 0;
-                }
+                self.end_tick();
                 Ok(())
             }
         }
