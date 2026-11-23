@@ -100,9 +100,14 @@ pub struct Host<'a> {
     /// One per port once a host sets a policy. Empty means every port takes every value.
     pub(crate) inbound: std::vec::Vec<crate::inbound::Inbound>,
     pub(crate) now_ns: u64,
-    /// Whether a feed to a held slot wakes its readers. A plan holds any slot with several
-    /// readers, and those are ordinary inputs.
-    pub(crate) held_feeds_wake: bool,
+    /// The input slots whose values are context, not work: held or shared inputs. A feed there
+    /// replaces the value and wakes nothing. Other inputs whose slot keeps its value (one with
+    /// several readers) are work.
+    pub(crate) context: std::vec::Vec<u32>,
+    /// The inputs whose slot keeps a value that is work, each its slot and that slot's version
+    /// when the last tick ran: such a value waits until a tick has run since it came. Empty for
+    /// most graphs, so a tick does nothing for it.
+    pub(crate) ticked: std::vec::Vec<(u32, u32)>,
     /// The buffers of a runner this host owns. Declared last, so it is dropped after `runner`.
     #[cfg(feature = "std")]
     pub(crate) owned: Option<daedalus_runner::owned_run::RunBuffers>,
@@ -110,14 +115,22 @@ pub struct Host<'a> {
 
 impl<'a> Host<'a> {
     /// A host over `runner`. `types[i]` is the key of type index `i`, for error messages.
+    /// An input whose slot keeps its value (`SlotKind::Held`) is context. A host a plan loads
+    /// takes each input's own policy instead.
     pub fn new(runner: Runner<'a>, ports: Ports<'a>, types: &'a [TypeKey]) -> Host<'a> {
+        let context = (0..ports.len())
+            .filter_map(|at| ports.at(at))
+            .filter(|spec| spec.dir == Dir::Input && runner.is_held(spec.slot))
+            .map(|spec| spec.slot)
+            .collect();
         Host {
             runner,
             ports,
             types,
             inbound: std::vec::Vec::new(),
             now_ns: 0,
-            held_feeds_wake: false,
+            context,
+            ticked: std::vec::Vec::new(),
             #[cfg(feature = "std")]
             owned: None,
         }
@@ -177,7 +190,7 @@ impl<'a> Host<'a> {
             return Err(self.mismatch(name, spec.ty, value.ty));
         }
         if self.runner.is_held(spec.slot) {
-            return self.replace_held(name, spec.slot, spec.wake, value);
+            return self.replace_kept(name, spec.slot, spec.wake, value);
         }
         let dropped = match self.admit(name, spec.slot)? {
             crate::inbound::Admit::Store(reason) => reason,
@@ -262,21 +275,14 @@ impl<'a> Host<'a> {
         value: std::sync::Arc<T>,
     ) -> Result<FeedOutcome, HostError> {
         let spec = self.input(name)?;
-        let held = self.runner.is_held(spec.slot);
-        if held {
+        if self.runner.is_held(spec.slot) {
             self.runner.clear_held(spec.slot).map_err(HostError::Run)?;
         }
         self.runner
             .feed_typed(spec.slot, spec.ty, spec.space, value)
             .map_err(|error| self.feed_error(name, error))?;
-        if held && !self.held_feeds_wake {
-            return Ok(FeedOutcome {
-                woke: 0,
-                dropped: None,
-            });
-        }
         Ok(FeedOutcome {
-            woke: self.wake_consumers(spec.wake),
+            woke: self.wake_unless_context(spec.slot, spec.wake),
             dropped: None,
         })
     }
@@ -320,7 +326,11 @@ impl<'a> Host<'a> {
     /// Runs one tick.
     pub fn step(&mut self) -> Result<TickReport, HostError> {
         self.expire_stale();
-        self.runner.tick().map_err(HostError::Run)
+        let report = self.runner.tick().map_err(HostError::Run);
+        if !self.ticked.is_empty() {
+            self.note_ticked();
+        }
+        report
     }
 
     /// Sets the failure policy: the backoff, and whether a fault stops the run (`fail_fast`).
@@ -364,19 +374,14 @@ impl<'a> Host<'a> {
         forward: daedalus_runner::Forward,
     ) -> Result<FeedOutcome, HostError> {
         let spec = self.input(name)?;
-        let held = self.runner.is_held(spec.slot);
-        if held {
+        if self.runner.is_held(spec.slot) {
             self.runner.clear_held(spec.slot).map_err(HostError::Run)?;
         }
         self.runner
             .feed_forward(spec.slot, spec.ty, spec.space, forward)
             .map_err(|error| self.feed_error(name, error))?;
         Ok(FeedOutcome {
-            woke: if held {
-                0
-            } else {
-                self.wake_consumers(spec.wake)
-            },
+            woke: self.wake_unless_context(spec.slot, spec.wake),
             dropped: None,
         })
     }

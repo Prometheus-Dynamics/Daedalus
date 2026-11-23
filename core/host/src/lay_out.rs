@@ -247,17 +247,40 @@ fn apply_edge(rules: &mut EdgeRules, slot: u32, policy: &EdgePolicyDoc) {
     rules.insert(slot, EdgeRule { pressure, blocking });
 }
 
-/// Each slot's capacity and read rule. A slot with several readers keeps its value for all of
-/// them, and an edge that declared a bound gets exactly that many cells.
+/// The slots that keep their value: one with several readers keeps it for all of them, and a held
+/// or shared host input keeps it for every tick, whatever number of readers it has.
+pub(crate) fn kept_slots(stitched: &Stitched) -> Vec<u32> {
+    let mut kept: Vec<u32> = stitched
+        .slots
+        .iter()
+        .enumerate()
+        .filter(|(_, info)| info.consumers > 1)
+        .map(|(at, _)| at as u32)
+        .chain(
+            stitched
+                .host_inputs
+                .iter()
+                .filter(|port| port.policy.is_context())
+                .map(|port| port.slot),
+        )
+        .collect();
+    kept.sort_unstable();
+    kept.dedup();
+    kept
+}
+
+/// Each slot's capacity and read rule. A kept slot ([`kept_slots`]) has one cell, and an edge
+/// that declared a bound gets exactly that many cells.
 fn slot_specs(bound: &Bound, options: LoadOptions, edges: &EdgeRules) -> Vec<SlotSpec> {
+    let kept = kept_slots(&bound.facts.stitched);
     bound
         .facts
         .stitched
         .slots
         .iter()
         .enumerate()
-        .map(|(at, info)| {
-            if info.consumers > 1 {
+        .map(|(at, _)| {
+            if kept.binary_search(&(at as u32)).is_ok() {
                 return SlotSpec {
                     cap: 1,
                     kind: SlotKind::Held,

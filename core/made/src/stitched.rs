@@ -1,6 +1,7 @@
 //! The final list of steps for a plan, over numbered slots: what each unit reads and writes, where
 //! a value moves, and which host ports it binds. The planner writes it; a host reads it.
 
+use daedalus_graph::HostInputPolicy;
 use daedalus_plan::PlanData;
 
 /// A compiled unit: its region, and its place in that region.
@@ -52,6 +53,8 @@ pub struct HostPort {
     pub node: u32,
     pub port: String,
     pub slot: u32,
+    /// An input's policy: whether its value is work or context. Outputs are `Consume`.
+    pub policy: HostInputPolicy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

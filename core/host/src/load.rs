@@ -317,15 +317,23 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
         let _ = runner.set_pressure(slot, rule.pressure);
         let _ = runner.set_blocking(slot, rule.blocking);
     }
-    // A slot with several readers holds its newest value, so a new one replaces it.
-    for (slot, info) in bound.facts.stitched.slots.iter().enumerate() {
-        if info.consumers > 1 {
-            let _ = runner.set_pressure(slot as u32, Pressure::LatestOnly);
-        }
+    // A slot that keeps its value, for several readers or as a held input's context, holds the
+    // newest one, so a new one replaces it.
+    for slot in crate::lay_out::kept_slots(&bound.facts.stitched) {
+        let _ = runner.set_pressure(slot, Pressure::LatestOnly);
     }
     let mut host = Host::new(runner, ports, types);
     host.owned = Some(buffers);
-    host.held_feeds_wake = true;
+    host.set_context(
+        bound
+            .facts
+            .stitched
+            .host_inputs
+            .iter()
+            .filter(|port| port.policy.is_context())
+            .map(|port| port.slot)
+            .collect(),
+    );
     Ok(Parts {
         host,
         same_as,
