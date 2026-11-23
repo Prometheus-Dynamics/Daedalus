@@ -157,6 +157,39 @@ and the process backend supervises it like any other worker. See [ffi.md](ffi.md
 A plugin's backend takes regions and returns one step a node. It produces steps only: the blob
 and source forms need a backend that is linked in.
 
+## Beside nodes linked into the host
+
+A plugin's nodes and nodes linked into the host run in one graph. A host that only loads a file
+needs nothing else: `PluginBackend` lists the two moves, and the planner places them.
+
+- A plugin's values live in the space `plugin.host`. Every plugin on `PluginBackend` shares it,
+  so a value passes from one plugin's node to another's with no move.
+- A linked CPU node's values live in `cpu.host`, as Rust values in the host's memory. Such a
+  value never reaches a plugin: there is no move between `cpu.host` and `plugin.host`.
+- What crosses is a value in its crossing form, in the CPU backend's space `cpu.wire`. A linked
+  node whose output a plugin reads writes that form, and a linked node that reads a plugin's
+  output reads it. The moves `plugin.from_cpu_wire` and `plugin.to_cpu_wire` hand the cell on as
+  it is, and the plan's explanation names them on the edge.
+  - A number or other plain data of 16 bytes or less crosses in place.
+  - Bytes cross by handle. A megabyte a plugin hands over is read by a linked node at the
+    address the plugin has it at.
+  - Anything else crosses as its type's wire form: the linked node writes it once.
+- A type with no crossing form is refused when the graph is planned, by the node, the port and
+  the type: ``output `y` of t.seal is read outside this program (by a worker or a plugin), but
+  Kept has no crossing form: add #[derive(WireForm)] to Kept``.
+
+What does not work yet:
+
+- A graph that needs a plugin's codec. The codec's four conversions join the registry, and the
+  planner puts one in where the types call for it, but the plugin's backend has no step for a
+  conversion, so the graph is refused, naming the conversion nodes. `Codec::convert` runs one
+  from host code.
+- A plugin whose backend the host wraps to give it memory of its own (a device) beside a plugin
+  on `PluginBackend`: nothing moves a value between `plugin.host` and the wrapper's space, and
+  the graph is refused, naming the edge and both spaces.
+
+`testing/crates/fake-npu-plugin/tests/mixed.rs` runs each of these, with two plugins.
+
 ## Integrity and the lock
 
 A host can approve the files it loads. The approval is a file named `daedalus.lock`. It lists the

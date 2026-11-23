@@ -875,6 +875,7 @@ dependencies = [
  "daedalus-backend",
  "daedalus-cpu",
  "daedalus-cpu-author",
+ "daedalus-derive",
  "daedalus-fake-npu",
  "daedalus-fake-npu-author",
  "daedalus-graph",

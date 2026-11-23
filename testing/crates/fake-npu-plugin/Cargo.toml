@@ -20,6 +20,7 @@ daedalus-runner = { path = "../../../core/runner" }
 daedalus-backend = { path = "../../../core/backend" }
 daedalus-cpu = { path = "../../../backends/cpu" }
 daedalus-cpu-author = { path = "../../../backends/cpu-author" }
+daedalus-derive = { path = "../../../core/derive" }
 daedalus-fake-npu-author = { path = "../fake-npu-author" }
 daedalus-graph = { path = "../../../core/graph" }
 daedalus-host = { path = "../../../core/host" }

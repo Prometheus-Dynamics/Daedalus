@@ -102,7 +102,7 @@ macro_rules! __daedalus_body {
             __setup: &$crate::__cpu::Setup<'_>,
         ) -> ::core::result::Result<$crate::__cpu::Step, $crate::__cpu::StepString> {
             $crate::__cpu::check_wire(__setup, &[$((
-                ::core::stringify!($oname),
+                $crate::__cpu::OutputNames::output_name(&$decl, $oat),
                 { const __KIND: $crate::__cpu::Kind<$oty> = $crate::__kind!($oty); __KIND.wire.is_some() },
                 ::core::any::type_name::<$oty>(),
             )),*])?;
