@@ -29,6 +29,8 @@ mod config_faults;
 mod const_shapes;
 #[path = "convert_once.rs"]
 mod convert_once;
+#[path = "default_fallback.rs"]
+mod default_fallback;
 #[cfg(any(feature = "blob", all(feature = "blob", feature = "receive")))]
 #[path = "shared/blob_fixture.rs"]
 mod fixture;

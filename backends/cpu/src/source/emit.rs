@@ -539,7 +539,16 @@ impl NodeEmit<'_> {
         let optional = matches!(role, Role::OptRead | Role::OptTake | Role::OptModify);
         let constant = self.constant(param)?;
         match (self.feed(param.at), constant) {
-            (Some(feed), _) => {
+            // As in a blob: a wired input is read from its edge only.
+            (Some(_), Some(_)) => {
+                let why = format!(
+                    "input `{}` is wired and has a default: generated code reads a wired input \
+                     from its edge only, with no default to fall back to",
+                    param.port
+                );
+                return Err(Refusal::new(vec![self.node], &why));
+            }
+            (Some(feed), None) => {
                 self.take(out, name, feed);
                 if !optional {
                     checks.push(format!(

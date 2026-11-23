@@ -47,15 +47,26 @@ pub fn heavy(a: u32) -> String {
     a.to_string()
 }
 
-const NODES: &[&NodeRecord; 6] = &[
+/// An input with a default: wired, it is what a blob refuses.
+#[node(
+    id = "b.scaled",
+    inputs(a, port(name = "by", default = 2)),
+    outputs(out)
+)]
+pub fn scaled(a: u32, by: u32) -> u32 {
+    a * by
+}
+
+const NODES: &[&NodeRecord; 7] = &[
     &GAIN_NODE,
     &SUM_NODE,
     &FIRST_NODE,
     &OPT_NODE,
     &BAD_NODE,
     &HEAVY_NODE,
+    &SCALED_NODE,
 ];
-pub static LIBRARY: Library<[Entry; 6]> = Library::new(NODES);
+pub static LIBRARY: Library<[Entry; 7]> = Library::new(NODES);
 pub const GAIN: u32 = 0;
 pub const SUM: u32 = 1;
 pub const FIRST: u32 = 2;

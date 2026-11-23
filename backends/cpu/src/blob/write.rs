@@ -435,7 +435,16 @@ fn step_of(
             .iter()
             .find(|one| one.node == member.node && Some(one.port) == name);
         inputs.push(match (wired, constant) {
-            (Some((_, edge)), _) => Source::Edge(*edge),
+            (Some((_, edge)), None) => Source::Edge(*edge),
+            // The steps form reads a wired input's declared default when its edge is empty. A
+            // blob reads a wired input from its edge only, so it says so and takes no such node.
+            (Some(_), Some(one)) => {
+                return Err(refuse(alloc::format!(
+                    "input `{}` is wired and has a default: a blob reads a wired input from \
+                     its edge only, with no default to fall back to",
+                    one.port
+                )));
+            }
             (None, Some(one)) => {
                 let declared = &member.decl.inputs[usize::from(port)];
                 let kind = key_text(&declared.ty)
