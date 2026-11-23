@@ -18,6 +18,9 @@ With DAEDALUS_TEST_PACKAGES set to package names, only those packages' binaries 
 same build: scripts/check.sh runs a change's packages this way. The gate unsets it.
 
 Each binary runs under a bound: three times the slowest it has passed in, and never under FLOOR.
+The bound is on time the binary could use: the time its threads spent waiting for a CPU on a busy
+machine is not counted (scripts/bounded.py, `wait_fair`), and a binary still running at ten times
+its bound is stopped whatever it was waiting for.
 The slowest is the larger of two records: the times file in the build directory, and SLOWEST, the
 slowest green run of each binary in gates on fresh slots under load, committed with the tree. A
 build directory's own record is too short to bound a binary by alone: a warm one that has seen one
@@ -50,7 +53,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bounded import TIMED_OUT, Group, scaled  # noqa: E402
+from bounded import OUTER, TIMED_OUT, Group, scaled  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
@@ -233,7 +236,8 @@ def main():
                               stderr=subprocess.STDOUT)
                 with groups_lock:
                     groups.add(group)
-                ended = group.wait(bound(name))
+                ran_for = []
+                ended = group.wait_fair(bound(name), ran_for)
                 code, left = group.reap()
                 with groups_lock:
                     groups.discard(group)
@@ -245,7 +249,13 @@ def main():
                 output += f"\n{name}: left {len(left)} processes running in its group: stopped them\n"
             if not ended:
                 code = TIMED_OUT
-                output += f"\n{name}: still running at its bound of {bound(name):.0f} s: stopped it\n"
+                wall, lost = ran_for
+                why = (f"after {wall:.0f} s, {OUTER} times its bound"
+                       if wall >= OUTER * bound(name) else
+                       f"after {wall:.0f} s, {lost:.0f} s of them spent waiting for a CPU"
+                       if lost >= 1 else "")
+                output += (f"\n{name}: still running at its bound of {bound(name):.0f} s"
+                           f"{' ' + why if why else ''}: stopped it\n")
             ran.append((message, code, output, left, time.monotonic() - start))
         return ran
 

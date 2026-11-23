@@ -27,6 +27,13 @@ build directory the `test` step is building in, say), or to build what it runs, 
 bound counts from then, so a cold or slow build cannot fail a step that has not run yet. The wait
 has a bound of its own, N, and a step still waiting then fails by name.
 
+A test binary's bound (scripts/test-parallel.py, `Group.wait_fair`) does not count the time its
+threads spent waiting for a CPU: on a machine running more than it has cores for, a test that is
+only starved is not slow, and failing it says nothing about the test. The kernel records, for every
+thread, how long it ran and how long it waited to run; the time waited, a thread's share of it, is
+taken off the clock. A test that spins or sleeps past its bound still fails at it. One that makes
+no progress at all fails at OUTER times its bound, whatever the machine was doing.
+
 A step (`--step`) runs with a TMPDIR of its own: an empty directory made in the gate's TMPDIR,
 removed when the step ends. A step that leaves anything in it fails, and the names are printed:
 tests that leak into a TMPDIR shared by every gate run fill it until unrelated steps fail. A cache
@@ -45,6 +52,10 @@ import time
 
 TIMED_OUT = 124
 GRACE = 5.0
+# A test binary still running at this many times its bound is stopped, however little CPU it had.
+OUTER = 10
+# How often a waiting test's threads are looked at.
+POLL = 1.0
 
 
 def scaled(seconds):
@@ -67,6 +78,25 @@ def members(pgid):
     return found
 
 
+def waited(pgid):
+    """How long each thread of group `pgid` has waited for a CPU, in seconds, by thread id. Empty
+    where the kernel keeps no such record."""
+    found = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat") as file:
+                if int(file.read().rsplit(")", 1)[1].split()[2]) != pgid:
+                    continue
+            for task in os.listdir(f"/proc/{entry}/task"):
+                with open(f"/proc/{entry}/task/{task}/schedstat") as file:
+                    found[int(task)] = int(file.read().split()[1]) / 1e9
+        except (OSError, IndexError, ValueError):
+            continue
+    return found
+
+
 class Group:
     """A command started as the leader of a process group of its own."""
 
@@ -81,6 +111,29 @@ class Group:
         """Whether the leader ended within `timeout` seconds. It is left unreaped."""
         ready, _, _ = select.select([self.pidfd], [], [], max(0.0, timeout))
         return bool(ready)
+
+    def wait_fair(self, bound, out=None, outer=OUTER):
+        """Whether the leader ended before it had `bound` seconds that it could use: wall time,
+        less the time its threads spent waiting for a CPU, or before `outer` times `bound` of
+        wall time whatever it waited for. It is left unreaped. When it did not end, `out` (a list)
+        gets the seconds of wall time it ran for and the seconds taken off."""
+        start = time.monotonic()
+        seen, lost = {}, 0.0
+        while True:
+            wall = time.monotonic() - start
+            left = min(bound - (wall - lost), outer * bound - wall)
+            if left <= 0:
+                if out is not None:
+                    out[:] = [wall, lost]
+                return False
+            if self.wait(min(POLL, left)):
+                return True
+            now = waited(self.pgid)
+            # A thread seen for the first time has waited what it says since it began.
+            more = sum(max(0.0, wait - seen.get(task, 0.0)) for task, wait in now.items())
+            seen.update(now)
+            # Threads that all waited at once lost that time once, not once each.
+            lost += more / max(1, len(now))
 
     def stop(self):
         """TERM to the whole group, then KILL to what is still there after the grace. Returns
@@ -430,6 +483,43 @@ def self_test():
                   and "stuck: still waiting to start at its wait bound of 4 s" in out
                   and took < 4 + GRACE + 3)
             check("no step's start mark is left in the gate's", os.listdir(gate_tmp) == [])
+
+            # A test binary's bound doesn't count time spent waiting for a CPU. One CPU is shared
+            # with spinners that are not the test's: a worker that needs 1 s of CPU takes longer
+            # than its 2 s bound to get it, and passes; alone on the CPU and spinning for ever it
+            # fails at its bound; starved and spinning for ever it fails at three times it (OUTER
+            # times, for a test binary).
+            cpu = min(os.sched_getaffinity(0))
+            pin = lambda: os.sched_setaffinity(0, {cpu})
+            spin = [sys.executable, "-I", "-c", "while True: pass"]
+            work = [sys.executable, "-I", "-c",
+                    "import time\nwhile time.process_time() < 1: pass"]
+
+            def fair(argv, bound, others, outer=OUTER):
+                crowd = [subprocess.Popen(spin, preexec_fn=pin) for _ in range(others)]
+                group, ran_for = Group(argv, preexec_fn=pin), []
+                begin = time.monotonic()
+                try:
+                    ended = group.wait_fair(bound, ran_for, outer)
+                    took = time.monotonic() - begin
+                finally:
+                    group.reap()
+                    for other in crowd:
+                        other.kill()
+                        other.wait()
+                return ended, took, ran_for
+
+            ended, took, _ = fair(work, 2, 4)
+            check("a starved test that needs less CPU than its bound passes, however long it took",
+                  ended and took > 2)
+            # The machine may be busy on this CPU too, so what is checked is the time the spinner
+            # could use, not the time on the wall.
+            ended, took, ran_for = fair(spin, 2, 0)
+            check("a test that spins past its bound fails at it",
+                  not ended and ran_for[0] - ran_for[1] < 2 + 2 * POLL and took < OUTER * 2)
+            ended, took, ran_for = fair(spin, 1, 20, outer=3)
+            check("a starved test that never ends fails at a multiple of its bound",
+                  not ended and 3 <= took < 3 + 6 and ran_for[1] > 1)
 
             # A command that ends within its bound runs as it would alone.
             code, out, _, ended = capture(

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# bound: 81 s (three times its slowest green run, 27 s, in a cold build on a fresh slot)
+# bound: 111 s (three times 37 s: its slowest green run, 27 s, in a cold build on a fresh slot,
+#   and the 10 s the starved-test cases of scripts/bounded.py have added since)
 # The working tools check themselves against planted cases: which packages a change reaches
 # (scripts/check.sh runs those), which build directories may be deleted, what a seed keeps, that
 # the boundaries scan blanks exactly what its one-character-at-a-time oracle did, and
