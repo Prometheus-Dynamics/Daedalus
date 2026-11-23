@@ -12,9 +12,11 @@ pub struct PortInfo<'a> {
     pub dir: Dir,
     /// The input's admission policy. Outputs report the default.
     pub policy: PortPolicy,
-    /// Whether the port keeps its last value for later ticks.
+    /// Whether the port's value is context, kept for later ticks and not work: a held or shared
+    /// input.
     pub held: bool,
-    /// How many values are waiting behind it.
+    /// How many values are waiting behind it. A value kept for several readers that is work
+    /// counts until a tick has run since it came.
     pub queued: u32,
 }
 
@@ -28,8 +30,8 @@ impl Host<'_> {
                 type_key: spec.key.as_str(),
                 dir: spec.dir,
                 policy: self.port_policy(spec.name).unwrap_or_default(),
-                held: self.is_held(spec.name).unwrap_or(false),
-                queued: self.runner.queue(spec.slot).map_or(0, |queue| queue.len),
+                held: spec.dir == Dir::Input && self.is_context(spec.slot),
+                queued: self.waiting(spec.slot),
             })
         })
     }

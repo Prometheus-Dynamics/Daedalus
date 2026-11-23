@@ -11,6 +11,8 @@ pub mod facts;
 pub mod plan;
 pub mod recipe;
 pub mod stitched;
+#[cfg(test)]
+mod stored_policies;
 
 pub use bind::{BindError, Bound, bind};
 pub use decode::decode;

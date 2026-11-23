@@ -9,7 +9,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use std::vec::Vec;
 
 use daedalus_backend::{Decode, OutputSharing, PortRef, RateId, UnitInfo};
-use daedalus_graph::{EdgePolicyDoc, Lit, LitField};
+use daedalus_graph::{EdgePolicyDoc, HostInputPolicy, Lit, LitField};
 use daedalus_plan::{PlanData, Span, StepRecord};
 use daedalus_types::{Field, NodeIndex, PortIndex, TypeExpr, TypeKey, Variant, fnv1a64};
 use daedalus_wire::WireError;
@@ -122,7 +122,7 @@ fn read_edge(r: &mut Reader<'_>) -> Result<MadeEdge, WireError> {
     })
 }
 
-fn read_stitched(r: &mut Reader<'_>) -> Result<Stitched, WireError> {
+pub(crate) fn read_stitched(r: &mut Reader<'_>) -> Result<Stitched, WireError> {
     let count = r.count()?;
     let mut layout = Vec::with_capacity(count);
     for _ in 0..count {
@@ -151,9 +151,14 @@ fn read_stitched(r: &mut Reader<'_>) -> Result<Stitched, WireError> {
             id: r.str()?,
         });
     }
-    let host_inputs = read_ports(r)?;
+    let mut host_inputs = read_ports(r)?;
     let host_outputs = read_ports(r)?;
     let plan = read_plan_data(r)?;
+    // A plan stored before the inputs' policies were written ends here: its inputs read as
+    // `Consume`, each value work, which is what a build of that time made of a one-reader input.
+    if r.more() {
+        read_input_policies(r, &mut host_inputs)?;
+    }
     Ok(Stitched {
         layout,
         slots,
@@ -205,9 +210,30 @@ fn read_ports(r: &mut Reader<'_>) -> Result<Vec<HostPort>, WireError> {
             node: r.u32()?,
             port: r.str()?,
             slot: r.u32()?,
+            policy: HostInputPolicy::Consume,
         });
     }
     Ok(ports)
+}
+
+fn read_input_policies(r: &mut Reader<'_>, inputs: &mut [HostPort]) -> Result<(), WireError> {
+    if r.count()? != inputs.len() {
+        return Err(bad("host input policies"));
+    }
+    for port in inputs {
+        port.policy = match r.u8()? {
+            0 => HostInputPolicy::Consume,
+            1 => HostInputPolicy::Held,
+            2 => HostInputPolicy::Shared,
+            tag => {
+                return Err(WireError::BadTag {
+                    what: "host input policy",
+                    tag: u32::from(tag),
+                });
+            }
+        };
+    }
+    Ok(())
 }
 
 fn read_plan_data(r: &mut Reader<'_>) -> Result<PlanData, WireError> {

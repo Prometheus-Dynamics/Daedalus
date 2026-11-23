@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use daedalus_backend::{Decode, PortRef, Sharing, UnitInfo};
-use daedalus_graph::{EdgePolicyDoc, Lit, LitField};
+use daedalus_graph::{EdgePolicyDoc, HostInputPolicy, Lit, LitField};
 use daedalus_plan::{PlanData, Span, StepKind, StepRecord};
 use daedalus_types::{Scalar, TypeExpr, fnv1a64};
 use daedalus_wire::WireError;
@@ -92,7 +92,17 @@ fn write_edge(w: Out<'_>, edge: &MadeEdge) -> Result<(), WireError> {
     write_policy(w, &edge.policy)
 }
 
-fn write_stitched(w: Out<'_>, stitched: &Stitched) -> Result<(), WireError> {
+pub(crate) fn write_stitched(w: Out<'_>, stitched: &Stitched) -> Result<(), WireError> {
+    write_stitched_as_first_stored(w, stitched)?;
+    // Added at the record's end, so a plan stored before it still reads (`read_stitched`).
+    write_input_policies(w, &stitched.host_inputs)
+}
+
+/// The record as plans were first stored, before the host inputs' policies.
+pub(crate) fn write_stitched_as_first_stored(
+    w: Out<'_>,
+    stitched: &Stitched,
+) -> Result<(), WireError> {
     w.len(stitched.layout.len())?;
     for item in &stitched.layout {
         write_item(w, item)?;
@@ -113,6 +123,23 @@ fn write_stitched(w: Out<'_>, stitched: &Stitched) -> Result<(), WireError> {
     write_ports(w, &stitched.host_inputs)?;
     write_ports(w, &stitched.host_outputs)?;
     write_plan_data(w, &stitched.plan)
+}
+
+/// One tag a host input, in `host_inputs` order.
+pub(crate) fn write_input_policies(w: Out<'_>, inputs: &[HostPort]) -> Result<(), WireError> {
+    w.len(inputs.len())?;
+    for port in inputs {
+        w.u8(input_policy_tag(port.policy));
+    }
+    Ok(())
+}
+
+fn input_policy_tag(policy: HostInputPolicy) -> u8 {
+    match policy {
+        HostInputPolicy::Consume => 0,
+        HostInputPolicy::Held => 1,
+        HostInputPolicy::Shared => 2,
+    }
 }
 
 fn write_item(w: Out<'_>, item: &Item) -> Result<(), WireError> {

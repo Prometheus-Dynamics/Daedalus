@@ -238,7 +238,9 @@ pub struct SyncGroupDoc {
 }
 
 /// What the host's value does once a node has read it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HostInputPolicy {
     /// Read once.
@@ -248,6 +250,13 @@ pub enum HostInputPolicy {
     Held,
     /// Stays, and other graphs read the same value.
     Shared,
+}
+
+impl HostInputPolicy {
+    /// Whether the value is context, kept for later ticks, rather than work: held or shared.
+    pub fn is_context(self) -> bool {
+        self != HostInputPolicy::Consume
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

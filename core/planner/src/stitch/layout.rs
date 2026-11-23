@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use daedalus_backend::{Compiled, PortRef, UnitInfo};
+use daedalus_graph::HostInputPolicy;
 use daedalus_plan::{PlanData, Span, StepKind, StepRecord};
 
 use super::fences::Fences;
@@ -360,6 +361,7 @@ pub(super) fn lay_out(regions: &Regions, types: &TypeTable) -> Stitched {
             node: o.node,
             port: o.port.clone(),
             slot: numbered.of[&(o.reader.value, o.reader.space)],
+            policy: HostInputPolicy::Consume,
         })
         .collect();
     Stitched {
@@ -379,10 +381,11 @@ fn host_inputs(routing: &Routing, slots: &BTreeMap<Live, u32>) -> Vec<HostPort> 
         .iter()
         .enumerate()
         .filter_map(|(index, value)| match &value.source {
-            Source::Host { node, port } => Some(HostPort {
+            Source::Host { node, port, policy } => Some(HostPort {
                 node: *node,
                 port: port.clone(),
                 slot: slots[&(index as u32, value.home)],
+                policy: *policy,
             }),
             Source::Node { .. } => None,
         })

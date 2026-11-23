@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use daedalus_backend::{Backend, Incoming, PortRef, Transfer, TransferCost};
-use daedalus_graph::NodeKindDoc;
+use daedalus_graph::{HostInputPolicy, NodeKindDoc};
 use daedalus_registry::{Registry, TransferClass, TransferRecord};
 use daedalus_types::{NodeIndex, PortIndex, TypeKey};
 
@@ -43,10 +43,11 @@ pub enum Source {
         node: u32,
         port: u16,
     },
-    /// A host bridge's output.
+    /// A host bridge's output: a host input, and what its policy makes of the value.
     Host {
         node: u32,
         port: String,
+        policy: HostInputPolicy,
     },
 }
 
@@ -445,7 +446,7 @@ impl Router<'_> {
                         let from = &self.graph.nodes[*node as usize];
                         format!("{}.{}", from.doc.id, from.outputs[*port as usize].name)
                     }
-                    Source::Host { node, port } => {
+                    Source::Host { node, port, .. } => {
                         format!("{}.{port}", self.graph.nodes[*node as usize].doc.id)
                     }
                 },
@@ -541,6 +542,12 @@ impl Router<'_> {
             let source = Source::Host {
                 node: edge.from.node,
                 port: edge.from.port.clone(),
+                policy: producer
+                    .doc
+                    .host_inputs
+                    .get(&edge.from.port)
+                    .copied()
+                    .unwrap_or_default(),
             };
             (source, home)
         } else {

@@ -57,6 +57,13 @@ keep only the newest value, bound it and say what is dropped when it is full, or
 producer. An input port can be given a freshness limit, so a stale value is dropped rather than
 used.
 
+A host input's policy on the host bridge says what its value is. A `consume` input (the default)
+is work: a feed wakes its readers, each value is read once, and a domain ticks the graph for it.
+That holds with several readers too, where the one value is kept for all of them until the next
+feed. A `held` or `shared` input is context: its value stays for every tick until the host
+replaces it, whatever number of readers it has, and a feed to it wakes nothing. The stored plan
+carries each input's policy; a plan stored before it did reads every input as `consume`.
+
 ## Reload
 
 `loaded.reload(new_plan)` replaces the graph between ticks and returns a `ReloadReport`:
