@@ -41,6 +41,10 @@ pub fn u32_ty() -> TypeRef {
     TypeRef::Key(Scalar::U32.key())
 }
 
+pub fn str_ty() -> TypeRef {
+    TypeRef::Key(Scalar::String.key())
+}
+
 pub fn f64_ty() -> TypeRef {
     TypeRef::Key(Scalar::Float.key())
 }
@@ -110,6 +114,21 @@ impl Decl {
             name: leak_str(name),
             ty,
             fields: &[],
+            rules: &[],
+        });
+        self
+    }
+
+    /// A config named `name` with these fields, each a name and a type.
+    pub fn config_fields(mut self, name: &str, ty: TypeRef, fields: &[(&str, TypeRef)]) -> Decl {
+        let fields: Vec<PortDecl> = fields
+            .iter()
+            .map(|(field, ty)| PortDecl::new(leak_str(*field), ty.clone()))
+            .collect();
+        self.config.push(ConfigDecl {
+            name: leak_str(name),
+            ty,
+            fields: leak(fields),
             rules: &[],
         });
         self

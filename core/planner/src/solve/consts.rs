@@ -1,8 +1,9 @@
 //! Works out each port's constant and checks it against the port's type.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
-use daedalus_graph::{Lit, NodeKindDoc};
+use daedalus_graph::{Lit, LitField, NodeKindDoc};
 use daedalus_registry::TypeRef;
 use daedalus_types::{Scalar, TypeExpr, TypeKey};
 
@@ -10,7 +11,6 @@ use super::expand::lit_of;
 use super::port_types::{display, generic_var};
 use super::{Port, Work};
 use crate::pipeline::SolveError;
-use crate::solve::ports::{Direction, PortError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -21,6 +21,15 @@ pub enum ConstError {
         expected: String,
         found: String,
     },
+    /// A const names neither an input port of the node nor a field of its config.
+    NoPortOrField {
+        node: String,
+        name: String,
+        /// The fields of the node's config, so a misspelt one is plain.
+        fields: Vec<String>,
+    },
+    /// A config field set both in the packed config and by a const of its own.
+    ConfigFieldTwice { node: String, field: String },
 }
 
 impl fmt::Display for ConstError {
@@ -37,6 +46,21 @@ impl fmt::Display for ConstError {
                     "node `{node}` port `{port}` takes `{expected}`, but its const is {found}"
                 )
             }
+            ConstError::NoPortOrField { node, name, fields } => {
+                write!(f, "node `{node}` has no input port `{name}`")?;
+                match fields.is_empty() {
+                    true => write!(f, " and no config fields"),
+                    false => write!(
+                        f,
+                        ", and its config has no field of that name: its fields are {}",
+                        fields.join(", ")
+                    ),
+                }
+            }
+            ConstError::ConfigFieldTwice { node, field } => write!(
+                f,
+                "node `{node}` sets config field `{field}` both in its config and by itself"
+            ),
         }
     }
 }
@@ -159,6 +183,48 @@ fn describe(value: &Lit) -> &'static str {
     }
 }
 
+fn mismatch(node: &str, port: &str, ty: &TypeRef, value: &Lit) -> SolveError {
+    SolveError::Consts(ConstError::TypeMismatch {
+        node: node.to_string(),
+        port: port.to_string(),
+        expected: display(ty),
+        found: describe(value).to_string(),
+    })
+}
+
+/// Puts a config field's own const into the packed config, so a backend reads one form.
+fn fold(
+    consts: &mut BTreeMap<String, Lit>,
+    config: &str,
+    field: &str,
+    value: &Lit,
+    node: &str,
+) -> Result<(), ConstError> {
+    let packed = consts
+        .entry(config.to_string())
+        .or_insert_with(|| Lit::Struct(Vec::new()));
+    let Lit::Struct(set) = packed else {
+        // A field can't join a packed config that isn't a struct of fields.
+        return Err(ConstError::TypeMismatch {
+            node: node.to_string(),
+            port: config.to_string(),
+            expected: "a struct of its fields".to_string(),
+            found: describe(packed).to_string(),
+        });
+    };
+    if set.iter().any(|one| one.name == field) {
+        return Err(ConstError::ConfigFieldTwice {
+            node: node.to_string(),
+            field: field.to_string(),
+        });
+    }
+    set.push(LitField {
+        name: field.to_string(),
+        value: value.clone(),
+    });
+    Ok(())
+}
+
 pub fn run(work: &mut Work<'_>) {
     let catalog = work.catalog;
     let mut errors = Vec::new();
@@ -176,30 +242,53 @@ pub fn run(work: &mut Work<'_>) {
                 node.consts.insert(port.name.clone(), lit_of(default));
             }
         }
+        let mut fields: Vec<(&'static str, &String, &Lit)> = Vec::new();
         for (name, value) in &node.doc.consts {
             let port: Option<&Port> = node.inputs.iter().find(|port| port.name == *name);
             let config = entry.decl.config.iter().find(|config| config.name == *name);
+            let field = || {
+                entry.decl.config.iter().find_map(|config| {
+                    let field = config.fields.iter().find(|field| field.name == *name)?;
+                    Some((config.name, field))
+                })
+            };
             let (ty, optional) = match (port, config) {
                 (Some(port), _) => (port.ty.clone(), port.optional),
                 (None, Some(config)) => (config.ty.clone(), false),
-                (None, None) => {
-                    errors.push(SolveError::Ports(PortError::PortMissing {
-                        node: node.doc.id.clone(),
-                        direction: Direction::Input,
-                        port: name.clone(),
-                    }));
-                    continue;
-                }
+                (None, None) => match field() {
+                    Some((config, field)) => {
+                        if accepts(&field.ty, field.optional, value) {
+                            fields.push((config, name, value));
+                        } else {
+                            errors.push(mismatch(&node.doc.id, name, &field.ty, value));
+                        }
+                        continue;
+                    }
+                    None => {
+                        errors.push(SolveError::Consts(ConstError::NoPortOrField {
+                            node: node.doc.id.clone(),
+                            name: name.clone(),
+                            fields: entry
+                                .decl
+                                .config
+                                .iter()
+                                .flat_map(|config| config.fields)
+                                .map(|field| field.name.to_string())
+                                .collect(),
+                        }));
+                        continue;
+                    }
+                },
             };
             if !accepts(&ty, optional, value) {
-                errors.push(SolveError::Consts(ConstError::TypeMismatch {
-                    node: node.doc.id.clone(),
-                    port: name.clone(),
-                    expected: display(&ty),
-                    found: describe(value).to_string(),
-                }));
+                errors.push(mismatch(&node.doc.id, name, &ty, value));
             }
             node.consts.insert(name.clone(), value.clone());
+        }
+        for (config, name, value) in fields {
+            if let Err(error) = fold(&mut node.consts, config, name, value, &node.doc.id) {
+                errors.push(SolveError::Consts(error));
+            }
         }
         let consts = &node.consts;
         node.required.retain(|port| !consts.contains_key(port));
