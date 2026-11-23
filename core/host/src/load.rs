@@ -38,6 +38,9 @@ pub struct LoadOptions {
     pub overhead_window: usize,
     /// The bytes of detail kept for a step's failure. Zero keeps none.
     pub fault_detail_bytes: usize,
+    /// Keep what the nodes' bodies report as their metrics, for [`LoadedHost::metric_rows`].
+    /// Off by default: a body's report then goes nowhere, and costs it one test.
+    pub node_metrics: bool,
 }
 
 impl Default for LoadOptions {
@@ -47,6 +50,7 @@ impl Default for LoadOptions {
             fault_reports: 32,
             overhead_window: 0,
             fault_detail_bytes: 16 << 10,
+            node_metrics: false,
         }
     }
 }
@@ -265,6 +269,9 @@ pub struct LoadedHost {
     pub(crate) moves: Vec<Option<&'static str>>,
     /// The metrics the graph's nodes declare.
     pub(crate) metric_list: Vec<MetricInfo>,
+    /// For each of them, the step whose cells hold it and its place among them. `None` when
+    /// the host keeps no metrics, or no step runs the node.
+    pub(crate) metric_cells: Vec<Option<(u32, u32)>>,
 }
 
 /// One metric a node declares.
@@ -274,6 +281,21 @@ pub struct MetricInfo {
     pub node: String,
     pub name: String,
     pub unit: daedalus_registry::MetricUnit,
+}
+
+/// What a node's body has reported for one of its metrics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetricRow {
+    /// The node, as the host names it.
+    pub node: String,
+    pub name: String,
+    pub unit: daedalus_registry::MetricUnit,
+    /// The values reported, added up.
+    pub sum: u64,
+    /// How many values were reported.
+    pub count: u64,
+    /// The largest value reported.
+    pub max: u64,
 }
 
 /// The metrics of every node of a plan, in node order.
@@ -302,6 +324,7 @@ pub(crate) struct Parts {
     pub(crate) covers: Vec<&'static [&'static str]>,
     pub(crate) node_names: Vec<&'static str>,
     pub(crate) metric_list: Vec<MetricInfo>,
+    pub(crate) metric_cells: Vec<Option<(u32, u32)>>,
 }
 
 /// Builds the host for a plan. Nothing else is touched, so a failure leaves any running graph as
@@ -325,6 +348,8 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
         edge_names,
     } = built;
     let node_names: Vec<&'static str> = nodes.iter().map(|node| intern(&node.key)).collect();
+    let metric_list = metric_list(bound, &nodes);
+    let step_nodes = covers.clone();
     let covers = covers
         .iter()
         .map(|covers| {
@@ -350,7 +375,33 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
     for carried in extra {
         stamps.push(stamps[carried as usize]);
     }
-    let wiring = owned_run::Wiring { meta, table, fans };
+    // Where each declared metric's cell is: its step, and its place among that step's cells,
+    // which follow the nodes the step runs, in that order.
+    let mut metric_cells = vec![None; metric_list.len()];
+    let mut per_step = Vec::new();
+    if options.node_metrics {
+        let mut first_of = vec![0usize; bound.facts.nodes.len() + 1];
+        for (node, facts) in bound.facts.nodes.iter().enumerate() {
+            first_of[node + 1] = first_of[node] + facts.metrics.len();
+        }
+        for (step, nodes) in step_nodes.iter().enumerate() {
+            let mut at = 0u32;
+            for &node in nodes {
+                let own = first_of[node as usize]..first_of[node as usize + 1];
+                for cell in &mut metric_cells[own] {
+                    *cell = Some((step as u32, at));
+                    at += 1;
+                }
+            }
+            per_step.push(at);
+        }
+    }
+    let wiring = owned_run::Wiring {
+        meta,
+        table,
+        fans,
+        metrics: per_step,
+    };
     let (mut runner, buffers) = owned_run::build(steps, wiring, slots, stamps, &host_inputs, clock)
         .map_err(LoadError::Run)?;
     for (slot, rule) in edges {
@@ -378,7 +429,8 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
             .collect(),
     );
     Ok(Parts {
-        metric_list: metric_list(bound, &nodes),
+        metric_list,
+        metric_cells,
         host,
         same_as,
         moves: transfers,
@@ -433,6 +485,7 @@ impl LoadedHost {
             same_as: parts.same_as,
             moves: parts.moves,
             metric_list: parts.metric_list,
+            metric_cells: parts.metric_cells,
             nodes: parts.nodes,
             bridges: parts.bridges,
             covers: parts.covers,
@@ -461,6 +514,28 @@ impl LoadedHost {
     /// its own work. Known from the plan, so a graph need not run to be asked.
     pub fn metrics(&self) -> Vec<MetricInfo> {
         self.metric_list.clone()
+    }
+
+    /// What each node's body has reported for each of its metrics since the plan was loaded: the
+    /// sum of the values, how many there were, and the largest. Empty unless the host was loaded
+    /// with [`LoadOptions::node_metrics`]. A reload starts them again.
+    pub fn metric_rows(&self) -> Vec<MetricRow> {
+        let cells = self.metric_list.iter().zip(&self.metric_cells);
+        cells
+            .filter_map(|(info, cell)| {
+                let (step, at) = (*cell)?;
+                let (sum, count, max) =
+                    self.host.runner.metric_cells(step).get(at as usize)?.read();
+                Some(MetricRow {
+                    node: info.node.clone(),
+                    name: info.name.clone(),
+                    unit: info.unit,
+                    sum,
+                    count,
+                    max,
+                })
+            })
+            .collect()
     }
 
     /// The tick overhead over the recent window, when the probe is on.

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use daedalus_cpu_author::Ctx;
 use daedalus_graph::{GraphBody, Lit, NodeDoc};
-use daedalus_host::LoadedHost;
+use daedalus_host::{LoadOptions, LoadedHost};
 use daedalus_macros::node;
 use daedalus_registry::NodeRecord;
 use daedalus_types::{TypeExpr, TypeKey, Typed};
@@ -74,7 +74,8 @@ struct Seen {
     id = "budget.mask",
     inputs(picture, radius, offset, invert),
     outputs(runs),
-    state(Seen)
+    state(Seen),
+    metrics(spans = "count")
 )]
 fn mask(
     picture: &Picture,
@@ -89,6 +90,8 @@ fn mask(
     let mut spans = [0; 16];
     spans[0] = first;
     spans[1] = cx.now_ns as u32;
+    // One report a frame: nothing is written unless the host keeps metrics.
+    cx.metric(MaskMetric::Spans, 2);
     Runs { count: 2, spans }
 }
 
@@ -184,8 +187,22 @@ pub fn detector() -> LoadedHost {
     detector_with(true)
 }
 
+/// The detector graph, loaded by a host that keeps the nodes' metrics: `budget.mask` reports one
+/// a frame.
+pub fn detector_keeping_metrics() -> LoadedHost {
+    let options = LoadOptions {
+        node_metrics: true,
+        ..LoadOptions::default()
+    };
+    crate::load_with(&detector_graph(), &NODES, true, options)
+}
+
 /// The detector graph, loaded with the backend free to fuse its nodes (`merge`) or not.
 pub fn detector_with(merge: bool) -> LoadedHost {
+    load(&detector_graph(), &NODES, merge)
+}
+
+fn detector_graph() -> GraphBody {
     let nodes = vec![
         bridge(&[
             ("picture", "budget:picture"),
@@ -227,12 +244,11 @@ pub fn detector_with(merge: bool) -> LoadedHost {
     for stage in 1..=5 {
         edges.push(edge(0, "picture", stage, "picture"));
     }
-    let graph = GraphBody {
+    GraphBody {
         nodes,
         edges,
         groups: Vec::new(),
-    };
-    load(&graph, &NODES, merge)
+    }
 }
 
 pub fn picture() -> Arc<Picture> {

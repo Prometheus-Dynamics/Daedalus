@@ -73,6 +73,8 @@ pub struct NodeBody<'a> {
     pub merges: bool,
     /// Runs only when every input has a value, rather than when any has.
     pub fire_all: bool,
+    /// How many metrics the node declares: the cells its body reports its own work in.
+    pub metrics: u16,
     pub label: Option<&'a str>,
     /// The graph's metadata for this node.
     pub metadata: &'a BTreeMap<String, Lit>,

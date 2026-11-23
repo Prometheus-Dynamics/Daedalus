@@ -81,6 +81,7 @@ pub fn step_of(backend: &ProcessBackend, id: &'static str) -> Step {
         outputs: 1,
         merges: false,
         fire_all: false,
+        metrics: 0,
         label: None,
         metadata: &NO_METADATA,
         code: &(),

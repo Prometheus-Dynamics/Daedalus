@@ -130,6 +130,9 @@ pub struct NestedStep {
     pub step: Step,
     pub reads: Vec<u32>,
     pub writes: Vec<u32>,
+    /// How many metrics the node this step runs declares. In a chain the steps' metric cells
+    /// follow one another, in the steps' order.
+    pub metrics: u16,
 }
 
 /// A step list with cells of its own.
@@ -250,13 +253,30 @@ impl Nested {
         for (&cell, input) in self.views.iter().zip(inputs) {
             self.cells[cell as usize] = *input;
         }
+        // Each step sees its own node's metric cells: the chain's cells, a node at a time.
+        let (cells, len) = (cx.metrics, cx.metrics_len);
+        let mut before = 0u32;
+        let mut end = StepEnd::Done;
         for at in 0..self.steps.len() {
-            match self.run_one(at, cx) {
-                StepEnd::Done => {}
-                end => return end,
+            let own = u32::from(self.steps[at].metrics);
+            if !cells.is_null() {
+                let fits = before + own <= len;
+                cx.metrics_len = if fits { own } else { 0 };
+                // SAFETY: `cells` holds `len` cells and `before + own` of them were checked.
+                cx.metrics = if fits && own > 0 {
+                    unsafe { cells.add(before as usize) }
+                } else {
+                    core::ptr::null()
+                };
+            }
+            before += own;
+            end = self.run_one(at, cx);
+            if !matches!(end, StepEnd::Done) {
+                break;
             }
         }
-        StepEnd::Done
+        (cx.metrics, cx.metrics_len) = (cells, len);
+        end
     }
 
     /// Whether a step took the value lent in view `cell`.

@@ -50,6 +50,7 @@ fn raw_io_step(backend: &ProcessBackend) -> Step {
         outputs: 1,
         merges: false,
         fire_all: false,
+        metrics: 0,
         label: None,
         metadata: &NO_METADATA,
         code: &(),

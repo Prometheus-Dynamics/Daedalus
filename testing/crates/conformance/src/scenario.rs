@@ -97,6 +97,7 @@ impl Scenario {
                 id: "test",
                 merges: true,
                 fire_all: false,
+                metrics: 0,
                 label: None,
                 metadata: &daedalus_backend::NO_METADATA,
                 code: self.code,

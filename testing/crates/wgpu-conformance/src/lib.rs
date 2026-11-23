@@ -209,6 +209,7 @@ impl Net {
             outputs,
             merges: true,
             fire_all: true,
+            metrics: 0,
             label: None,
             metadata: &NO_METADATA,
             code,

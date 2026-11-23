@@ -13,8 +13,8 @@ use crate::foreign::{ForeignHandle, ForeignInterfaceInfo, ForeignOwner};
 use crate::shape::{AbiDesc, FieldInfo, ShapeDesc, ShapeInfo};
 use crate::{
     AbiVersion, BackendTable, BoundaryPort, BytesC, CodecC, DetailSink, Fence, FencePoll,
-    HandedRecord, Handle, NodeC, PluginEntry, PortC, RegionView, Slot, Slots, Status, Step, StepCx,
-    StepEnd, Text, UnitOut,
+    HandedRecord, Handle, MetricCell, NodeC, PluginEntry, PortC, RegionView, Slot, Slots, Status,
+    Step, StepCx, StepEnd, Text, UnitOut,
 };
 
 /// FNV-1a over the words, each as little-endian bytes.
@@ -93,7 +93,7 @@ pub const SHAPES: &[ShapeInfo] = shapes! {
     6 frozen Slots { cells, len, reserved }
     7 frozen DetailSink { context, write }
     #[cfg(not(daedalus_abi_baseline))]
-    8 growable StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns, handover | detail, step }
+    8 growable StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns, handover | detail, step, metrics_len, metrics }
     #[cfg(daedalus_abi_baseline)]
     8 growable StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns, handover }
     9 frozen StepEnd { }
@@ -115,6 +115,7 @@ pub const SHAPES: &[ShapeInfo] = shapes! {
     25 growable PluginEntry { name, nodes, node_count, backends, backend_count, codecs, codec_count, produce, release }
     26 frozen ShapeDesc { id, size, extent, fields, needs, hash }
     27 frozen AbiDesc { shapes, count, reserved }
+    28 frozen MetricCell { sum, count, max }
 };
 
 const COUNT: usize = SHAPES.len();

@@ -222,6 +222,8 @@ struct View<'t> {
     failure: FailurePolicy,
     stamps: &'t [SlotStamp],
     fans: &'t [crate::FanOut],
+    metrics: &'t [daedalus_abi::MetricCell],
+    metric_at: &'t [u32],
     pending: *mut Pending,
     pending_cap: usize,
     pending_len: *mut usize,
@@ -291,6 +293,16 @@ impl<'t> Env<'t> for Lane<'t> {
     }
     fn stamp(&self, slot: usize) -> Option<SlotStamp> {
         self.view.stamps.get(slot).copied()
+    }
+    fn metrics(&self, index: usize) -> Option<&'t [daedalus_abi::MetricCell]> {
+        if self.view.metric_at.is_empty() {
+            return None;
+        }
+        Some(crate::progress::metric_cells(
+            self.view.metrics,
+            self.view.metric_at,
+            index,
+        ))
     }
     fn fans(&self, index: usize) -> &'t [crate::FanOut] {
         crate::fan::of_step(self.view.fans, index)
@@ -456,6 +468,8 @@ impl Runner<'_> {
                 failure: self.failure,
                 stamps: self.stamps,
                 fans: self.fans,
+                metrics: self.metrics,
+                metric_at: self.metric_at,
                 pending: self.pending.as_mut_ptr(),
                 pending_cap: self.pending.len(),
                 pending_len: &mut self.pending_len,

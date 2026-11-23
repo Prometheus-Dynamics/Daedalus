@@ -116,6 +116,67 @@ impl DetailSink {
     };
 }
 
+/// One metric of one node: what its body reported since the plan was loaded. A step is the only
+/// writer of its cells, during its own call, and the host reads them between ticks.
+#[repr(C)]
+pub struct MetricCell {
+    pub(crate) sum: core::cell::UnsafeCell<u64>,
+    pub(crate) count: core::cell::UnsafeCell<u64>,
+    pub(crate) max: core::cell::UnsafeCell<u64>,
+}
+
+// SAFETY: a cell is written only by the step it belongs to, while that step runs, and a step
+// runs on one thread at a time. It is read only when no tick is running. So no two threads touch
+// a cell at once, on any target, with or without atomics.
+unsafe impl Sync for MetricCell {}
+
+impl MetricCell {
+    pub const fn new() -> MetricCell {
+        MetricCell {
+            sum: core::cell::UnsafeCell::new(0),
+            count: core::cell::UnsafeCell::new(0),
+            max: core::cell::UnsafeCell::new(0),
+        }
+    }
+
+    /// Adds one reported value: to the sum and the count, and to the maximum if it is the largest.
+    #[inline]
+    pub fn record(&self, value: u64) {
+        // SAFETY: only the step these cells belong to calls this, during its own call.
+        unsafe {
+            *self.sum.get() = (*self.sum.get()).wrapping_add(value);
+            *self.count.get() += 1;
+            if value > *self.max.get() {
+                *self.max.get() = value;
+            }
+        }
+    }
+
+    /// The sum of the values reported, how many there were, and the largest.
+    pub fn read(&self) -> (u64, u64, u64) {
+        // SAFETY: read between ticks, when no step is writing.
+        unsafe { (*self.sum.get(), *self.count.get(), *self.max.get()) }
+    }
+}
+
+impl Default for MetricCell {
+    fn default() -> MetricCell {
+        MetricCell::new()
+    }
+}
+
+/// Which of a node's metrics a value is for: the place of the metric in the node's declaration.
+/// `#[node(metrics(..))]` makes an enum of the node's metrics that is one.
+pub trait MetricId {
+    fn index(self) -> u16;
+}
+
+impl MetricId for u16 {
+    fn index(self) -> u16 {
+        self
+    }
+}
+
 #[repr(C)]
 pub struct StepCx {
     pub at: u32,
@@ -139,6 +200,13 @@ pub struct StepCx {
     /// Which step of the plan this call is, set by the runner. The detail is kept under it.
     #[cfg(not(daedalus_abi_baseline))]
     pub step: u32,
+    /// How many cells `metrics` points at.
+    #[cfg(not(daedalus_abi_baseline))]
+    pub metrics_len: u32,
+    /// The cells of the node being run, one for each metric it declares. Null means nobody is
+    /// reading.
+    #[cfg(not(daedalus_abi_baseline))]
+    pub metrics: *const MetricCell,
 }
 
 // SAFETY: `cancel` and `progress` point at `Word`s, which are `Sync`, and are only ever read
@@ -162,6 +230,10 @@ impl StepCx {
             detail: DetailSink::NONE,
             #[cfg(not(daedalus_abi_baseline))]
             step: 0,
+            #[cfg(not(daedalus_abi_baseline))]
+            metrics_len: 0,
+            #[cfg(not(daedalus_abi_baseline))]
+            metrics: core::ptr::null(),
         }
     }
 
@@ -201,6 +273,38 @@ impl StepCx {
             let _ = core::fmt::write(&mut Pieces(self), args);
         }
     }
+
+    /// Whether anybody reads this node's metrics. A body asks before it measures something only
+    /// a metric is for.
+    #[cfg(not(daedalus_abi_baseline))]
+    #[inline]
+    pub fn wants_metrics(&self) -> bool {
+        !self.metrics.is_null()
+    }
+
+    /// Reports one value of the node's metric `id`: a duration in nanoseconds or a count, as the
+    /// metric was declared. It allocates nothing, and does nothing when the host reads no metrics.
+    #[cfg(not(daedalus_abi_baseline))]
+    #[inline]
+    pub fn metric(&self, id: impl MetricId, value: u64) {
+        let at = id.index();
+        if self.metrics.is_null() || u32::from(at) >= self.metrics_len {
+            return;
+        }
+        // SAFETY: the runner sets `metrics` to null or to `metrics_len` cells that outlive this
+        // call, and `at` is inside them.
+        unsafe { (*self.metrics.add(usize::from(at))).record(value) };
+    }
+
+    /// A build from before a step could report a metric: nobody reads one.
+    #[cfg(daedalus_abi_baseline)]
+    pub fn wants_metrics(&self) -> bool {
+        false
+    }
+
+    /// A build from before a step could report a metric: there is nowhere to write it.
+    #[cfg(daedalus_abi_baseline)]
+    pub fn metric(&self, _: impl MetricId, _: u64) {}
 
     /// A build from before a step could give a detail: nobody keeps one.
     #[cfg(daedalus_abi_baseline)]

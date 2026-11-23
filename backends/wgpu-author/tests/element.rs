@@ -89,6 +89,7 @@ impl Net {
             outputs: record.decl.outputs.len() as u16,
             merges: true,
             fire_all: true,
+            metrics: 0,
             label: None,
             metadata: &NO_METADATA,
             code: record.body.code,

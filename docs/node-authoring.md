@@ -305,6 +305,33 @@ Each metric has a name and a unit, `"ns"` for a duration in nanoseconds or `"cou
 part of the node's declaration and of the plan, so a host lists a graph's metrics without running
 it (`LoadedHost::metrics`).
 
+The declaration also makes an enum of the node's metrics, named after the function: `detect`
+gets `DetectMetric::Threshold`, `DetectMetric::Decode` and `DetectMetric::Candidates`. The body
+reports through its `&Ctx`:
+
+```rust
+fn detect(frame: &Frame, ctx: &Ctx) -> Tags {
+    let mask = ctx.timed(DetectMetric::Threshold, || threshold(frame));
+    let quads = find(&mask);
+    ctx.metric(DetectMetric::Candidates, quads.len() as u64);
+    ctx.timed(DetectMetric::Decode, || decode(frame, &quads))
+}
+```
+
+- `ctx.metric(id, value)` reports one value, a `u64`: nanoseconds or a count, as declared. A
+  metric the node did not declare has no variant, so reporting it does not compile.
+- `ctx.timed(id, || work)` runs the work and reports how long it took. It needs `std`, and
+  `use daedalus_cpu_author::Timed;` in scope. A
+  `no_std` body measures with whatever clock its chip has and calls `ctx.metric` with the
+  nanoseconds: `ctx.now_ns` is the host's clock at the start of the tick, not a stopwatch.
+- A stage may report more than once in a tick, and may report nothing.
+- The host keeps, for each metric, the sum of the values, how many there were and the largest
+  (`LoadedHost::metric_rows`), when it was loaded with `LoadOptions::node_metrics`. When it was
+  not, a report costs the body one test and writes nothing, and `ctx.timed` reads no clock;
+  `ctx.wants_metrics()` says which, for a body that would otherwise measure something only a
+  metric is for. Nothing here allocates.
+- A node the backend merges into one step with its neighbours keeps its own metrics.
+
 ## Firing
 
 A node runs when one of its inputs has a new value and every required input has one. With

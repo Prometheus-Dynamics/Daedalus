@@ -179,6 +179,7 @@ impl ServiceHost {
             },
             overhead_window: 0,
             fault_detail_bytes: defaults.fault_detail_bytes,
+            node_metrics: false,
         }
     }
 

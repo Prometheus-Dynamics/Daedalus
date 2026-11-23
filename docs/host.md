@@ -166,6 +166,14 @@ Nothing is turned off automatically.
 - `loaded.metrics()`: the metrics the graph's nodes declare, each with its node, name and unit
   (see [node-authoring.md](node-authoring.md#metrics)). They come from the plan, so a graph
   need not run to be asked, and a stored plan keeps them.
+- `loaded.metric_rows()`: what each node's body has reported for each of its metrics since the
+  plan was loaded: the sum, the count and the largest value. The host keeps them only when it
+  was loaded with `LoadOptions::node_metrics`, which is separate from `overhead_window`: a host
+  can have stage numbers without the per-step clock reads, or the other way round. Off, the
+  runner sets one pointer a step and nothing else happens. On, each report is two additions
+  and a compare, in a table sized when the plan loads, 24 bytes a metric. A reload starts the
+  figures again. They are read in process: the service's telemetry rows and the trace log do
+  not carry them.
 - `set_node_on(node, on)`: turn a node off or on by hand.
 - `set_unmerged(true)`: run every node as its own step, to find which node in a merged step
   fails. It is never done automatically.

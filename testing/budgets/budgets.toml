@@ -50,6 +50,17 @@ tolerance_percent = 10
 board_run = "I2"
 
 [[row]]
+name = "detector_frame_metrics"
+measure = "instructions per frame of the same graph on a host that keeps the nodes' metrics: one stage reports one a frame"
+tool = "callgrind"
+command = "detector {n} metrics"
+# No figure on dev: its custom metrics allocated. The limit is the plain detector row's.
+dev_callgrind = 34395
+limit = 34395
+next = 8165
+tolerance_percent = 10
+
+[[row]]
 name = "fused_chain_16_tick"
 measure = "instructions per tick of 16 fused no-op stages with a value in them: feed, tick, take"
 tool = "callgrind"

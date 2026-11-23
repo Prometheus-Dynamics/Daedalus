@@ -20,7 +20,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use daedalus_abi::counting::{CountingAlloc, counted};
-use daedalus_budget_harness::detector::{detector, frame, picture};
+use daedalus_budget_harness::detector::{detector, detector_keeping_metrics, frame, picture};
 use daedalus_budget_harness::plugin::{
     bytes_node, bytes_tick, handover_node, handover_tick, plugin_node, plugin_tick,
 };
@@ -236,7 +236,13 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         "detector" => {
             let frames = number(args.get(1), 0)?;
-            let mut host = detector();
+            // `detector N metrics`: the host keeps the nodes' metrics.
+            let keeping = args.get(2).is_some_and(|word| word == "metrics");
+            let mut host = if keeping {
+                detector_keeping_metrics()
+            } else {
+                detector()
+            };
             let picture = picture();
             let mut taken = 0u64;
             for _ in 0..frames {
@@ -245,6 +251,10 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("detector: {frames} frames, {taken} outputs");
             if taken != frames * 3 {
                 return Err("a frame did not give its three outputs".to_owned());
+            }
+            let reported: u64 = host.metric_rows().iter().map(|row| row.count).sum();
+            if reported != if keeping { frames } else { 0 } {
+                return Err(format!("{reported} metric reports over {frames} frames"));
             }
         }
         "plugin" => {

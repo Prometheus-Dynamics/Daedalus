@@ -69,6 +69,8 @@ pub struct RunBuffers {
     _slots: Raw<SlotSpec>,
     _stamps: Raw<SlotStamp>,
     _fans: Raw<crate::FanOut>,
+    _metric_cells: Raw<daedalus_abi::MetricCell>,
+    _metric_at: Raw<u32>,
     _cells: Raw<Slot>,
     _queues: Raw<Queue>,
     _storage: Raw<Slot>,
@@ -182,18 +184,40 @@ pub struct Wiring {
     pub table: Vec<u32>,
     /// The outputs a fan-out added to their steps, sorted by step.
     pub fans: Vec<crate::FanOut>,
+    /// How many metric cells each step has: one for each metric of each node it runs. Empty
+    /// when nobody reads metrics.
+    pub metrics: Vec<u32>,
 }
 
 /// Builds a runner over buffers of its own: see the module's documentation.
 pub fn build(
     steps: Vec<Step>,
-    Wiring { meta, table, fans }: Wiring,
+    Wiring {
+        meta,
+        table,
+        fans,
+        metrics,
+    }: Wiring,
     slots: Vec<SlotSpec>,
     slot_stamps: Vec<SlotStamp>,
     host_inputs: &[u32],
     clock: Option<ProbeClock>,
 ) -> Result<(Runner<'static>, RunBuffers), LoadError> {
     let count = steps.len();
+    // Where each step's metric cells start, and one past the last.
+    let has_metrics = !metrics.is_empty();
+    let mut metric_at = Vec::with_capacity(metrics.len() + 1);
+    let mut cells = 0u32;
+    if has_metrics {
+        metric_at.push(0);
+        for own in &metrics {
+            cells += own;
+            metric_at.push(cells);
+        }
+    }
+    let metric_cells: Vec<daedalus_abi::MetricCell> = (0..cells)
+        .map(|_| daedalus_abi::MetricCell::new())
+        .collect();
     let words = words_for(count);
     let reusable = || meta.iter().filter(|record| record.reuse);
     let stamps: usize = reusable().map(|record| record.inputs.len as usize).sum();
@@ -220,6 +244,8 @@ pub fn build(
         _slots: Raw::new(slots),
         _stamps: Raw::new(slot_stamps),
         _fans: Raw::new(fans),
+        _metric_cells: Raw::new(metric_cells),
+        _metric_at: Raw::new(metric_at),
         _cells: Raw::new(vec![Slot::EMPTY; widest]),
         _queues: Raw::new(vec![Queue::default(); nslots]),
         _storage: Raw::new(vec![Slot::EMPTY; storage as usize]),
@@ -275,6 +301,12 @@ pub fn build(
     runner.set_stamps(unsafe { buffers._stamps.borrow() })?;
     // SAFETY: as above; this table is borrowed only here.
     runner.set_fans(unsafe { buffers._fans.borrow() })?;
+    if has_metrics {
+        // SAFETY: as above; these tables are borrowed only here.
+        runner.set_metrics(unsafe { buffers._metric_cells.borrow() }, unsafe {
+            buffers._metric_at.borrow()
+        })?;
+    }
     // SAFETY: the cells are in an `Arc` that `buffers` holds for as long as the runner lives, as
     // the function's documentation requires of the caller, and they are only ever shared.
     let cells: &'static [Progress] = unsafe { &*Arc::as_ptr(&buffers.progress) };

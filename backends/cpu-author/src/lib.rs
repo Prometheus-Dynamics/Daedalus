@@ -7,7 +7,7 @@ mod body;
 
 pub use daedalus_cpu::{Ctx, FanIn, FanItem, Fault, FixedError};
 #[cfg(feature = "std")]
-pub use daedalus_cpu::{ListView, OutView, Refused};
+pub use daedalus_cpu::{ListView, OutView, Refused, Timed};
 
 #[doc(hidden)]
 pub use daedalus_cpu::steps as __cpu;

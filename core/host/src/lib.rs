@@ -94,7 +94,7 @@ pub use introspect::PortInfo;
 pub use io::{FeedOutcome, Host, HostError};
 pub use label::{LABEL_BYTES, Label};
 #[cfg(feature = "std")]
-pub use load::{LoadError, LoadOptions, LoadedHost, MetricInfo, probe_clock};
+pub use load::{LoadError, LoadOptions, LoadedHost, MetricInfo, MetricRow, probe_clock};
 #[cfg(feature = "std")]
 pub use patch::{ConstTable, ConstValue, PatchError, PatchOutcome};
 pub use ports::{Dir, PortSpec, Ports, PortsError};

@@ -180,6 +180,10 @@ pub struct Runner<'a> {
     widest: usize,
     stamps: &'a [SlotStamp],
     fans: &'a [FanOut],
+    /// Each step's metric cells: step `i` has `metric_at[i]..metric_at[i + 1]` of `metrics`.
+    /// Both empty when nobody reads metrics.
+    metrics: &'a [daedalus_abi::MetricCell],
+    metric_at: &'a [u32],
     cells: &'a mut [Slot],
     queues: &'a mut [Queue],
     storage: &'a mut [Slot],
@@ -316,6 +320,8 @@ impl<'a> Runner<'a> {
             widest,
             stamps: &[],
             fans: &[],
+            metrics: &[],
+            metric_at: &[],
             cells,
             queues,
             storage,
