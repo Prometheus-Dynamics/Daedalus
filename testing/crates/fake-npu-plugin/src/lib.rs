@@ -117,6 +117,7 @@ daedalus_loader::export_plugin!(PluginDef {
     name: PLUGIN_NAME,
     backends: &[BACKEND_ID],
     nodes: &NODES,
+    made: &[],
     codecs: &[],
     produce: None,
 });

@@ -705,6 +705,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-cpu-plugin"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-abi",
+ "daedalus-cpu",
+ "daedalus-loader",
+ "daedalus-registry",
+]
+
+[[package]]
 name = "daedalus-cpu-timings"
 version = "3.0.1-dev"
 dependencies = [
@@ -1075,6 +1085,23 @@ dependencies = [
  "daedalus-registry",
  "daedalus-types",
  "daedalus-wire",
+]
+
+[[package]]
+name = "daedalus-node-plugin"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-cpu",
+ "daedalus-cpu-author",
+ "daedalus-cpu-plugin",
+ "daedalus-derive",
+ "daedalus-graph",
+ "daedalus-host",
+ "daedalus-loader",
+ "daedalus-macros",
+ "daedalus-planner",
+ "daedalus-registry",
+ "daedalus-types",
 ]
 
 [[package]]

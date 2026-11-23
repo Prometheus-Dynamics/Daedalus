@@ -1,0 +1,29 @@
+[package]
+name = "daedalus-node-plugin"
+description = "A crate of #[node] functions shipped as a plugin with one line, for the tests that load it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+daedalus-cpu = { path = "../../../backends/cpu" }
+daedalus-cpu-author = { path = "../../../backends/cpu-author" }
+daedalus-cpu-plugin = { path = "../../../backends/cpu-plugin" }
+daedalus-derive = { path = "../../../core/derive" }
+daedalus-macros = { path = "../../../core/macros" }
+daedalus-registry = { path = "../../../core/registry" }
+daedalus-types = { path = "../../../core/types" }
+
+[dev-dependencies]
+daedalus-graph = { path = "../../../core/graph" }
+daedalus-host = { path = "../../../core/host" }
+daedalus-loader = { path = "../../../core/loader" }
+daedalus-planner = { path = "../../../core/planner" }
+
+[lints]
+workspace = true

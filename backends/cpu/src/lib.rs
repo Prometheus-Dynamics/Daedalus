@@ -29,6 +29,8 @@ pub mod chip;
 pub mod closure;
 #[cfg(all(feature = "alloc", feature = "merge"))]
 pub(crate) mod merge;
+#[cfg(feature = "std")]
+pub mod plugin;
 #[cfg(feature = "source")]
 pub mod source;
 #[cfg(feature = "std")]

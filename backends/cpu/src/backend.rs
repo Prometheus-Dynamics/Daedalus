@@ -141,7 +141,7 @@ fn wire_reads(
 }
 
 /// Whether a parameter is read from an input port of its own.
-fn has_port(role: crate::shape::Role) -> bool {
+pub(crate) fn has_port(role: crate::shape::Role) -> bool {
     use crate::shape::Role;
     matches!(
         role,

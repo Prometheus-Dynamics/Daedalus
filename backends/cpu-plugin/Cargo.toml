@@ -1,0 +1,16 @@
+[package]
+name = "daedalus-cpu-plugin"
+description = "Ships a crate of #[node] functions as a plugin a host loads from a file."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+daedalus-abi = { path = "../../core/abi" }
+daedalus-cpu = { path = "../cpu" }
+daedalus-loader = { path = "../../core/loader" }
+daedalus-registry = { path = "../../core/registry" }
+
+[lints]
+workspace = true
