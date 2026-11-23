@@ -170,7 +170,7 @@ Nothing is turned off automatically.
   plan was loaded: the sum, the count and the largest value. The host keeps them only when it
   was loaded with `LoadOptions::node_metrics`, which is separate from `overhead_window`: a host
   can have stage numbers without the per-step clock reads, or the other way round. Off, the
-  runner sets one pointer a step and nothing else happens. On, each report is two additions
+  runner makes one test a step and nothing else happens. On, each report is two additions
   and a compare, in a table sized when the plan loads, 24 bytes a metric. A reload starts the
   figures again. They are read in process: the service's telemetry rows and the trace log do
   not carry them.

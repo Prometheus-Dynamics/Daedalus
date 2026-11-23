@@ -14,8 +14,9 @@ pub(crate) fn cell(cells: &[Progress], index: usize) -> *const Progress {
     cells.get(index).map_or(ptr::null(), |cell| cell)
 }
 
-/// The cells of step `index`, or none.
-#[inline]
+/// The cells of step `index`, or none. Out of line: only a runner that keeps metrics gets here.
+#[cold]
+#[inline(never)]
 pub(crate) fn metric_cells<'a>(
     cells: &'a [daedalus_abi::MetricCell],
     at: &[u32],
