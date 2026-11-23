@@ -29,6 +29,7 @@ mod error;
 pub mod event_fd;
 mod exec;
 mod failure;
+mod fan;
 #[cfg(feature = "alloc")]
 mod fanin;
 mod fault_log;
@@ -80,6 +81,7 @@ pub use carried::Carried;
 pub use detail::DetailStore;
 pub use error::{LoadError, MaskError, RunError};
 pub use failure::{FailurePolicy, MAX_CAP_NS, PolicyError, StepHealth};
+pub use fan::FanOut;
 #[cfg(feature = "alloc")]
 pub use fanin::fanin_order;
 pub use fault_log::StepFault;
@@ -177,6 +179,7 @@ pub struct Runner<'a> {
     #[cfg(feature = "threads")]
     widest: usize,
     stamps: &'a [SlotStamp],
+    fans: &'a [FanOut],
     cells: &'a mut [Slot],
     queues: &'a mut [Queue],
     storage: &'a mut [Slot],
@@ -312,6 +315,7 @@ impl<'a> Runner<'a> {
             #[cfg(feature = "threads")]
             widest,
             stamps: &[],
+            fans: &[],
             cells,
             queues,
             storage,

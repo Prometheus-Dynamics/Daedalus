@@ -221,6 +221,7 @@ struct View<'t> {
     masked: bool,
     failure: FailurePolicy,
     stamps: &'t [SlotStamp],
+    fans: &'t [crate::FanOut],
     pending: *mut Pending,
     pending_cap: usize,
     pending_len: *mut usize,
@@ -290,6 +291,9 @@ impl<'t> Env<'t> for Lane<'t> {
     }
     fn stamp(&self, slot: usize) -> Option<SlotStamp> {
         self.view.stamps.get(slot).copied()
+    }
+    fn fans(&self, index: usize) -> &'t [crate::FanOut] {
+        crate::fan::of_step(self.view.fans, index)
     }
     fn counters(&mut self) -> &mut Counters {
         &mut self.worker.counters
@@ -451,6 +455,7 @@ impl Runner<'_> {
                 masked: self.masked,
                 failure: self.failure,
                 stamps: self.stamps,
+                fans: self.fans,
                 pending: self.pending.as_mut_ptr(),
                 pending_cap: self.pending.len(),
                 pending_len: &mut self.pending_len,

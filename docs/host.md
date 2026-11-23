@@ -69,14 +69,17 @@ host's activity mask, still gets the value in the first tick it can run. A value
 host lives through the next tick. The chip forms, whose queues keep a value until it is read,
 refuse a `per_tick` edge by name.
 
-An output with more than one reader is one value its readers share, with no copy: the newest,
-kept until the output is written again. It is not taken when a reader reads it, so a reader that
-runs on a later tick finds it still there, and a required input fed by it counts as arrived for
-as long as it holds a value. Where the value means something only in the tick it was sent in, put
-`per_tick` on the readers' edges: the shared value is then released when that tick ends, for
-every reader. The readers of one output share its queue, so give every reader's edge the same
-policy: where they differ, one of them applies to all the readers. An input port can be given a freshness limit, so a stale value is dropped rather than
-used.
+An output with more than one reader gives each reader an edge of its own: its own queue, with
+its own depth and policy. The value is shared by a reference count and never copied (16 bytes or
+less of plain data are copied as bytes). So the number of readers changes nothing: each reader
+takes a value once, a reader that has not run yet still finds it, and it is released when the
+last holder lets go. One consequence matters for values that hold something scarce, a camera
+frame from a small pool, say: a reader that rarely runs keeps up to its edge's depth of values,
+each a reference, so a frame fanned out to a stage that waits on another input pins up to 64
+buffers on a FIFO. Give that edge `latest_only` or `per_tick`. A FIFO edge that fills fails the
+tick as an overflow of that edge's queue. A host input with several readers is different: it is
+one kept value, the newest fed, for all of them. Each extra reader costs its producer one more
+queue store and one reference per value sent (a few hundred instructions, and no allocation).
 
 The edges inside a group take their policy from the group: `edge_policies` lists a stage input
 and the policy of the edges into it (`GroupDef::edge_policies`, or `"edge_policies": [{"at":

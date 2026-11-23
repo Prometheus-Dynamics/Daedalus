@@ -30,6 +30,13 @@ pub(crate) struct Built {
     pub(crate) covers: Vec<Vec<u32>>,
     pub(crate) same_as: Vec<Option<String>>,
     pub(crate) transfers: Vec<Option<&'static str>>,
+    /// The slots that keep their value: see [`kept_slots`].
+    pub(crate) kept: Vec<u32>,
+    /// The slots added to the plan's own, one for each queue a fan-out needs: for each, the plan
+    /// slot whose values it carries.
+    pub(crate) extra: Vec<u32>,
+    /// The outputs a fan-out added to their producers, sorted by step.
+    pub(crate) fans: Vec<daedalus_runner::FanOut>,
 }
 
 /// The pressure each edge declared, by the slot it lands on.
@@ -44,15 +51,17 @@ pub(crate) struct EdgeRule {
 }
 
 /// One step's wiring while it's being laid out.
-struct Draft {
-    reads: Vec<u32>,
-    writes: Vec<u32>,
-    may_pend: bool,
-    fire: Fire,
-    required: Vec<u32>,
-    reuse: bool,
-    always: bool,
-    recovery: Recovery,
+pub(crate) struct Draft {
+    pub(crate) reads: Vec<u32>,
+    pub(crate) writes: Vec<u32>,
+    pub(crate) may_pend: bool,
+    pub(crate) fire: Fire,
+    pub(crate) required: Vec<u32>,
+    pub(crate) reuse: bool,
+    pub(crate) always: bool,
+    pub(crate) recovery: Recovery,
+    /// The reads that an edge feeds: the read's position, and the edge.
+    pub(crate) connected: Vec<(usize, usize)>,
 }
 
 fn span(table: &mut Vec<u32>, values: &[u32]) -> Span {
@@ -70,7 +79,7 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
     let mut move_steps = mem::take(&mut bound.move_steps);
     let stitched = &bound.facts.stitched;
     let mut steps = Vec::new();
-    let mut drafts = Vec::new();
+    let mut drafts: Vec<Draft> = Vec::new();
     let mut step_covers = Vec::new();
     let mut same_as = Vec::new();
     let mut transfers = Vec::new();
@@ -96,18 +105,14 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
                 same_as.push(Some(same_step(bound, &entries, covers, &info)));
                 transfers.push(None);
                 let recovery = step_recovery(bound, covers)?;
-                let connected = connected_reads(bound, &info, reads);
-                let (fire, required) = join_for(bound, covers, &connected);
-                for (slot, edge) in &connected {
-                    apply_edge(&mut edges, *slot, &bound.facts.edges[*edge].policy)?;
-                }
                 drafts.push(Draft {
+                    connected: connected_reads(bound, &info, reads),
                     reads: reads.clone(),
                     writes: writes.clone(),
                     may_pend: info.may_pend,
                     always: reads.iter().all(|slot| *slot == NO_SLOT),
-                    fire,
-                    required,
+                    fire: Fire::Any,
+                    required: Vec::new(),
                     reuse: covers.len() == 1
                         && bound.facts.nodes[covers[0] as usize].reusable
                         && writes.iter().filter(|slot| **slot != NO_SLOT).all(|slot| {
@@ -133,6 +138,7 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
                 same_as.push(None);
                 transfers.push(Some(intern(id)));
                 drafts.push(Draft {
+                    connected: Vec::new(),
                     reads: vec![*from_slot],
                     writes: vec![*to_slot],
                     may_pend: false,
@@ -149,9 +155,29 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
         }
     }
     bound.move_steps = move_steps;
-    let slots = slot_specs(bound, options, &edges);
+    // The body's own outputs come first: a fan-out adds slots after them.
+    let fanned = crate::fan_out::fan_out(&bound.facts.stitched, &mut drafts);
+    // Each read's edge says how its slot queues and whether its step waits for it. A reader of
+    // a fanned output has a slot of its own by now, so its edge's policy is its alone.
+    for (draft, covers) in drafts.iter_mut().zip(&step_covers) {
+        let connected: Vec<(u32, usize)> = draft
+            .connected
+            .iter()
+            .map(|&(at, edge)| (draft.reads[at], edge))
+            .collect();
+        (draft.fire, draft.required) = join_for(bound, covers, &connected);
+        for (slot, edge) in &connected {
+            apply_edge(&mut edges, *slot, &bound.facts.edges[*edge].policy)?;
+        }
+    }
+    let mut kept = kept_slots(&bound.facts.stitched);
+    kept.retain(|slot| !fanned.slots.contains(slot));
+    let slots = slot_specs(bound, options, &edges, &kept, fanned.extra.len());
     let (meta, table) = wire(&drafts);
     Ok(Built {
+        kept,
+        extra: fanned.extra,
+        fans: fanned.fans,
         steps,
         meta,
         table,
@@ -192,7 +218,7 @@ fn host_spaces(stitched: &Stitched) -> Vec<u32> {
 
 /// The unit's reads that have a slot and an edge, as (slot, edge). The layout's `reads` line up
 /// with the unit's, with `NO_SLOT` at a port nothing feeds.
-fn connected_reads(bound: &Bound, info: &UnitInfo, reads: &[u32]) -> Vec<(u32, usize)> {
+fn connected_reads(bound: &Bound, info: &UnitInfo, reads: &[u32]) -> Vec<(usize, usize)> {
     let edges = &bound.facts.edges;
     let edge_of = |input: &daedalus_backend::PortRef| {
         let node = input.node.0;
@@ -206,8 +232,9 @@ fn connected_reads(bound: &Bound, info: &UnitInfo, reads: &[u32]) -> Vec<(u32, u
     info.reads
         .iter()
         .zip(reads)
-        .filter(|(_, slot)| **slot != NO_SLOT)
-        .filter_map(|(input, slot)| Some((*slot, edge_of(input)?)))
+        .enumerate()
+        .filter(|(_, (_, slot))| **slot != NO_SLOT)
+        .filter_map(|(at, (input, _))| Some((at, edge_of(input)?)))
         .collect()
 }
 
@@ -292,15 +319,15 @@ pub(crate) fn kept_slots(stitched: &Stitched) -> Vec<u32> {
 
 /// Each slot's capacity and read rule. A kept slot ([`kept_slots`]) has one cell, and an edge
 /// that declared a bound gets exactly that many cells.
-fn slot_specs(bound: &Bound, options: LoadOptions, edges: &EdgeRules) -> Vec<SlotSpec> {
-    let kept = kept_slots(&bound.facts.stitched);
-    bound
-        .facts
-        .stitched
-        .slots
-        .iter()
-        .enumerate()
-        .map(|(at, _)| {
+fn slot_specs(
+    bound: &Bound,
+    options: LoadOptions,
+    edges: &EdgeRules,
+    kept: &[u32],
+    extra: usize,
+) -> Vec<SlotSpec> {
+    (0..bound.facts.stitched.slots.len() + extra)
+        .map(|at| {
             if kept.binary_search(&(at as u32)).is_ok() {
                 return SlotSpec {
                     cap: 1,

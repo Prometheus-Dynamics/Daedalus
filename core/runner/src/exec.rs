@@ -184,6 +184,8 @@ pub(crate) trait Env<'t> {
     fn fault_log(&self) -> (FaultLog, u32);
     /// What an output written to `slot` is stamped with, if the plan says.
     fn stamp(&self, slot: usize) -> Option<SlotStamp>;
+    /// The fan-outs of step `index`.
+    fn fans(&self, index: usize) -> &'t [crate::FanOut];
     fn counters(&mut self) -> &mut Counters;
     /// False when the activity mask holds this step back.
     fn active(&self, index: usize) -> bool;
@@ -242,6 +244,9 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         return Ok(());
     }
     let (run, data) = env.step_fn(index);
+    // The body sees its own ports: a fanned output's added cells come after them.
+    let fans = env.fans(index);
+    let own_ports = port_count(meta) - fans.len();
     let mut attempt = 0;
     let end = loop {
         load_cells(env, meta, attempt != 0);
@@ -256,7 +261,7 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         cx.reason_len = 0;
         cx.at = NO_NODE;
         cx.code = 0;
-        let mut slots = Slots::of(&mut cells[..port_count(meta)]);
+        let mut slots = Slots::of(&mut cells[..own_ports]);
         report.step_calls += 1;
         // SAFETY: `run` and `data` come from one `Step`, so the body was built to take that data.
         // `slots` and `cx` are exclusive to this call, and they stay valid until it returns.
@@ -282,10 +287,11 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
     };
     // An output the body marked to take an input's value as it is gets it now, before the
     // inputs are committed: the runner alone knows whether that reference is the step's to move.
-    crate::values::settle_forwards(
-        &mut env.parts().0[..port_count(meta)],
-        meta.inputs.len as usize,
-    );
+    crate::values::settle_forwards(&mut env.parts().0[..own_ports], meta.inputs.len as usize);
+    if !fans.is_empty() && matches!(end, StepEnd::Done | StepEnd::Pending(_)) {
+        let outputs = &mut env.parts().0[meta.inputs.len as usize..port_count(meta)];
+        crate::fan::fill(fans, outputs);
+    }
     match end {
         StepEnd::Done => {
             env.health(index).on_success();
@@ -553,6 +559,10 @@ impl<'a> Env<'a> for Runner<'a> {
     #[inline]
     fn stamp(&self, slot: usize) -> Option<SlotStamp> {
         self.stamps.get(slot).copied()
+    }
+    #[inline]
+    fn fans(&self, index: usize) -> &'a [crate::FanOut] {
+        crate::fan::of_step(self.fans, index)
     }
     #[inline]
     fn counters(&mut self) -> &mut Counters {
