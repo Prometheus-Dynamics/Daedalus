@@ -42,8 +42,43 @@ has the same thing by capability, one row each, and is checked by the gate.
 - The Rust-ABI plugin path, plugin fingerprints, and every versioned plugin handshake. A plugin
   describes its layout a shape at a time and the host checks it fits: see
   [plugins.md](plugins.md#the-check-at-load).
+  What to do instead is under [Plugins that were built with their host](#plugins-that-were-built-with-their-host).
 - JSON and base64 on the worker path, and the payload handles and leases that went with them.
 - The separate MCU macro and node types. A chip uses the same `#[node]`.
+
+## Plugins that were built with their host
+
+On `dev` a host could load a dylib that was built in the same cargo run as itself
+(`PluginLibrary::load`, then `install_into(registry)`, which reported `InstallPath::RustAbi`). The
+plugin's `#[node]` functions arrived as they were declared: every port's label, unit and default,
+the config struct, the fire rule. That path is gone, and nothing on `next` does the same thing
+through a dylib.
+
+A consumer that did this links the crate and registers its nodes:
+
+```rust
+let mut registry = Registry::new();
+registry.register_all(&my_nodes::NODES)?; // the `<NAME>_NODE` records `#[node]` makes
+```
+
+Everything a declaration carries arrives, because nothing crosses a boundary. What is given up is
+swapping the plugin's file without rebuilding the host, which the same-build rule on `dev` did
+not allow either.
+
+A dylib on `next` is a different thing ([plugins.md](plugins.md)). It is loaded with
+`Loader::new().open(path)` and joined with `plugin.join(&mut registry)`, and it is written with
+`daedalus_loader::export_plugin!(PluginDef { .. })`, which has no `deps[..]`. What its nodes can
+and cannot say:
+
+| A dylib node declares | A dylib node cannot declare |
+|---|---|
+| Its id and source | A summary or description |
+| Each port's name, type key and whether it is optional | A port's label, unit, group, description, default, limits or step |
+| The backend it runs on, which the plugin itself provides | A config struct, fan-in ports, state, a fire rule, metrics, a group |
+| A `run` function over the step's cells | A `#[node]` function run by the host's CPU backend |
+
+So a dylib suits a backend or a codec shipped apart from the host (an NPU runtime, say), and
+nodes written in Rust for the CPU belong in a linked crate.
 
 ## What changed shape
 
