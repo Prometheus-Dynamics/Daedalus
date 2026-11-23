@@ -53,10 +53,11 @@ impl Host<'_> {
         };
         // A type made of others has no key to compare: the port's type was proved when the
         // graph was planned, and the size is checked below.
-        if !T::STRUCTURAL && self.output(name)?.key.as_str() != T::KEY.as_str() {
+        let spec = self.output(name)?;
+        if !T::STRUCTURAL && spec.key.as_str() != T::KEY.as_str() {
             return Err(wrong());
         }
-        let Some(value) = self.take_value(name)? else {
+        let Some(value) = self.take_value_at(name, spec)? else {
             return Ok(None);
         };
         if let Owner::Typed(payload) = &value.owner {

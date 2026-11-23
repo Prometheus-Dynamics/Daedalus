@@ -5,7 +5,7 @@
 use daedalus_runner::{Fed, RunError, Runner};
 use daedalus_value::{Decision, DropReason, Freshness, Pressure, Value};
 
-use crate::io::{Host, HostError};
+use crate::io::{Host, HostError, InputAt};
 use crate::label::Label;
 use crate::ports::PortSpec;
 
@@ -119,9 +119,8 @@ impl<'a> Host<'a> {
         value: Value,
         mark: u64,
     ) -> Result<crate::FeedOutcome, HostError> {
-        self.input(name)?;
-        let index = self.ports.index_of(name).unwrap_or(0);
-        if let Some(entry) = self.inbound.get_mut(index) {
+        let at = self.input_at(name)?;
+        if let Some(entry) = self.inbound.get_mut(at.index) {
             if !entry.policy.freshness.in_order(mark, entry.newest_mark) {
                 entry.drops.count(DropReason::OutOfOrder);
                 return Ok(crate::FeedOutcome {
@@ -131,7 +130,7 @@ impl<'a> Host<'a> {
             }
             entry.newest_mark = Some(mark);
         }
-        self.feed(name, value)
+        self.feed_at(name, at, value)
     }
 
     fn queue_cap(&self, name: &str) -> Result<u32, HostError> {
@@ -147,9 +146,9 @@ impl<'a> Host<'a> {
     /// the slot's pressure, which the edge's policy set when the plan was loaded, decides as a
     /// step's publish does (see `Runner::room`). The queue never holds more than the slot's rule
     /// allows, so at most one of the two gives a value up on any feed, and the outcome reports it.
-    pub(crate) fn admit(&mut self, name: &str, slot: u32) -> Result<Admit, HostError> {
-        let index = self.ports.index_of(name).unwrap_or(0);
-        let Some(entry) = self.inbound.get_mut(index) else {
+    pub(crate) fn admit(&mut self, name: &str, at: InputAt<'a>) -> Result<Admit, HostError> {
+        let slot = at.spec.slot;
+        let Some(entry) = self.inbound.get_mut(at.index) else {
             return Ok(Admit::Store(None));
         };
         if entry.policy.pressure == Pressure::BufferAll {
@@ -190,9 +189,10 @@ impl<'a> Host<'a> {
     pub(crate) fn feed_by(
         &mut self,
         name: &str,
+        at: InputAt<'a>,
         store: impl FnOnce(&mut Runner<'a>, &PortSpec<'a>) -> Result<Fed, RunError>,
     ) -> Result<crate::FeedOutcome, HostError> {
-        let spec = self.input(name)?;
+        let spec = at.spec;
         if self.runner.is_held(spec.slot) {
             self.runner.clear_held(spec.slot).map_err(HostError::Run)?;
             store(&mut self.runner, spec).map_err(|error| self.feed_error(name, error))?;
@@ -201,7 +201,7 @@ impl<'a> Host<'a> {
                 dropped: None,
             });
         }
-        let admitted = match self.admit(name, spec.slot)? {
+        let admitted = match self.admit(name, at)? {
             Admit::Store(reason) => reason,
             Admit::Discard(reason) => {
                 return Ok(crate::FeedOutcome {
@@ -211,11 +211,10 @@ impl<'a> Host<'a> {
             }
         };
         let fed = store(&mut self.runner, spec).map_err(|error| self.feed_error(name, error))?;
-        if let Some(reason) = fed.dropped() {
-            let index = self.ports.index_of(name).unwrap_or(0);
-            if let Some(entry) = self.inbound.get_mut(index) {
-                entry.drops.count(reason);
-            }
+        if let Some(reason) = fed.dropped()
+            && let Some(entry) = self.inbound.get_mut(at.index)
+        {
+            entry.drops.count(reason);
         }
         if !fed.stored() {
             return Ok(crate::FeedOutcome {
@@ -223,7 +222,7 @@ impl<'a> Host<'a> {
                 dropped: fed.dropped(),
             });
         }
-        self.note_arrival(name);
+        self.note_arrival(at.index);
         Ok(crate::FeedOutcome {
             woke: self.wake_consumers(spec.wake),
             dropped: fed.dropped().or(admitted),
@@ -231,8 +230,7 @@ impl<'a> Host<'a> {
     }
 
     /// Records when a stored value arrived.
-    pub(crate) fn note_arrival(&mut self, name: &str) {
-        let index = self.ports.index_of(name).unwrap_or(0);
+    pub(crate) fn note_arrival(&mut self, index: usize) {
         let now = self.now_ns;
         if let Some(entry) = self.inbound.get_mut(index)
             && !entry.arrivals.is_empty()
