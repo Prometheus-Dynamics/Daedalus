@@ -75,6 +75,7 @@ fn stored(graph: &GraphBody) -> Result<Vec<u8>, PlanError> {
             &OPT_NODE,
             &BAD_NODE,
             &HEAVY_NODE,
+            &fixture::SCALED_NODE,
         ])
         .unwrap();
     let backend = BlobBackend { library: &LIBRARY };
@@ -270,6 +271,22 @@ fn a_refused_load_leaves_the_running_plan_alone_and_a_new_one_starts_clean() {
     assert!(running.plan_hash().is_some());
     running.unload();
     assert_eq!(running.plan_hash(), None);
+}
+
+#[test]
+fn a_wired_input_with_a_default_is_refused_by_name_and_plans_when_it_is_not_wired() {
+    // `by` left to its default of 2, with nothing wired to it: a blob holds it as a constant.
+    let mut desc = graph();
+    desc.nodes[1] = NodeDoc::new("b.scaled");
+    assert!(stored(&desc).is_ok());
+    // The host's `in` wired to `by` as well: the steps form would fall back to the default when
+    // that edge is empty, which a blob can't do, so it takes no such node.
+    desc.edges.push(wire(0, "in", 1, "by"));
+    let error = stored(&desc).unwrap_err().to_string();
+    assert!(
+        error.contains("input `by` is wired and has a default: a blob reads a wired input from"),
+        "{error}"
+    );
 }
 
 #[test]

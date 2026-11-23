@@ -247,3 +247,57 @@ fn a_field_cannot_join_a_packed_config_that_is_not_a_struct() {
     };
     assert_eq!(port, "config");
 }
+
+/// `t.src` feeds `gain`, `maybe` or `needed` of a `t.c`, which may also carry a const.
+fn wired(port: &str, consts: &[(&str, Lit)]) -> Result<Graph, Vec<SolveError>> {
+    let mut registry = registry();
+    decl("t.src")
+        .output("out", u8_ty())
+        .body("sim")
+        .add(&mut registry);
+    let mut reader = node("t.c");
+    for (name, value) in consts {
+        reader.consts.insert(name.to_string(), value.clone());
+    }
+    let body = GraphBody {
+        nodes: vec![node("t.src"), reader],
+        edges: vec![daedalus_planner_tests::edge(0, "out", 1, port)],
+        ..GraphBody::default()
+    };
+    solve(&body, &registry, &Config::default())
+}
+
+#[test]
+fn a_const_the_graph_gives_a_wired_input_is_refused_naming_the_edges_source() {
+    let errors = wired("needed", &[("needed", Lit::Int(4))]).unwrap_err();
+    assert_eq!(
+        errors,
+        [SolveError::Consts(ConstError::ConstOnWired {
+            node: "t.c".to_string(),
+            port: "needed".to_string(),
+            from: "t.src.out".to_string(),
+        })]
+    );
+    assert_eq!(
+        errors[0].to_string(),
+        "node `t.c` input `needed` has a const and is also fed by `t.src.out`: remove the const \
+         or the edge"
+    );
+    // A const on another input of the same node is untouched.
+    assert!(wired("needed", &[("maybe", Lit::Int(4))]).is_ok());
+}
+
+#[test]
+fn a_wired_input_keeps_its_declared_default_as_a_fallback_and_is_not_waited_for() {
+    let graph = wired("gain", &[("needed", Lit::Int(1))]).unwrap();
+    let reader = &graph.nodes[1];
+    assert_eq!(reader.consts.get("gain"), Some(&Lit::Int(3)));
+    assert!(!reader.required.contains(&"gain".to_string()));
+    // A graph const in the default's place is still refused: the input is wired.
+    assert!(matches!(
+        wired("gain", &[("gain", Lit::Int(9)), ("needed", Lit::Int(1))])
+            .unwrap_err()
+            .as_slice(),
+        [SolveError::Consts(ConstError::ConstOnWired { .. })]
+    ));
+}

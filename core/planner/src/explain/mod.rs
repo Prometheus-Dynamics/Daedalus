@@ -48,6 +48,10 @@ pub struct EdgeExplain {
     /// copies it. With an empty `transfer`, this is what tells a read in place from an edge the
     /// planner knows nothing about.
     pub in_place: bool,
+    /// The reader's input declares a default, which it reads until a value comes on this edge and
+    /// on any tick the edge is empty. So the reader does not wait for this edge.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub fallback: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,6 +230,11 @@ fn edge_explain(planned: &Planned, last: &EdgeDoc) -> EdgeExplain {
         written_in,
         read_in,
         in_place,
+        fallback: graph.nodes[last.to.node as usize]
+            .inputs
+            .iter()
+            .find(|port| port.name == last.to.port)
+            .is_some_and(|port| port.default.is_some()),
     }
 }
 

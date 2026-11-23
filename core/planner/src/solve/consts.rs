@@ -30,6 +30,13 @@ pub enum ConstError {
     },
     /// A config field set both in the packed config and by a const of its own.
     ConfigFieldTwice { node: String, field: String },
+    /// The graph gives a const to an input that an edge also feeds.
+    ConstOnWired {
+        node: String,
+        port: String,
+        /// The edge's source, as `node.port`.
+        from: String,
+    },
 }
 
 impl fmt::Display for ConstError {
@@ -60,6 +67,11 @@ impl fmt::Display for ConstError {
             ConstError::ConfigFieldTwice { node, field } => write!(
                 f,
                 "node `{node}` sets config field `{field}` both in its config and by itself"
+            ),
+            ConstError::ConstOnWired { node, port, from } => write!(
+                f,
+                "node `{node}` input `{port}` has a const and is also fed by `{from}`: remove \
+                 the const or the edge"
             ),
         }
     }
@@ -228,7 +240,23 @@ fn fold(
 pub fn run(work: &mut Work<'_>) {
     let catalog = work.catalog;
     let mut errors = Vec::new();
-    for node in &mut work.graph.nodes {
+    // Each wired input, and where its edge comes from.
+    let mut wired: BTreeMap<(usize, &str), String> = BTreeMap::new();
+    for edge in &work.graph.edges {
+        let from = work
+            .graph
+            .nodes
+            .get(edge.from.node as usize)
+            .map_or("?", |node| node.doc.id.as_str());
+        wired
+            .entry((edge.to.node as usize, edge.to.port.as_str()))
+            .or_insert_with(|| format!("{from}.{}", edge.from.port));
+    }
+    let wired: BTreeMap<(usize, String), String> = wired
+        .into_iter()
+        .map(|((node, port), from)| ((node, port.to_string()), from))
+        .collect();
+    for (at, node) in work.graph.nodes.iter_mut().enumerate() {
         if node.doc.kind == NodeKindDoc::HostBridge {
             continue;
         }
@@ -252,6 +280,16 @@ pub fn run(work: &mut Work<'_>) {
                     Some((config.name, field))
                 })
             };
+            // A wired input reads its edge. A const the graph writes there would be a second
+            // value for one port: a declared default is the only fallback a wired input has.
+            if let (Some(_), Some(from)) = (port, wired.get(&(at, name.clone()))) {
+                errors.push(SolveError::Consts(ConstError::ConstOnWired {
+                    node: node.doc.id.clone(),
+                    port: name.clone(),
+                    from: from.clone(),
+                }));
+                continue;
+            }
             let (ty, optional) = match (port, config) {
                 (Some(port), _) => (port.ty.clone(), port.optional),
                 (None, Some(config)) => (config.ty.clone(), false),

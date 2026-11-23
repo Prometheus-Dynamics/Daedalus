@@ -239,6 +239,14 @@ struct Gains { low: u32, high: u32, taps: Vec<f32> }
 fn shape(gains: &Gains) -> u32 { .. }
 ```
 
+An input is fed by an edge or set by a constant, not both: a constant the graph gives an input
+that an edge also feeds is refused, naming the node, the input and the edge's source. The one
+fallback a wired input has is the default it declares (`port(name = "gain", default = 1)`): the
+node reads the default until a value arrives on the edge and on any tick the edge is empty, and
+it is then not waiting on that edge. The chip forms (blob and generated code) read a wired input
+from its edge only, so they refuse a wired input that declares a default by name; that is a
+limit of those forms, not a second meaning.
+
 A constant that doesn't fit its port fails planning, or the node's setup, and names the port. It is
 decoded once when the graph is planned, so running the graph allocates nothing for it.
 

@@ -212,6 +212,7 @@ impl From<&ConstError> for Diagnostic {
     fn from(error: &ConstError) -> Diagnostic {
         match error {
             ConstError::TypeMismatch { node, port, .. }
+            | ConstError::ConstOnWired { node, port, .. }
             | ConstError::ConfigFieldTwice { node, field: port } => {
                 Diagnostic::error(Code::ConstMismatch, error).at(node, port)
             }
