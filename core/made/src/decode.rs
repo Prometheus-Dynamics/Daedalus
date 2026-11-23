@@ -534,6 +534,14 @@ fn read_lits(r: &mut Reader<'_>) -> Result<BTreeMap<String, Lit>, WireError> {
     Ok(map)
 }
 
+/// The constant [`lit_bytes`](crate::encode::lit_bytes) wrote. Bytes left over are refused.
+pub fn lit_from_bytes(bytes: &[u8]) -> Result<Lit, MadeError> {
+    let mut reader = Reader::new(bytes);
+    let lit = read_lit(&mut reader, 0).map_err(MadeError::Wire)?;
+    reader.finish().map_err(MadeError::Wire)?;
+    Ok(lit)
+}
+
 fn read_lit(r: &mut Reader<'_>, depth: u32) -> Result<Lit, WireError> {
     if depth > crate::encode::MAX_DEPTH {
         return Err(WireError::TooDeep);

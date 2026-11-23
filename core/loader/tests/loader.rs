@@ -73,6 +73,7 @@ fn a_node_runs_through_its_compiled_step() {
         nodes: &nodes,
         inputs: &inputs,
         outputs: &outputs,
+        consts: &[],
     };
     assert_eq!(backend.can_take(&region).expect("can take"), vec![true]);
 
@@ -111,6 +112,7 @@ fn a_panicking_node_is_a_fault_and_the_host_keeps_running() {
         nodes: &nodes,
         inputs: &inputs,
         outputs: &outputs,
+        consts: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut payload = *b"x";
@@ -148,6 +150,7 @@ fn a_panicking_node_is_a_fault_and_the_host_keeps_running() {
         nodes: &nodes,
         inputs: &inputs,
         outputs: &outputs,
+        consts: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut step = units.pop().expect("unit").step;
@@ -213,6 +216,7 @@ fn a_plugin_built_before_the_newest_fields_loads_and_runs() {
         nodes: &nodes,
         inputs: &inputs,
         outputs: &outputs,
+        consts: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut payload = *b"x";
@@ -240,6 +244,7 @@ fn a_plugin_built_before_the_newest_fields_loads_and_runs() {
         nodes: &nodes,
         inputs: &inputs,
         outputs: &outputs,
+        consts: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut cells = [Slot::EMPTY, Slot::EMPTY];
@@ -395,6 +400,7 @@ fn a_failed_reload_leaves_the_loaded_library_serving_and_is_retried() {
         nodes: &nodes,
         inputs: &inputs,
         outputs: &outputs,
+        consts: &[],
     };
     let mut units = backend.compile(&region).expect("still compiles");
     let mut payload = *b"ok";
@@ -454,6 +460,7 @@ fn a_reload_is_a_new_generation_and_the_old_one_goes_when_its_steps_do() {
         nodes: &nodes,
         inputs: &inputs,
         outputs: &outputs,
+        consts: &[],
     };
     let units = first
         .backend("fixture.cpu")

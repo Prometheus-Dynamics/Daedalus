@@ -20,7 +20,7 @@
 use std::any::Any;
 
 use daedalus_abi::Step;
-use daedalus_loader::export::{MadeNode, PluginDef, PortDef};
+use daedalus_loader::export::{Ask, MadeNode, PluginDef, PortDef};
 use daedalus_registry::{NodeRecord, PortDecl, TypeRef};
 
 #[doc(hidden)]
@@ -49,12 +49,23 @@ fn ports(decls: &[PortDecl]) -> Option<&'static [PortDef]> {
     Some(kept(ports?).as_slice())
 }
 
-/// Builds the step of the node record `data` is, for its place in a region.
-fn make(data: &'static (dyn Any + Send + Sync), position: u32) -> Result<Step, String> {
+/// Builds the step of the node record `data` is, for its place in a region and the constants
+/// the graph gives it.
+fn make(data: &'static (dyn Any + Send + Sync), ask: &Ask<'_>) -> Result<Step, String> {
     let record = data
         .downcast_ref::<&'static NodeRecord>()
         .ok_or("this node is not a node record")?;
-    daedalus_cpu::plugin::boundary_step(record, position)
+    let mut consts = Vec::with_capacity(ask.consts.len());
+    for (port, bytes) in ask.consts {
+        let value = daedalus_made::lit_from_bytes(bytes).map_err(|error| {
+            format!(
+                "the constant for port `{port}` of {} can't be read: {error}",
+                record.decl.id
+            )
+        })?;
+        consts.push((*port, value));
+    }
+    daedalus_cpu::plugin::boundary_step(record, ask.position, &consts)
 }
 
 /// What a plugin named `name` declares for `records`: one backend, named as the plugin is, and

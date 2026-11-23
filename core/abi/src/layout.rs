@@ -12,7 +12,7 @@ use core::mem::{align_of, offset_of, size_of};
 use crate::foreign::{ForeignHandle, ForeignInterfaceInfo, ForeignOwner};
 use crate::shape::{AbiDesc, FieldInfo, ShapeDesc, ShapeInfo};
 use crate::{
-    AbiVersion, BackendTable, BoundaryPort, BytesC, CodecC, DetailSink, Fence, FencePoll,
+    AbiVersion, BackendTable, BoundaryPort, BytesC, CodecC, ConstC, DetailSink, Fence, FencePoll,
     HandedRecord, Handle, MetricCell, NodeC, PluginEntry, PortC, RegionView, Slot, Slots, Status,
     Step, StepCx, StepEnd, Text, UnitOut,
 };
@@ -106,6 +106,9 @@ pub const SHAPES: &[ShapeInfo] = shapes! {
     16 frozen PortC { name, key, optional }
     17 growable NodeC { id, source, backend, text, inputs, input_count, outputs, output_count }
     18 frozen BoundaryPort { node, port, reserved, type_index, slot }
+    #[cfg(not(daedalus_abi_baseline))]
+    19 growable RegionView { nodes, node_count, inputs, input_count, outputs, output_count | consts, const_count, reason, reason_cap, reason_len }
+    #[cfg(daedalus_abi_baseline)]
     19 growable RegionView { nodes, node_count, inputs, input_count, outputs, output_count }
     20 frozen UnitOut { step, node, reserved }
     21 growable BackendTable { id, can_take, compile }
@@ -116,6 +119,7 @@ pub const SHAPES: &[ShapeInfo] = shapes! {
     26 frozen ShapeDesc { id, size, extent, fields, needs, hash }
     27 frozen AbiDesc { shapes, count, reserved }
     28 frozen MetricCell { sum, count, max }
+    29 frozen ConstC { node, reserved, port, value, len }
 };
 
 const COUNT: usize = SHAPES.len();

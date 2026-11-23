@@ -19,7 +19,7 @@ mod retry;
 
 pub use adapter::{CPU_WIRE, FROM_PLUGIN, PLUGIN_SPACE, PluginBackend, TO_PLUGIN};
 pub use codec::{Codec, Direction};
-pub use entry::{Backend, Loader, Plugin, RegionIn, plugin_tables_held};
+pub use entry::{Backend, ConstIn, Loader, Plugin, RegionIn, plugin_tables_held};
 
 /// Runs a step that a loaded plugin's backend compiled, on its cells.
 ///

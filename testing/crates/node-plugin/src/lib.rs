@@ -5,7 +5,8 @@
 #![forbid(unsafe_code)]
 
 use daedalus_cpu::{Ctx, Fault};
-use daedalus_derive::{Type, WireForm};
+use daedalus_cpu_author::FanIn;
+use daedalus_derive::{NodeConfig, Type, WireForm};
 use daedalus_macros::node;
 use daedalus_registry::NodeRecord;
 
@@ -77,8 +78,42 @@ fn first(bytes: &[u8]) -> u32 {
     u32::from(bytes[0]) + bytes.len() as u32
 }
 
+/// A node with an input a graph gives as a constant.
+#[node(id = "np.scale", inputs(x, by), outputs(y))]
+fn scale(x: u32, by: u32) -> u32 {
+    x.wrapping_mul(by)
+}
+
+/// A node's config.
+#[derive(Clone, Default, Type, NodeConfig)]
+#[type_key("np.shift")]
+pub struct Shift {
+    #[port(default = 1)]
+    pub add: u32,
+    #[port(default = 0)]
+    pub then_double: u32,
+}
+
+/// A node with a config.
+#[node(id = "np.shifted", inputs(x, config = Shift), outputs(y))]
+fn shifted(x: u32, config: &Shift) -> u32 {
+    let moved = x.wrapping_add(config.add);
+    if config.then_double != 0 {
+        moved.wrapping_mul(2)
+    } else {
+        moved
+    }
+}
+
+/// A node that takes a fan-in, which a plugin's node cannot yet: the plugin refuses it when a
+/// graph uses it, and says why.
+#[node(id = "np.sum", inputs(items), outputs(y))]
+fn sum(items: FanIn<'_, u32>) -> u32 {
+    items.iter().fold(0, |sum, item| sum.wrapping_add(*item))
+}
+
 /// Every node of this crate: what a host that links it registers.
-pub const NODES: [&NodeRecord; 8] = [
+pub const NODES: [&NodeRecord; 11] = [
     &TRIPLE_NODE,
     &TOTAL_NODE,
     &COUNTED_NODE,
@@ -87,6 +122,9 @@ pub const NODES: [&NodeRecord; 8] = [
     &FILL_NODE,
     &FIRST_NODE,
     &FRAGILE_NODE,
+    &SCALE_NODE,
+    &SHIFTED_NODE,
+    &SUM_NODE,
 ];
 
 daedalus_cpu_plugin::export_nodes!("node-plugin", NODES);

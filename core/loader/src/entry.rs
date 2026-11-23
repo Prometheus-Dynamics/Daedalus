@@ -7,9 +7,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 use daedalus_abi::{
-    BackendTable, BoundaryPort, CanTakeFn, CompileFn, HANDOVER_PENDING, OWNER_HANDED, OwnedStep,
-    PluginEntry, RegionView, SharedBytes, Slot, SlotState, Slots, Status, Step, StepCx, StepEnd,
-    Text, UnitOut,
+    BackendTable, BoundaryPort, CanTakeFn, CompileFn, ConstC, HANDOVER_PENDING, OWNER_HANDED,
+    OwnedStep, PluginEntry, RegionView, SharedBytes, Slot, SlotState, Slots, Status, Step, StepCx,
+    StepEnd, Text, UnitOut,
 };
 use daedalus_backend::{PortRef, StepUnit, UnitInfo};
 use daedalus_integrity::{Checked, Integrity};
@@ -27,6 +27,17 @@ pub struct RegionIn<'a> {
     pub nodes: &'a [&'a str],
     pub inputs: &'a [BoundaryPort],
     pub outputs: &'a [BoundaryPort],
+    /// The constants the graph gives the region's nodes. Empty when it gives none.
+    pub consts: &'a [ConstIn<'a>],
+}
+
+/// A constant of one input of a region's node: the node's index in the region, the port, and
+/// the value as a stored plan keeps it (`daedalus_made::lit_bytes`).
+#[derive(Clone, Copy, Debug)]
+pub struct ConstIn<'a> {
+    pub node: u32,
+    pub port: &'a str,
+    pub value: &'a [u8],
 }
 
 /// Opens plugins. Loading a name again makes a new generation of it.
@@ -284,6 +295,9 @@ pub struct Backend {
     holder: Arc<Holder>,
 }
 
+/// How many bytes of a refusal's words a backend is given room for.
+const REASON_ROOM: usize = 256;
+
 /// How many hand-over records a backend's pool holds. A hand-over past that copies its bytes.
 const POOL_RECORDS: usize = 16;
 
@@ -322,14 +336,14 @@ impl Backend {
             // output asks only for the size.
             let status = unsafe { (self.can_take)(view, ptr::null_mut(), 0, &mut needed) };
             if status != Status::OK {
-                return Err(self.refused(status));
+                return Err(status);
             }
             let mut flags = vec![0u8; needed];
             // SAFETY: `flags` holds `needed` bytes, the size the backend asked for.
             let status =
                 unsafe { (self.can_take)(view, flags.as_mut_ptr(), flags.len(), &mut needed) };
             if status != Status::OK {
-                return Err(self.refused(status));
+                return Err(status);
             }
             Ok(flags.iter().map(|flag| *flag != 0).collect())
         })
@@ -343,10 +357,10 @@ impl Backend {
             // SAFETY: as in `can_take`: a null output asks only for the size.
             let status = unsafe { (self.compile)(view, ptr::null_mut(), 0, &mut needed) };
             if status != Status::OK {
-                return Err(self.refused(status));
+                return Err(status);
             }
             if needed > region.nodes.len() {
-                return Err(self.refused(Status::BUFFER_TOO_SMALL));
+                return Err(Status::BUFFER_TOO_SMALL);
             }
             let mut units: Vec<UnitOut> = (0..needed)
                 .map(|_| UnitOut {
@@ -363,7 +377,7 @@ impl Backend {
                 for unit in units {
                     unit.step.discard();
                 }
-                return Err(self.refused(status));
+                return Err(status);
             }
             Ok(units
                 .into_iter()
@@ -415,8 +429,13 @@ impl Backend {
     }
 
     /// Builds the view the backend reads, and runs `body` with it. The node texts are kept here,
-    /// for the call only.
-    fn with_view<R>(&self, region: &RegionIn<'_>, body: impl FnOnce(&RegionView) -> R) -> R {
+    /// for the call only. A status `body` refuses with becomes the error, with the words the
+    /// backend wrote when it wrote any.
+    fn with_view<R>(
+        &self,
+        region: &RegionIn<'_>,
+        body: impl FnOnce(&RegionView) -> Result<R, Status>,
+    ) -> Result<R, LoadError> {
         let nodes: Vec<Text> = region
             .nodes
             .iter()
@@ -425,22 +444,41 @@ impl Backend {
                 len: id.len(),
             })
             .collect();
-        let view = RegionView {
-            nodes: nodes.as_ptr(),
-            node_count: nodes.len(),
-            inputs: region.inputs.as_ptr(),
-            input_count: region.inputs.len(),
-            outputs: region.outputs.as_ptr(),
-            output_count: region.outputs.len(),
+        let consts: Vec<ConstC> = region
+            .consts
+            .iter()
+            .map(|one| ConstC {
+                node: one.node,
+                reserved: 0,
+                port: Text {
+                    ptr: one.port.as_ptr(),
+                    len: one.port.len(),
+                },
+                value: one.value.as_ptr(),
+                len: one.value.len(),
+            })
+            .collect();
+        // Room for the backend to say why, when it refuses.
+        let mut reason = [0u8; REASON_ROOM];
+        let mut written = 0usize;
+        let view = RegionView::of(&nodes, region.inputs, region.outputs)
+            .with_consts(&consts)
+            .with_reason(&mut reason, &mut written);
+        let status = match body(&view) {
+            Ok(result) => return Ok(result),
+            Err(status) => status,
         };
-        body(&view)
-    }
-
-    fn refused(&self, status: Status) -> LoadError {
-        LoadError::Compile {
-            backend: self.id.clone(),
-            status,
+        let said = &reason[..written.min(REASON_ROOM)];
+        if said.is_empty() {
+            return Err(LoadError::Compile {
+                backend: self.id.clone(),
+                status,
+            });
         }
+        Err(LoadError::Said {
+            backend: self.id.clone(),
+            reason: String::from_utf8_lossy(said).into_owned(),
+        })
     }
 }
 

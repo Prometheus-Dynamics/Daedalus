@@ -711,6 +711,7 @@ dependencies = [
  "daedalus-abi",
  "daedalus-cpu",
  "daedalus-loader",
+ "daedalus-made",
  "daedalus-registry",
 ]
 
@@ -1046,6 +1047,7 @@ dependencies = [
  "daedalus-graph",
  "daedalus-host",
  "daedalus-integrity",
+ "daedalus-made",
  "daedalus-planner",
  "daedalus-registry",
  "daedalus-types",

@@ -60,8 +60,14 @@ What such a node gets, and what it does not yet:
   step. This holds between two nodes of the same plugin too, for now.
 - A port's type needs a key of its own (`#[type_key("...")]`). A type compared by what it is made
   of, a list or a tuple, has no name an entry can carry.
-- Constants and config do not reach the node yet: it runs with what its function is given by
-  its inputs.
+- A constant the graph gives an input reaches the node: the host hands the plugin each
+  constant of the region's nodes with the view it compiles, in the form a stored plan keeps it,
+  and the node's step decodes it as a linked step does. A config does not reach it yet: the
+  entry does not carry a config's fields, so the planner refuses a config for such a node.
+  A constant changed while the graph runs (`patch_const`) is not offered to the plugin yet, and
+  is refused as one no step reads.
+- A plugin that cannot build a node's step says why, and the words reach the host's refusal:
+  `backend node-plugin refused: np.sum takes a fan-in, which a plugin's node cannot yet`.
 - The entry carries a node's id and its ports' names, type keys and whether each may stay
   unwired. Labels, defaults, config fields and metrics are not declared, so a host lists no
   metrics for such a node and the node's reports go nowhere.
@@ -81,7 +87,7 @@ against its own, a shape at a time. There are no version numbers to compare.
 A shape is one of two kinds (`core/abi/src/layout.rs` lists them):
 
 - **Frozen**: passed by value, or in an array the other side walks with its own stride. `Slot`,
-  `Slots`, `Step`, `Fence`, `Text`, `PortC`, `BoundaryPort`, `UnitOut`, `BytesC`,
+  `Slots`, `Step`, `Fence`, `Text`, `PortC`, `BoundaryPort`, `ConstC`, `UnitOut`, `BytesC`,
   `HandedRecord`, `DetailSink`, `Status`, `Handle`, the foreign-value handles, and the
   descriptors themselves. A frozen shape has to be the same on both sides.
 - **Growable**: a single value passed by pointer, or a table read through the size its maker

@@ -1,11 +1,14 @@
 //! A crate of `#[node]` functions loaded as a plugin gives what the same crate gives linked in:
-//! the same outputs, state kept across a reload, and a node's own metrics.
+//! the same outputs, state kept across a reload, a node's own metrics, the constants and config
+//! a graph gives a node, and a refusal in the plugin's own words.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use daedalus_cpu::CpuBackend;
-use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, Lit, NodeDoc, NodeKindDoc, PortRefDoc};
+use daedalus_graph::{
+    EdgeDoc, EdgePolicyDoc, GraphBody, Lit, LitField, NodeDoc, NodeKindDoc, PortRefDoc,
+};
 use daedalus_host::{LoadOptions, LoadedHost};
 use daedalus_loader::{Loader, Plugin, PluginBackend};
 use daedalus_node_plugin::NODES;
@@ -191,4 +194,80 @@ fn a_fault_and_a_restart_go_as_they_go_linked() {
         .map(|fault| (fault.covers.to_vec(), fault.reason().to_string()))
         .collect();
     assert_eq!(faults, [(vec!["np.fragile"], "thirteen".to_string())]);
+}
+
+#[test]
+fn a_constant_reaches_a_plugins_node_as_it_reaches_it_linked() {
+    // `host.x -> np.scale (by 3) -> np.triple -> host.out`.
+    let mut graph = chain(&[("np.scale", "x", "y"), ("np.triple", "x", "y")]);
+    graph.nodes[1].consts.insert("by".to_string(), Lit::Int(3));
+    let mut from_file = host(loaded(&plugin_of(), &graph));
+    let mut built_in = host(linked(&graph));
+    for x in [0u32, 1, 7] {
+        let got = through(&mut from_file, x);
+        assert_eq!(got, Some(x * 9), "x = {x}");
+        assert_eq!(got, through(&mut built_in, x), "x = {x}");
+    }
+}
+
+#[test]
+fn a_patched_constant_is_not_offered_to_a_plugins_node_yet_and_is_refused_by_name() {
+    let mut graph = chain(&[("np.scale", "x", "y")]);
+    graph.nodes[1].consts.insert("by".to_string(), Lit::Int(3));
+    let mut host = host(loaded(&plugin_of(), &graph));
+    assert_eq!(through(&mut host, 2), Some(6));
+    let error = host
+        .patch_const("np.scale", "by", Lit::Int(5))
+        .expect_err("no step of the plugin takes a later value yet");
+    assert!(
+        matches!(error, daedalus_host::PatchError::NotRead { .. }),
+        "{error}"
+    );
+    assert_eq!(through(&mut host, 2), Some(6));
+}
+
+fn plugin_of() -> Arc<Plugin> {
+    Arc::new(Loader::new().open(library()).expect("the plugin loads"))
+}
+
+#[test]
+fn a_plugins_config_is_refused_by_the_planner_until_the_entry_carries_its_fields() {
+    let field = |name: &str, value| LitField {
+        name: name.to_string(),
+        value: Lit::Int(value),
+    };
+    let mut graph = chain(&[("np.shifted", "x", "y")]);
+    let config = Lit::Struct(vec![field("add", 4), field("then_double", 1)]);
+    graph.nodes[1].consts.insert("config".to_string(), config);
+    // Linked, the config is read.
+    assert_eq!(through(&mut host(linked(&graph)), 1), Some(10));
+    // From the file, the entry names the node's ports and not its config's fields, so the
+    // planner has nothing to fit the config to.
+    let plugin = plugin_of();
+    let mut registry = Registry::new();
+    plugin.join(&mut registry).expect("the plugin's nodes join");
+    let backend = PluginBackend::new(Arc::clone(&plugin), 0);
+    let error = plan(&graph, &registry, &[&backend], &Config::default())
+        .expect_err("a config the entry does not describe is refused");
+    assert!(format!("{error:?}").contains("NoPortOrField"), "{error:?}");
+}
+
+#[test]
+fn a_plugins_refusal_reaches_the_host_in_its_own_words() {
+    let plugin = Arc::new(Loader::new().open(library()).expect("the plugin loads"));
+    let mut graph = chain(&[("np.triple", "x", "y")]);
+    let mut sum = NodeDoc::new("np.sum");
+    sum.label = Some("sum".to_string());
+    graph.nodes.push(sum);
+    graph.edges[1] = edge(2, "y", 0, "out");
+    let mut registry = Registry::new();
+    plugin.join(&mut registry).expect("the plugin's nodes join");
+    let backend = PluginBackend::new(Arc::clone(&plugin), 0);
+    let error = plan(&graph, &registry, &[&backend], &Config::default())
+        .expect_err("a node the plugin cannot build is refused");
+    let words = format!("{error:?}");
+    assert!(
+        words.contains("np.sum takes a fan-in, which a plugin's node cannot yet"),
+        "the plugin's words are lost: {words}"
+    );
 }
