@@ -77,7 +77,8 @@ last holder lets go. One consequence matters for values that hold something scar
 frame from a small pool, say: a reader that rarely runs keeps up to its edge's depth of values,
 each a reference, so a frame fanned out to a stage that waits on another input pins up to 64
 buffers on a FIFO. Give that edge `latest_only` or `per_tick`. A FIFO edge that fills fails the
-tick as an overflow of that edge's queue. A host input with several readers is different: it is
+tick with an error that names the edge: the node and port at each end, how many values it holds
+and its policy (`HostError::EdgeFull`). A host input with several readers is different: it is
 one kept value, the newest fed, for all of them. Each extra reader costs its producer one more
 queue store and one reference per value sent (a few hundred instructions, and no allocation).
 

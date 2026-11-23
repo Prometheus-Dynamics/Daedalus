@@ -95,7 +95,7 @@ fn read_facts(r: &mut Reader<'_>) -> Result<PlanFacts, WireError> {
     })
 }
 
-fn read_node(r: &mut Reader<'_>) -> Result<MadeNode, WireError> {
+pub(crate) fn read_node(r: &mut Reader<'_>) -> Result<MadeNode, WireError> {
     Ok(MadeNode {
         id: r.str()?,
         label: read_opt_str(r)?,
@@ -111,6 +111,8 @@ fn read_node(r: &mut Reader<'_>) -> Result<MadeNode, WireError> {
             let index = r.u8()?;
             has.then_some(index)
         },
+        // A plan stored before the output names were kept ends here.
+        outputs: if r.more() { read_strs(r)? } else { Vec::new() },
     })
 }
 

@@ -37,6 +37,8 @@ pub(crate) struct Built {
     pub(crate) extra: Vec<u32>,
     /// The outputs a fan-out added to their producers, sorted by step.
     pub(crate) fans: Vec<daedalus_runner::FanOut>,
+    /// What each edge's slot is called, sorted by slot.
+    pub(crate) edge_names: Vec<(u32, crate::io::EdgeName)>,
 }
 
 /// The pressure each edge declared, by the slot it lands on.
@@ -62,6 +64,8 @@ pub(crate) struct Draft {
     pub(crate) recovery: Recovery,
     /// The reads that an edge feeds: the read's position, and the edge.
     pub(crate) connected: Vec<(usize, usize)>,
+    /// What each output the body writes is called, as `node.port`.
+    pub(crate) write_names: Vec<String>,
 }
 
 fn span(table: &mut Vec<u32>, values: &[u32]) -> Span {
@@ -106,6 +110,11 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
                 transfers.push(None);
                 let recovery = step_recovery(bound, covers)?;
                 drafts.push(Draft {
+                    write_names: info
+                        .writes
+                        .iter()
+                        .map(|port| crate::edge_names::output(bound, &entries, *port))
+                        .collect(),
                     connected: connected_reads(bound, &info, reads),
                     reads: reads.clone(),
                     writes: writes.clone(),
@@ -138,6 +147,7 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
                 same_as.push(None);
                 transfers.push(Some(intern(id)));
                 drafts.push(Draft {
+                    write_names: vec![std::format!("the transfer {id}")],
                     connected: Vec::new(),
                     reads: vec![*from_slot],
                     writes: vec![*to_slot],
@@ -174,7 +184,9 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
     kept.retain(|slot| !fanned.slots.contains(slot));
     let slots = slot_specs(bound, options, &edges, &kept, fanned.extra.len());
     let (meta, table) = wire(&drafts);
+    let edge_names = crate::edge_names::edge_names(bound, &entries, &drafts, &slots, &fanned.extra);
     Ok(Built {
+        edge_names,
         kept,
         extra: fanned.extra,
         fans: fanned.fans,

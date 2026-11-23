@@ -36,6 +36,7 @@ impl Planned {
                 inputs: node.inputs.iter().map(|port| port.name.clone()).collect(),
                 consts: node.consts.clone(),
                 backend: backend_of[at],
+                outputs: node.outputs.iter().map(|port| port.name.clone()).collect(),
             })
             .collect();
         let edges = self

@@ -27,6 +27,8 @@ pub struct MadeNode {
     pub consts: BTreeMap<String, Lit>,
     /// The backend's place in the plan's backend list, for the region the node is in.
     pub backend: Option<u8>,
+    /// The output port names, in port order. Empty in a plan stored before they were kept.
+    pub outputs: Vec<String>,
 }
 
 /// One edge, by the node and port it feeds, and its policy.
