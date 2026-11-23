@@ -190,6 +190,30 @@ impl Registry {
         self.entries.get(id)
     }
 
+    /// Checks every config of every node here against itself: that the value its Rust `Default`
+    /// makes is inside each field's limits and passes the config's own checks, and that a field's
+    /// declared default is the value `Default` gives it. Returns one line for each fault, naming
+    /// the node, the config and the field. Empty when every config is consistent: a consumer
+    /// asserts that in one test.
+    pub fn config_faults(&self) -> Vec<String> {
+        let mut faults = Vec::new();
+        for entry in self.entries() {
+            for config in entry.decl.config {
+                (config.self_check)(&mut |field, what| {
+                    let place = match field {
+                        "" => String::new(),
+                        field => format!(" field `{field}`"),
+                    };
+                    faults.push(format!(
+                        "node `{}` config `{}`{place}: {what}",
+                        entry.decl.id, config.name
+                    ));
+                });
+            }
+        }
+        faults
+    }
+
     /// Sorted by id.
     pub fn entries(&self) -> impl Iterator<Item = &Entry> {
         self.entries.values()

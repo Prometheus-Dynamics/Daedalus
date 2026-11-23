@@ -116,6 +116,7 @@ impl Decl {
             name: leak_str(name),
             ty,
             fields: &[],
+            self_check: daedalus_registry::self_check::nothing,
         });
         self
     }
@@ -130,6 +131,7 @@ impl Decl {
             name: leak_str(name),
             ty,
             fields: leak(fields),
+            self_check: daedalus_registry::self_check::nothing,
         });
         self
     }

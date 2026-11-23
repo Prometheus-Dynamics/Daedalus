@@ -106,6 +106,8 @@ impl Typed for Settings {
 
 impl Settings {
     const FIELDS: &'static [daedalus_registry::PortDecl] = &[];
+
+    fn self_check(_: daedalus_registry::self_check::Report<'_>) {}
 }
 
 #[node(id = "t.cfg", inputs(value, config = Settings), backend = fixture)]

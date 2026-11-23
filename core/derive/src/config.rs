@@ -150,6 +150,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let r = quote!(::daedalus_registry);
     let mut ports = Vec::new();
     let mut reads = Vec::new();
+    let mut self_checks = Vec::new();
     let mut checks = TokenStream::new();
     for field in &fields.named {
         let ident = field.ident.as_ref().expect("a named field");
@@ -191,6 +192,29 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                     odd: #odd,
                     policy: #policy,
                 },
+            }
+        });
+        let at = self_checks.len();
+        self_checks.push(quote! {
+            {
+                let field = &Self::FIELDS[#at];
+                let value = &config.#ident;
+                if let ::core::option::Option::Some(number) =
+                    (&#r::self_check::Probe(value)).number()
+                {
+                    #r::self_check::rule(field.name, &field.rule, number, report);
+                }
+                if let ::core::option::Option::Some(declared) = &field.default {
+                    match <#field_ty as #p::FromLiteral>::from_literal(declared) {
+                        ::core::result::Result::Ok(declared) => {
+                            (&#r::self_check::Pair(&declared, value)).same(field.name, report)
+                        }
+                        ::core::result::Result::Err(_) => report(
+                            field.name,
+                            ::core::format_args!("its declared default doesn't fit its type"),
+                        ),
+                    }
+                }
             }
         });
         let absent = match &port.default {
@@ -236,6 +260,30 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
             /// Whole-value checks, for the planner to run.
             pub const CHECKERS: &'static [fn(&Self) -> ::core::result::Result<(), &'static str>] =
                 &[#(#checkers),*];
+
+            /// Checks the value `Default` makes against this declaration, and reports each fault
+            /// with its field (empty for the config as a whole): a field outside its own limits,
+            /// a declared default that is not the value `Default` gives, a refusal by one of the
+            /// config's own checks. `Registry::config_faults` calls this for every config.
+            pub fn self_check(report: #r::self_check::Report<'_>) {
+                #[allow(unused_imports)]
+                use #r::self_check::{
+                    Incomparable as _, MakeDefault as _, MakeNothing as _, NotANumber as _,
+                    Number as _, Same as _,
+                };
+                let ::core::option::Option::Some(config) =
+                    (&#r::self_check::Made::<Self>::new()).make()
+                else {
+                    report("", ::core::format_args!("has no `Default` to check"));
+                    return;
+                };
+                #(#self_checks)*
+                for check in Self::CHECKERS {
+                    if let ::core::result::Result::Err(why) = check(&config) {
+                        report("", ::core::format_args!("`Default` is refused by its own check: {why}"));
+                    }
+                }
+            }
 
             /// Builds the value. A field `lookup` doesn't find takes its default.
             pub fn from_literals<'a>(
