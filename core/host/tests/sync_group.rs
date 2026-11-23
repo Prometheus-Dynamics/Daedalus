@@ -9,7 +9,7 @@ use daedalus_host::sync_group::{
 };
 use daedalus_host::{Dir, Host, PortSpec, Ports};
 use daedalus_runner::{Memory, Plan, Runner, SlotKind, SlotSpec};
-use daedalus_types::{SpaceIndex, TypeIndex, TypeKey};
+use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey, Typed};
 use daedalus_value::{Owner, Value};
 
 const MS: u64 = 1_000_000;
@@ -281,16 +281,24 @@ fn value() -> Value {
     }
 }
 
+/// A Rust value of the type the two inputs take.
+struct Stamped;
+
+impl Typed for Stamped {
+    const KEY: TypeKey = TypeKey::new("t");
+    const EXPR: TypeExpr = TypeExpr::Opaque(Self::KEY);
+}
+
 #[test]
 fn the_host_sink_delivers_a_group_and_supersedes_the_last_one() {
     let mut host = two_inputs();
     let names = ["a", "b"];
-    let mut sync: Synchronized<Arc<u32>> = Synchronized::new(2, config(PartialPolicy::Drop));
+    let mut sync: Synchronized<Arc<Stamped>> = Synchronized::new(2, config(PartialPolicy::Drop));
     let mut sink = HostSink::new(&mut host, &names);
-    sync.push(0, Arc::new(1), 0, 0, &mut sink);
-    sync.push(1, Arc::new(2), 0, 0, &mut sink);
-    sync.push(0, Arc::new(3), 33 * MS, 0, &mut sink);
-    sync.push(1, Arc::new(4), 33 * MS, 0, &mut sink);
+    sync.push(0, Arc::new(Stamped), 0, 0, &mut sink);
+    sync.push(1, Arc::new(Stamped), 0, 0, &mut sink);
+    sync.push(0, Arc::new(Stamped), 33 * MS, 0, &mut sink);
+    sync.push(1, Arc::new(Stamped), 33 * MS, 0, &mut sink);
     assert_eq!(sink.refused, 0);
     assert_eq!(sync.stats().superseded_groups, 1);
     let queued: Vec<u32> = host.port_infos().map(|port| port.queued).collect();

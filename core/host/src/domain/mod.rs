@@ -125,7 +125,7 @@ impl Domain {
     }
 
     /// Hands a typed value to an input.
-    pub fn push_typed<T: Send + Sync + 'static>(
+    pub fn push_typed<T: daedalus_types::Typed + Send + Sync + 'static>(
         &mut self,
         graph: &str,
         port: &str,

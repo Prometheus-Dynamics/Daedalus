@@ -207,15 +207,9 @@ fn port_table(
 /// A key for a type. Named types use their own, and a composite one gets a readable name, since
 /// these keys only name a type in messages and inspection.
 pub(crate) fn type_text(expr: &TypeExpr) -> String {
-    match expr {
-        TypeExpr::Scalar(scalar) => String::from(scalar.key().as_str()),
-        TypeExpr::Opaque(key) => String::from(key.as_str()),
-        other => std::format!("{other:?}")
-            .to_lowercase()
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-            .collect(),
-    }
+    let mut text = String::new();
+    let _ = crate::io::write_type_text(expr, &mut text);
+    text
 }
 
 fn monotonic_ns() -> u64 {
