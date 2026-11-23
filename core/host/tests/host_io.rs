@@ -8,7 +8,7 @@ use daedalus_abi::{Slots, Step, StepCx, StepEnd, StepWord};
 use daedalus_host::{Dir, Host, HostError, PortSpec, Ports};
 use daedalus_plan::Span;
 use daedalus_runner::{Memory, Plan, Runner, SlotKind, SlotSpec, StepMeta};
-use daedalus_types::{SpaceIndex, TypeIndex, TypeKey};
+use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey, Typed};
 use daedalus_value::{Owner, Value};
 
 #[global_allocator]
@@ -266,6 +266,58 @@ fn a_probe_counts_the_bytes_each_step_publishes_and_the_loop_still_allocates_not
 struct Tracked {
     id: u32,
     log: Arc<Mutex<Vec<u32>>>,
+}
+
+/// The type the ports of this file take.
+impl Typed for Tracked {
+    const KEY: TypeKey = TypeKey::new("demo.a");
+    const EXPR: TypeExpr = TypeExpr::Opaque(Self::KEY);
+}
+
+/// A Rust type of another key.
+struct Other;
+
+impl Typed for Other {
+    const KEY: TypeKey = TypeKey::new("demo.b");
+    const EXPR: TypeExpr = TypeExpr::Opaque(Self::KEY);
+}
+
+/// A type with the port's key that is made of something: a key of its own is what a type is
+/// compared by, not what it is made of.
+struct Made(u32);
+
+impl Typed for Made {
+    const KEY: TypeKey = TypeKey::new("demo.a");
+    const EXPR: TypeExpr = <u32 as Typed>::EXPR;
+}
+
+#[test]
+fn a_type_is_fed_by_its_own_key_whatever_it_is_made_of() {
+    let mut graph = Graph::new();
+    let mut host = Host::new(graph.runner(), Ports::new(&PORTS).unwrap(), &TYPES);
+    host.feed_typed("in", Arc::new(Made(9))).unwrap();
+    host.step().unwrap();
+    let back = host.take_value("out").unwrap().expect("one value");
+    assert_eq!(back.typed::<Made>().map(|made| made.0), Some(9));
+}
+
+#[test]
+fn a_rust_value_of_another_type_than_the_ports_is_refused_and_nothing_is_stored() {
+    let mut graph = Graph::new();
+    let mut host = Host::new(graph.runner(), Ports::new(&PORTS).unwrap(), &TYPES);
+    let refused = host.feed_typed("in", Arc::new(Other)).unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        "port in takes `demo.a`, and was fed `demo.b`"
+    );
+    // A number is a type too, and not this port's.
+    let refused = host.feed_typed("in", Arc::new(7u32)).unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        "port in takes `demo.a`, and was fed `u32`"
+    );
+    host.step().unwrap();
+    assert!(host.take_value("out").unwrap().is_none());
 }
 
 impl Drop for Tracked {

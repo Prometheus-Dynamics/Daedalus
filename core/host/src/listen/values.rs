@@ -37,7 +37,7 @@ pub struct WireCodec {
 
 impl WireCodec {
     /// A codec for a type the graph passes as an `Arc<T>`.
-    pub fn typed<T: Send + Sync + 'static>(
+    pub fn typed<T: daedalus_types::Typed + Send + Sync + 'static>(
         ty: WireType,
         to_wire: impl Fn(&T) -> WireValue + Send + Sync + 'static,
         from_wire: impl Fn(&WireValue) -> Option<T> + Send + Sync + 'static,

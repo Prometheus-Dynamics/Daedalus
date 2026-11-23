@@ -6,7 +6,7 @@ use daedalus_abi::{Slots, Step, StepCx, StepEnd, StepWord};
 use daedalus_host::{Dir, Host, HostError, PortPolicy, PortSpec, Ports};
 use daedalus_plan::Span;
 use daedalus_runner::{Memory, Plan, Recovery, Runner, SlotKind, SlotSpec, StepMeta};
-use daedalus_types::{SpaceIndex, TypeIndex, TypeKey};
+use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey, Typed};
 use daedalus_value::{DropReason, Freshness, Keep, Overflow, Owner, Pressure, Push, Ring, Value};
 
 const TY: TypeIndex = TypeIndex(0);
@@ -436,21 +436,31 @@ fn a_fifo_input_still_refuses_a_feed_into_a_full_queue() {
     assert_eq!(take_all(&mut host), b"1234");
 }
 
+/// A Rust value of the type these ports take.
+struct Reading(u32);
+
+impl Typed for Reading {
+    const KEY: TypeKey = TypeKey::new("demo.a");
+    const EXPR: TypeExpr = TypeExpr::Opaque(Self::KEY);
+}
+
 #[test]
 fn a_typed_feed_follows_the_slots_policy_and_releases_what_it_drops() {
     let mut host = host_with_slot(Pressure::LatestOnly);
-    let first = std::sync::Arc::new(1_u32);
+    let first = std::sync::Arc::new(Reading(1));
     assert_eq!(
         host.feed_typed("in", std::sync::Arc::clone(&first))
             .unwrap()
             .dropped,
         None
     );
-    let second = host.feed_typed("in", std::sync::Arc::new(2_u32)).unwrap();
+    let second = host
+        .feed_typed("in", std::sync::Arc::new(Reading(2)))
+        .unwrap();
     assert_eq!(second.dropped, Some(DropReason::LatestOnlyReplace));
     assert_eq!(std::sync::Arc::strong_count(&first), 1);
     let kept = host.runner().take_value(0).unwrap();
-    assert_eq!(kept.typed::<u32>().copied(), Some(2));
+    assert_eq!(kept.typed::<Reading>().map(|reading| reading.0), Some(2));
 }
 
 #[test]
@@ -461,9 +471,10 @@ fn a_typed_feed_follows_the_ports_own_policy() {
         freshness: Freshness::PreserveAll,
     };
     host.set_port_policy("in", policy).unwrap();
-    host.feed_typed("in", std::sync::Arc::new(1_u32)).unwrap();
+    host.feed_typed("in", std::sync::Arc::new(Reading(1)))
+        .unwrap();
     assert!(matches!(
-        host.feed_typed("in", std::sync::Arc::new(2_u32)),
+        host.feed_typed("in", std::sync::Arc::new(Reading(2))),
         Err(HostError::Full { .. })
     ));
 }

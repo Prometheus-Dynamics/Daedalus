@@ -28,7 +28,9 @@ let doubled = host.take_copy::<i64>("doubled")?;
   them.
 - **Load.** `LoadedHost::load` sizes every queue and buffer once. Nothing is allocated for them
   after that.
-- **Feed.** `feed_typed(port, Arc<T>)` hands in a value by its handle. `feed_inline(port, bytes)`
+- **Feed.** `feed_typed(port, Arc<T>)` hands in a value by its handle. `T` has a type key
+  (`Typed`), and it has to be the port's type: a value of another type is refused, naming the
+  port, the type it takes and the type fed (`HostError::FedType`), and nothing is stored. `feed_inline(port, bytes)`
   puts plain data of 16 bytes or less in place, with no allocation. A feed never runs a tick.
 - **Step.** `step()` runs one tick: every step whose inputs changed, in order. A tick with
   nothing to do reads a few words and returns.

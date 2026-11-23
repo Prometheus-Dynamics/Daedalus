@@ -3,11 +3,78 @@
 use core::fmt;
 
 use daedalus_runner::{RunError, Runner, TickReport};
-use daedalus_types::{TypeIndex, TypeKey};
+use daedalus_types::{TypeExpr, TypeIndex, TypeKey, Typed};
 use daedalus_value::{DropReason, Value};
 
 use crate::label::Label;
 use crate::ports::{Dir, Ports};
+
+/// A type as a port names it: a scalar's or an opaque type's key, and for a type made of others
+/// its expression in lower case with everything but letters and digits as `_`.
+pub(crate) fn write_type_text(expr: &TypeExpr, out: &mut impl fmt::Write) -> fmt::Result {
+    struct Plain<'a, W>(&'a mut W);
+    impl<W: fmt::Write> fmt::Write for Plain<'_, W> {
+        fn write_str(&mut self, text: &str) -> fmt::Result {
+            for c in text.chars() {
+                let c = c.to_ascii_lowercase();
+                self.0
+                    .write_char(if c.is_ascii_alphanumeric() { c } else { '_' })?;
+            }
+            Ok(())
+        }
+    }
+    match expr {
+        TypeExpr::Scalar(scalar) => out.write_str(scalar.key().as_str()),
+        TypeExpr::Opaque(key) => out.write_str(key.as_str()),
+        other => fmt::Write::write_fmt(&mut Plain(out), format_args!("{other:?}")),
+    }
+}
+
+/// Whether `expr` is the type a port names as `text`. Nothing is allocated.
+fn type_is(expr: &TypeExpr, text: &str) -> bool {
+    struct Rest<'a>(&'a str);
+    impl fmt::Write for Rest<'_> {
+        fn write_str(&mut self, text: &str) -> fmt::Result {
+            self.0 = self.0.strip_prefix(text).ok_or(fmt::Error)?;
+            Ok(())
+        }
+    }
+    let mut rest = Rest(text);
+    write_type_text(expr, &mut rest).is_ok() && rest.0.is_empty()
+}
+
+/// As much of a type's text as an error's label holds.
+struct TextLabel {
+    len: usize,
+    bytes: [u8; 64],
+}
+
+impl Default for TextLabel {
+    fn default() -> TextLabel {
+        TextLabel {
+            len: 0,
+            bytes: [0; 64],
+        }
+    }
+}
+
+impl TextLabel {
+    fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.len]).unwrap_or("")
+    }
+}
+
+impl fmt::Write for TextLabel {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        for byte in text.bytes().filter(u8::is_ascii) {
+            if let Some(slot) = self.bytes.get_mut(self.len) {
+                *slot = byte;
+                self.len += 1;
+            }
+        }
+        Ok(())
+    }
+}
 
 /// What a feed did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +125,13 @@ pub enum HostError {
     NotTyped {
         port: Label,
     },
+    /// A Rust value was fed to a port of another type. `expected` is the port's type and `fed`
+    /// the type of the value, each as a port names its type.
+    FedType {
+        port: Label,
+        expected: Label,
+        fed: Label,
+    },
     /// The payload is typed, but not as the Rust type the caller asked for.
     WrongRustType {
         port: Label,
@@ -104,6 +178,11 @@ impl fmt::Display for HostError {
                 "port {port} expects type {expected}, got type {found} (index {found_index})"
             ),
             HostError::NotTyped { port } => write!(f, "port {port} holds no typed payload"),
+            HostError::FedType {
+                port,
+                expected,
+                fed,
+            } => write!(f, "port {port} takes `{expected}`, and was fed `{fed}`"),
             HostError::WrongRustType { port } => {
                 write!(f, "port {port} holds a payload of another Rust type")
             }
@@ -329,13 +408,32 @@ impl<'a> Host<'a> {
         self.feed_at(name, at, value)
     }
 
-    /// Stores a typed payload in the input port `name`, and wakes its consumers.
-    pub fn feed_typed<T: Send + Sync + 'static>(
+    /// Stores a typed payload in the input port `name`, and wakes its consumers. The value's
+    /// type has to be the port's: a value of another type is refused, naming the port, the type
+    /// it takes and the type that was fed, and nothing is stored.
+    pub fn feed_typed<T: Typed + Send + Sync + 'static>(
         &mut self,
         name: &str,
         value: std::sync::Arc<T>,
     ) -> Result<FeedOutcome, HostError> {
         let at = self.input_at(name)?;
+        // A type with a key of its own is that key, whatever it is made of; one without is
+        // compared by what it is made of, as a port of such a type is named.
+        let key = at.spec.key.as_str();
+        let named = !T::STRUCTURAL && T::KEY.as_str() == key;
+        if !named && !type_is(&T::EXPR, key) {
+            let mut fed = TextLabel::default();
+            let _ = if T::STRUCTURAL {
+                write_type_text(&T::EXPR, &mut fed)
+            } else {
+                fmt::Write::write_str(&mut fed, T::KEY.as_str())
+            };
+            return Err(HostError::FedType {
+                port: Label::new(name),
+                expected: Label::new(at.spec.key.as_str()),
+                fed: Label::new(fed.as_str()),
+            });
+        }
         self.feed_by(name, at, |runner, spec| {
             runner.feed_typed(spec.slot, spec.ty, spec.space, value)
         })

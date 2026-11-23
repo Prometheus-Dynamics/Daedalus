@@ -46,6 +46,16 @@ has the same thing by capability, one row each, and is checked by the gate.
 - JSON and base64 on the worker path, and the payload handles and leases that went with them.
 - The separate MCU macro and node types. A chip uses the same `#[node]`.
 
+## Feeding a Rust value
+
+`feed_typed(port, Arc<T>)` needs `T: Typed`, and checks it against the port. A port's type has a
+key, so the value fed to it has one too: `#[derive(Type)]` with a `#[type_key("...")]`, or a
+hand-written `Typed` impl for a type the derive cannot read, as
+[foreign-values.md](foreign-values.md#a-type-of-your-own) shows for a struct that holds a file
+descriptor. A value of another type than the port's is refused with `HostError::FedType`,
+which names the port, the type it takes and the type that was fed. The same bound is on
+`WireCodec::typed`, on a domain's `push_typed`, and on a sync group's host sink.
+
 ## Plugins that were built with their host
 
 On `dev` a host could load a dylib that was built in the same cargo run as itself

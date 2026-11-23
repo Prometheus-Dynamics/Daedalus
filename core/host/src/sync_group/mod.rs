@@ -132,7 +132,7 @@ impl GroupSink<Value> for HostSink<'_, '_> {
     }
 }
 
-impl<T: Send + Sync + 'static> GroupSink<Arc<T>> for HostSink<'_, '_> {
+impl<T: daedalus_types::Typed + Send + Sync + 'static> GroupSink<Arc<T>> for HostSink<'_, '_> {
     fn deliver(&mut self, input: usize, value: Arc<T>) {
         if self.host.feed_typed(self.ports[input], value).is_err() {
             self.refused += 1;
