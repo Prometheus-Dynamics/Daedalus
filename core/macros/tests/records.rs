@@ -106,7 +106,6 @@ impl Typed for Settings {
 
 impl Settings {
     const FIELDS: &'static [daedalus_registry::PortDecl] = &[];
-    const RULES: &'static [daedalus_registry::FieldRule] = &[];
 }
 
 #[node(id = "t.cfg", inputs(value, config = Settings), backend = fixture)]
@@ -161,4 +160,44 @@ fn generics_make_one_node_per_instance_and_lists_join_the_registry() {
     registry.register_all(list).unwrap();
     assert_eq!(registry.entries().count(), 3);
     assert_eq!(ADD_NODE.decl.outputs[0].name, "sum");
+}
+
+#[node(
+    id = "t.ruled",
+    inputs(
+        port(name = "side", min = 0.000001, max = 1000.0, step = 0.0001, unit = "m"),
+        port(name = "taps", min = 1, odd),
+        plain
+    ),
+    backend = fixture
+)]
+fn ruled(side: f64, taps: u32, plain: u8) -> f64 {
+    side + f64::from(taps) + f64::from(plain)
+}
+
+#[test]
+fn an_input_ports_limits_and_step_are_its_rule() {
+    use daedalus_registry::PortRule;
+    use daedalus_types::Literal;
+    let inputs = RULED_DECL.inputs;
+    assert_eq!(
+        inputs[0].rule,
+        PortRule {
+            min: Some(Literal::Float(0.000001)),
+            max: Some(Literal::Float(1000.0)),
+            step: Some(Literal::Float(0.0001)),
+            odd: false,
+            policy: "",
+        }
+    );
+    assert_eq!(inputs[0].unit, "m");
+    assert_eq!(
+        inputs[1].rule,
+        PortRule {
+            min: Some(Literal::Int(1)),
+            odd: true,
+            ..PortRule::NONE
+        }
+    );
+    assert!(inputs[2].rule.is_none());
 }

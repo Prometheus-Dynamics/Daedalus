@@ -17,6 +17,11 @@ pub(crate) struct PortArg {
     pub group: Option<LitStr>,
     pub advanced: bool,
     pub description: Option<LitStr>,
+    pub min: Option<Expr>,
+    pub max: Option<Expr>,
+    pub step: Option<Expr>,
+    pub odd: bool,
+    pub policy: Option<LitStr>,
 }
 
 pub(crate) enum InputArg {
@@ -95,6 +100,17 @@ fn parse_port_body(input: ParseStream<'_>) -> Result<PortArg> {
             "unit" => port.unit = Some(value(input)?),
             "group" => port.group = Some(value(input)?),
             "description" => port.description = Some(value(input)?),
+            "min" => port.min = Some(value(input)?),
+            "max" => port.max = Some(value(input)?),
+            "step" => port.step = Some(value(input)?),
+            "policy" => port.policy = Some(value(input)?),
+            "odd" => {
+                port.odd = if input.peek(Token![=]) {
+                    value::<LitBool>(input)?.value
+                } else {
+                    true
+                }
+            }
             "advanced" => {
                 port.advanced = if input.peek(Token![=]) {
                     value::<LitBool>(input)?.value

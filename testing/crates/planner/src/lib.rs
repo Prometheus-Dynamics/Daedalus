@@ -116,7 +116,6 @@ impl Decl {
             name: leak_str(name),
             ty,
             fields: &[],
-            rules: &[],
         });
         self
     }
@@ -131,7 +130,6 @@ impl Decl {
             name: leak_str(name),
             ty,
             fields: leak(fields),
-            rules: &[],
         });
         self
     }
