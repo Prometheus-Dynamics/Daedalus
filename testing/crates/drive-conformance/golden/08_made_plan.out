@@ -1,6 +1,6 @@
 plugin name="dylib-fixture" generation=1 nodes=["fixture.pass","fixture.boom","fixture.abort","fixture.handover","fixture.pass_bytes","fixture.copy_cell","fixture.gated","fixture.chatty"] backends=["fixture.cpu"]
 graph name="pass" diagnostics=[]
-made hash=17017861089990873547 bytes=709
+made hash=6925392302740267092 bytes=730
 blob name="junk" bytes=1
 error invalid_request
 ack

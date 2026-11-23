@@ -149,7 +149,7 @@ fn two_readers_of_one_output_each_follow_their_own_edges_policy() {
 }
 
 #[test]
-fn a_fifo_edge_to_a_reader_that_never_runs_overflows_at_its_depth_by_name() {
+fn a_fifo_edge_to_a_reader_that_never_runs_overflows_naming_both_ends_its_depth_and_policy() {
     let mut host = busy_and_waiting(EdgePolicyDoc::Fifo);
     let depth = LoadOptions::default().fifo_capacity;
     for value in 0..depth {
@@ -158,7 +158,14 @@ fn a_fifo_edge_to_a_reader_that_never_runs_overflows_at_its_depth_by_name() {
     }
     feed(&mut host, "x", depth);
     let error = host.step().unwrap_err();
-    assert!(format!("{error:?}").contains("Overflow"), "{error:?}");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "the edge from t.pass#0.out to t.reader#0.opt is full: it holds {depth} and its policy is \
+             fifo, so the reader is not keeping up; give the edge a policy that drops \
+             (latest_only, per_tick, or bounded with drop_oldest) or one that blocks"
+        )
+    );
 }
 
 #[test]

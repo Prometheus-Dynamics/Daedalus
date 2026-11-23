@@ -24,6 +24,8 @@ pub mod domain;
 #[cfg(feature = "std")]
 mod drive;
 #[cfg(feature = "std")]
+mod edge_names;
+#[cfg(feature = "std")]
 mod fan_out;
 #[cfg(feature = "std")]
 mod fault;

@@ -71,7 +71,14 @@ fn write_facts(w: Out<'_>, facts: &PlanFacts) -> Result<(), WireError> {
     w.record(|w| write_stitched(w, &facts.stitched))
 }
 
-fn write_node(w: Out<'_>, node: &MadeNode) -> Result<(), WireError> {
+pub(crate) fn write_node(w: Out<'_>, node: &MadeNode) -> Result<(), WireError> {
+    write_node_as_first_stored(w, node)?;
+    // Added at the record's end, so a plan stored before it still reads (`read_node`).
+    write_strs(w, &node.outputs)
+}
+
+/// The record as plans were first stored, before the output names.
+pub(crate) fn write_node_as_first_stored(w: Out<'_>, node: &MadeNode) -> Result<(), WireError> {
     w.str(&node.id)?;
     write_opt_str(w, node.label.as_deref())?;
     w.bool(node.bridge);

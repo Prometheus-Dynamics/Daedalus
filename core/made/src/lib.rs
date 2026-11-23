@@ -12,6 +12,8 @@ pub mod plan;
 pub mod recipe;
 pub mod stitched;
 #[cfg(test)]
+mod stored_outputs;
+#[cfg(test)]
 mod stored_policies;
 
 pub use bind::{BindError, Bound, bind};

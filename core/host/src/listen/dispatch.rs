@@ -56,7 +56,7 @@ fn port_error(error: &HostError) -> ServiceError {
         | HostError::NotAnInput { .. }
         | HostError::NotAnOutput { .. } => ErrorCode::UnknownPort,
         HostError::Full { .. } => ErrorCode::Busy,
-        HostError::Run(_) => ErrorCode::InvalidRequest,
+        HostError::Run(_) | HostError::EdgeFull { .. } => ErrorCode::InvalidRequest,
         _ => ErrorCode::ValueType,
     };
     refuse(code, crate::render_error(error))

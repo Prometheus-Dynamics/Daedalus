@@ -18,6 +18,15 @@ pub struct FeedOutcome {
     pub dropped: Option<DropReason>,
 }
 
+/// One edge, as an error names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EdgeName {
+    pub(crate) from: Label,
+    pub(crate) to: Label,
+    pub(crate) depth: u32,
+    pub(crate) policy: Label,
+}
+
 /// Why a host call was refused. Every variant that involves a port names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostError {
@@ -59,6 +68,15 @@ pub enum HostError {
         port: Label,
         key: Label,
     },
+    /// An edge's queue was full when its producer sent a value, and its policy gives none up.
+    /// `from` and `to` are the two ends, each a node and its port (`host.<port>` for the host),
+    /// `depth` is how many values the queue holds, and `policy` is the edge's policy.
+    EdgeFull {
+        from: Label,
+        to: Label,
+        depth: u32,
+        policy: Label,
+    },
     /// The graph refused the tick.
     Run(RunError),
 }
@@ -87,6 +105,17 @@ impl fmt::Display for HostError {
             HostError::Refused { port, key } => {
                 write!(f, "port {port} refused a value of type {key}")
             }
+            HostError::EdgeFull {
+                from,
+                to,
+                depth,
+                policy,
+            } => write!(
+                f,
+                "the edge from {from} to {to} is full: it holds {depth} and its policy is \
+                 {policy}, so the reader is not keeping up; give the edge a policy that drops \
+                 (latest_only, per_tick, or bounded with drop_oldest) or one that blocks"
+            ),
             HostError::Run(error) => write!(f, "the run was refused: {error:?}"),
         }
     }
@@ -100,6 +129,9 @@ pub struct Host<'a> {
     /// One per port once a host sets a policy, or from the start when an input's edge policy can
     /// give a value up. Empty means every port takes every value.
     pub(crate) inbound: std::vec::Vec<crate::inbound::Inbound>,
+    /// What each edge's slot is called, sorted by slot, for a plan a loader laid out: an
+    /// overflow names its edge with it. Empty for a host made over a bare runner.
+    pub(crate) edge_names: std::vec::Vec<(u32, EdgeName)>,
     pub(crate) now_ns: u64,
     /// The input slots whose values are context, not work: held or shared inputs. A feed there
     /// replaces the value and wakes nothing. Other inputs whose slot keeps its value (one with
@@ -146,6 +178,7 @@ impl<'a> Host<'a> {
             now_ns: 0,
             context,
             ticked: std::vec::Vec::new(),
+            edge_names: std::vec::Vec::new(),
             #[cfg(feature = "std")]
             owned: None,
         }
@@ -311,10 +344,30 @@ impl<'a> Host<'a> {
         }
     }
 
+    /// A tick's error, with an overflow named by its edge where the edges' names are known.
+    fn run_error(&self, error: RunError) -> HostError {
+        let RunError::Overflow { slot } = error else {
+            return HostError::Run(error);
+        };
+        let Ok(at) = self
+            .edge_names
+            .binary_search_by_key(&slot, |(slot, _)| *slot)
+        else {
+            return HostError::Run(error);
+        };
+        let name = &self.edge_names[at].1;
+        HostError::EdgeFull {
+            from: name.from,
+            to: name.to,
+            depth: name.depth,
+            policy: name.policy,
+        }
+    }
+
     /// Runs one tick.
     pub fn step(&mut self) -> Result<TickReport, HostError> {
         self.expire_stale();
-        let report = self.runner.tick().map_err(HostError::Run);
+        let report = self.runner.tick().map_err(|error| self.run_error(error));
         if !self.ticked.is_empty() {
             self.note_ticked();
         }

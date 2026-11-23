@@ -296,6 +296,7 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
         kept,
         extra,
         fans,
+        edge_names,
     } = built;
     let node_names: Vec<&'static str> = nodes.iter().map(|node| intern(&node.key)).collect();
     let covers = covers
@@ -339,6 +340,7 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
     }
     let mut host = Host::new(runner, ports, types);
     host.owned = Some(buffers);
+    host.edge_names = edge_names;
     host.set_context(
         bound
             .facts
