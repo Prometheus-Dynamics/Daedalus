@@ -197,3 +197,64 @@ fn a_host_input_with_two_readers_is_still_one_kept_value() {
     // Two steps ran, the two readers: nothing stands between the host and them.
     assert_eq!(host.host().runner().counters().steps_called - steps, 2);
 }
+
+/// The host's `x` through `t.add` to the host's `y`, which the host never takes.
+fn unread() -> GraphBody {
+    let mut host = node("host");
+    host.kind = NodeKindDoc::HostBridge;
+    for port in ["x", "y"] {
+        host.port_types.insert(port.to_string(), "u32".to_string());
+    }
+    GraphBody {
+        nodes: vec![host, node("t.add")],
+        edges: vec![edge(0, "x", 1, "in"), edge(1, "out", 0, "y")],
+        groups: Vec::new(),
+    }
+}
+
+/// Feeds and ticks until a tick fails, and gives that error's text.
+fn until_full(host: &mut LoadedHost) -> String {
+    for value in 0..=LoadOptions::default().fifo_capacity {
+        feed(host, "x", value);
+        if let Err(error) = host.step() {
+            return error.to_string();
+        }
+    }
+    panic!("an output the host never takes did not fill");
+}
+
+const FIX: &str = "so the reader is not keeping up; give the edge a policy that drops \
+                   (latest_only, per_tick, or bounded with drop_oldest) or one that blocks";
+
+#[test]
+fn an_output_the_host_stops_taking_overflows_naming_the_node_and_the_hosts_port() {
+    let planned = plan(&unread(), &registry(), &[&Test], &Config::default()).unwrap();
+    let mut host = LoadedHost::load(planned, LoadOptions::default()).unwrap();
+    assert_eq!(
+        until_full(&mut host),
+        format!(
+            "the edge from t.add#0.out to host#0.y is full: it holds 64 and its policy is fifo, {FIX}"
+        )
+    );
+}
+
+#[test]
+fn a_plan_stored_before_output_names_names_the_producer_by_its_output_number() {
+    let planned = plan(&unread(), &registry(), &[&Test], &Config::default()).unwrap();
+    let mut made = planned.made().unwrap();
+    // What reading a plan stored before the names gives: see core/made/src/stored_outputs.rs.
+    for node in &mut made.facts.nodes {
+        node.outputs.clear();
+    }
+    let bytes = daedalus_made::encode(&made).unwrap();
+    let backends: [&dyn daedalus_backend::Backend; 1] = [&Test];
+    let mut host =
+        LoadedHost::load_made(&bytes, &registry(), &backends, LoadOptions::default()).unwrap();
+    assert_eq!(
+        until_full(&mut host),
+        format!(
+            "the edge from t.add#0.output 0 to host#0.y is full: it holds 64 and its policy is \
+             fifo, {FIX}"
+        )
+    );
+}
