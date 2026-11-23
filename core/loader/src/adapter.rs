@@ -7,10 +7,12 @@ use std::borrow::Cow;
 use daedalus_abi::{BoundaryPort, OwnedStep, SlotState, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{
     CompileCx, Compiled, MemorySpace, NodeRef, Offer, PortRef, Refusal, Region, SpaceKind,
-    Transfer, TransferCost,
+    StepUnit, Transfer, TransferCost, UnitInfo,
 };
-use daedalus_types::NodeIndex;
+use daedalus_types::{NodeIndex, PortIndex};
 
+use crate::codec::{Codec, Direction};
+use crate::convert::{Convert, direction_of};
 use crate::{Plugin, RegionIn};
 
 /// The memory every plugin backend's values live in. They share it, so a value passes from one
@@ -151,20 +153,71 @@ impl daedalus_backend::Backend for PluginBackend {
     }
 
     fn compile(&self, region: &Region<'_>, cx: &CompileCx<'_>) -> Result<Compiled, Refusal> {
-        let ids: Vec<&str> = region
-            .nodes
-            .iter()
-            .map(|node| {
-                cx.bodies
-                    .iter()
-                    .find(|body| body.node == *node)
-                    .map_or("", |body| body.id)
-            })
-            .collect();
+        let id_of = |node: &NodeIndex| {
+            cx.bodies
+                .iter()
+                .find(|body| body.node == *node)
+                .map_or("", |body| body.id)
+        };
+        // A codec's conversion is the host's to run, with the codec's own function: the plugin's
+        // backend has no step for one. The rest are the plugin's nodes.
+        let mut units = Vec::new();
+        let mut theirs: Vec<NodeIndex> = Vec::new();
+        for node in region.nodes {
+            match self.conversion(id_of(node)) {
+                Some((codec, direction)) => units.push(conversion_unit(codec, direction, *node)),
+                None => theirs.push(*node),
+            }
+        }
+        if !theirs.is_empty() {
+            units.extend(self.compile_theirs(&theirs, region, cx, id_of)?);
+        }
+        Ok(Compiled::Steps(units))
+    }
+}
+
+/// A conversion node as a unit: one input, one output, run by the host.
+fn conversion_unit(codec: &Codec, direction: Direction, node: NodeIndex) -> StepUnit {
+    let port = PortRef {
+        node,
+        port: PortIndex(0),
+    };
+    StepUnit {
+        step: Step::boxed(Convert::new(codec.clone(), direction, node.0)),
+        info: UnitInfo {
+            covers: vec![node],
+            reads: vec![port],
+            writes: vec![port],
+            absorbed: Vec::new(),
+            may_pend: false,
+            decodes: Vec::new(),
+        },
+        patch: None,
+    }
+}
+
+impl PluginBackend {
+    /// Which of the plugin's codecs' conversions the node `id` is, if it is one.
+    fn conversion(&self, id: &str) -> Option<(&Codec, Direction)> {
+        let codecs = self.plugin.codecs().iter();
+        codecs
+            .filter_map(|codec| Some((codec, direction_of(codec, id)?)))
+            .next()
+    }
+
+    /// Compiles the plugin's own nodes of a region, `theirs`, through its backend.
+    fn compile_theirs<'a>(
+        &self,
+        theirs: &[NodeIndex],
+        region: &Region<'_>,
+        cx: &CompileCx<'a>,
+        id_of: impl Fn(&NodeIndex) -> &'a str,
+    ) -> Result<Vec<StepUnit>, Refusal> {
+        let ids: Vec<&str> = theirs.iter().map(id_of).collect();
         // A plugin's steps are one a node, so each node's ports are named: the region's
         // boundary, and both ends of every edge inside it.
         let inputs = ports(
-            region.nodes,
+            theirs,
             region
                 .inputs
                 .iter()
@@ -172,7 +225,7 @@ impl daedalus_backend::Backend for PluginBackend {
                 .chain(cx.edges.iter().map(|edge| edge.to)),
         );
         let outputs = ports(
-            region.nodes,
+            theirs,
             region
                 .outputs
                 .iter()
@@ -188,8 +241,7 @@ impl daedalus_backend::Backend for PluginBackend {
         let takes = backend
             .can_take(&view)
             .map_err(|error| Refusal::new(Vec::new(), &error.to_string()))?;
-        let refused: Vec<NodeIndex> = region
-            .nodes
+        let refused: Vec<NodeIndex> = theirs
             .iter()
             .zip(&takes)
             .filter(|(_, takes)| !**takes)
@@ -204,9 +256,9 @@ impl daedalus_backend::Backend for PluginBackend {
         let mut units = backend
             .compile(&view)
             .map_err(|error| Refusal::new(Vec::new(), &error.to_string()))?;
-        // The loader numbers nodes by their place in the region. The planner wants its own.
-        let graph_node =
-            |local: NodeIndex| region.nodes.get(local.0 as usize).copied().unwrap_or(local);
+        // The loader numbers nodes by their place among those it was given. The planner wants
+        // its own.
+        let graph_node = |local: NodeIndex| theirs.get(local.0 as usize).copied().unwrap_or(local);
         for unit in &mut units {
             for node in &mut unit.info.covers {
                 *node = graph_node(*node);
@@ -215,6 +267,6 @@ impl daedalus_backend::Backend for PluginBackend {
                 port.node = graph_node(port.node);
             }
         }
-        Ok(Compiled::Steps(units))
+        Ok(units)
     }
 }
