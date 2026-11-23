@@ -187,7 +187,7 @@ fn a_plugin_describes_the_shapes_this_host_has() {
 #[test]
 fn a_plugin_built_before_the_newest_fields_loads_and_runs() {
     let library = support::baseline_library();
-    // It was built with a `StepCx` that ends before `detail` and `step`.
+    // It was built with a `StepCx` that ends before `detail`, `step` and the metric cells.
     let theirs = shapes_of(&library);
     let ours = daedalus_abi::SHAPES
         .iter()
@@ -196,8 +196,8 @@ fn a_plugin_built_before_the_newest_fields_loads_and_runs() {
     let their = daedalus_abi::find(&theirs, ours.id).expect("it describes StepCx");
     assert_eq!(
         (their.fields, ours.fields.len() as u16),
-        (ours.required, ours.required + 2),
-        "two fields fewer than this host"
+        (ours.required, ours.required + 4),
+        "four fields fewer than this host"
     );
     assert!(their.extent < ours.desc().extent);
     assert_ne!(theirs, daedalus_abi::DESCRIPTORS);

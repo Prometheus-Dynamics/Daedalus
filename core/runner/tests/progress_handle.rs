@@ -74,6 +74,7 @@ fn build(
         meta: wiring.meta,
         table: wiring.table,
         fans: Vec::new(),
+        metrics: Vec::new(),
     };
     owned_run::build(steps, wiring, slots, stamps, &[], None).unwrap()
 }

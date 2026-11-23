@@ -100,6 +100,8 @@ fn take_steps(
                     step: found.step,
                     reads,
                     writes,
+                    // A control body's nodes report no metrics.
+                    metrics: 0,
                 });
                 covers.push(nodes);
             }
@@ -118,6 +120,7 @@ fn take_steps(
                     step,
                     reads: vec![from_slot],
                     writes: vec![to_slot],
+                    metrics: 0,
                 });
             }
             Item::Wait { .. } => return Err(waits()),

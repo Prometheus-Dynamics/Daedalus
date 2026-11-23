@@ -184,6 +184,9 @@ pub(crate) trait Env<'t> {
     fn fault_log(&self) -> (FaultLog, u32);
     /// What an output written to `slot` is stamped with, if the plan says.
     fn stamp(&self, slot: usize) -> Option<SlotStamp>;
+    /// The metric cells of step `index`. `None` when nobody reads metrics, so a call sets
+    /// nothing.
+    fn metrics(&self, index: usize) -> Option<&'t [daedalus_abi::MetricCell]>;
     /// The fan-outs of step `index`.
     fn fans(&self, index: usize) -> &'t [crate::FanOut];
     fn counters(&mut self) -> &mut Counters;
@@ -253,7 +256,16 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         let flags = env.health(index).call_flags();
         let probe = env.probe();
         let progress = env.progress(index);
+        let metrics = env.metrics(index);
         let (cells, cx) = env.parts();
+        if let Some(metrics) = metrics {
+            cx.metrics_len = metrics.len() as u32;
+            cx.metrics = if metrics.is_empty() {
+                core::ptr::null()
+            } else {
+                metrics.as_ptr()
+            };
+        }
         cx.flags = flags;
         cx.progress = progress;
         cx.step = index as u32;
@@ -559,6 +571,17 @@ impl<'a> Env<'a> for Runner<'a> {
     #[inline]
     fn stamp(&self, slot: usize) -> Option<SlotStamp> {
         self.stamps.get(slot).copied()
+    }
+    #[inline]
+    fn metrics(&self, index: usize) -> Option<&'a [daedalus_abi::MetricCell]> {
+        if self.metric_at.is_empty() {
+            return None;
+        }
+        Some(crate::progress::metric_cells(
+            self.metrics,
+            self.metric_at,
+            index,
+        ))
     }
     #[inline]
     fn fans(&self, index: usize) -> &'a [crate::FanOut] {

@@ -171,6 +171,7 @@ fn merged_unit(
         let (step, decoded) = step_of(node, body, cx, &wiring)?;
         decodes.extend(decoded);
         steps.push(NestedStep {
+            metrics: body.metrics,
             step,
             reads: bound_inputs,
             writes: bound_outputs,

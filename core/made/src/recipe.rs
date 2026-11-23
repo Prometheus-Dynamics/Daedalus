@@ -152,6 +152,7 @@ impl RegionRecipe {
                 outputs: body.outputs,
                 merges: body.merges,
                 fire_all: body.fire_all,
+                metrics: entry.decl.metrics.len() as u16,
                 label: body.label.as_deref(),
                 metadata: &body.metadata,
                 code: record.code,

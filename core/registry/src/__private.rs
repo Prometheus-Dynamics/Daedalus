@@ -1,5 +1,6 @@
 //! What the macros' generated code names.
 
+pub use daedalus_abi::MetricId;
 pub use daedalus_types::{
     Code, Error, Field, FromLiteral, Literal, Scalar, TypeExpr, TypeKey, Typed, Variant, WireForm,
     flat_layout, literal_field,

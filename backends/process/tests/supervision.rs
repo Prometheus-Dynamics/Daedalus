@@ -51,6 +51,7 @@ fn scalar_add_step(backend: &ProcessBackend) -> daedalus_abi::Step {
         outputs: 1,
         merges: false,
         fire_all: false,
+        metrics: 0,
         label: None,
         metadata: &NO_METADATA,
         code: &(),

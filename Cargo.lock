@@ -1166,6 +1166,7 @@ dependencies = [
 name = "daedalus-registry"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus-abi",
  "daedalus-backend",
  "daedalus-graph",
  "daedalus-types",

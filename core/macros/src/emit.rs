@@ -237,12 +237,14 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
     let bind = bind_tokens(args.state.as_ref(), args.config.as_ref(), &shape);
     let decl = format_ident!("{upper}_DECL");
     let node = format_ident!("{upper}_NODE");
+    let metric_ids = metric_enum(args, &upper);
     let init = init.map(|init| quote!(, init = (#init)));
     Ok(quote! {
         const _: ::daedalus_registry::__private::TypeKey =
             ::daedalus_registry::__private::TypeKey::new(#id);
         #state_check
         #result_check
+        #metric_ids
 
         pub const #decl: ::daedalus_registry::NodeDecl = ::daedalus_registry::NodeDecl {
             id: #id,
@@ -279,6 +281,54 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
             },
         };
     })
+}
+
+/// `threshold_ns` as `ThresholdNs`.
+fn camel(name: &str) -> String {
+    name.split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let lower = part.to_lowercase();
+            let mut chars = lower.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// The enum of a node's metrics, one variant each in declared order: `DetectMetric::Threshold`
+/// for the node function `detect`. A body reports a value with it, so a metric the node doesn't
+/// declare has no name to report under.
+fn metric_enum(args: &NodeArgs, upper: &str) -> TokenStream {
+    if args.metrics.is_empty() {
+        return TokenStream::new();
+    }
+    let name = format_ident!("{}Metric", camel(upper));
+    let variants: Vec<Ident> = args
+        .metrics
+        .iter()
+        .map(|(metric, _)| Ident::new(&camel(&metric.to_string()), metric.span()))
+        .collect();
+    let doc = "This node's metrics, for `Ctx::metric` and `Ctx::timed`.";
+    quote! {
+        #[doc = #doc]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u16)]
+        // A body need not report every metric it declares.
+        #[allow(dead_code)]
+        pub enum #name {
+            #(#variants),*
+        }
+
+        impl ::daedalus_registry::__private::MetricId for #name {
+            #[inline]
+            fn index(self) -> u16 {
+                self as u16
+            }
+        }
+    }
 }
 
 /// The node's metrics, each a name and a unit.

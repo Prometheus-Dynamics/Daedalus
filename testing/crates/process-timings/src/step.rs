@@ -34,6 +34,7 @@ pub fn one_node(backend: &ProcessBackend, id: &'static str, inputs: u16, outputs
         outputs,
         merges: false,
         fire_all: false,
+        metrics: 0,
         label: None,
         metadata: &NO_METADATA,
         code: &(),

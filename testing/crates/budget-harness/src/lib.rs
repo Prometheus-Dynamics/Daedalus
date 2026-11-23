@@ -112,6 +112,15 @@ pub(crate) fn bridge(ports: &[(&str, &str)]) -> NodeDoc {
 
 /// Plans `graph` on the CPU backend and loads it. `merge` lets the backend fuse nodes.
 pub(crate) fn load(graph: &GraphBody, records: &[&'static NodeRecord], merge: bool) -> LoadedHost {
+    load_with(graph, records, merge, LoadOptions::default())
+}
+
+pub(crate) fn load_with(
+    graph: &GraphBody,
+    records: &[&'static NodeRecord],
+    merge: bool,
+    options: LoadOptions,
+) -> LoadedHost {
     let mut registry = Registry::new();
     registry.register_all(records).expect("the nodes register");
     let config = Config {
@@ -119,7 +128,7 @@ pub(crate) fn load(graph: &GraphBody, records: &[&'static NodeRecord], merge: bo
         ..Config::default()
     };
     let planned = plan(graph, &registry, &[&CpuBackend], &config).expect("the graph plans");
-    LoadedHost::load(planned, LoadOptions::default()).expect("the plan loads")
+    LoadedHost::load(planned, options).expect("the plan loads")
 }
 
 /// Which stage a chain is made of.

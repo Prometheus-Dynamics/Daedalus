@@ -106,6 +106,7 @@ fn body(node: u32, spec: &'static ShaderSpec) -> NodeBody<'static> {
         outputs: spec.outputs.len() as u16,
         merges: true,
         fire_all: true,
+        metrics: 0,
         label: None,
         metadata: &NO_METADATA,
         code: spec as &(dyn Any + Send + Sync),

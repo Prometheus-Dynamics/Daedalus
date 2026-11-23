@@ -14,6 +14,7 @@ std = ["dep:daedalus-backend", "daedalus-types/alloc", "daedalus-value/std"]
 heap_free = true
 
 [dependencies]
+daedalus-abi = { path = "../abi", default-features = false }
 daedalus-backend = { path = "../backend", optional = true }
 daedalus-graph = { path = "../graph", default-features = false }
 daedalus-types = { path = "../types", default-features = false }
