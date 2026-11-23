@@ -123,7 +123,12 @@ def main():
     pinned = pin()
     extra = layer_env(step, pinned)
 
+    # This waits for the `test` step's build, when that step is still building. The step's bound
+    # counts from here: see scripts/bounded.py.
     found = tp.binaries(WORKSPACE)
+    started = os.environ.get("DAEDALUS_BOUND_STARTED")
+    if started:
+        open(started, "w").close()
     rustc = lambda *words: subprocess.run(["rustc", *words], capture_output=True, text=True,
                                           check=True).stdout.strip()
     host = next(l.split()[1] for l in rustc("-vV").splitlines() if l.startswith("host:"))

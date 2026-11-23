@@ -103,7 +103,9 @@ pub fn json_schema() -> Value {
                 object(json!({
                     "kind": { "const": "bounded" },
                     "capacity": { "type": "integer" },
-                    "overflow": text,
+                    "overflow": { "enum": [
+                        "drop_oldest", "drop_newest", "error_on_full", "block", "coalesce",
+                    ] },
                 }), &["kind", "capacity", "overflow"]),
             ] },
             "edge": object(json!({

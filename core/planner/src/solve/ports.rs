@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use daedalus_graph::{NodeDoc, NodeKindDoc};
+use daedalus_graph::{EdgePolicyDoc, NodeDoc, NodeKindDoc};
 use daedalus_registry::{Entry, FanInDecl, PortDecl, TypeRef};
 use daedalus_value::Access;
 
@@ -53,6 +53,12 @@ pub enum PortError {
     },
     /// An edge names a node index outside the graph.
     NodeOutOfRange { index: u32 },
+    /// A bounded edge's overflow word names no rule.
+    OverflowUnknown {
+        node: String,
+        port: String,
+        overflow: String,
+    },
 }
 
 impl fmt::Display for PortError {
@@ -88,6 +94,16 @@ impl fmt::Display for PortError {
             PortError::NodeOutOfRange { index } => {
                 write!(f, "an edge names node {index}, which isn't in the graph")
             }
+            PortError::OverflowUnknown {
+                node,
+                port,
+                overflow,
+            } => write!(
+                f,
+                "the edge into `{node}.{port}` is bounded with overflow `{overflow}`, which is \
+                 not one of {}",
+                daedalus_graph::OverflowDoc::WORDS
+            ),
         }
     }
 }
@@ -315,6 +331,15 @@ pub fn run(work: &mut Work<'_>) {
                 index: edge.from.node.max(edge.to.node),
             });
             continue;
+        }
+        if let EdgePolicyDoc::Bounded { overflow, .. } = &edge.policy
+            && daedalus_graph::OverflowDoc::parse(overflow).is_none()
+        {
+            errors.push(PortError::OverflowUnknown {
+                node: work.graph.nodes[edge.to.node as usize].doc.id.clone(),
+                port: edge.to.port.clone(),
+                overflow: overflow.clone(),
+            });
         }
         check_end(
             work,

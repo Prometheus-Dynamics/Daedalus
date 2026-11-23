@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # bound: 99 s (three times its slowest green run, 33 s)
+# wait: 2508 s (its own build of the examples, cold after a reseed: the bound of the `test` step,
+#   which builds the whole workspace)
 # Builds and runs each example binary, which must exit 0, and runs each example's test, which
 # checks what it printed against its golden lines.
 #
@@ -92,9 +94,19 @@ self_test() {
   echo "smoke: the planted cases behave: a wrong golden line fails the step, a right one passes"
 }
 
+build_example() { # name: the example's binary and its test, built and not run
+  local package="daedalus-example-$1"
+  cargo build --locked -q -p "$package" || fail "$package did not build"
+  cargo test --locked -q -p "$package" --no-run || fail "$package's test did not build"
+}
+
 case "${1:-}" in
   --self-test) self_test ;;
   "")
+    # The build first, then the mark that starts the step's bound (scripts/bounded.py): the bound
+    # is on running the examples, and a cold build ahead of that has its own, the wait bound.
+    for example in "${EXAMPLES[@]}"; do build_example "$example"; done
+    if [[ -n "${DAEDALUS_BOUND_STARTED:-}" ]]; then : >"$DAEDALUS_BOUND_STARTED"; fi
     self_test
     for example in "${EXAMPLES[@]}"; do run_example "$example"; done
     ;;

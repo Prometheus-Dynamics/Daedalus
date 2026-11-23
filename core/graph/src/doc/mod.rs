@@ -335,6 +335,35 @@ pub struct GroupDoc {
     pub edge_policies: Vec<StagePolicyDoc>,
 }
 
+/// What a bounded edge does with a new value when it is full.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverflowDoc {
+    DropOldest,
+    DropNewest,
+    ErrorOnFull,
+    /// The producer is held back until there is room.
+    Block,
+    /// The new value replaces the queued one.
+    Coalesce,
+}
+
+impl OverflowDoc {
+    /// Every word a bounded edge's `overflow` may be, for a message that lists them.
+    pub const WORDS: &'static str = "drop_oldest, drop_newest, error_on_full, block, coalesce";
+
+    /// The rule `word` names, or `None` for a word that names none.
+    pub fn parse(word: &str) -> Option<OverflowDoc> {
+        Some(match word {
+            "drop_oldest" => OverflowDoc::DropOldest,
+            "drop_newest" => OverflowDoc::DropNewest,
+            "error_on_full" => OverflowDoc::ErrorOnFull,
+            "block" => OverflowDoc::Block,
+            "coalesce" => OverflowDoc::Coalesce,
+            _ => return None,
+        })
+    }
+}
+
 impl From<crate::EdgePolicy> for EdgePolicyDoc {
     fn from(policy: crate::EdgePolicy) -> EdgePolicyDoc {
         match policy {

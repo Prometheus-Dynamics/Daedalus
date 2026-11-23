@@ -303,3 +303,20 @@ fn a_value_a_working_step_sent_counts_from_the_tick_it_is_shown_in() {
     }
     assert_eq!(*seen.lock().unwrap(), [true]);
 }
+
+#[test]
+fn a_slot_kept_for_several_readers_lets_its_per_tick_value_go_too() {
+    let mut graph = graph(0, 0, false);
+    graph.fixture.specs[OPTIONAL as usize].kind = SlotKind::Held;
+    let mut runner = per_tick(&mut graph.fixture);
+    let value = send(&mut runner);
+    trigger(&mut runner);
+    runner.tick().unwrap();
+    // The reader ran and was lent the value; the slot still let it go when the tick ended.
+    assert_eq!(*graph.seen.lock().unwrap(), [true]);
+    assert_eq!(runner.queue(OPTIONAL).unwrap().len, 0);
+    assert_eq!(Arc::strong_count(&value), 1, "the slot released it");
+    trigger(&mut runner);
+    runner.tick().unwrap();
+    assert_eq!(*graph.seen.lock().unwrap(), [true, false]);
+}
