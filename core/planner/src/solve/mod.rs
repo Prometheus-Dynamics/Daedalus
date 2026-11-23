@@ -72,6 +72,8 @@ pub struct Node {
     pub consts: BTreeMap<String, Lit>,
     pub rate_in: Rate,
     pub rate_out: Rate,
+    /// The numbers the node's body reports about its own work, as its declaration lists them.
+    pub metrics: &'static [daedalus_registry::MetricDecl],
 }
 
 impl Node {
@@ -89,6 +91,7 @@ impl Node {
             consts: BTreeMap::new(),
             rate_in: Rate::ONE,
             rate_out: Rate::ONE,
+            metrics: &[],
         }
     }
 }

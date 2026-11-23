@@ -9,6 +9,13 @@ use daedalus_types::TypeExpr;
 
 use crate::stitched::Stitched;
 
+/// One metric of a node: its name and what its number is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MadeMetric {
+    pub name: String,
+    pub unit: daedalus_registry::MetricUnit,
+}
+
 /// One node of the graph, as a host reads it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MadeNode {
@@ -29,6 +36,9 @@ pub struct MadeNode {
     pub backend: Option<u8>,
     /// The output port names, in port order. Empty in a plan stored before they were kept.
     pub outputs: Vec<String>,
+    /// The numbers the node's body reports about its own work, in the order it numbers them.
+    /// Empty in a plan stored before they were kept.
+    pub metrics: Vec<MadeMetric>,
 }
 
 /// One edge, by the node and port it feeds, and its policy.

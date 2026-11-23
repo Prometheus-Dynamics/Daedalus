@@ -31,6 +31,7 @@ impl std::error::Error for DefaultsError {}
 /// Copies a declaration's defaults onto a node.
 pub(super) fn apply_declared(node: &mut Node, decl: &NodeDecl) {
     node.fire = decl.fire;
+    node.metrics = decl.metrics;
     node.reusable = decl.reusable;
     node.shareable = decl.shareable;
     node.required = decl

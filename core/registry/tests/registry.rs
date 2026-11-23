@@ -26,6 +26,7 @@ const fn decl(
         shareable: false,
         conversion: None,
         group: None,
+        metrics: &[],
     }
 }
 

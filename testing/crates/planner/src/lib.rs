@@ -59,6 +59,7 @@ pub struct Decl {
     shareable: bool,
     conversion: Option<Conversion>,
     group: Option<&'static daedalus_graph::GroupDef>,
+    metrics: &'static [daedalus_registry::MetricDecl],
     config: Vec<ConfigDecl>,
     bodies: Vec<(&'static str, &'static str, &'static [&'static str])>,
 }
@@ -73,6 +74,7 @@ pub fn decl(id: &str) -> Decl {
         shareable: false,
         conversion: None,
         group: None,
+        metrics: &[],
         config: Vec::new(),
         bodies: Vec::new(),
     }
@@ -151,6 +153,11 @@ impl Decl {
         self
     }
 
+    pub fn metrics(mut self, metrics: &'static [daedalus_registry::MetricDecl]) -> Decl {
+        self.metrics = metrics;
+        self
+    }
+
     pub fn shareable(mut self) -> Decl {
         self.shareable = true;
         self
@@ -198,6 +205,7 @@ impl Decl {
             shareable: self.shareable,
             conversion: self.conversion,
             group: self.group,
+            metrics: self.metrics,
         }));
         for (backend, text, needs) in self.bodies {
             let record: &'static NodeRecord = Box::leak(Box::new(NodeRecord {

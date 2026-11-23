@@ -15,6 +15,7 @@ use crate::facts::{MadeEdge, MadeNode, PlanFacts};
 use crate::plan::{MadeMove, MadePlan, MadeRegion};
 use crate::recipe::{RecipeBody, RecipeHost, RegionRecipe};
 use crate::stitched::{HostPort, Item, Stitched, UnitId};
+use daedalus_registry::MetricUnit;
 
 /// The first bytes of a made plan.
 pub const MAGIC: &[u8; 8] = b"DAEDMADE";
@@ -73,8 +74,17 @@ fn write_facts(w: Out<'_>, facts: &PlanFacts) -> Result<(), WireError> {
 
 pub(crate) fn write_node(w: Out<'_>, node: &MadeNode) -> Result<(), WireError> {
     write_node_as_first_stored(w, node)?;
-    // Added at the record's end, so a plan stored before it still reads (`read_node`).
-    write_strs(w, &node.outputs)
+    // Each added at the record's end, so a plan stored before it still reads (`read_node`).
+    write_strs(w, &node.outputs)?;
+    w.len(node.metrics.len())?;
+    for metric in &node.metrics {
+        w.str(&metric.name)?;
+        w.u8(match metric.unit {
+            MetricUnit::Ns => 0,
+            MetricUnit::Count => 1,
+        });
+    }
+    Ok(())
 }
 
 /// The record as plans were first stored, before the output names.

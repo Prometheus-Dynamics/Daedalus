@@ -163,6 +163,9 @@ Nothing is turned off automatically.
   costs one clock read and three additions, and one more addition for each output it
   publishes. Nothing in either case allocates: the figures are in a table sized when the plan
   loads, 144 bytes a step.
+- `loaded.metrics()`: the metrics the graph's nodes declare, each with its node, name and unit
+  (see [node-authoring.md](node-authoring.md#metrics)). They come from the plan, so a graph
+  need not run to be asked, and a stored plan keeps them.
 - `set_node_on(node, on)`: turn a node off or on by hand.
 - `set_unmerged(true)`: run every node as its own step, to find which node in a merged step
   fails. It is never done automatically.
