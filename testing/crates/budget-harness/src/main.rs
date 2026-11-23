@@ -25,7 +25,8 @@ use daedalus_budget_harness::plugin::{
     bytes_node, bytes_tick, handover_node, handover_tick, plugin_node, plugin_tick,
 };
 use daedalus_budget_harness::{
-    Stage, big, chain, chain_tick, idle_tick, large_feed, large_handle, large_step,
+    Stage, big, chain, chain_tick, fanned_conversion, fanned_conversion_tick, idle_tick,
+    large_feed, large_handle, large_step,
 };
 use daedalus_handoff_bench as handoff;
 use std::sync::Arc;
@@ -213,6 +214,20 @@ fn run(args: &[String]) -> Result<(), String> {
             if idle != ticks {
                 return Err("a tick with nothing fed was not idle".to_owned());
             }
+        }
+        "convert" => {
+            let ticks = number(args.get(1), 0)?;
+            let mut host = fanned_conversion();
+            let mut sum = 0u64;
+            for value in 0..ticks {
+                let got = black_box(fanned_conversion_tick(&mut host, value));
+                // Each of the three readers gives `value * 3 + 1`.
+                if got != value.wrapping_mul(3).wrapping_add(1).wrapping_mul(3) {
+                    return Err(format!("tick {value} gave {got}"));
+                }
+                sum = sum.wrapping_add(got);
+            }
+            println!("convert: {ticks} ticks, sum {sum}");
         }
         "chain" => {
             let ticks = number(args.get(1), 0)?;

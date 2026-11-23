@@ -1,10 +1,18 @@
 //! Puts conversion nodes on edges whose two ends declare different types.
+//!
+//! One output converted the same way for several readers is converted once: the readers share the
+//! conversion's output as they would any node's. The path is still chosen for each pair of types
+//! by itself. So where two readers want different types from one output, each gets its own
+//! cheapest path and they share whatever those paths begin with; a dearer path for one that would
+//! share more with the other is not looked for.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, PortRefDoc};
 use daedalus_registry::TypeRef;
 use daedalus_types::{Scalar, TypeExpr, TypeKey};
+use daedalus_value::Access;
 
 use super::Work;
 use super::adapter::Routes;
@@ -83,10 +91,27 @@ fn end(work: &Work<'_>, node: u32, port: &str, input: bool) -> Option<(TypeRef, 
         .map(|known| (known.ty.clone(), known.generic))
 }
 
-/// The edges through `path`, ending with the original edge's policy.
-fn route_edge(work: &mut Work<'_>, edge: &EdgeDoc, path: &[&str], out: &mut Vec<EdgeDoc>) {
+/// The conversions already put behind an output: for an output and a conversion's id, the node
+/// that conversion was inserted as and its output port.
+type Made = BTreeMap<(u32, String, String), PortRefDoc>;
+
+/// The edges through `path`, ending with the original edge's policy. A conversion an earlier edge
+/// already put behind the same output is used again, so several readers of one output that need
+/// the same conversion share one node, and two paths that start alike share their start.
+fn route_edge(
+    work: &mut Work<'_>,
+    edge: &EdgeDoc,
+    path: &[&str],
+    made: &mut Made,
+    out: &mut Vec<EdgeDoc>,
+) {
     let mut from = edge.from.clone();
     for id in path {
+        let key = (from.node, from.port.clone(), id.to_string());
+        if let Some(output) = made.get(&key) {
+            from = output.clone();
+            continue;
+        }
         let Some(index) = work.insert_node(id) else {
             continue; // The table came from this registry, so every id is there.
         };
@@ -104,6 +129,7 @@ fn route_edge(work: &mut Work<'_>, edge: &EdgeDoc, path: &[&str], out: &mut Vec<
             node: index,
             port: output,
         };
+        made.insert(key, from.clone());
     }
     out.push(EdgeDoc {
         from,
@@ -116,6 +142,7 @@ pub fn run(work: &mut Work<'_>) {
     let mut routes = Routes::new(&work.catalog.conversions());
     let edges = std::mem::take(&mut work.graph.edges);
     let mut out = Vec::with_capacity(edges.len());
+    let mut made = Made::new();
     for edge in edges {
         let from = end(work, edge.from.node, &edge.from.port, false);
         let to = end(work, edge.to.node, &edge.to.port, true);
@@ -132,7 +159,17 @@ pub fn run(work: &mut Work<'_>) {
             _ => None,
         };
         if let Some(path) = path {
-            route_edge(work, &edge, &path, &mut out);
+            // A reader that takes its value needs one nobody else reads, so its conversion is
+            // its own: sharing one and then copying its output would cost more, and would need
+            // a copy the registry may not have.
+            let takes = work.graph.nodes[edge.to.node as usize]
+                .inputs
+                .iter()
+                .find(|port| port.name == edge.to.port)
+                .is_some_and(|port| matches!(port.access, Access::Move | Access::Modify));
+            let mut own = Made::new();
+            let made = if takes { &mut own } else { &mut made };
+            route_edge(work, &edge, &path, made, &mut out);
             continue;
         }
         let name = |index: u32| work.graph.nodes[index as usize].doc.id.clone();

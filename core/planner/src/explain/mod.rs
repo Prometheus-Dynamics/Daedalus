@@ -100,6 +100,20 @@ pub struct QueuedExplain {
     pub note: String,
 }
 
+/// A node the planner added: a conversion between two types, or a copy for a reader that takes
+/// its value. It is added once for an output however many readers need it, and they share what
+/// it makes, so its cost is paid once a value and not once a reader.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddedExplain {
+    pub node: u32,
+    pub id: String,
+    /// The output it reads.
+    pub from_node: u32,
+    pub from_port: String,
+    /// Every reader its value reaches.
+    pub readers: Vec<PortExplain>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Explain {
     pub nodes: Vec<NodeExplain>,
@@ -112,6 +126,9 @@ pub struct Explain {
     /// Left out when there are none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queued: Vec<QueuedExplain>,
+    /// The nodes the planner added, each once with its readers. Left out when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added: Vec<AddedExplain>,
 }
 
 fn reason(reason: &Reason) -> PlaceReason {
@@ -169,36 +186,84 @@ fn transfers_of(planned: &Planned, edge: &EdgeDoc, out: &mut Vec<String>) {
     );
 }
 
-fn edge_explain(planned: &Planned, first: &EdgeDoc) -> EdgeExplain {
+/// The edge into a planner-added node. It has one input, so there is one.
+fn edge_into(graph: &Graph, node: u32) -> Option<&EdgeDoc> {
+    graph.edges.iter().find(|edge| edge.to.node == node)
+}
+
+/// The edge the graph asked for that ends at `last`'s reader: back from the reader through the
+/// nodes the planner added, to the output the graph named. Several readers may share an added
+/// node, so the walk goes from the reader, which has one way back.
+fn edge_explain(planned: &Planned, last: &EdgeDoc) -> EdgeExplain {
     let graph = &planned.graph;
     let (mut conversion, mut transfer) = (Vec::new(), Vec::new());
-    let mut edge = first;
-    transfers_of(planned, edge, &mut transfer);
-    // Each planner-added node has one input and one output, so its one outgoing edge continues.
-    while graph.nodes[edge.to.node as usize].inserted != Inserted::No {
-        let at = edge.to.node;
+    let mut first = last;
+    let mut hops = vec![last];
+    while graph.nodes[first.from.node as usize].inserted != Inserted::No {
+        let at = first.from.node;
         conversion.push(graph.nodes[at as usize].doc.id.clone());
-        let Some(next) = graph.edges.iter().find(|e| e.from.node == at) else {
+        let Some(before) = edge_into(graph, at) else {
             break;
         };
-        edge = next;
-        transfers_of(planned, edge, &mut transfer);
+        first = before;
+        hops.push(before);
+    }
+    conversion.reverse();
+    for hop in hops.iter().rev() {
+        transfers_of(planned, hop, &mut transfer);
     }
     // Where the first edge's value is written, and where the last edge's consumer reads.
     let written_in = spaces_of(planned, first).map(|(written, _)| written);
-    let read_in = spaces_of(planned, edge).map(|(_, read)| read);
+    let read_in = spaces_of(planned, last).map(|(_, read)| read);
     let in_place = transfer.is_empty() && written_in.is_some() && written_in == read_in;
     EdgeExplain {
         from_node: first.from.node,
         from_port: first.from.port.clone(),
-        to_node: edge.to.node,
-        to_port: edge.to.port.clone(),
+        to_node: last.to.node,
+        to_port: last.to.port.clone(),
         conversion,
         transfer,
         written_in,
         read_in,
         in_place,
     }
+}
+
+/// Each node the planner added, once, with the output it reads and every reader its value
+/// reaches, through any nodes added after it.
+fn added(graph: &Graph) -> Vec<AddedExplain> {
+    let mut out = Vec::new();
+    for (at, node) in graph.nodes.iter().enumerate() {
+        if node.inserted == Inserted::No {
+            continue;
+        }
+        let Some(source) = edge_into(graph, at as u32) else {
+            continue;
+        };
+        // The readers downstream: follow every edge out, through added nodes.
+        let (mut readers, mut open) = (Vec::new(), vec![at as u32]);
+        while let Some(from) = open.pop() {
+            for edge in graph.edges.iter().filter(|edge| edge.from.node == from) {
+                if graph.nodes[edge.to.node as usize].inserted == Inserted::No {
+                    readers.push(PortExplain {
+                        node: edge.to.node,
+                        port: edge.to.port.clone(),
+                    });
+                } else {
+                    open.push(edge.to.node);
+                }
+            }
+        }
+        readers.sort_by(|a, b| (a.node, &a.port).cmp(&(b.node, &b.port)));
+        out.push(AddedExplain {
+            node: at as u32,
+            id: node.doc.id.clone(),
+            from_node: source.from.node,
+            from_port: source.from.port.clone(),
+            readers,
+        });
+    }
+    out
 }
 
 fn port_name(graph: &Graph, port: &PortRef, inputs: bool) -> PortExplain {
@@ -305,7 +370,7 @@ pub fn explain_plan(planned: &Planned) -> Explain {
     let edges = graph
         .edges
         .iter()
-        .filter(|edge| graph.nodes[edge.from.node as usize].inserted == Inserted::No)
+        .filter(|edge| graph.nodes[edge.to.node as usize].inserted == Inserted::No)
         .map(|edge| edge_explain(planned, edge))
         .collect();
     let mut units = Vec::new();
@@ -346,5 +411,6 @@ pub fn explain_plan(planned: &Planned) -> Explain {
         units,
         decodes: converted,
         queued: queued(graph),
+        added: added(graph),
     }
 }
