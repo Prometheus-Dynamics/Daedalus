@@ -183,6 +183,35 @@ pub struct MetricDecl {
     pub unit: MetricUnit,
 }
 
+/// The package a node comes from, and its version: what a stored graph names when it says what
+/// it needs of a host. `#[node]` fills it in from the crate that declares the node. A declaration
+/// written by hand takes it from [`provider!`](crate::provider), which reads the calling crate's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Provider {
+    pub name: &'static str,
+    /// Empty when the provider has no version: a plugin's nodes carry the plugin's name alone.
+    pub version: &'static str,
+}
+
+impl Provider {
+    /// No provider: the node is nobody's to require.
+    pub const NONE: Provider = Provider {
+        name: "",
+        version: "",
+    };
+}
+
+/// The provider that is the crate this is written in: its package name and version.
+#[macro_export]
+macro_rules! provider {
+    () => {
+        $crate::Provider {
+            name: ::core::env!("CARGO_PKG_NAME"),
+            version: ::core::env!("CARGO_PKG_VERSION"),
+        }
+    };
+}
+
 /// What the graph sees. One per id, shared by every body.
 #[derive(Clone, Debug)]
 pub struct NodeDecl {
@@ -203,6 +232,8 @@ pub struct NodeDecl {
     pub group: Option<&'static GroupDef>,
     /// The numbers the node's body reports about its own work, in the order it numbers them.
     pub metrics: &'static [MetricDecl],
+    /// The package the node comes from.
+    pub provider: Provider,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

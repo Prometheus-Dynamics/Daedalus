@@ -110,7 +110,7 @@ consumer wrote it; nothing on `next` keeps it.
 | `ExecutionTelemetry` node metrics | `Telemetry::report(runner).nodes` (a `NodeRow` a step), and `loaded.metric_rows()` for what nodes report themselves |
 | `ExecutionTelemetry` edge metrics | No per-edge table. `port_infos()` gives a host port's queue depth, `port_drops(port)` its drops, and a full edge fails its tick naming the edge |
 | `registry.graph_document`, `refresh_graph_ports_with` | No registry call. A document is `GraphDoc`; the planner fills a host bridge's ports from the graph's edges and checks every node's ports against its declaration |
-| `registry.graph_requirements`, `GraphDocument::requires` | `GraphDoc::requires` is carried in the document. Nothing on `next` checks it |
+| `registry.graph_requirements`, `GraphDocument::requires` | `registry.requirements(&graph)` gives what a graph needs, for the document's `requires`; `registry.check_requires(&doc)` refuses a document the host can't meet, by package and version |
 | `GraphDocument::from_json`, `to_json` | `GraphDoc::parse(text)`, `doc.to_json()` |
 
 ## What changed shape

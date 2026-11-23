@@ -134,6 +134,11 @@ fn promote(decl: OwnedDecl) -> &'static NodeRecord {
         conversion: decl.conversion,
         group: None,
         metrics: &[],
+        // A plugin's or a worker's nodes are provided by it, by name. It gives no version.
+        provider: crate::Provider {
+            name: at.0,
+            version: "",
+        },
     }));
     Box::leak(Box::new(NodeRecord {
         decl: node,

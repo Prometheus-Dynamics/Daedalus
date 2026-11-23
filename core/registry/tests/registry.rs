@@ -27,6 +27,7 @@ const fn decl(
         conversion: None,
         group: None,
         metrics: &[],
+        provider: daedalus_registry::Provider::NONE,
     }
 }
 

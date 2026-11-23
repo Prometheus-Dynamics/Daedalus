@@ -285,6 +285,8 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
             conversion: #conversion,
             group: ::core::option::Option::None,
             metrics: &[#(#metrics),*],
+            // The crate the node is written in.
+            provider: ::daedalus_registry::provider!(),
         };
 
         pub const #node: ::daedalus_registry::NodeRecord = ::daedalus_registry::NodeRecord {

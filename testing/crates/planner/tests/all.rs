@@ -3,6 +3,8 @@
 //! `[[test]]` of its own in Cargo.toml, with the reason beside it. A new file goes in one
 //! or the other; the boundary check refuses a test file in neither.
 
+#[path = "a8_requires.rs"]
+mod a8_requires;
 #[path = "b10_control.rs"]
 mod b10_control;
 #[path = "b11_explain_queued.rs"]

@@ -60,6 +60,7 @@ pub struct Decl {
     conversion: Option<Conversion>,
     group: Option<&'static daedalus_graph::GroupDef>,
     metrics: &'static [daedalus_registry::MetricDecl],
+    provider: daedalus_registry::Provider,
     config: Vec<ConfigDecl>,
     bodies: Vec<(&'static str, &'static str, &'static [&'static str])>,
 }
@@ -75,6 +76,7 @@ pub fn decl(id: &str) -> Decl {
         conversion: None,
         group: None,
         metrics: &[],
+        provider: daedalus_registry::Provider::NONE,
         config: Vec::new(),
         bodies: Vec::new(),
     }
@@ -153,6 +155,12 @@ impl Decl {
         self
     }
 
+    /// The package the node comes from, and its version.
+    pub fn provider(mut self, name: &'static str, version: &'static str) -> Decl {
+        self.provider = daedalus_registry::Provider { name, version };
+        self
+    }
+
     pub fn metrics(mut self, metrics: &'static [daedalus_registry::MetricDecl]) -> Decl {
         self.metrics = metrics;
         self
@@ -206,6 +214,7 @@ impl Decl {
             conversion: self.conversion,
             group: self.group,
             metrics: self.metrics,
+            provider: self.provider,
         }));
         for (backend, text, needs) in self.bodies {
             let record: &'static NodeRecord = Box::leak(Box::new(NodeRecord {

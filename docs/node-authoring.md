@@ -520,3 +520,22 @@ registry.register_owned(closure_node(
 A graph is JSON in the format [`schema/`](schema) describes: nodes by id, edges between ports,
 and one or more host bridge nodes whose ports are the graph's inputs and outputs. A `label` on a
 node names it in reports and across reloads.
+
+A document's `requires` says what the graph needs of a host: the packages its nodes come from,
+each with a version. Every node records its provider. `#[node]` writes the name and version of
+the crate the node is declared in, with nothing for the author to do; a declaration built by hand
+uses `daedalus_registry::provider!()`, which gives the calling crate's; a plugin's node is
+provided by the plugin, by name, with no version.
+
+- When a host stores a graph, it fills `requires` from `registry.requirements(&graph)`: the
+  provider of every node the graph uses, a group's stages included, each once.
+- When a host loads a stored document, it calls `registry.check_requires(&doc)` before planning.
+  A provider no registered node comes from is refused by name, and so is a version the host does
+  not meet: "requires `vision` 1.5.0, and the host has 1.4.2".
+- A version is a plain one, such as `1.4.2` (`1.4` and `1` are read as `1.4.0` and `1.0.0`). The
+  host's version meets it when it is on the same major version, or the same minor while the major
+  is 0, and is at least as new. A requirement with no version is met by any version of the
+  provider. A version that is not plain, a range for instance, is refused as unreadable, and a
+  version asked of a provider that has none is refused too.
+- Planning does not read `requires`: it takes the graph, not the document. A graph with a node
+  nobody registered still fails to plan, naming the node; `requires` names the package.

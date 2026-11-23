@@ -68,6 +68,7 @@ const fn decl(id: &'static str) -> NodeDecl {
         conversion: None,
         group: None,
         metrics: &[],
+        provider: daedalus_registry::Provider::NONE,
     }
 }
 
