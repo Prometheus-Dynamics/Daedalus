@@ -174,16 +174,17 @@ needs nothing else: `PluginBackend` lists the two moves, and the planner places 
   - Bytes cross by handle. A megabyte a plugin hands over is read by a linked node at the
     address the plugin has it at.
   - Anything else crosses as its type's wire form: the linked node writes it once.
+- A plugin's own plain-data type reaches other nodes through its codec. The codec's four
+  conversions join the registry, the planner puts one in where the types call for it, and the
+  host runs it with the codec's own function over the value's bytes. A result of 16 bytes or
+  less is written in place and nothing is allocated for it; a longer one is one allocation,
+  held behind a count.
 - A type with no crossing form is refused when the graph is planned, by the node, the port and
   the type: ``output `y` of t.seal is read outside this program (by a worker or a plugin), but
   Kept has no crossing form: add #[derive(WireForm)] to Kept``.
 
 What does not work yet:
 
-- A graph that needs a plugin's codec. The codec's four conversions join the registry, and the
-  planner puts one in where the types call for it, but the plugin's backend has no step for a
-  conversion, so the graph is refused, naming the conversion nodes. `Codec::convert` runs one
-  from host code.
 - A plugin whose backend the host wraps to give it memory of its own (a device) beside a plugin
   on `PluginBackend`: nothing moves a value between `plugin.host` and the wrapper's space, and
   the graph is refused, naming the edge and both spaces.

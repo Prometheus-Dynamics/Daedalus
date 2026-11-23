@@ -72,6 +72,19 @@ impl Codec {
     /// Runs one conversion over `input`, and returns its output. A plugin that refuses the input
     /// gives a typed error with the codec's key.
     pub fn convert(&self, direction: Direction, input: &[u8]) -> Result<Vec<u8>, LoadError> {
+        let mut out = Vec::new();
+        self.convert_into(direction, input, &mut out)?;
+        Ok(out)
+    }
+
+    /// As [`convert`](Codec::convert), into `out`, which is reused: nothing is allocated once it
+    /// has grown to the size of a result.
+    pub fn convert_into(
+        &self,
+        direction: Direction,
+        input: &[u8],
+        out: &mut Vec<u8>,
+    ) -> Result<(), LoadError> {
         let convert = match direction {
             Direction::ToValue => self.to_value,
             Direction::FromValue => self.from_value,
@@ -86,7 +99,8 @@ impl Codec {
         if status != Status::OK {
             return Err(self.refused(status));
         }
-        let mut out = vec![0u8; needed];
+        out.clear();
+        out.resize(needed, 0);
         // SAFETY: as above, and `out` holds `needed` writable bytes, the size the plugin asked for.
         let status = unsafe {
             convert(
@@ -101,7 +115,7 @@ impl Codec {
             return Err(self.refused(status));
         }
         out.truncate(needed);
-        Ok(out)
+        Ok(())
     }
 
     /// The plugin's bytes as a block, named by this codec's key and layout.

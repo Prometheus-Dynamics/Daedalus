@@ -375,7 +375,7 @@ fn bytes_from_a_linked_node_pass_through_a_plugin_to_a_linked_node() {
 }
 
 #[test]
-fn a_graph_that_needs_a_plugins_codec_does_not_plan_today() {
+fn a_plugins_own_type_reaches_linked_nodes_through_its_codec() {
     let (npu, fixture, registry) = loaded(&mut Loader::new());
     let (number, number_in, number_out) = from_inventory(&npu, "npu.number");
     let graph = GraphBody {
@@ -393,24 +393,35 @@ fn a_graph_that_needs_a_plugins_codec_does_not_plan_today() {
         ],
         groups: Vec::new(),
     };
-    // The planner finds the other plugin's codec between `u32` and its type and puts the
-    // conversions in. They are declared for that plugin's backend, which has no step for them.
+    // One plugin's node takes the other plugin's plain-data type. The planner finds that
+    // plugin's codec between `u32` and the type, and puts its conversions in on both sides.
     let device = PluginBackend::new(Arc::clone(&npu), 0);
     let cells = PluginBackend::new(Arc::clone(&fixture), 0);
-    let refused = plan(
+    let planned = plan(
         &graph,
         &registry,
         &[&device, &cells, &CpuBackend],
         &Config::default(),
     )
-    .expect_err("no step for a conversion");
-    let told = refused.to_string();
-    for part in [
-        "dylib.number.from_value",
-        "dylib.number.to_value",
-        "fixture.cpu",
-    ] {
-        assert!(told.contains(part), "{told}");
+    .expect("the graph plans");
+    let conversions: Vec<Vec<String>> = explain_plan(&planned)
+        .edges
+        .into_iter()
+        .filter(|edge| edge.to_node == 2 || edge.from_node == 2)
+        .map(|edge| edge.conversion)
+        .collect();
+    assert_eq!(
+        conversions,
+        [
+            vec!["dylib.number.from_value".to_string()],
+            vec!["dylib.number.to_value".to_string()]
+        ]
+    );
+    let mut host = LoadedHost::load(planned, LoadOptions::default()).expect("the plan loads");
+    // The codec's number is one less than the value it stands for, and it gives the value
+    // back on the way out: each linked node adds one.
+    for x in [0u32, 1, 41] {
+        assert_eq!(through(&mut host, x), Some(x + 2));
     }
 }
 

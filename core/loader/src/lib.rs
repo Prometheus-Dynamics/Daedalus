@@ -7,6 +7,7 @@ pub use daedalus_abi as abi;
 
 mod adapter;
 mod codec;
+mod convert;
 mod entry;
 pub mod export;
 mod generation;
