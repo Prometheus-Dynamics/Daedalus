@@ -57,6 +57,12 @@ keep only the newest value, bound it and say what is dropped when it is full, or
 producer. An input port can be given a freshness limit, so a stale value is dropped rather than
 used.
 
+The edges inside a group take their policy from the group: `edge_policies` lists a stage input
+and the policy of the connects into it (`GroupDef::edge_policies`, or `"edge_policies": [{"at":
+{"stage": "b", "port": "in"}, "policy": {"kind": "latest_only"}}]` in a document). A connect not
+listed is a FIFO. An entry no connect leads into, or a second one for the same input, is refused
+by name when the group is expanded.
+
 A host input's policy on the host bridge says what its value is. A `consume` input (the default)
 is work: a feed wakes its readers, each value is read once, and a domain ticks the graph for it.
 That holds with several readers too, where the one value is kept for all of them until the next

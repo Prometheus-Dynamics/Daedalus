@@ -48,6 +48,7 @@ fn pair(id: &str, first: &str, second: &str) -> GroupDoc {
         outputs: BTreeMap::from([("out".to_string(), at("second", "out"))]),
         consts: Vec::new(),
         metadata: BTreeMap::new(),
+        edge_policies: Vec::new(),
     }
 }
 
@@ -165,9 +166,7 @@ fn a_stages_own_metadata_is_kept_and_wins() {
 #[test]
 fn a_declared_groups_stage_metadata_is_kept() {
     static GROUP: GroupDef = GroupDef {
-        id: "t.declared",
         stages: &[("only", "t.pass")],
-        connects: &[],
         inputs: &[(
             "in",
             &[daedalus_graph::StagePort {
@@ -182,8 +181,8 @@ fn a_declared_groups_stage_metadata_is_kept() {
                 port: "out",
             },
         )],
-        consts: &[],
         metadata: &[("only", FUSION, Literal::Bool(false))],
+        ..GroupDef::new("t.declared")
     };
     let mut registry = registry();
     decl("t.declared")

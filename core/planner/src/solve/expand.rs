@@ -5,7 +5,7 @@ use std::fmt;
 
 use daedalus_graph::{
     EdgeDoc, EdgePolicyDoc, GraphBody, GroupDef, GroupDoc, Lit, NodeDoc, NodeKindDoc, PortRefDoc,
-    StageConstDoc, StagePortDoc,
+    StageConstDoc, StagePolicyDoc, StagePortDoc,
 };
 use daedalus_types::Literal;
 
@@ -35,6 +35,18 @@ pub enum ExpandError {
     NodeOutOfRange {
         index: u32,
     },
+    /// An edge policy of a group names a stage input no connect of the group leads into.
+    EdgePolicyUnmatched {
+        group: String,
+        stage: String,
+        port: String,
+    },
+    /// A group gives one stage input two edge policies.
+    EdgePolicyTwice {
+        group: String,
+        stage: String,
+        port: String,
+    },
 }
 
 impl fmt::Display for ExpandError {
@@ -49,6 +61,16 @@ impl fmt::Display for ExpandError {
             }
             ExpandError::NodeOutOfRange { index } => {
                 write!(f, "an edge names node {index}, which isn't in the graph")
+            }
+            ExpandError::EdgePolicyUnmatched { group, stage, port } => write!(
+                f,
+                "group `{group}` gives `{stage}.{port}` an edge policy, but no connect leads into it"
+            ),
+            ExpandError::EdgePolicyTwice { group, stage, port } => {
+                write!(
+                    f,
+                    "group `{group}` gives `{stage}.{port}` two edge policies"
+                )
             }
         }
     }
@@ -126,6 +148,14 @@ fn from_def(def: &GroupDef) -> GroupDoc {
             }
             by_stage
         },
+        edge_policies: def
+            .edge_policies
+            .iter()
+            .map(|(at, policy)| StagePolicyDoc {
+                at: port(at),
+                policy: (*policy).into(),
+            })
+            .collect(),
     }
 }
 
@@ -221,6 +251,7 @@ impl Expander<'_> {
             node: port.stage.clone(),
             port: port.port.clone(),
         };
+        let policies = self.edge_policies(&node.id, &body);
         let mut connects = Vec::new();
         for (a, b) in &body.connects {
             match (index_of(&a.stage), index_of(&b.stage)) {
@@ -234,7 +265,10 @@ impl Expander<'_> {
                             node: to as u32,
                             port: b.port.clone(),
                         },
-                        policy: EdgePolicyDoc::default(),
+                        policy: policies
+                            .get(&(b.stage.as_str(), b.port.as_str()))
+                            .cloned()
+                            .unwrap_or_default(),
                     });
                 }
                 (None, _) => self.errors.push(missing(a)),
@@ -272,6 +306,28 @@ impl Expander<'_> {
             inputs,
             outputs,
         }
+    }
+
+    /// The group's edge policies by the stage input they're for. One that no connect leads
+    /// into, or a second for the same input, is refused.
+    fn edge_policies<'g>(
+        &mut self,
+        group: &str,
+        body: &'g GroupDoc,
+    ) -> BTreeMap<(&'g str, &'g str), EdgePolicyDoc> {
+        let mut policies = BTreeMap::new();
+        for entry in &body.edge_policies {
+            let key = (entry.at.stage.as_str(), entry.at.port.as_str());
+            let (group, stage, port) = (group.to_string(), key.0.to_string(), key.1.to_string());
+            if !body.connects.iter().any(|(_, to)| *to == entry.at) {
+                self.errors
+                    .push(ExpandError::EdgePolicyUnmatched { group, stage, port });
+            } else if policies.insert(key, entry.policy.clone()).is_some() {
+                self.errors
+                    .push(ExpandError::EdgePolicyTwice { group, stage, port });
+            }
+        }
+        policies
     }
 
     fn input_ports(&mut self, mapping: &Mapping, port: &str) -> Vec<Flat> {

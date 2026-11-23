@@ -88,7 +88,8 @@ pub struct StagePort {
     pub port: &'static str,
 }
 
-/// A group of nodes used as one. Data only: the planner expands it.
+/// A group of nodes used as one. Data only: the planner expands it. Start one from
+/// [`GroupDef::new`] and `..`, so a field added later doesn't need every group written again.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GroupDef {
     pub id: &'static str,
@@ -100,6 +101,26 @@ pub struct GroupDef {
     pub consts: &'static [(StagePort, Literal)],
     /// Metadata a stage's node carries: stage name, key and value.
     pub metadata: &'static [(&'static str, &'static str, Literal)],
+    /// The policy of the connects into a stage input, by that input. A connect not listed is
+    /// `Fifo`; an entry no connect leads into is refused at expansion, so a misspelt one can't
+    /// leave its edge `Fifo` unseen.
+    pub edge_policies: &'static [(StagePort, EdgePolicy)],
+}
+
+impl GroupDef {
+    /// A group named `id` with nothing in it.
+    pub const fn new(id: &'static str) -> GroupDef {
+        GroupDef {
+            id,
+            stages: &[],
+            connects: &[],
+            inputs: &[],
+            outputs: &[],
+            consts: &[],
+            metadata: &[],
+            edge_policies: &[],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -130,7 +151,6 @@ const _: GraphDef<'static> = GraphDef {
         policy: EdgePolicy::Fifo,
     }],
     groups: &[GroupDef {
-        id: "demo.pair",
         stages: &[("a", "demo.source"), ("b", "demo.gain")],
         connects: &[(
             StagePort {
@@ -150,7 +170,13 @@ const _: GraphDef<'static> = GraphDef {
                 port: "out",
             },
         )],
-        consts: &[],
-        metadata: &[],
+        edge_policies: &[(
+            StagePort {
+                stage: "b",
+                port: "in",
+            },
+            EdgePolicy::LatestOnly,
+        )],
+        ..GroupDef::new("demo.pair")
     }],
 };

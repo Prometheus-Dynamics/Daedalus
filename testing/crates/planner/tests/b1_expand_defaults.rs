@@ -43,6 +43,7 @@ fn wrapper(id: &str, stage_id: &str) -> GroupDoc {
         outputs: BTreeMap::from([("out".to_string(), at("inner", "out"))]),
         consts: Vec::new(),
         metadata: BTreeMap::new(),
+        edge_policies: Vec::new(),
     }
 }
 
@@ -121,6 +122,7 @@ fn a_group_on_a_declaration_expands_too() {
         )],
         consts: &[],
         metadata: &[],
+        edge_policies: &[],
     };
     let mut registry = registry();
     decl("t.declared")

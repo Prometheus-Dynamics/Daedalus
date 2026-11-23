@@ -30,6 +30,8 @@ pub enum Code {
     PortDuplicate,
     GroupMissing,
     GroupDepth,
+    /// A group's edge policy names no connect's target, or one target twice.
+    GroupEdgePolicy,
     NodeOutOfRange,
     BadFire,
     TypeInvalid,
@@ -140,6 +142,10 @@ impl From<&ExpandError> for Diagnostic {
             ExpandError::GroupMissing { id } => base(Code::GroupMissing).on(id),
             ExpandError::PortMissing { node, port, .. } => base(Code::PortMissing).at(node, port),
             ExpandError::NodeOutOfRange { .. } => base(Code::NodeOutOfRange),
+            ExpandError::EdgePolicyUnmatched { stage, port, .. }
+            | ExpandError::EdgePolicyTwice { stage, port, .. } => {
+                base(Code::GroupEdgePolicy).at(stage, port)
+            }
         }
     }
 }
