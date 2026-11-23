@@ -4,6 +4,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::scenario::{self, Proxy, Scenario};
@@ -17,6 +18,9 @@ const AT_ONCE: usize = 4;
 
 /// How long a driver may take to answer one scenario before it is stopped.
 const LIMIT: Duration = Duration::from_secs(30);
+/// How long a driver's pipes have to close once it has ended. They close as it exits unless a
+/// process it started holds them, so this only bounds that case.
+const GRACE: Duration = Duration::from_secs(5);
 
 /// Runs `cmd` over every scenario and every transport. Each answer is compared with the golden
 /// transcript of its scenario. `fixture` is the built plugin library (`build_fixture`).
@@ -251,7 +255,9 @@ fn normalize(text: &str, fixture: &Path) -> String {
 }
 
 /// Runs the driver once with `input` on stdin and `args` after its own arguments. Its stdout is
-/// returned when it exits cleanly. A driver that outlives `LIMIT` is stopped.
+/// returned when it exits cleanly. A driver that outlives `LIMIT` is stopped. Once it has ended,
+/// its pipes have `GRACE` to close: one a process it started still holds fails the run, naming the
+/// pipe and with what was read, rather than waiting on that process.
 fn run_child(cmd: &Command, args: Vec<String>, input: &str) -> Result<String, String> {
     let mut child_cmd = fresh(cmd);
     child_cmd.args(args);
@@ -264,21 +270,13 @@ fn run_child(cmd: &Command, args: Vec<String>, input: &str) -> Result<String, St
         .map_err(|error| format!("cannot start the driver: {error}"))?;
     let mut stdin = child.stdin.take().ok_or("no stdin")?;
     let writer_input = input.to_owned();
-    let writer = std::thread::spawn(move || {
+    let (wrote, writer) = mpsc::channel();
+    std::thread::spawn(move || {
         let _ = stdin.write_all(writer_input.as_bytes());
+        let _ = wrote.send(());
     });
-    let mut stdout = child.stdout.take().ok_or("no stdout")?;
-    let mut stderr = child.stderr.take().ok_or("no stderr")?;
-    let out = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stdout.read_to_string(&mut text);
-        text
-    });
-    let err = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stderr.read_to_string(&mut text);
-        text
-    });
+    let out = Pipe::read(child.stdout.take().ok_or("no stdout")?);
+    let err = Pipe::read(child.stderr.take().ok_or("no stderr")?);
     let deadline = Instant::now() + LIMIT;
     let status = loop {
         match child.try_wait() {
@@ -293,9 +291,33 @@ fn run_child(cmd: &Command, args: Vec<String>, input: &str) -> Result<String, St
             Err(error) => return Err(format!("waiting for the driver: {error}")),
         }
     };
-    let _ = writer.join();
-    let text = out.join().unwrap_or_default();
-    let stderr_text = err.join().unwrap_or_default();
+    // Every wait from here shares one deadline. A thread still blocked on a pipe past it is left:
+    // the process holding the pipe isn't this one's to stop, and the thread ends when it does.
+    let closed = Instant::now() + GRACE;
+    let left = || closed.saturating_duration_since(Instant::now());
+    let stdin_open = writer.recv_timeout(left()).is_err();
+    let stdout_open = !out.wait(left());
+    let stderr_open = !err.wait(left());
+    let open: Vec<&str> = [
+        ("stdin", stdin_open),
+        ("stdout", stdout_open),
+        ("stderr", stderr_open),
+    ]
+    .into_iter()
+    .filter_map(|(name, open)| open.then_some(name))
+    .collect();
+    let text = out.text();
+    let stderr_text = err.text();
+    if !open.is_empty() {
+        return Err(format!(
+            "the driver ended ({status}) but its {} stayed open {} s later, held by a process it \
+             started; stdout so far: {:?}; stderr so far: {:?}",
+            open.join(" and "),
+            GRACE.as_secs(),
+            text,
+            stderr_text.trim_end()
+        ));
+    }
     if !status.success() {
         return Err(format!(
             "exit {status}: {}",
@@ -303,6 +325,47 @@ fn run_child(cmd: &Command, args: Vec<String>, input: &str) -> Result<String, St
         ));
     }
     Ok(text)
+}
+
+/// One of the driver's output pipes, read on a thread of its own into a buffer that can be read
+/// at any time, so what came before a pipe that never closes is still there to report.
+struct Pipe {
+    read: Arc<Mutex<Vec<u8>>>,
+    ended: mpsc::Receiver<()>,
+}
+
+impl Pipe {
+    fn read(mut from: impl Read + Send + 'static) -> Pipe {
+        let read = Arc::new(Mutex::new(Vec::new()));
+        let (done, ended) = mpsc::channel();
+        let into = Arc::clone(&read);
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 4096];
+            loop {
+                match from.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => into
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .extend_from_slice(&chunk[..n]),
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            let _ = done.send(());
+        });
+        Pipe { read, ended }
+    }
+
+    /// Whether the pipe closed within `timeout`.
+    fn wait(&self, timeout: Duration) -> bool {
+        self.ended.recv_timeout(timeout).is_ok()
+    }
+
+    fn text(&self) -> String {
+        let bytes = self.read.lock().unwrap_or_else(PoisonError::into_inner);
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
 }
 
 /// A new command with the same program, arguments, environment and directory.
@@ -465,5 +528,51 @@ mod tests {
             normalize(text, fixture),
             r#"load {plugin} ["2|load_plugin|{plugin}|none"]"#
         );
+    }
+
+    /// Waits for the process whose pid `file` holds to end, so the test leaves nothing running.
+    fn wait_for_end(file: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let pid = loop {
+            if let Ok(text) = std::fs::read_to_string(file)
+                && let Ok(pid) = text.trim().parse::<u32>()
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "no pid in {}", file.display());
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let proc = PathBuf::from(format!("/proc/{pid}"));
+        while proc.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_driver_whose_output_stays_open_after_it_ends_fails_by_name_with_what_it_wrote() {
+        let dir = std::env::temp_dir().join(format!("dd-run-child-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pidfile = dir.join("pid");
+        // The driver starts a process that keeps its stdout and stderr, writes, and ends.
+        let script = format!(
+            "sleep 10 & echo $! > '{}'; echo partial; echo noted >&2",
+            pidfile.display()
+        );
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(script).arg("sh");
+        let started = Instant::now();
+        let result = run_child(&cmd, Vec::new(), "");
+        let took = started.elapsed();
+        wait_for_end(&pidfile);
+        let _ = std::fs::remove_dir_all(&dir);
+        let error = result.expect_err("an output left open must fail the run");
+        assert!(
+            took < Duration::from_secs(9),
+            "it waited {took:?} for the pipe"
+        );
+        assert!(error.contains("stdout"), "{error}");
+        assert!(error.contains("partial"), "{error}");
+        assert!(error.contains("noted"), "{error}");
     }
 }
