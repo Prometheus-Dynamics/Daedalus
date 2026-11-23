@@ -15,6 +15,8 @@ mod owned;
 mod record;
 #[cfg(feature = "std")]
 mod registry;
+#[cfg(feature = "std")]
+mod requires;
 pub mod self_check;
 #[cfg(feature = "std")]
 mod types;
@@ -27,11 +29,13 @@ pub use offer::OfferData;
 pub use owned::{OwnedBody, OwnedDecl, OwnedPort, promoted_declarations};
 pub use record::{
     BodyRecord, ConfigDecl, Conversion, FanInDecl, Fire, MetricDecl, MetricUnit, NoCode, NodeDecl,
-    NodeRecord, PortDecl, PortRule, SourceAt, StateDecl, TransferClass, TransferRecord, TypeRef,
-    port_type,
+    NodeRecord, PortDecl, PortRule, Provider, SourceAt, StateDecl, TransferClass, TransferRecord,
+    TypeRef, port_type,
 };
 #[cfg(feature = "std")]
 pub use registry::{ConversionEntry, Entry, Registry};
+#[cfg(feature = "std")]
+pub use requires::RequireError;
 #[cfg(feature = "std")]
 pub use types::{TypeRecord, TypeTable};
 

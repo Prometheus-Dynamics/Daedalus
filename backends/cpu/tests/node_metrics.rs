@@ -216,3 +216,15 @@ fn a_host_that_keeps_no_metrics_has_no_rows_and_the_graph_runs_the_same() {
     assert_eq!(out, [5, 10, 3]);
     assert!(rows.is_empty());
 }
+
+#[test]
+fn a_node_records_the_crate_it_is_declared_in_as_its_provider() {
+    let here = daedalus_registry::provider!();
+    assert_eq!(
+        (here.name, here.version),
+        (env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(here.name, "daedalus-cpu");
+    assert_eq!(DETECT_DECL.provider, here);
+    assert_eq!(PLAIN_DECL.provider, here);
+}
