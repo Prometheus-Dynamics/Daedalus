@@ -253,22 +253,36 @@ impl Nested {
         for (&cell, input) in self.views.iter().zip(inputs) {
             self.cells[cell as usize] = *input;
         }
-        // Each step sees its own node's metric cells: the chain's cells, a node at a time.
+        // Nobody reads metrics: the plain chain, with nothing done for them.
+        if cx.metrics.is_null() {
+            for at in 0..self.steps.len() {
+                match self.run_one(at, cx) {
+                    StepEnd::Done => {}
+                    end => return end,
+                }
+            }
+            return StepEnd::Done;
+        }
+        self.run_chain_with_metrics(cx)
+    }
+
+    /// The chain when the host reads metrics: each step sees its own node's cells, the chain's
+    /// cells a node at a time.
+    #[cold]
+    fn run_chain_with_metrics(&mut self, cx: &mut StepCx) -> StepEnd {
         let (cells, len) = (cx.metrics, cx.metrics_len);
         let mut before = 0u32;
         let mut end = StepEnd::Done;
         for at in 0..self.steps.len() {
             let own = u32::from(self.steps[at].metrics);
-            if !cells.is_null() {
-                let fits = before + own <= len;
-                cx.metrics_len = if fits { own } else { 0 };
-                // SAFETY: `cells` holds `len` cells and `before + own` of them were checked.
-                cx.metrics = if fits && own > 0 {
-                    unsafe { cells.add(before as usize) }
-                } else {
-                    core::ptr::null()
-                };
-            }
+            let fits = before + own <= len;
+            cx.metrics_len = if fits { own } else { 0 };
+            // SAFETY: `cells` holds `len` cells and `before + own` of them were checked.
+            cx.metrics = if fits && own > 0 {
+                unsafe { cells.add(before as usize) }
+            } else {
+                core::ptr::null()
+            };
             before += own;
             end = self.run_one(at, cx);
             if !matches!(end, StepEnd::Done) {

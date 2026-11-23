@@ -250,22 +250,17 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
     // The body sees its own ports: a fanned output's added cells come after them.
     let fans = env.fans(index);
     let own_ports = port_count(meta) - fans.len();
+    // Off, which is the usual case, this is one test: the rest is out of line.
+    if let Some(metrics) = env.metrics(index) {
+        point_at(env.parts().1, metrics);
+    }
     let mut attempt = 0;
     let end = loop {
         load_cells(env, meta, attempt != 0);
         let flags = env.health(index).call_flags();
         let probe = env.probe();
         let progress = env.progress(index);
-        let metrics = env.metrics(index);
         let (cells, cx) = env.parts();
-        if let Some(metrics) = metrics {
-            cx.metrics_len = metrics.len() as u32;
-            cx.metrics = if metrics.is_empty() {
-                core::ptr::null()
-            } else {
-                metrics.as_ptr()
-            };
-        }
         cx.flags = flags;
         cx.progress = progress;
         cx.step = index as u32;
@@ -360,6 +355,18 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         }
     }
     Ok(())
+}
+
+/// Points a step's context at its metric cells, or at none when it has none.
+#[cold]
+#[inline(never)]
+fn point_at(cx: &mut StepCx, metrics: &[daedalus_abi::MetricCell]) {
+    cx.metrics_len = metrics.len() as u32;
+    cx.metrics = if metrics.is_empty() {
+        core::ptr::null()
+    } else {
+        metrics.as_ptr()
+    };
 }
 
 /// How many cells a step's frame has.

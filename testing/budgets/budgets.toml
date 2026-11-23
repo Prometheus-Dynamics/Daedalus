@@ -57,7 +57,7 @@ command = "detector {n} metrics"
 # No figure on dev: its custom metrics allocated. The limit is the plain detector row's.
 dev_callgrind = 34395
 limit = 34395
-next = 8165
+next = 8187
 tolerance_percent = 10
 
 [[row]]
