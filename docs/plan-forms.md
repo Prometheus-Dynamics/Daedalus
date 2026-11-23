@@ -57,6 +57,10 @@ the move. The same plan still explains, and runs as steps.
   consumer reads the value where it was written: nothing moves it and nothing copies it. That is
   what tells a read in place from an edge with a transfer missing. An edge inside a region a
   backend merged into one step has no value of its own, and both spaces are absent.
+- `added` lists each node the planner put in itself, a conversion or a copy, once: the output it
+  reads and every reader its value reaches. A conversion several readers of one output need is
+  one node, so its cost is paid once a value. Each of those readers' edges still names it in
+  `conversion`.
 - `queued` lists each edge that holds more than one value into a node that waits for its other
   inputs (a `fire = "all"` node with another connected input): the node, the port, the edge's
   depth and the inputs it waits on. While the node waits the edge fills, and a queued value that

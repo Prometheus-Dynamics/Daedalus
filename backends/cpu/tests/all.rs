@@ -27,6 +27,8 @@ mod compound_ports;
 mod config_faults;
 #[path = "const_shapes.rs"]
 mod const_shapes;
+#[path = "convert_once.rs"]
+mod convert_once;
 #[cfg(any(feature = "blob", all(feature = "blob", feature = "receive")))]
 #[path = "shared/blob_fixture.rs"]
 mod fixture;

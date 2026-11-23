@@ -1,4 +1,4 @@
-use daedalus_graph::{GraphBody, GraphDoc, HostInputPolicy, NodeDoc, NodeKindDoc};
+use daedalus_graph::{EdgePolicyDoc, GraphBody, GraphDoc, HostInputPolicy, NodeDoc, NodeKindDoc};
 use daedalus_planner::solve::Graph;
 use daedalus_planner::solve::convert::ConvertError;
 use daedalus_planner::solve::host_inputs::{
@@ -81,25 +81,197 @@ fn ids(graph: &Graph) -> Vec<&str> {
 }
 
 #[test]
-fn conversion_inserted_once_per_edge() {
+fn readers_of_one_output_that_need_the_same_conversion_share_one() {
+    let mut registry = registry();
+    conversion(&mut registry, "c.ab", "t.a", "t.b", 1);
+    let mut kept = edge(0, "out", 2, "in");
+    kept.policy = EdgePolicyDoc::LatestOnly;
+    let graph = run(
+        &registry,
+        vec![
+            node("t.a"),
+            node("t.sinkb"),
+            node("t.sinkb"),
+            node("t.sinkb"),
+        ],
+        vec![
+            edge(0, "out", 1, "in"),
+            kept.clone(),
+            edge(0, "out", 3, "in"),
+        ],
+    )
+    .unwrap();
+    // One conversion, read by all three.
+    assert_eq!(
+        ids(&graph),
+        ["t.a", "t.sinkb", "t.sinkb", "t.sinkb", "c.ab"]
+    );
+    // Each reader's own policy stays on the edge into it.
+    let mut into_second = edge(4, "out", 2, "in");
+    into_second.policy = EdgePolicyDoc::LatestOnly;
+    assert_eq!(
+        graph.edges,
+        [
+            edge(0, "out", 4, "in"),
+            edge(4, "out", 1, "in"),
+            into_second,
+            edge(4, "out", 3, "in"),
+        ]
+    );
+}
+
+#[test]
+fn a_reader_of_the_plain_type_reads_the_output_beside_the_shared_conversion() {
+    let mut registry = registry();
+    conversion(&mut registry, "c.ab", "t.a", "t.b", 1);
+    decl("t.sinka")
+        .input("in", key("t.a"))
+        .body("sim")
+        .add(&mut registry);
+    let graph = run(
+        &registry,
+        vec![
+            node("t.a"),
+            node("t.sinkb"),
+            node("t.sinka"),
+            node("t.sinkb"),
+            node("t.sinkb"),
+        ],
+        vec![
+            edge(0, "out", 1, "in"),
+            edge(0, "out", 2, "in"),
+            edge(0, "out", 3, "in"),
+            edge(0, "out", 4, "in"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(ids(&graph)[5..], ["c.ab"]);
+    assert_eq!(
+        graph.edges,
+        [
+            edge(0, "out", 5, "in"),
+            edge(5, "out", 1, "in"),
+            edge(0, "out", 2, "in"),
+            edge(5, "out", 3, "in"),
+            edge(5, "out", 4, "in"),
+        ]
+    );
+}
+
+#[test]
+fn two_target_types_from_one_output_get_a_conversion_each() {
+    let mut registry = registry();
+    conversion(&mut registry, "c.ab", "t.a", "t.b", 1);
+    conversion(&mut registry, "c.ac", "t.a", "t.c", 1);
+    decl("t.sinkc")
+        .input("in", key("t.c"))
+        .body("sim")
+        .add(&mut registry);
+    let graph = run(
+        &registry,
+        vec![
+            node("t.a"),
+            node("t.sinkb"),
+            node("t.sinkc"),
+            node("t.sinkb"),
+        ],
+        vec![
+            edge(0, "out", 1, "in"),
+            edge(0, "out", 2, "in"),
+            edge(0, "out", 3, "in"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(ids(&graph)[4..], ["c.ab", "c.ac"]);
+}
+
+#[test]
+fn two_paths_that_start_alike_share_their_start() {
+    let mut registry = registry();
+    conversion(&mut registry, "c.ab", "t.a", "t.b", 1);
+    conversion(&mut registry, "c.bc", "t.b", "t.c", 1);
+    decl("t.sinkc")
+        .input("in", key("t.c"))
+        .body("sim")
+        .add(&mut registry);
+    // One reader wants `t.b`, two want `t.c`, which is reached through `t.b`.
+    let graph = run(
+        &registry,
+        vec![
+            node("t.a"),
+            node("t.sinkc"),
+            node("t.sinkb"),
+            node("t.sinkc"),
+        ],
+        vec![
+            edge(0, "out", 1, "in"),
+            edge(0, "out", 2, "in"),
+            edge(0, "out", 3, "in"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(ids(&graph)[4..], ["c.ab", "c.bc"]);
+    assert_eq!(
+        graph.edges,
+        [
+            edge(0, "out", 4, "in"),
+            edge(4, "out", 5, "in"),
+            edge(5, "out", 1, "in"),
+            edge(4, "out", 2, "in"),
+            edge(5, "out", 3, "in"),
+        ]
+    );
+}
+
+#[test]
+fn a_reader_that_takes_its_value_keeps_a_conversion_of_its_own() {
+    let mut registry = registry();
+    conversion(&mut registry, "c.ab", "t.a", "t.b", 1);
+    decl("t.takeb")
+        .input_move("in", key("t.b"))
+        .body("sim")
+        .add(&mut registry);
+    // Two readers share one conversion; the one that takes its value has its own, and no copy
+    // is needed (the registry has none for `t.b`).
+    let graph = run(
+        &registry,
+        vec![
+            node("t.a"),
+            node("t.sinkb"),
+            node("t.takeb"),
+            node("t.sinkb"),
+        ],
+        vec![
+            edge(0, "out", 1, "in"),
+            edge(0, "out", 2, "in"),
+            edge(0, "out", 3, "in"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(ids(&graph)[4..], ["c.ab", "c.ab"]);
+    assert_eq!(
+        graph.edges,
+        [
+            edge(0, "out", 4, "in"),
+            edge(4, "out", 1, "in"),
+            edge(0, "out", 5, "in"),
+            edge(5, "out", 2, "in"),
+            edge(4, "out", 3, "in"),
+        ]
+    );
+}
+
+#[test]
+fn two_outputs_of_the_same_type_are_converted_apart() {
     let mut registry = registry();
     conversion(&mut registry, "c.ab", "t.a", "t.b", 1);
     let graph = run(
         &registry,
-        vec![node("t.a"), node("t.sinkb"), node("t.sinkb")],
-        vec![edge(0, "out", 1, "in"), edge(0, "out", 2, "in")],
+        vec![node("t.a"), node("t.a"), node("t.sinkb"), node("t.sinkb")],
+        vec![edge(0, "out", 2, "in"), edge(1, "out", 3, "in")],
     )
     .unwrap();
-    assert_eq!(ids(&graph), ["t.a", "t.sinkb", "t.sinkb", "c.ab", "c.ab"]);
-    assert_eq!(
-        graph.edges,
-        [
-            edge(0, "out", 3, "in"),
-            edge(3, "out", 1, "in"),
-            edge(0, "out", 4, "in"),
-            edge(4, "out", 2, "in")
-        ]
-    );
+    assert_eq!(ids(&graph)[4..], ["c.ab", "c.ab"]);
 }
 
 fn inserted(registry: &Registry) -> Vec<String> {

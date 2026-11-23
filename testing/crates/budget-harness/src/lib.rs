@@ -76,7 +76,66 @@ fn pass(big: Arc<Big>) -> Arc<Big> {
     big
 }
 
-const NODES: [&NodeRecord; 7] = [
+/// What three readers want of the host's number: a type the planner reaches by a conversion.
+#[derive(Clone, Copy)]
+pub struct Wide(pub u64);
+
+impl Typed for Wide {
+    const KEY: TypeKey = TypeKey::new("budget:wide");
+    const EXPR: TypeExpr = TypeExpr::Opaque(Self::KEY);
+}
+
+/// The conversion the planner puts in for them.
+#[node(id = "budget.widen", inputs(x), outputs(wide), conversion(cost = 1))]
+fn widen(x: u64) -> Wide {
+    Wide(x.wrapping_mul(3))
+}
+
+/// One of the readers.
+#[node(id = "budget.narrow", inputs(wide), outputs(y))]
+fn narrow(wide: &Wide) -> u64 {
+    wide.0.wrapping_add(1)
+}
+
+/// The host's `in`, a `u64`, read by three nodes that take a `Wide`: the planner converts it
+/// once and the three share the result.
+pub fn fanned_conversion() -> LoadedHost {
+    let mut nodes = vec![bridge(&[
+        ("in", "u64"),
+        ("a", "u64"),
+        ("b", "u64"),
+        ("c", "u64"),
+    ])];
+    let mut edges = Vec::new();
+    for (at, out) in [(1, "a"), (2, "b"), (3, "c")] {
+        nodes.push(NodeDoc::new("budget.narrow"));
+        edges.push(edge(0, "in", at, "wide"));
+        edges.push(edge(at, "y", 0, out));
+    }
+    let graph = GraphBody {
+        nodes,
+        edges,
+        groups: Vec::new(),
+    };
+    load(&graph, &NODES, true)
+}
+
+/// One tick of [`fanned_conversion`]: fed in place, stepped, the three outputs taken.
+pub fn fanned_conversion_tick(host: &mut LoadedHost, value: u64) -> u64 {
+    let io = host.host();
+    io.feed_inline("in", &value.to_le_bytes()).expect("a feed");
+    io.step().expect("a tick");
+    let mut sum = 0u64;
+    for port in ["a", "b", "c"] {
+        let got = io.take_copy::<u64>(port).expect("a take");
+        sum = sum.wrapping_add(got.expect("a value"));
+    }
+    sum
+}
+
+const NODES: [&NodeRecord; 9] = [
+    &WIDEN_NODE,
+    &NARROW_NODE,
     &STAGE_NODE,
     &STAGE_EXTRA_NODE,
     &STAGE_ALLOC_NODE,

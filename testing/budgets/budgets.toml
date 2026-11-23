@@ -50,6 +50,17 @@ tolerance_percent = 10
 board_run = "I2"
 
 [[row]]
+name = "fanned_conversion_tick"
+measure = "instructions per tick: one host value read by three nodes that take a type the planner converts it to, so one conversion feeds all three"
+tool = "callgrind"
+command = "convert {n}"
+# No figure on dev. With a conversion on each edge this graph took 7,135.
+dev_callgrind = 7135
+limit = 7135
+next = 5826
+tolerance_percent = 10
+
+[[row]]
 name = "detector_frame_metrics"
 measure = "instructions per frame of the same graph on a host that keeps the nodes' metrics: one stage reports one a frame"
 tool = "callgrind"

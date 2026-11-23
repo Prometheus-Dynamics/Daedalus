@@ -446,6 +446,13 @@ const BLUR: &str = include_str!("blur.wgsl");
 `#[node(conversion)]` on a one-in, one-out node tells the planner it may insert that node where
 an edge's two types differ.
 
+Where several readers of one output need the same conversion, the planner puts it in once and the
+readers share what it makes, each on an edge of its own with its own queue and policy. A
+conversion is an ordinary node otherwise: it may hold state, which is then one state for all its
+readers, and it may declare metrics. A conversion path is chosen for each pair of types by
+itself, and paths that start alike share their start. A reader that takes its value, instead of
+borrowing it, keeps a conversion of its own.
+
 ## Other markers
 
 - `reusable`: the node is pure, so when its inputs have not changed its last output is used and
