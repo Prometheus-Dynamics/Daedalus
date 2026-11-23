@@ -18,6 +18,13 @@ pub struct FeedOutcome {
     pub dropped: Option<DropReason>,
 }
 
+/// An input port a feed has found: its place in the port table and what it is.
+#[derive(Clone, Copy)]
+pub(crate) struct InputAt<'a> {
+    pub(crate) index: usize,
+    pub(crate) spec: &'a crate::ports::PortSpec<'a>,
+}
+
 /// One edge, as an error names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EdgeName {
@@ -201,11 +208,23 @@ impl<'a> Host<'a> {
     }
 
     pub(crate) fn input(&self, name: &str) -> Result<&'a crate::ports::PortSpec<'a>, HostError> {
-        let spec = self.ports.find(name).ok_or(HostError::UnknownPort {
-            port: Label::new(name),
-        })?;
+        self.input_at(name).map(|at| at.spec)
+    }
+
+    /// Finds the input port `name`, once: a feed looks its port up here and passes what it found
+    /// down, so the name is searched for one time however many rules the value meets.
+    pub(crate) fn input_at(&self, name: &str) -> Result<InputAt<'a>, HostError> {
+        let found = self
+            .ports
+            .index_of(name)
+            .and_then(|index| Some((index, self.ports.at(index)?)));
+        let Some((index, spec)) = found else {
+            return Err(HostError::UnknownPort {
+                port: Label::new(name),
+            });
+        };
         match spec.dir {
-            Dir::Input => Ok(spec),
+            Dir::Input => Ok(InputAt { index, spec }),
             Dir::Output => Err(HostError::NotAnInput {
                 port: Label::new(name),
             }),
@@ -233,18 +252,29 @@ impl<'a> Host<'a> {
 
     /// Stores `value` in the input port `name`, and wakes its consumers. It never runs a tick.
     pub fn feed(&mut self, name: &str, value: Value) -> Result<FeedOutcome, HostError> {
-        let spec = self.input(name)?;
-        if value.ty != spec.ty {
-            return Err(self.mismatch(name, spec.ty, value.ty));
+        let at = self.input_at(name)?;
+        self.feed_at(name, at, value)
+    }
+
+    /// [`Host::feed`] for a port already found.
+    pub(crate) fn feed_at(
+        &mut self,
+        name: &str,
+        at: InputAt<'a>,
+        value: Value,
+    ) -> Result<FeedOutcome, HostError> {
+        if value.ty != at.spec.ty {
+            return Err(self.mismatch(name, at.spec.ty, value.ty));
         }
-        self.feed_by(name, |runner, spec| runner.feed_value(spec.slot, value))
+        self.feed_by(name, at, |runner, spec| runner.feed_value(spec.slot, value))
     }
 
     /// Stores up to 16 bytes of plain data in the input port `name`, in place, with the port's own
     /// type and memory space: a number goes in as its little-endian bytes. Nothing is allocated.
     /// More than 16 bytes are refused as [`HostError::Refused`].
     pub fn feed_inline(&mut self, name: &str, bytes: &[u8]) -> Result<FeedOutcome, HostError> {
-        let spec = self.input(name)?;
+        let at = self.input_at(name)?;
+        let spec = at.spec;
         let inline = daedalus_value::InlineBytes::from_slice(bytes).ok_or(HostError::Refused {
             port: Label::new(name),
             key: Label::new(spec.key.as_str()),
@@ -254,7 +284,7 @@ impl<'a> Host<'a> {
             space: spec.space,
             owner: daedalus_value::Owner::Inline(inline),
         };
-        self.feed(name, value)
+        self.feed_at(name, at, value)
     }
 
     /// The graph's host ports, sorted by name: what each is called, which way it goes, and
@@ -271,13 +301,14 @@ impl<'a> Host<'a> {
         name: &str,
         bytes: std::sync::Arc<[u8]>,
     ) -> Result<FeedOutcome, HostError> {
-        let spec = self.input(name)?;
+        let at = self.input_at(name)?;
+        let spec = at.spec;
         let value = Value {
             ty: spec.ty,
             space: spec.space,
             owner: daedalus_value::Owner::Shared(bytes),
         };
-        self.feed(name, value)
+        self.feed_at(name, at, value)
     }
 
     /// Stores bytes a plugin handed over in the input port `name`. The handle's count moves into the
@@ -288,13 +319,14 @@ impl<'a> Host<'a> {
         name: &str,
         bytes: daedalus_abi::SharedBytes,
     ) -> Result<FeedOutcome, HostError> {
-        let spec = self.input(name)?;
+        let at = self.input_at(name)?;
+        let spec = at.spec;
         let value = Value {
             ty: spec.ty,
             space: spec.space,
             owner: daedalus_value::Owner::Handed(bytes),
         };
-        self.feed(name, value)
+        self.feed_at(name, at, value)
     }
 
     /// Stores a typed payload in the input port `name`, and wakes its consumers.
@@ -303,7 +335,8 @@ impl<'a> Host<'a> {
         name: &str,
         value: std::sync::Arc<T>,
     ) -> Result<FeedOutcome, HostError> {
-        self.feed_by(name, |runner, spec| {
+        let at = self.input_at(name)?;
+        self.feed_by(name, at, |runner, spec| {
             runner.feed_typed(spec.slot, spec.ty, spec.space, value)
         })
     }
@@ -389,6 +422,15 @@ impl<'a> Host<'a> {
     /// Takes the oldest value out of the output port `name`, if there is one.
     pub fn take_value(&mut self, name: &str) -> Result<Option<Value>, HostError> {
         let spec = self.output(name)?;
+        self.take_value_at(name, spec)
+    }
+
+    /// [`Host::take_value`] for an output port already found.
+    pub(crate) fn take_value_at(
+        &mut self,
+        name: &str,
+        spec: &crate::ports::PortSpec<'a>,
+    ) -> Result<Option<Value>, HostError> {
         match self.runner.peek_type(spec.slot) {
             None => Ok(None),
             Some(found) if found != spec.ty => Err(self.mismatch(name, spec.ty, found)),
@@ -414,7 +456,8 @@ impl<'a> Host<'a> {
         name: &str,
         forward: daedalus_runner::Forward,
     ) -> Result<FeedOutcome, HostError> {
-        self.feed_by(name, |runner, spec| {
+        let at = self.input_at(name)?;
+        self.feed_by(name, at, |runner, spec| {
             runner.feed_forward(spec.slot, spec.ty, spec.space, forward)
         })
     }
