@@ -39,6 +39,8 @@ pub(crate) type EdgeRules = BTreeMap<u32, EdgeRule>;
 pub(crate) struct EdgeRule {
     pub(crate) pressure: Pressure,
     pub(crate) blocking: bool,
+    /// The slot's value lives for the tick it was written in.
+    pub(crate) per_tick: bool,
 }
 
 /// One step's wiring while it's being laid out.
@@ -233,7 +235,7 @@ fn join_for(bound: &Bound, covers: &[u32], connected: &[(u32, usize)]) -> (Fire,
 fn apply_edge(rules: &mut EdgeRules, slot: u32, policy: &EdgePolicyDoc) {
     let pressure = match policy {
         EdgePolicyDoc::Fifo => return,
-        EdgePolicyDoc::LatestOnly => Pressure::LatestOnly,
+        EdgePolicyDoc::LatestOnly | EdgePolicyDoc::PerTick => Pressure::LatestOnly,
         EdgePolicyDoc::Bounded { capacity, overflow } => Pressure::Bounded {
             cap: (*capacity).max(1),
             overflow: match overflow.as_str() {
@@ -244,7 +246,13 @@ fn apply_edge(rules: &mut EdgeRules, slot: u32, policy: &EdgePolicyDoc) {
         },
     };
     let blocking = matches!(policy, EdgePolicyDoc::Bounded { overflow, .. } if overflow == "block");
-    rules.insert(slot, EdgeRule { pressure, blocking });
+    let per_tick = matches!(policy, EdgePolicyDoc::PerTick);
+    let rule = EdgeRule {
+        pressure,
+        blocking,
+        per_tick,
+    };
+    rules.insert(slot, rule);
 }
 
 /// The slots that keep their value: one with several readers keeps it for all of them, and a held

@@ -73,10 +73,7 @@ impl Runner<'_> {
                 step_once(self, word * 32 + bit as usize, report)?;
             }
         }
-        for word in 0..words {
-            self.dirty[word] |= self.carry[word];
-            self.carry[word] = 0;
-        }
+        self.end_tick();
         Ok(())
     }
 }

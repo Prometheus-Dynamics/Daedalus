@@ -279,15 +279,16 @@ fn add_edge(
     policy: &EdgePolicyDoc,
     fifo: u32,
     (key, size): (u32, u32),
-) -> u32 {
-    let (capacity, overflow) = queue_shape(policy, fifo);
+    reader: NodeIndex,
+) -> Result<u32, Refusal> {
+    let (capacity, overflow) = queue_shape(policy, fifo, reader)?;
     plan.edges.push(EdgeDesc {
         capacity,
         overflow,
         size,
         key,
     });
-    plan.edges.len() as u32 - 1
+    Ok(plan.edges.len() as u32 - 1)
 }
 
 fn input_type(all: &[Member], port: PortRef) -> Result<(u32, u32), Refusal> {
@@ -327,7 +328,7 @@ fn host_inputs(
         for binding in bindings.iter().filter(|binding| binding.name == name) {
             let shaped = input_type(all, binding.port)?;
             key = shaped.0;
-            let edge = add_edge(plan, binding.policy, fifo, shaped);
+            let edge = add_edge(plan, binding.policy, fifo, shaped, binding.port.node)?;
             wires.feeds.push((binding.port, edge));
             edges.push(edge);
         }
@@ -356,7 +357,13 @@ fn describe(
     };
     for edge in cx.edges {
         let shaped = output_type(&all, edge.from)?;
-        let index = add_edge(&mut plan, edge.policy, cx.fifo_capacity, shaped);
+        let index = add_edge(
+            &mut plan,
+            edge.policy,
+            cx.fifo_capacity,
+            shaped,
+            edge.to.node,
+        )?;
         wires.feeds.push((edge.to, index));
         wires.drains.push((edge.from, index));
     }
@@ -369,7 +376,13 @@ fn describe(
     )?;
     for binding in cx.host_outputs {
         let shaped = output_type(&all, binding.port)?;
-        let edge = add_edge(&mut plan, binding.policy, cx.fifo_capacity, shaped);
+        let edge = add_edge(
+            &mut plan,
+            binding.policy,
+            cx.fifo_capacity,
+            shaped,
+            binding.port.node,
+        )?;
         wires.drains.push((binding.port, edge));
         plan.host_outputs.push(HostDesc {
             name: binding.name.to_string(),

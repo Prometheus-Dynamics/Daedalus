@@ -57,6 +57,8 @@ mod c21_domain;
 mod c21_group_input_policy;
 #[path = "c21_host_policy.rs"]
 mod c21_host_policy;
+#[path = "c21_per_tick.rs"]
+mod c21_per_tick;
 #[path = "c23_introspect.rs"]
 mod c23_introspect;
 #[path = "d0_positions.rs"]

@@ -36,6 +36,11 @@ A crate that writes CPU nodes depends on `daedalus`, on `daedalus-cpu-author` an
 | `items: FanIn<'_, T>` | Any number of edges, on ports `items0`, `items1` and so on, in number order. |
 
 - Returning `Option<T>` sends nothing on a tick where it is `None`.
+- An `Option<T>` input is `Some` when its edge holds a value, and an edge is a queue that keeps a
+  value until the node reads it. So it can deliver a value that was sent on an earlier tick, when
+  the node did not run on that tick: `None` does not mean "not sent this tick". Put the
+  `per_tick` policy on the edge to make it mean that (see
+  [host.md](host.md#queues-and-policies)).
 - Returning `Result<T, Fault>` reports a failure. See [Failure](#failure).
 
 ## Bytes a plugin handed over

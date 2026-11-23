@@ -219,6 +219,7 @@ impl Canon {
                 self.word(u64::from(*capacity));
                 self.text(overflow);
             }
+            EdgePolicyDoc::PerTick => self.byte(3),
         }
     }
 

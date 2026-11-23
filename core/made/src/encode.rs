@@ -463,6 +463,7 @@ fn write_policy(w: Out<'_>, policy: &EdgePolicyDoc) -> Result<(), WireError> {
             w.u32(*capacity);
             w.str(overflow)?;
         }
+        EdgePolicyDoc::PerTick => w.u8(3),
     }
     Ok(())
 }

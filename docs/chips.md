@@ -29,6 +29,7 @@ Every edge gets one fixed-size queue, or a local variable where two nodes always
 | FIFO | `Config.fifo_capacity` slots (default 4), and a full queue is an error |
 | `latest_only` | 1 slot, newest wins |
 | `bounded` | its capacity, with its overflow rule |
+| `per_tick` | refused by name: a chip's queue keeps a value until it is read |
 
 A node waits for its required inputs. If one is missing, it doesn't run this tick. A node that fails, or a queue with the error policy that fills up, stops the tick and returns a `ChipError`. `NODE_IDS` and `EDGES` turn the numbers in it into names.
 
