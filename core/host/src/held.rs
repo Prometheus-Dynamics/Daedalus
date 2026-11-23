@@ -2,9 +2,7 @@
 //! shared input's value is context, not work, so a feed to it wakes nothing. A consumed input whose
 //! slot keeps its value for several readers is work like any other.
 
-use daedalus_value::Value;
-
-use crate::io::{FeedOutcome, Host, HostError};
+use crate::io::{Host, HostError};
 
 impl Host<'_> {
     /// Drops the value a held input holds, if any.
@@ -62,25 +60,6 @@ impl Host<'_> {
         } else {
             self.wake_consumers(wake)
         }
-    }
-
-    /// Replaces the value of an input whose slot keeps it. Its readers are woken when the value
-    /// is work.
-    pub(crate) fn replace_kept(
-        &mut self,
-        name: &str,
-        slot: u32,
-        wake: &[u32],
-        value: Value,
-    ) -> Result<FeedOutcome, HostError> {
-        self.runner.clear_held(slot).map_err(HostError::Run)?;
-        self.runner
-            .feed_value(slot, value)
-            .map_err(|error| self.feed_error(name, error))?;
-        Ok(FeedOutcome {
-            woke: self.wake_unless_context(slot, wake),
-            dropped: None,
-        })
     }
 
     /// Notes the version of each kept slot that is work, as a tick has run.

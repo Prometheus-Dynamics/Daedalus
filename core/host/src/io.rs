@@ -97,7 +97,8 @@ pub struct Host<'a> {
     pub(crate) runner: Runner<'a>,
     pub(crate) ports: Ports<'a>,
     pub(crate) types: &'a [TypeKey],
-    /// One per port once a host sets a policy. Empty means every port takes every value.
+    /// One per port once a host sets a policy, or from the start when an input's edge policy can
+    /// give a value up. Empty means every port takes every value.
     pub(crate) inbound: std::vec::Vec<crate::inbound::Inbound>,
     pub(crate) now_ns: u64,
     /// The input slots whose values are context, not work: held or shared inputs. A feed there
@@ -123,11 +124,25 @@ impl<'a> Host<'a> {
             .filter(|spec| spec.dir == Dir::Input && runner.is_held(spec.slot))
             .map(|spec| spec.slot)
             .collect();
+        // A slot whose edge policy can give a value up counts it against its port, so the ports
+        // get their entries now, and a feed never sizes them.
+        let pressured = (0..ports.len()).filter_map(|at| ports.at(at)).any(|spec| {
+            spec.dir == Dir::Input
+                && !runner.is_held(spec.slot)
+                && runner
+                    .queue(spec.slot)
+                    .is_some_and(|queue| queue.pressure != daedalus_value::Pressure::BufferAll)
+        });
+        let inbound = if pressured {
+            std::vec![crate::inbound::Inbound::default(); ports.len()]
+        } else {
+            std::vec::Vec::new()
+        };
         Host {
             runner,
             ports,
             types,
-            inbound: std::vec::Vec::new(),
+            inbound,
             now_ns: 0,
             context,
             ticked: std::vec::Vec::new(),
@@ -189,26 +204,7 @@ impl<'a> Host<'a> {
         if value.ty != spec.ty {
             return Err(self.mismatch(name, spec.ty, value.ty));
         }
-        if self.runner.is_held(spec.slot) {
-            return self.replace_kept(name, spec.slot, spec.wake, value);
-        }
-        let dropped = match self.admit(name, spec.slot)? {
-            crate::inbound::Admit::Store(reason) => reason,
-            crate::inbound::Admit::Discard(reason) => {
-                return Ok(FeedOutcome {
-                    woke: 0,
-                    dropped: Some(reason),
-                });
-            }
-        };
-        self.runner
-            .feed_value(spec.slot, value)
-            .map_err(|error| self.feed_error(name, error))?;
-        self.note_arrival(name);
-        Ok(FeedOutcome {
-            woke: self.wake_consumers(spec.wake),
-            dropped,
-        })
+        self.feed_by(name, |runner, spec| runner.feed_value(spec.slot, value))
     }
 
     /// Stores up to 16 bytes of plain data in the input port `name`, in place, with the port's own
@@ -274,16 +270,8 @@ impl<'a> Host<'a> {
         name: &str,
         value: std::sync::Arc<T>,
     ) -> Result<FeedOutcome, HostError> {
-        let spec = self.input(name)?;
-        if self.runner.is_held(spec.slot) {
-            self.runner.clear_held(spec.slot).map_err(HostError::Run)?;
-        }
-        self.runner
-            .feed_typed(spec.slot, spec.ty, spec.space, value)
-            .map_err(|error| self.feed_error(name, error))?;
-        Ok(FeedOutcome {
-            woke: self.wake_unless_context(spec.slot, spec.wake),
-            dropped: None,
+        self.feed_by(name, |runner, spec| {
+            runner.feed_typed(spec.slot, spec.ty, spec.space, value)
         })
     }
 
@@ -373,16 +361,8 @@ impl<'a> Host<'a> {
         name: &str,
         forward: daedalus_runner::Forward,
     ) -> Result<FeedOutcome, HostError> {
-        let spec = self.input(name)?;
-        if self.runner.is_held(spec.slot) {
-            self.runner.clear_held(spec.slot).map_err(HostError::Run)?;
-        }
-        self.runner
-            .feed_forward(spec.slot, spec.ty, spec.space, forward)
-            .map_err(|error| self.feed_error(name, error))?;
-        Ok(FeedOutcome {
-            woke: self.wake_unless_context(spec.slot, spec.wake),
-            dropped: None,
+        self.feed_by(name, |runner, spec| {
+            runner.feed_forward(spec.slot, spec.ty, spec.space, forward)
         })
     }
 

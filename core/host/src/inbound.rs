@@ -2,10 +2,12 @@
 //! A host sets them when it builds the graph and may change them between ticks. Sizing happens
 //! once, when the first policy is set, so feeds never allocate.
 
+use daedalus_runner::{Fed, RunError, Runner};
 use daedalus_value::{Decision, DropReason, Freshness, Pressure, Value};
 
 use crate::io::{Host, HostError};
 use crate::label::Label;
+use crate::ports::PortSpec;
 
 /// A port's rules.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -71,7 +73,7 @@ pub(crate) enum Admit {
     Discard(DropReason),
 }
 
-impl Host<'_> {
+impl<'a> Host<'a> {
     /// Sets the pressure and freshness rules of the input port `name`. Allowed between ticks.
     pub fn set_port_policy(&mut self, name: &str, policy: PortPolicy) -> Result<(), HostError> {
         self.input(name)?;
@@ -138,11 +140,21 @@ impl Host<'_> {
     }
 
     /// Applies the port's rules to an arriving value. A refusal comes back as `Full`.
+    ///
+    /// A fed value meets two rules, in this order. First the port's own [`PortPolicy`], which the
+    /// host sets at run time: it may give the value up, make room by giving up the oldest, or
+    /// refuse. A port left on `BufferAll` has no rule of its own and passes every value on. Then
+    /// the slot's pressure, which the edge's policy set when the plan was loaded, decides as a
+    /// step's publish does (see `Runner::room`). The queue never holds more than the slot's rule
+    /// allows, so at most one of the two gives a value up on any feed, and the outcome reports it.
     pub(crate) fn admit(&mut self, name: &str, slot: u32) -> Result<Admit, HostError> {
         let index = self.ports.index_of(name).unwrap_or(0);
         let Some(entry) = self.inbound.get_mut(index) else {
             return Ok(Admit::Store(None));
         };
+        if entry.policy.pressure == Pressure::BufferAll {
+            return Ok(Admit::Store(None));
+        }
         let (len, cap) = self
             .runner
             .queue(slot)
@@ -170,6 +182,52 @@ impl Host<'_> {
                 port: Label::new(name),
             }),
         }
+    }
+
+    /// Feeds the input port `name` through `store`, which puts one value in the runner. A held
+    /// input's value is replaced, and its readers are woken when it is work. Any other input
+    /// takes the value under the port's rule and then the slot's, as [`Host::admit`] says.
+    pub(crate) fn feed_by(
+        &mut self,
+        name: &str,
+        store: impl FnOnce(&mut Runner<'a>, &PortSpec<'a>) -> Result<Fed, RunError>,
+    ) -> Result<crate::FeedOutcome, HostError> {
+        let spec = self.input(name)?;
+        if self.runner.is_held(spec.slot) {
+            self.runner.clear_held(spec.slot).map_err(HostError::Run)?;
+            store(&mut self.runner, spec).map_err(|error| self.feed_error(name, error))?;
+            return Ok(crate::FeedOutcome {
+                woke: self.wake_unless_context(spec.slot, spec.wake),
+                dropped: None,
+            });
+        }
+        let admitted = match self.admit(name, spec.slot)? {
+            Admit::Store(reason) => reason,
+            Admit::Discard(reason) => {
+                return Ok(crate::FeedOutcome {
+                    woke: 0,
+                    dropped: Some(reason),
+                });
+            }
+        };
+        let fed = store(&mut self.runner, spec).map_err(|error| self.feed_error(name, error))?;
+        if let Some(reason) = fed.dropped() {
+            let index = self.ports.index_of(name).unwrap_or(0);
+            if let Some(entry) = self.inbound.get_mut(index) {
+                entry.drops.count(reason);
+            }
+        }
+        if !fed.stored() {
+            return Ok(crate::FeedOutcome {
+                woke: 0,
+                dropped: fed.dropped(),
+            });
+        }
+        self.note_arrival(name);
+        Ok(crate::FeedOutcome {
+            woke: self.wake_consumers(spec.wake),
+            dropped: fed.dropped().or(admitted),
+        })
     }
 
     /// Records when a stored value arrived.

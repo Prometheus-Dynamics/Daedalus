@@ -105,7 +105,7 @@ pub use reuse::{
 pub use step::{Queue, SlotKind, SlotSpec, SlotStamp, StepMeta};
 pub use telemetry::Counters;
 pub use tick::TickReport;
-pub use values::{LENT, hand_on, put, put_inline, settle_forwards};
+pub use values::{Fed, LENT, hand_on, put, put_inline, settle_forwards};
 pub use values::{put_handed, share_handed, take_handed};
 #[cfg(feature = "alloc")]
 pub use values::{put_shared, put_typed};
@@ -335,12 +335,13 @@ impl<'a> Runner<'a> {
         })
     }
 
-    /// Stores a raw value at the back of `slot`'s queue. It does not wake consumers: a host feed
-    /// calls [`Runner::wake`] for each consumer, as a body write does.
+    /// Stores a raw value at the back of `slot`'s queue, under the slot's pressure as
+    /// [`Runner::feed_value`] does. It does not wake consumers: a host feed calls
+    /// [`Runner::wake`] for each consumer, as a body write does.
     ///
     /// Only values that own nothing can be pushed raw: static bytes, a slot reference, or a host
     /// handle. Owning values go in through `feed_value` or `feed_typed`.
-    pub fn push(&mut self, slot: u32, value: Slot) -> Result<(), RunError> {
+    pub fn push(&mut self, slot: u32, value: Slot) -> Result<Fed, RunError> {
         let index = slot as usize;
         if index >= self.slots {
             return Err(RunError::NoSlot { slot });
@@ -352,11 +353,11 @@ impl<'a> Runner<'a> {
         {
             return Err(RunError::NotRaw { slot });
         }
-        if self.queues[index].is_full() {
-            return Err(RunError::Overflow { slot });
+        let fed = self.room(slot)?;
+        if fed.stored() {
+            self.queues[index].push(self.storage, value);
         }
-        self.queues[index].push(self.storage, value);
-        Ok(())
+        Ok(fed)
     }
 
     /// Exchanges step `step` of this runner with step `other_step` of `other`. A host that
