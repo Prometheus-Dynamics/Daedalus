@@ -111,7 +111,7 @@ fn install(entry: &mut HostEntry, path: &str) -> Result<(), String> {
     let plugin: Plugin = entry.loader.open(path).map_err(|error| error.to_string())?;
     // A node an earlier generation of this plugin registered is the same node, and its body
     // now runs from the new library.
-    for decl in plugin.nodes() {
+    for decl in plugin.nodes().iter().chain(plugin.conversions()) {
         match entry.registry.register_owned(decl.clone()) {
             Ok(()) | Err(RegError::DuplicateBody { .. }) => {}
             Err(error) => return Err(format!("{path}: node `{}`: {error}", decl.id)),

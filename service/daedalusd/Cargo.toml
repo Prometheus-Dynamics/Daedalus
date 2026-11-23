@@ -34,6 +34,8 @@ listenfd = { workspace = true }
 
 [dev-dependencies]
 daedalus-client = { path = "../../core/client" }
+# Its library is the second plugin of the two-plugin test: cargo builds it beside the test.
+daedalus-fake-npu-plugin = { path = "../../testing/crates/fake-npu-plugin" }
 daedalus-graph = { path = "../../core/graph" }
 
 [lints]

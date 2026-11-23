@@ -8,5 +8,8 @@ mod daemon;
 #[cfg(unix)]
 #[path = "made.rs"]
 mod made;
+#[cfg(all(unix, feature = "planner"))]
+#[path = "two_plugins.rs"]
+mod two_plugins;
 #[path = "workers.rs"]
 mod workers;

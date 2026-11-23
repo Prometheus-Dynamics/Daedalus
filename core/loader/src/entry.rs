@@ -205,6 +205,13 @@ impl Plugin {
         &self.nodes
     }
 
+    /// The conversion nodes the plugin's codecs make, four a codec. [`Plugin::join`] registers
+    /// them with the nodes; a host that registers a plugin's declarations itself registers these
+    /// too, or the planner has no conversion to place for the plugin's types.
+    pub fn conversions(&self) -> &[OwnedDecl] {
+        &self.conversions
+    }
+
     pub fn backends(&self) -> &[Backend] {
         &self.backends
     }
