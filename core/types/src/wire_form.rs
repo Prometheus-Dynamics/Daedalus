@@ -21,6 +21,26 @@ pub trait WireForm: Sized {
     /// The type is `u8`: a list of it is bytes.
     #[doc(hidden)]
     const BYTE: bool = false;
+    /// Bytes an item takes when a list of the type is written and read as one block, the items'
+    /// wire forms end to end in one pass; `0` for a type whose list is written an item at a
+    /// time. A number is one.
+    #[doc(hidden)]
+    const BLOCK: usize = 0;
+
+    /// Writes `items` as one block into `out`, which is `items.len() * BLOCK` bytes. Called only
+    /// for a type whose `BLOCK` is not `0`.
+    #[doc(hidden)]
+    fn write_block(items: &[Self], out: &mut [u8]) {
+        let _ = (items, out);
+    }
+    /// Reads a block of items from `bytes`, a whole number of `BLOCK`s. Called only for a type
+    /// whose `BLOCK` is not `0`.
+    #[cfg(feature = "alloc")]
+    #[doc(hidden)]
+    fn read_block(bytes: &[u8]) -> Vec<Self> {
+        let _ = bytes;
+        Vec::new()
+    }
 
     /// How many bytes the value's wire form takes inside another value.
     fn wire_len(&self) -> usize;
@@ -63,8 +83,26 @@ macro_rules! numbers {
     ($($ty:ty),*) => {$(
         impl WireForm for $ty {
             const FLAT: bool = LITTLE || core::mem::size_of::<$ty>() == 1;
+            const BLOCK: usize = core::mem::size_of::<$ty>();
             fn wire_len(&self) -> usize {
                 core::mem::size_of::<$ty>()
+            }
+            fn write_block(items: &[$ty], out: &mut [u8]) {
+                for (to, item) in out.chunks_exact_mut(Self::BLOCK).zip(items) {
+                    to.copy_from_slice(&item.to_le_bytes());
+                }
+            }
+            #[cfg(feature = "alloc")]
+            fn read_block(bytes: &[u8]) -> Vec<$ty> {
+                // Filled in place, a shape the compiler makes one copy of on a little-endian
+                // machine.
+                let mut items: Vec<$ty> = alloc::vec![0 as $ty; bytes.len() / Self::BLOCK];
+                for (item, from) in items.iter_mut().zip(bytes.chunks_exact(Self::BLOCK)) {
+                    let mut le = [0u8; core::mem::size_of::<$ty>()];
+                    le.copy_from_slice(from);
+                    *item = <$ty>::from_le_bytes(le);
+                }
+                items
             }
             fn write_wire(&self, out: &mut [u8]) -> usize {
                 put(out, &self.to_le_bytes())
@@ -81,6 +119,14 @@ numbers!(i8, i16, i32, i64, u16, u32, u64, f32, f64);
 impl WireForm for u8 {
     const FLAT: bool = true;
     const BYTE: bool = true;
+    const BLOCK: usize = 1;
+    fn write_block(items: &[u8], out: &mut [u8]) {
+        out.copy_from_slice(items);
+    }
+    #[cfg(feature = "alloc")]
+    fn read_block(bytes: &[u8]) -> Vec<u8> {
+        bytes.to_vec()
+    }
     fn wire_len(&self) -> usize {
         1
     }
@@ -228,6 +274,11 @@ fn items_len<T: WireForm>(items: &[T]) -> usize {
 
 #[cfg(feature = "alloc")]
 fn write_items<T: WireForm>(items: &[T], out: &mut [u8]) -> usize {
+    if T::BLOCK != 0 {
+        let len = items.len() * T::BLOCK;
+        T::write_block(items, &mut out[..len]);
+        return len;
+    }
     let mut at = 0;
     for item in items {
         at += item.write_wire(&mut out[at..]);
@@ -238,6 +289,16 @@ fn write_items<T: WireForm>(items: &[T], out: &mut [u8]) -> usize {
 /// `len` items from the front of `bytes`, or as many as fill all of it when `len` is `None`.
 #[cfg(feature = "alloc")]
 fn read_items<T: WireForm>(bytes: &[u8], len: Option<usize>) -> Option<(Vec<T>, usize)> {
+    if T::BLOCK != 0 {
+        // A list of all the bytes is a whole number of items, as an item at a time it must be.
+        let len = match len {
+            Some(len) => len,
+            None if bytes.len().is_multiple_of(T::BLOCK) => bytes.len() / T::BLOCK,
+            None => return None,
+        };
+        let used = len.checked_mul(T::BLOCK)?;
+        return Some((T::read_block(bytes.get(..used)?), used));
+    }
     // Never reserve more than the bytes could hold, whatever a count claims.
     let mut items = Vec::with_capacity(len.unwrap_or(bytes.len()).min(bytes.len()));
     let mut at = 0;
