@@ -58,10 +58,14 @@ producer. An input port can be given a freshness limit, so a stale value is drop
 used.
 
 The edges inside a group take their policy from the group: `edge_policies` lists a stage input
-and the policy of the connects into it (`GroupDef::edge_policies`, or `"edge_policies": [{"at":
-{"stage": "b", "port": "in"}, "policy": {"kind": "latest_only"}}]` in a document). A connect not
-listed is a FIFO. An entry no connect leads into, or a second one for the same input, is refused
-by name when the group is expanded.
+and the policy of the edges into it (`GroupDef::edge_policies`, or `"edge_policies": [{"at":
+{"stage": "b", "port": "in"}, "policy": {"kind": "latest_only"}}]` in a document). The input may
+be a connect's target or one a group input feeds; then the caller's edge into the group gets the
+policy for that stage, and an input that feeds several stages can give each its own. An edge not
+listed keeps its own policy, a FIFO by default. The group nearest the stage wins: an edge into it
+that carries a policy of its own, other than a FIFO, that differs from the group's is refused by
+name, and the fix is to drop that edge's policy or make it the group's. An entry no connect or
+group input leads into, or a second one for the same input, is refused by name too.
 
 A host input's policy on the host bridge says what its value is. A `consume` input (the default)
 is work: a feed wakes its readers, each value is read once, and a domain ticks the graph for it.

@@ -20,7 +20,7 @@ use daedalus_runner::{put_typed, typed_view};
 use daedalus_types::{SpaceIndex, TypeIndex};
 
 /// Writes the sum of the inputs that hold a value.
-struct Sum;
+pub(crate) struct Sum;
 
 impl OwnedStep for Sum {
     fn run(&mut self, slots: &mut Slots, _: &mut StepCx) -> StepEnd {
@@ -42,7 +42,7 @@ impl OwnedStep for Sum {
     }
 }
 
-struct Test;
+pub(crate) struct Test;
 
 impl Backend for Test {
     fn id(&self) -> &str {

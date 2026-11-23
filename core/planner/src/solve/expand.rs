@@ -47,6 +47,15 @@ pub enum ExpandError {
         stage: String,
         port: String,
     },
+    /// An edge into a group's input carries a policy of its own that differs from the one the
+    /// group declares for a stage behind that input.
+    EdgePolicyConflict {
+        group: String,
+        stage: String,
+        port: String,
+        group_policy: EdgePolicyDoc,
+        edge_policy: EdgePolicyDoc,
+    },
 }
 
 impl fmt::Display for ExpandError {
@@ -64,7 +73,20 @@ impl fmt::Display for ExpandError {
             }
             ExpandError::EdgePolicyUnmatched { group, stage, port } => write!(
                 f,
-                "group `{group}` gives `{stage}.{port}` an edge policy, but no connect leads into it"
+                "group `{group}` gives `{stage}.{port}` an edge policy, but no connect or group \
+                 input leads into it"
+            ),
+            ExpandError::EdgePolicyConflict {
+                group,
+                stage,
+                port,
+                group_policy,
+                edge_policy,
+            } => write!(
+                f,
+                "group `{group}` gives `{stage}.{port}` the edge policy {group_policy:?}, but the \
+                 edge into it carries {edge_policy:?}: drop that edge's own policy, or make it \
+                 {group_policy:?}"
             ),
             ExpandError::EdgePolicyTwice { group, stage, port } => {
                 write!(
@@ -81,13 +103,47 @@ impl std::error::Error for ExpandError {}
 /// A port of an expanded node, in the flat graph.
 type Flat = (u32, String);
 
+/// A group's edge policy for one stage input, and where it was declared.
+#[derive(Clone)]
+struct Declared {
+    policy: EdgePolicyDoc,
+    group: String,
+    stage: String,
+    port: String,
+}
+
+/// A port a group input leads to, with the policy the group nearest it declares for its edge.
+#[derive(Clone)]
+struct Target {
+    flat: Flat,
+    declared: Option<Declared>,
+}
+
+impl Declared {
+    /// The policy an edge carrying `incoming` gets into this stage input: the group's. `None`
+    /// when the edge's own policy isn't the default and differs from it, which is refused.
+    fn over(&self, incoming: &EdgePolicyDoc) -> Option<EdgePolicyDoc> {
+        (*incoming == EdgePolicyDoc::Fifo || *incoming == self.policy).then(|| self.policy.clone())
+    }
+
+    fn conflict(&self, incoming: &EdgePolicyDoc) -> ExpandError {
+        ExpandError::EdgePolicyConflict {
+            group: self.group.clone(),
+            stage: self.stage.clone(),
+            port: self.port.clone(),
+            group_policy: self.policy.clone(),
+            edge_policy: incoming.clone(),
+        }
+    }
+}
+
 /// How an original node's ports map to the flat graph.
 enum Mapping {
     Single(u32),
     Group {
         id: String,
         label: String,
-        inputs: BTreeMap<String, Vec<Flat>>,
+        inputs: BTreeMap<String, Vec<Target>>,
         /// `None` where the stage behind the port already failed.
         outputs: BTreeMap<String, Option<Flat>>,
     },
@@ -280,9 +336,31 @@ impl Expander<'_> {
         for (name, targets) in &body.inputs {
             let mut flat = Vec::new();
             for target in targets {
-                match index_of(&target.stage) {
-                    Some(at) => flat.extend(self.input_ports(&mappings[at], &target.port)),
-                    None => self.errors.push(missing(target)),
+                let Some(at) = index_of(&target.stage) else {
+                    self.errors.push(missing(target));
+                    continue;
+                };
+                let own = policies
+                    .get(&(target.stage.as_str(), target.port.as_str()))
+                    .map(|policy| Declared {
+                        policy: policy.clone(),
+                        group: node.id.clone(),
+                        stage: target.stage.clone(),
+                        port: target.port.clone(),
+                    });
+                for mut reached in self.input_ports(&mappings[at], &target.port) {
+                    // A nested group's own policy for the stage is nearer, so it wins; this
+                    // group's is then an incoming edge's, checked against it.
+                    match (&reached.declared, own.clone()) {
+                        (Some(inner), Some(own)) => {
+                            if inner.over(&own.policy).is_none() {
+                                self.errors.push(inner.conflict(&own.policy));
+                            }
+                        }
+                        (None, own) => reached.declared = own,
+                        (Some(_), None) => {}
+                    }
+                    flat.push(reached);
                 }
             }
             inputs.insert(name.clone(), flat);
@@ -308,8 +386,8 @@ impl Expander<'_> {
         }
     }
 
-    /// The group's edge policies by the stage input they're for. One that no connect leads
-    /// into, or a second for the same input, is refused.
+    /// The group's edge policies by the stage input they're for. One that no connect or group
+    /// input leads into, or a second for the same input, is refused.
     fn edge_policies<'g>(
         &mut self,
         group: &str,
@@ -319,7 +397,9 @@ impl Expander<'_> {
         for entry in &body.edge_policies {
             let key = (entry.at.stage.as_str(), entry.at.port.as_str());
             let (group, stage, port) = (group.to_string(), key.0.to_string(), key.1.to_string());
-            if !body.connects.iter().any(|(_, to)| *to == entry.at) {
+            let connected = body.connects.iter().any(|(_, to)| *to == entry.at);
+            let input = body.inputs.values().flatten().any(|to| *to == entry.at);
+            if !connected && !input {
                 self.errors
                     .push(ExpandError::EdgePolicyUnmatched { group, stage, port });
             } else if policies.insert(key, entry.policy.clone()).is_some() {
@@ -330,9 +410,12 @@ impl Expander<'_> {
         policies
     }
 
-    fn input_ports(&mut self, mapping: &Mapping, port: &str) -> Vec<Flat> {
+    fn input_ports(&mut self, mapping: &Mapping, port: &str) -> Vec<Target> {
         match mapping {
-            Mapping::Single(index) => vec![(*index, port.to_string())],
+            Mapping::Single(index) => vec![Target {
+                flat: (*index, port.to_string()),
+                declared: None,
+            }],
             Mapping::Failed => Vec::new(),
             Mapping::Group {
                 id, label, inputs, ..
@@ -388,7 +471,18 @@ impl Expander<'_> {
             let Some((node, port)) = self.output_port(from, &edge.from.port) else {
                 continue;
             };
-            for (target, target_port) in self.input_ports(to, &edge.to.port) {
+            for target in self.input_ports(to, &edge.to.port) {
+                let policy = match &target.declared {
+                    None => edge.policy.clone(),
+                    Some(declared) => match declared.over(&edge.policy) {
+                        Some(policy) => policy,
+                        None => {
+                            self.errors.push(declared.conflict(&edge.policy));
+                            continue;
+                        }
+                    },
+                };
+                let (target, target_port) = target.flat;
                 self.edges.push(EdgeDoc {
                     from: PortRefDoc {
                         node,
@@ -398,7 +492,7 @@ impl Expander<'_> {
                         node: target,
                         port: target_port,
                     },
-                    policy: edge.policy.clone(),
+                    policy,
                 });
             }
         }
@@ -420,7 +514,11 @@ impl Expander<'_> {
             }
             let mapping = self.group(node, outer, chain);
             for (port, value) in &node.consts {
-                for (target, target_port) in self.input_ports(&mapping, port) {
+                for Target {
+                    flat: (target, target_port),
+                    ..
+                } in self.input_ports(&mapping, port)
+                {
                     self.nodes[target as usize]
                         .doc
                         .consts

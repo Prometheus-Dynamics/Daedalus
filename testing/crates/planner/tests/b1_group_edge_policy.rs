@@ -58,6 +58,37 @@ static TWICE: GroupDef = GroupDef {
     ..GroupDef::new("t.twice")
 };
 
+/// The group's input `in` feeds `a` and `b`; `a` fires only sometimes, so its edge keeps only the
+/// newest value whatever edge the caller feeds `in` with.
+static FANNED: GroupDef = GroupDef {
+    stages: &[("a", "t.pass"), ("b", "t.pass")],
+    inputs: &[("in", &[stage("a", "in"), stage("b", "in")])],
+    outputs: &[("a", stage("a", "out")), ("b", stage("b", "out"))],
+    edge_policies: &[(stage("a", "in"), EdgePolicy::LatestOnly)],
+    ..GroupDef::new("t.fanned")
+};
+
+/// `FANNED` inside another group, fed by a connect with no policy.
+static NESTING: GroupDef = GroupDef {
+    stages: &[("src", "t.pass"), ("inner", "t.fanned")],
+    connects: &[(stage("src", "out"), stage("inner", "in"))],
+    inputs: &[("in", &[stage("src", "in")])],
+    outputs: &[("a", stage("inner", "a")), ("b", stage("inner", "b"))],
+    ..GroupDef::new("t.nesting")
+};
+
+/// `FANNED` inside another group whose own policy for that connect differs from `FANNED`'s.
+static NESTING_BOUNDED: GroupDef = GroupDef {
+    edge_policies: &[(
+        stage("inner", "in"),
+        EdgePolicy::Bounded {
+            capacity: 4,
+            overflow: "drop_oldest",
+        },
+    )],
+    ..NESTING
+};
+
 fn registry() -> Registry {
     let mut registry = Registry::new();
     decl("t.pass")
@@ -65,13 +96,21 @@ fn registry() -> Registry {
         .output("out", u8_ty())
         .body("sim")
         .add(&mut registry);
-    for group in [&DECLARED, &UNMATCHED, &TWICE] {
+    for group in [&DECLARED, &UNMATCHED, &TWICE, &FANNED, &NESTING] {
         let mut declared = decl(group.id).input("in", u8_ty());
         for (name, _) in group.outputs {
             declared = declared.output(name, u8_ty());
         }
         declared.group(group).body("sim").add(&mut registry);
     }
+    let mut declared = decl("t.nesting_bounded").input("in", u8_ty());
+    for (name, _) in NESTING_BOUNDED.outputs {
+        declared = declared.output(name, u8_ty());
+    }
+    declared
+        .group(&NESTING_BOUNDED)
+        .body("sim")
+        .add(&mut registry);
     registry
 }
 
@@ -180,5 +219,86 @@ fn two_policies_for_one_input_are_refused_by_name() {
             stage: "b".into(),
             port: "in".into(),
         })]
+    );
+}
+
+/// `t.pass` feeding the group `id` on its input `in`, over an edge with `policy`.
+fn fed(id: &str, policy: EdgePolicyDoc) -> GraphBody {
+    let mut feed = daedalus_planner_tests::edge(0, "out", 1, "in");
+    feed.policy = policy;
+    GraphBody {
+        nodes: vec![node("t.pass"), node(id)],
+        edges: vec![feed],
+        groups: Vec::new(),
+    }
+}
+
+fn into_stage(graph: &Graph, name: &str) -> EdgePolicyDoc {
+    let suffix = format!("::{name}");
+    let found: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| {
+            let to = &graph.nodes[edge.to.node as usize].doc;
+            to.label
+                .as_deref()
+                .is_some_and(|label| label.ends_with(&suffix))
+        })
+        .collect();
+    assert_eq!(found.len(), 1, "{:?}", graph.edges);
+    found[0].policy.clone()
+}
+
+#[test]
+fn a_policy_on_a_group_inputs_target_applies_to_the_callers_edge() {
+    for caller in [EdgePolicyDoc::Fifo, EdgePolicyDoc::LatestOnly] {
+        let graph = run(fed("t.fanned", caller.clone())).unwrap();
+        assert_eq!(
+            into_stage(&graph, "a"),
+            EdgePolicyDoc::LatestOnly,
+            "{caller:?}"
+        );
+        // The input's other target keeps the caller's edge as it is.
+        assert_eq!(into_stage(&graph, "b"), caller);
+    }
+}
+
+#[test]
+fn a_callers_policy_that_differs_from_the_groups_is_refused_by_name() {
+    let bounded = EdgePolicyDoc::Bounded {
+        capacity: 4,
+        overflow: "drop_oldest".into(),
+    };
+    let errors = run(fed("t.fanned", bounded.clone())).unwrap_err();
+    let text = errors[0].to_string();
+    assert!(
+        text.contains("drop that edge's own policy, or make it LatestOnly"),
+        "{text}"
+    );
+    assert_eq!(
+        errors,
+        [SolveError::Expand(ExpandError::EdgePolicyConflict {
+            group: "t.fanned".into(),
+            stage: "a".into(),
+            port: "in".into(),
+            group_policy: EdgePolicyDoc::LatestOnly,
+            edge_policy: bounded,
+        })]
+    );
+}
+
+#[test]
+fn a_nested_groups_input_policy_applies_to_the_enclosing_connect() {
+    let graph = run(fed("t.nesting", EdgePolicyDoc::Fifo)).unwrap();
+    assert_eq!(into_stage(&graph, "a"), EdgePolicyDoc::LatestOnly);
+    assert_eq!(into_stage(&graph, "b"), EdgePolicyDoc::Fifo);
+    let errors = run(fed("t.nesting_bounded", EdgePolicyDoc::Fifo)).unwrap_err();
+    assert!(
+        matches!(
+            &errors[..],
+            [SolveError::Expand(ExpandError::EdgePolicyConflict { group, stage, .. })]
+                if group == "t.fanned" && stage == "a"
+        ),
+        "{errors:?}"
     );
 }
