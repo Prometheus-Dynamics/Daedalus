@@ -1352,6 +1352,7 @@ dependencies = [
  "daedalus-backend",
  "daedalus-backend-process",
  "daedalus-client",
+ "daedalus-fake-npu-plugin",
  "daedalus-graph",
  "daedalus-host",
  "daedalus-integrity",

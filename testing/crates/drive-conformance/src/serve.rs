@@ -59,7 +59,7 @@ impl PluginLoader for Plugins {
         backends: &mut Vec<Arc<dyn Backend>>,
     ) -> Result<PluginInfo, String> {
         let plugin = self.loader.open(path).map_err(|error| error.to_string())?;
-        for decl in plugin.nodes() {
+        for decl in plugin.nodes().iter().chain(plugin.conversions()) {
             match registry.register_owned(decl.clone()) {
                 Ok(()) | Err(RegError::DuplicateBody { .. }) => {}
                 Err(error) => return Err(format!("{path}: node `{}`: {error}", decl.id)),

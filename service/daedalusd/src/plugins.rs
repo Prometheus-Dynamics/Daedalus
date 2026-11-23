@@ -71,7 +71,9 @@ impl PluginLoader for Plugins {
         };
         // A node this plugin's earlier generation already registered is the same node: its body
         // now runs from the new library. Anything else that does not join is an error.
-        for decl in plugin.nodes() {
+        // Its codecs' conversions join too: without them the planner has nothing to place
+        // between the plugin's own types and the rest.
+        for decl in plugin.nodes().iter().chain(plugin.conversions()) {
             match registry.register_owned(decl.clone()) {
                 Ok(()) | Err(RegError::DuplicateBody { .. }) => {}
                 Err(error) => return Err(format!("{path}: node `{}`: {error}", decl.id)),
