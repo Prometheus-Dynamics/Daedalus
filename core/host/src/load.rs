@@ -293,6 +293,9 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
         covers,
         same_as,
         transfers,
+        kept,
+        extra,
+        fans,
     } = built;
     let node_names: Vec<&'static str> = nodes.iter().map(|node| intern(&node.key)).collect();
     let covers = covers
@@ -315,10 +318,14 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
         .iter()
         .map(|p| p.slot)
         .collect();
-    let stamps = slot_stamps(&bound.facts.stitched);
-    let (mut runner, buffers) =
-        owned_run::build(steps, meta, table, slots, stamps, &host_inputs, clock)
-            .map_err(LoadError::Run)?;
+    let mut stamps = slot_stamps(&bound.facts.stitched);
+    // A fan-out's added slot carries the values of the plan slot it was made for.
+    for carried in extra {
+        stamps.push(stamps[carried as usize]);
+    }
+    let wiring = owned_run::Wiring { meta, table, fans };
+    let (mut runner, buffers) = owned_run::build(steps, wiring, slots, stamps, &host_inputs, clock)
+        .map_err(LoadError::Run)?;
     for (slot, rule) in edges {
         // A slot a kept rule can't apply to stays on the default.
         let _ = runner.set_pressure(slot, rule.pressure);
@@ -327,7 +334,7 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
     }
     // A slot that keeps its value, for several readers or as a held input's context, holds the
     // newest one, so a new one replaces it.
-    for slot in crate::lay_out::kept_slots(&bound.facts.stitched) {
+    for slot in kept {
         let _ = runner.set_pressure(slot, Pressure::LatestOnly);
     }
     let mut host = Host::new(runner, ports, types);

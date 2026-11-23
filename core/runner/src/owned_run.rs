@@ -68,6 +68,7 @@ pub struct RunBuffers {
     _table: Raw<u32>,
     _slots: Raw<SlotSpec>,
     _stamps: Raw<SlotStamp>,
+    _fans: Raw<crate::FanOut>,
     _cells: Raw<Slot>,
     _queues: Raw<Queue>,
     _storage: Raw<Slot>,
@@ -176,10 +177,17 @@ unsafe impl Send for RunBuffers {}
 
 /// Builds a runner over buffers it owns. The caller keeps the buffers and drops them after the
 /// runner.
+pub struct Wiring {
+    pub meta: Vec<StepMeta>,
+    pub table: Vec<u32>,
+    /// The outputs a fan-out added to their steps, sorted by step.
+    pub fans: Vec<crate::FanOut>,
+}
+
+/// Builds a runner over buffers of its own: see the module's documentation.
 pub fn build(
     steps: Vec<Step>,
-    meta: Vec<StepMeta>,
-    table: Vec<u32>,
+    Wiring { meta, table, fans }: Wiring,
     slots: Vec<SlotSpec>,
     slot_stamps: Vec<SlotStamp>,
     host_inputs: &[u32],
@@ -211,6 +219,7 @@ pub fn build(
         _table: Raw::new(table),
         _slots: Raw::new(slots),
         _stamps: Raw::new(slot_stamps),
+        _fans: Raw::new(fans),
         _cells: Raw::new(vec![Slot::EMPTY; widest]),
         _queues: Raw::new(vec![Queue::default(); nslots]),
         _storage: Raw::new(vec![Slot::EMPTY; storage as usize]),
@@ -264,6 +273,8 @@ pub fn build(
     let mut runner = Runner::load(plan, memory)?;
     // SAFETY: as above; this table is borrowed only here.
     runner.set_stamps(unsafe { buffers._stamps.borrow() })?;
+    // SAFETY: as above; this table is borrowed only here.
+    runner.set_fans(unsafe { buffers._fans.borrow() })?;
     // SAFETY: the cells are in an `Arc` that `buffers` holds for as long as the runner lives, as
     // the function's documentation requires of the caller, and they are only ever shared.
     let cells: &'static [Progress] = unsafe { &*Arc::as_ptr(&buffers.progress) };

@@ -70,7 +70,12 @@ fn build(
         ty: TypeIndex(0),
         space: SpaceIndex(0),
     }];
-    owned_run::build(steps, wiring.meta, wiring.table, slots, stamps, &[], None).unwrap()
+    let wiring = owned_run::Wiring {
+        meta: wiring.meta,
+        table: wiring.table,
+        fans: Vec::new(),
+    };
+    owned_run::build(steps, wiring, slots, stamps, &[], None).unwrap()
 }
 
 #[test]
