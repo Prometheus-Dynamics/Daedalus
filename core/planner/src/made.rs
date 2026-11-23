@@ -37,6 +37,14 @@ impl Planned {
                 consts: node.consts.clone(),
                 backend: backend_of[at],
                 outputs: node.outputs.iter().map(|port| port.name.clone()).collect(),
+                metrics: node
+                    .metrics
+                    .iter()
+                    .map(|metric| daedalus_made::MadeMetric {
+                        name: metric.name.to_string(),
+                        unit: metric.unit,
+                    })
+                    .collect(),
             })
             .collect();
         let edges = self

@@ -110,6 +110,42 @@ pub struct Conversion {
     pub lossy: bool,
 }
 
+/// What a metric's number is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetricUnit {
+    /// A duration, in nanoseconds.
+    Ns,
+    /// How many of something.
+    Count,
+}
+
+impl MetricUnit {
+    /// The word a `#[node]` declaration and a report use.
+    pub const fn word(self) -> &'static str {
+        match self {
+            MetricUnit::Ns => "ns",
+            MetricUnit::Count => "count",
+        }
+    }
+
+    pub fn parse(word: &str) -> Option<MetricUnit> {
+        match word {
+            "ns" => Some(MetricUnit::Ns),
+            "count" => Some(MetricUnit::Count),
+            _ => None,
+        }
+    }
+}
+
+/// A number a node's body reports about its own work, beside what the host measures for every
+/// node: how long one of its stages took, how many candidates it found. Declared on the node, so a
+/// host can list a graph's metrics without running it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MetricDecl {
+    pub name: &'static str,
+    pub unit: MetricUnit,
+}
+
 /// What the graph sees. One per id, shared by every body.
 #[derive(Clone, Debug)]
 pub struct NodeDecl {
@@ -128,6 +164,8 @@ pub struct NodeDecl {
     pub conversion: Option<Conversion>,
     /// A node made of other nodes.
     pub group: Option<&'static GroupDef>,
+    /// The numbers the node's body reports about its own work, in the order it numbers them.
+    pub metrics: &'static [MetricDecl],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -38,6 +38,8 @@ mod handed_bytes;
 mod merge;
 #[path = "node_fault.rs"]
 mod node_fault;
+#[path = "node_metrics.rs"]
+mod node_metrics;
 #[path = "owned_code.rs"]
 mod owned_code;
 #[cfg(feature = "merge")]

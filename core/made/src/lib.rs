@@ -20,6 +20,6 @@ pub use bind::{BindError, Bound, bind};
 pub use decode::decode;
 pub use encode::encode;
 pub use error::MadeError;
-pub use facts::{MadeEdge, MadeNode, PlanFacts};
+pub use facts::{MadeEdge, MadeMetric, MadeNode, PlanFacts};
 pub use plan::{MadeMove, MadePlan, MadeRegion, declaration};
 pub use stitched::{HostPort, Item, SlotInfo, Stitched, TransferUse, UnitId};

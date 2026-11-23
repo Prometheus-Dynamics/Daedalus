@@ -283,6 +283,28 @@ node's step did not change: see [host.md](host.md#reload).
 A parameter of type `&Ctx` (from `daedalus_cpu_author`) gives the tick's clock, and lets a long
 body ask whether a cancel was requested and report progress.
 
+## Metrics
+
+The host times every node and counts what it publishes (see [host.md](host.md)). When a body has
+stages of its own, start by asking whether they should be nodes: stages that hand each other
+values the graph can own are better as a group of real nodes, because then per-node timing, edge
+policies, placement and switching a node off all apply to each stage. A body keeps its stages to
+itself when they share borrowed scratch or state inside one call, when a stage is a loop body or
+runs a number of times the data decides, when a stage is so short that a step of its own would
+distort what it measures, or when the number is not a time at all (candidates found, bits
+corrected).
+
+For those, a node declares the numbers its body reports about its own work:
+
+```rust
+#[node(id = "detect", inputs(frame), outputs(tags),
+       metrics(threshold = "ns", decode = "ns", candidates = "count"))]
+```
+
+Each metric has a name and a unit, `"ns"` for a duration in nanoseconds or `"count"`. They are
+part of the node's declaration and of the plan, so a host lists a graph's metrics without running
+it (`LoadedHost::metrics`).
+
 ## Firing
 
 A node runs when one of its inputs has a new value and every required input has one. With

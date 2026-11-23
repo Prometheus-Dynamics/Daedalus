@@ -263,6 +263,31 @@ pub struct LoadedHost {
     pub(crate) same_as: Vec<Option<String>>,
     /// For each step that is a move, the transfer it makes.
     pub(crate) moves: Vec<Option<&'static str>>,
+    /// The metrics the graph's nodes declare.
+    pub(crate) metric_list: Vec<MetricInfo>,
+}
+
+/// One metric a node declares.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetricInfo {
+    /// The node, as the host names it.
+    pub node: String,
+    pub name: String,
+    pub unit: daedalus_registry::MetricUnit,
+}
+
+/// The metrics of every node of a plan, in node order.
+pub(crate) fn metric_list(bound: &Bound, nodes: &[NodeEntry]) -> Vec<MetricInfo> {
+    let facts = bound.facts.nodes.iter().zip(nodes);
+    facts
+        .flat_map(|(node, entry)| {
+            node.metrics.iter().map(|metric| MetricInfo {
+                node: entry.key.clone(),
+                name: metric.name.clone(),
+                unit: metric.unit,
+            })
+        })
+        .collect()
 }
 
 /// Everything one version of the graph brings.
@@ -276,6 +301,7 @@ pub(crate) struct Parts {
     pub(crate) bridges: Vec<String>,
     pub(crate) covers: Vec<&'static [&'static str]>,
     pub(crate) node_names: Vec<&'static str>,
+    pub(crate) metric_list: Vec<MetricInfo>,
 }
 
 /// Builds the host for a plan. Nothing else is touched, so a failure leaves any running graph as
@@ -352,6 +378,7 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
             .collect(),
     );
     Ok(Parts {
+        metric_list: metric_list(bound, &nodes),
         host,
         same_as,
         moves: transfers,
@@ -405,6 +432,7 @@ impl LoadedHost {
             host: parts.host,
             same_as: parts.same_as,
             moves: parts.moves,
+            metric_list: parts.metric_list,
             nodes: parts.nodes,
             bridges: parts.bridges,
             covers: parts.covers,
@@ -427,6 +455,12 @@ impl LoadedHost {
         }
         self.collect_faults();
         report
+    }
+
+    /// The metrics the graph's nodes declare, in node order: what each node's body reports about
+    /// its own work. Known from the plan, so a graph need not run to be asked.
+    pub fn metrics(&self) -> Vec<MetricInfo> {
+        self.metric_list.clone()
     }
 
     /// The tick overhead over the recent window, when the probe is on.

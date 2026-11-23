@@ -67,6 +67,7 @@ const fn decl(id: &'static str) -> NodeDecl {
         shareable: false,
         conversion: None,
         group: None,
+        metrics: &[],
     }
 }
 

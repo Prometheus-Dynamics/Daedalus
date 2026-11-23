@@ -60,6 +60,8 @@ pub(crate) struct NodeArgs {
     pub generics: Option<GenericsArg>,
     pub backend: Option<BackendArg>,
     pub memory: Vec<(Ident, LitStr)>,
+    /// Each metric's name and unit.
+    pub metrics: Vec<(Ident, LitStr)>,
 }
 
 pub(crate) fn value<T: Parse>(input: ParseStream<'_>) -> Result<T> {
@@ -270,6 +272,8 @@ impl Parse for NodeArgs {
                 "generics" => args.generics = Some(parse_generics(input)?),
                 "backend" => args.backend = Some(parse_backend(input)?),
                 "memory" => args.memory = parse_memory(input)?,
+                // The same shape: `metrics(threshold = "ns", candidates = "count")`.
+                "metrics" => args.metrics = parse_memory(input)?,
                 _ => return Err(Error::new(key.span(), "unsupported #[node] argument")),
             }
             if !input.is_empty() {

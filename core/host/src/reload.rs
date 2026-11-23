@@ -129,6 +129,7 @@ impl LoadedHost {
         self.covers = parts.covers;
         self.same_as = parts.same_as;
         self.moves = parts.moves;
+        self.metric_list = parts.metric_list;
         self.node_names = parts.node_names;
         self.attach_detail();
         self.consts.seed(&bound);

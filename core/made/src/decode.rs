@@ -17,12 +17,13 @@ use daedalus_wire::codec::Reader;
 
 use crate::encode::{FORMAT, HEADER, MAGIC, SCALARS, kind_of, sharing_of};
 use crate::error::MadeError;
-use crate::facts::{MadeEdge, MadeNode, PlanFacts};
+use crate::facts::{MadeEdge, MadeMetric, MadeNode, PlanFacts};
 use crate::plan::{MadeMove, MadePlan, MadeRegion};
 use crate::recipe::{
     RecipeBody, RecipeConst, RecipeEdge, RecipeHost, RecipeIncoming, RecipeLent, RegionRecipe,
 };
 use crate::stitched::{HostPort, Item, SlotInfo, Stitched, TransferUse, UnitId};
+use daedalus_registry::MetricUnit;
 
 /// Reads a made plan. Bytes that were changed or cut short are refused by the hash or a field.
 pub fn decode(bytes: &[u8]) -> Result<MadePlan, MadeError> {
@@ -95,6 +96,26 @@ fn read_facts(r: &mut Reader<'_>) -> Result<PlanFacts, WireError> {
     })
 }
 
+fn read_metrics(r: &mut Reader<'_>) -> Result<Vec<MadeMetric>, WireError> {
+    let count = r.count()?;
+    let mut metrics = Vec::with_capacity(count.min(64));
+    for _ in 0..count {
+        let name = r.str()?;
+        let unit = match r.u8()? {
+            0 => MetricUnit::Ns,
+            1 => MetricUnit::Count,
+            tag => {
+                return Err(WireError::BadTag {
+                    what: "metric unit",
+                    tag: u32::from(tag),
+                });
+            }
+        };
+        metrics.push(MadeMetric { name, unit });
+    }
+    Ok(metrics)
+}
+
 pub(crate) fn read_node(r: &mut Reader<'_>) -> Result<MadeNode, WireError> {
     Ok(MadeNode {
         id: r.str()?,
@@ -113,6 +134,12 @@ pub(crate) fn read_node(r: &mut Reader<'_>) -> Result<MadeNode, WireError> {
         },
         // A plan stored before the output names were kept ends here.
         outputs: if r.more() { read_strs(r)? } else { Vec::new() },
+        // And one stored before the metrics ends here.
+        metrics: if r.more() {
+            read_metrics(r)?
+        } else {
+            Vec::new()
+        },
     })
 }
 

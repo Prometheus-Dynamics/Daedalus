@@ -133,6 +133,7 @@ fn promote(decl: OwnedDecl) -> &'static NodeRecord {
         shareable: false,
         conversion: decl.conversion,
         group: None,
+        metrics: &[],
     }));
     Box::leak(Box::new(NodeRecord {
         decl: node,

@@ -216,6 +216,7 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
         quote!(::daedalus_registry::FanInDecl { prefix: #prefix, start: 0, ty: #ty })
     });
     let fire = fire_tokens(args)?;
+    let metrics = metric_tokens(args)?;
     let (reusable, shareable) = (args.reusable, args.shareable);
     let conversion = conversion_tokens(args);
     let config = config_tokens(args);
@@ -259,6 +260,7 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
             shareable: #shareable,
             conversion: #conversion,
             group: ::core::option::Option::None,
+            metrics: &[#(#metrics),*],
         };
 
         pub const #node: ::daedalus_registry::NodeRecord = ::daedalus_registry::NodeRecord {
@@ -277,6 +279,35 @@ fn records(parts: Parts<'_>) -> Result<TokenStream> {
             },
         };
     })
+}
+
+/// The node's metrics, each a name and a unit.
+fn metric_tokens(args: &NodeArgs) -> Result<Vec<TokenStream>> {
+    let mut seen = Vec::new();
+    args.metrics
+        .iter()
+        .map(|(name, unit)| {
+            let text = name.to_string();
+            if seen.contains(&text) {
+                return Err(Error::new(name.span(), "this metric is declared twice"));
+            }
+            seen.push(text.clone());
+            let unit = match unit.value().as_str() {
+                "ns" => quote!(Ns),
+                "count" => quote!(Count),
+                _ => {
+                    return Err(Error::new(
+                        unit.span(),
+                        "a metric's unit must be \"ns\" or \"count\"",
+                    ));
+                }
+            };
+            Ok(quote!(::daedalus_registry::MetricDecl {
+                name: #text,
+                unit: ::daedalus_registry::MetricUnit::#unit,
+            }))
+        })
+        .collect()
 }
 
 /// What a backend needs to wire a function up: which parameter is which, and what it returns.
