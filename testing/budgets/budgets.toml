@@ -124,6 +124,31 @@ next = 3083
 tolerance_percent = 10
 
 [[row]]
+name = "wire_bytes_megabyte"
+measure = "instructions to write a megabyte of Vec<u8> in its wire form into a kept cell and read it back"
+tool = "callgrind"
+command = "wire {n} bytes"
+# A new row, so it has no dev figure. Written and read a byte at a time this was 8,618,625; as one
+# block, this branch measured 231,408 over 1,000 and 3,000 ticks. The limit leaves room for the
+# copy to vary by machine, and fails long before a list goes back to an item at a time.
+dev_callgrind = 231408
+limit = 300000
+next = 231408
+tolerance_percent = 10
+
+[[row]]
+name = "wire_floats_megabyte"
+measure = "instructions to write a megabyte of Vec<f32> in its wire form into a kept cell and read it back"
+tool = "callgrind"
+command = "wire {n} floats"
+# A new row, so it has no dev figure. Written and read an item at a time this was 6,029,674; as
+# one block, this branch measured 264,534 over 1,000 and 3,000 ticks.
+dev_callgrind = 264534
+limit = 340000
+next = 264534
+tolerance_percent = 10
+
+[[row]]
 name = "alloc_plugin_handover_tick"
 measure = "allocations per tick of a plugin node that hands a megabyte to the host, taken each tick"
 tool = "alloc"

@@ -2,8 +2,8 @@
 //! pays for reading the list in `cpu.wire`, where the worker's copy is written, against reading it
 //! in `cpu.host` with no worker in the graph.
 //!
-//! Two shapes. A `list<f32>`, which the CPU reader takes as `&[f32]` and views where its bytes are;
-//! and a list of 28-byte records, which it takes as a `ListView` and reads where the bytes are,
+//! Three shapes. A `Vec<u8>`, which each reader takes as `&[u8]`; a `list<f32>`, which the CPU
+//! reader takes as `&[f32]` and views where its bytes are; and a list of 28-byte records, which it takes as a `ListView` and reads where the bytes are,
 //! one record at a time. Four graphs per shape and
 //! size, each timed by the tick:
 //!
@@ -59,6 +59,26 @@ pub fn floats_view(n: u32, mut out: OutView<'_, f32>) -> Result<(), Refused> {
     Ok(())
 }
 
+#[node(id = "fan.bytes", inputs(n), outputs(out))]
+pub fn bytes(n: u32) -> Vec<u8> {
+    (0..n).map(|at| at as u8).collect()
+}
+
+#[node(id = "fan.bytes_view", inputs(n))]
+pub fn bytes_view(n: u32, mut out: OutView<'_, u8>) -> Result<(), Refused> {
+    for (item, at) in out.items_mut(n as usize)?.iter_mut().zip(0..n) {
+        *item = at as u8;
+    }
+    Ok(())
+}
+
+#[node(id = "fan.bytes_sum", inputs(items), outputs(sum))]
+pub fn bytes_sum(items: &[u8]) -> u32 {
+    items
+        .iter()
+        .fold(0u32, |sum, byte| sum.wrapping_add(u32::from(*byte)))
+}
+
 #[node(id = "fan.floats_sum", inputs(items), outputs(sum))]
 pub fn floats_sum(items: &[f32]) -> u32 {
     items
@@ -108,7 +128,15 @@ struct Shape {
     worker: &'static str,
 }
 
-const SHAPES: [Shape; 2] = [
+const SHAPES: [Shape; 3] = [
+    Shape {
+        name: "u8",
+        item: 1,
+        producer: "fan.bytes",
+        view: "fan.bytes_view",
+        reader: "fan.bytes_sum",
+        worker: "sweep.bytes_view",
+    },
     Shape {
         name: "f32",
         item: 4,
@@ -177,6 +205,9 @@ fn load(program: &Path, graph: &GraphBody) -> (LoadedHost, usize) {
     let mut registry = Registry::new();
     registry
         .register_all(&[
+            &BYTES_NODE,
+            &BYTES_VIEW_NODE,
+            &BYTES_SUM_NODE,
             &FLOATS_NODE,
             &FLOATS_VIEW_NODE,
             &FLOATS_SUM_NODE,

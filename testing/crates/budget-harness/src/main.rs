@@ -6,6 +6,8 @@
 //! budget-harness detector FRAMES [metrics|patch]  the detector-shaped graph; `patch` changes
 //!                                             one constant before each frame
 //! budget-harness plugin TICKS LIBRARY         a dylib plugin's node
+//! budget-harness wire TICKS bytes|floats      a megabyte's wire form written to a cell and read
+//!                                             back, as a `Vec<u8>` or a `Vec<f32>`
 //! budget-harness allocations [planted]        allocations per steady-state tick, one row a line
 //! ```
 //!
@@ -31,6 +33,8 @@ use daedalus_budget_harness::{
 };
 use daedalus_handoff_bench as handoff;
 use std::sync::Arc;
+
+use daedalus_types::WireForm;
 
 #[global_allocator]
 static ALLOC: CountingAlloc = CountingAlloc;
@@ -196,6 +200,33 @@ fn plugin_allocations(library: &Path) {
     println!("alloc_i3_stable_round_tick {}", count as u64 / TICKS);
 }
 
+const MEGABYTE: usize = 1 << 20;
+
+/// `ticks` times: `value`'s wire form written into a cell's bytes, and read back as a new value.
+/// The cell is allocated once, as a step's kept wire buffer is. The value read back is compared
+/// whole once, outside the count's interest; each tick checks its length.
+fn wire_ticks<T: Clone + PartialEq>(value: &Vec<T>, ticks: u64) -> Result<u64, String>
+where
+    Vec<T>: WireForm,
+{
+    let mut cell = vec![0u8; value.cell_len()];
+    let written = value.write_cell(&mut cell);
+    if Vec::<T>::read_cell(&cell[..written]).as_ref() != Some(value) {
+        return Err("the value read back is not the one written".to_owned());
+    }
+    let mut sum = 0u64;
+    for _ in 0..ticks {
+        let written = black_box(value).write_cell(&mut cell);
+        let back =
+            Vec::<T>::read_cell(black_box(&cell[..written])).ok_or("the cell did not read back")?;
+        if back.len() != value.len() {
+            return Err("the value read back is not the one written".to_owned());
+        }
+        sum += written as u64;
+    }
+    Ok(sum)
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let command = args.first().map(String::as_str).unwrap_or("");
     match command {
@@ -215,6 +246,15 @@ fn run(args: &[String]) -> Result<(), String> {
             if idle != ticks {
                 return Err("a tick with nothing fed was not idle".to_owned());
             }
+        }
+        "wire" => {
+            let ticks = number(args.get(1), 0)?;
+            let sum = match args.get(2).map(String::as_str) {
+                Some("bytes") => wire_ticks(&vec![7u8; MEGABYTE], ticks),
+                Some("floats") => wire_ticks(&vec![0.5f32; MEGABYTE / 4], ticks),
+                _ => return Err("wire TICKS bytes|floats".to_owned()),
+            }?;
+            println!("wire: {ticks} ticks, {sum} bytes");
         }
         "convert" => {
             let ticks = number(args.get(1), 0)?;

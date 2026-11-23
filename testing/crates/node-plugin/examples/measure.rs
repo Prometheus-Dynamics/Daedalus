@@ -2,11 +2,13 @@
 //! in or loaded from the crate's library, so the two can be counted against each other:
 //!
 //! ```text
-//! measure triple|pair|bytes linked|unmerged|plugin TICKS [LIBRARY]
+//! measure triple|pair|bytes|handed linked|unmerged|plugin TICKS [LIBRARY]
 //! ```
 //!
 //! `triple` is one node. `pair` is two with a small struct between them, and `bytes` two with
-//! a megabyte between them: the edge inside is what differs between the forms. An instruction
+//! a megabyte between them: the edge inside is what differs between the forms. `handed` is a
+//! megabyte made by a node linked into this tool and read by the plugin's `np.first`: what a
+//! linked node's `Vec<u8>` costs on its way to a plugin. It runs in `plugin` mode only. An instruction
 //! count is the difference between two runs with different counts, divided by the difference.
 
 #![allow(clippy::print_stdout)] // a command-line tool
@@ -19,9 +21,16 @@ use daedalus_cpu::CpuBackend;
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, NodeDoc, NodeKindDoc, PortRefDoc};
 use daedalus_host::{LoadOptions, LoadedHost};
 use daedalus_loader::{Loader, PluginBackend};
+use daedalus_macros::node;
 use daedalus_node_plugin::NODES;
 use daedalus_planner::{Config, plan};
 use daedalus_registry::Registry;
+
+/// A megabyte made by a node linked into this tool.
+#[node(id = "m.fill", inputs(x), outputs(bytes))]
+fn fill(x: u32) -> Vec<u8> {
+    vec![x as u8; 1 << 20]
+}
 
 fn edge(from: usize, from_port: &str, to: usize, to_port: &str) -> EdgeDoc {
     EdgeDoc {
@@ -63,12 +72,15 @@ fn chain(nodes: &[(&str, &str, &str)]) -> GraphBody {
 
 fn run(args: &[String]) -> Result<(), String> {
     let [kind, mode, ticks, rest @ ..] = args else {
-        return Err("measure triple|pair|bytes linked|unmerged|plugin TICKS [LIBRARY]".to_owned());
+        return Err(
+            "measure triple|pair|bytes|handed linked|unmerged|plugin TICKS [LIBRARY]".to_owned(),
+        );
     };
     let graph = match kind.as_str() {
         "triple" => chain(&[("np.triple", "x", "y")]),
         "pair" => chain(&[("np.split", "x", "pair"), ("np.join", "pair", "y")]),
         "bytes" => chain(&[("np.fill", "x", "bytes"), ("np.first", "bytes", "y")]),
+        "handed" => chain(&[("m.fill", "x", "bytes"), ("np.first", "bytes", "y")]),
         other => return Err(format!("no graph `{other}`")),
     };
     let ticks: u32 = ticks.parse().map_err(|_| "TICKS is a number".to_owned())?;
@@ -93,7 +105,19 @@ fn run(args: &[String]) -> Result<(), String> {
                 .join(&mut registry)
                 .map_err(|error| error.to_string())?;
             let backend = PluginBackend::new(Arc::new(plugin), 0);
-            plan(&graph, &registry, &[&backend], &Config::default())
+            if kind == "handed" {
+                registry
+                    .register_all(&[&FILL_NODE])
+                    .map_err(|errors| format!("{errors:?}"))?;
+                plan(
+                    &graph,
+                    &registry,
+                    &[&CpuBackend, &backend],
+                    &Config::default(),
+                )
+            } else {
+                plan(&graph, &registry, &[&backend], &Config::default())
+            }
         }
         other => return Err(format!("no mode `{other}`")),
     }

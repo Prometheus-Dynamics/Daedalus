@@ -195,7 +195,14 @@ pub fn points_decode(r#in: Points) -> u32 {
     point_sum(&r#in.0)
 }
 
+#[node(id = "sweep.bytes_view", inputs("in"), outputs(sum), backend = daedalus_lang_rust)]
+pub fn bytes_view(r#in: &[u8]) -> u32 {
+    r#in.iter()
+        .fold(0u32, |sum, byte| sum.wrapping_add(u32::from(*byte)))
+}
+
 const NODES: &[&NodeRecord] = &[
+    &BYTES_VIEW_NODE,
     &FLOATS_VIEW_NODE,
     &FLOATS_DECODE_NODE,
     &POINTS_VIEW_NODE,

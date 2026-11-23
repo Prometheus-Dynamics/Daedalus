@@ -76,7 +76,9 @@ What such a node gets, and what it does not yet:
 - Cost, in instructions a tick (`testing/crates/node-plugin/examples/measure.rs`): one node
   1,733 linked and 1,887 loaded. Two nodes with a small struct between them 2,597 linked and
   unmerged, 2,870 loaded. Two nodes with a megabyte of `Vec<u8>` between them 60,000 linked and
-  17.9 million loaded: the wire form of a `Vec<u8>` is written a byte at a time.
+  176,000 loaded, where the megabyte is written in its wire form and read back as one block.
+  A megabyte made by a linked node and read by a plugin's node costs the same (`measure
+  handed`).
 
 ## The check at load
 

@@ -182,3 +182,63 @@ fn a_short_or_wrong_value_is_refused() {
     // Bytes left over after the value.
     assert_eq!(u16::read_cell(&[1, 0, 0]), None);
 }
+
+/// A list of one number type is written and read as one block. It is still what the codec writes,
+/// item for item, for every width, nested in another value or alone in a cell.
+#[test]
+fn a_list_of_numbers_is_what_the_codec_writes_when_written_as_one_block() {
+    let bytes: Vec<u8> = (0..=255).collect();
+    same(&bytes, WireValue::Bytes(bytes.clone()));
+    let wide: Vec<u16> = vec![1, 0x1234, u16::MAX];
+    same(
+        &wide,
+        WireValue::List(wide.iter().map(|v| WireValue::U16(*v)).collect()),
+    );
+    let signed: Vec<i64> = vec![-1, 0, i64::MAX, i64::MIN];
+    same(
+        &signed,
+        WireValue::List(signed.iter().map(|v| WireValue::I64(*v)).collect()),
+    );
+    let floats: Vec<f32> = vec![0.5, -0.0, f32::MAX, f32::MIN_POSITIVE];
+    same(
+        &floats,
+        WireValue::List(floats.iter().map(|v| WireValue::F32(*v)).collect()),
+    );
+    let doubles: Vec<f64> = vec![1.0e300, -2.5];
+    same(
+        &doubles,
+        WireValue::List(doubles.iter().map(|v| WireValue::F64(*v)).collect()),
+    );
+    let empty: Vec<u32> = Vec::new();
+    same(&empty, WireValue::List(Vec::new()));
+    same(
+        &Labels {
+            width: 2,
+            height: 1,
+            labels: vec![7, 9],
+        },
+        WireValue::Struct(vec![
+            WireValue::U32(2),
+            WireValue::U32(1),
+            WireValue::List(vec![WireValue::U32(7), WireValue::U32(9)]),
+        ]),
+    );
+}
+
+#[test]
+fn a_block_that_is_short_or_not_a_whole_number_of_items_is_refused() {
+    // A count of three u32s with only two there.
+    assert_eq!(
+        Vec::<u32>::read_cell(&[3, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0]),
+        None
+    );
+    // A count that is right, and a byte left over after the items.
+    assert_eq!(Vec::<u16>::read_cell(&[1, 0, 0, 0, 5, 0, 9]), None);
+    // A list nested in another value with its items cut short.
+    assert_eq!(
+        Labels::read_cell(&[2, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 7, 0, 0, 0]),
+        None
+    );
+    // A count so large its items' bytes overflow.
+    assert_eq!(Vec::<u64>::read_cell(&[0xff, 0xff, 0xff, 0xff]), None);
+}
