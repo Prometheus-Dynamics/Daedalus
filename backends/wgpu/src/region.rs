@@ -546,5 +546,6 @@ pub(crate) fn compile(
             may_pend: true,
             decodes: Vec::new(),
         },
+        patch: None,
     })
 }

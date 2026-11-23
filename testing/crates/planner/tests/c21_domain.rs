@@ -89,7 +89,11 @@ impl Backend for Test {
         let step = Step::boxed(AddOne {
             log: Arc::clone(&self.log),
         });
-        Ok(Compiled::Steps(vec![StepUnit { step, info }]))
+        Ok(Compiled::Steps(vec![StepUnit {
+            step,
+            info,
+            patch: None,
+        }]))
     }
 }
 

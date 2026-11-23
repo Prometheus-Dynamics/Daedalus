@@ -96,6 +96,7 @@ impl Backend for Test {
                     may_pend: false,
                     decodes: Vec::new(),
                 },
+                patch: None,
             })
             .collect();
         Ok(Compiled::Steps(units))

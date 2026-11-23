@@ -59,6 +59,7 @@ impl Backend for Fake {
                 covers: region.nodes.to_vec(),
                 ..UnitInfo::default()
             },
+            patch: None,
         }]))
     }
 }

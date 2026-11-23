@@ -1,8 +1,10 @@
 //! What a backend hands back.
 
 use std::fmt;
+use std::sync::Arc;
 
 use daedalus_abi::Step;
+use daedalus_graph::Lit;
 use daedalus_types::NodeIndex;
 
 use crate::PortRef;
@@ -40,6 +42,28 @@ pub struct Decode {
 pub struct StepUnit {
     pub step: Step,
     pub info: UnitInfo,
+    /// How a later value for a constant reaches this unit's steps, when they can take one. `None`
+    /// when the unit's constants are fixed as it is compiled.
+    pub patch: Option<Arc<dyn Repatch>>,
+}
+
+/// Takes a later value for a constant of the steps a backend compiled. A host offers a value
+/// between ticks; the step that reads the constant picks it up before it next runs. The value
+/// is decoded as it is offered, so one that does not fit is refused there and nothing changes.
+pub trait Repatch: Send + Sync + fmt::Debug {
+    fn offer(&self, node: NodeIndex, port: &str, value: &Lit) -> Result<(), NotTaken>;
+
+    /// Whether any step that reads through this is still alive.
+    fn reads(&self) -> bool;
+}
+
+/// Why an offered constant was not taken.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NotTaken {
+    /// No step reads this constant through here.
+    NoReader,
+    /// The step that reads it refused the value, in the words it uses when it is compiled.
+    Refused(String),
 }
 
 /// Generated Rust, for a graph sealed into a build.

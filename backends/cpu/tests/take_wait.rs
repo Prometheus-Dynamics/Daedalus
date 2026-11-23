@@ -105,6 +105,7 @@ impl Backend for Waiting {
                                 may_pend: true,
                                 ..unit.info
                             },
+                            patch: None,
                         }
                     })
                     .collect(),

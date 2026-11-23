@@ -117,7 +117,11 @@ impl Backend for Test {
             may_pend: false,
             decodes: Vec::new(),
         };
-        Ok(Compiled::Steps(vec![StepUnit { step, info }]))
+        Ok(Compiled::Steps(vec![StepUnit {
+            step,
+            info,
+            patch: None,
+        }]))
     }
 }
 

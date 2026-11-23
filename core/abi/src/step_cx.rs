@@ -15,6 +15,9 @@ pub const REASON_CUT: u32 = 2;
 /// In [`StepCx::flags`], set with a fault's code: the code is one of Daedalus's own, from
 /// [`own`], and not the node's.
 pub const OWN_CODE: u32 = 4;
+/// In [`StepCx::flags`]: a later value for one of the body's constants is waiting for it, to be
+/// taken before it runs. A body that takes none ignores it.
+pub const CONSTS_MOVED: u32 = 8;
 
 /// The codes of the faults Daedalus raises itself. A fault's code is otherwise the node's: the
 /// node that failed owns its numbers, they mean what its author says, and Daedalus passes them
@@ -411,6 +414,19 @@ impl StepCx {
     #[inline]
     pub fn restarting(&self) -> bool {
         self.flags & RESTART != 0
+    }
+
+    /// Whether a later value for one of the body's constants is waiting for it.
+    #[inline]
+    pub fn consts_moved(&self) -> bool {
+        self.flags & CONSTS_MOVED != 0
+    }
+
+    /// Whether the runner marked this call at all: a restart, or constants to take. One test
+    /// for a body to make before it looks at which.
+    #[inline]
+    pub fn marked(&self) -> bool {
+        self.flags & (RESTART | CONSTS_MOVED) != 0
     }
 }
 

@@ -13,7 +13,9 @@ mod memory;
 mod offer;
 mod region;
 
-pub use compiled::{Compiled, Decode, GeneratedCode, Refusal, StepUnit, UnitInfo};
+pub use compiled::{
+    Compiled, Decode, GeneratedCode, NotTaken, Refusal, Repatch, StepUnit, UnitInfo,
+};
 pub use memory::{MemorySpace, SpaceKind, Transfer, TransferCost, find_transfer};
 pub use offer::{BodyIndex, NodeRef, Offer, OfferNode, PortInfo};
 pub use region::{

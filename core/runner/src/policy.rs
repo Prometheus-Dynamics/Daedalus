@@ -37,6 +37,15 @@ impl Runner<'_> {
             .filter(|_| (step as usize) < self.steps.len())
     }
 
+    /// Marks `step` so its next call is told a later value for one of its constants is waiting
+    /// ([`daedalus_abi::CONSTS_MOVED`]). The mark is spent by that call. Steps past the end are
+    /// ignored.
+    pub fn mark_consts(&mut self, step: u32) {
+        if (step as usize) < self.steps.len() {
+            self.health[step as usize].marks |= daedalus_abi::CONSTS_MOVED as u8;
+        }
+    }
+
     /// Turns `step` off by hand. It is not called, its queued inputs are dropped, and its
     /// consumers see nothing until it is switched on.
     pub fn switch_off(&mut self, step: u32) -> Result<(), RunError> {

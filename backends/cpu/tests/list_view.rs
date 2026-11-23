@@ -64,6 +64,7 @@ fn step(record: &NodeRecord, wire: bool) -> daedalus_abi::Step {
         },
         id: record.decl.id,
         lent: &[],
+        readers: None,
     };
     (body.make)(&setup).unwrap()
 }

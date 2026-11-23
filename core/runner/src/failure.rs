@@ -115,7 +115,8 @@ pub struct StepHealth {
     pub(crate) backing_off: bool,
     pub(crate) disabled: bool,
     pub(crate) auto_off: bool,
-    pub(crate) restart: bool,
+    /// The marks the next call carries in its flags: a restart, constants to take.
+    pub(crate) marks: u8,
     pub(crate) calls: u32,
 }
 
@@ -133,7 +134,7 @@ impl StepHealth {
             self.until_ns = now.saturating_add(policy.delay_ns(self.failures));
         }
         if recovery == Recovery::Restart {
-            self.restart = true;
+            self.marks |= RESTART as u8;
         }
     }
 
@@ -144,9 +145,9 @@ impl StepHealth {
         self.until_ns = 0;
     }
 
-    /// The flags a call to this step gets: the restart flag while one is pending.
+    /// The flags a call to this step gets: the marks that are pending.
     pub(crate) fn call_flags(&self) -> u32 {
-        if self.restart { RESTART } else { 0 }
+        u32::from(self.marks)
     }
 
     /// Failures in a row. A success sets it back to zero.
