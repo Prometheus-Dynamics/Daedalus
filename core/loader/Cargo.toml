@@ -12,6 +12,7 @@ repository.workspace = true
 daedalus-abi = { path = "../abi" }
 daedalus-backend = { path = "../backend" }
 daedalus-integrity = { path = "../integrity" }
+daedalus-made = { path = "../made" }
 daedalus-registry = { path = "../registry" }
 daedalus-types = { path = "../types" }
 libloading = { workspace = true }

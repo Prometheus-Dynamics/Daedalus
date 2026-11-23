@@ -13,7 +13,7 @@ use daedalus_types::{NodeIndex, PortIndex};
 
 use crate::codec::{Codec, Direction};
 use crate::convert::{Convert, direction_of};
-use crate::{Plugin, RegionIn};
+use crate::{ConstIn, Plugin, RegionIn};
 
 /// The memory every plugin backend's values live in. They share it, so a value passes from one
 /// plugin's node to another's with no transfer. A value reaches it from a node linked into the
@@ -215,14 +215,27 @@ impl PluginBackend {
     ) -> Result<Vec<StepUnit>, Refusal> {
         let ids: Vec<&str> = theirs.iter().map(id_of).collect();
         // A plugin's steps are one a node, so each node's ports are named: the region's
-        // boundary, and both ends of every edge inside it.
+        // boundary, and both ends of every edge inside it. Every input a node has is named,
+        // wired or not, so a step finds input `k` and its outputs where it builds them for: an
+        // input given a constant, or left unwired, has its cell too.
+        let declared = cx
+            .bodies
+            .iter()
+            .filter(|body| theirs.contains(&body.node))
+            .flat_map(|body| {
+                (0..body.inputs).map(|port| PortRef {
+                    node: body.node,
+                    port: PortIndex(port),
+                })
+            });
         let inputs = ports(
             theirs,
             region
                 .inputs
                 .iter()
                 .copied()
-                .chain(cx.edges.iter().map(|edge| edge.to)),
+                .chain(cx.edges.iter().map(|edge| edge.to))
+                .chain(declared),
         );
         let outputs = ports(
             theirs,
@@ -232,10 +245,30 @@ impl PluginBackend {
                 .copied()
                 .chain(cx.edges.iter().map(|edge| edge.from)),
         );
+        // The constants the graph gives these nodes, each as a stored plan keeps it, with the
+        // node named by its place among those the plugin is given.
+        let mut values = Vec::new();
+        for one in cx.consts {
+            let Some(place) = theirs.iter().position(|node| *node == one.node) else {
+                continue;
+            };
+            let bytes = daedalus_made::lit_bytes(one.value)
+                .map_err(|error| Refusal::new(vec![one.node], &error.to_string()))?;
+            values.push((place as u32, one.port, bytes));
+        }
+        let consts: Vec<ConstIn<'_>> = values
+            .iter()
+            .map(|(node, port, value)| ConstIn {
+                node: *node,
+                port,
+                value,
+            })
+            .collect();
         let view = RegionIn {
             nodes: &ids,
             inputs: &inputs,
             outputs: &outputs,
+            consts: &consts,
         };
         let backend = self.inner();
         let takes = backend

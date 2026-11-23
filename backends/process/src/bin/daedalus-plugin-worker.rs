@@ -430,6 +430,7 @@ fn describe(plugin: &Plugin) -> (Hello, BTreeMap<String, Served>) {
             nodes: &[decl.id.as_str()],
             inputs: &ports_in,
             outputs: &ports_out,
+            consts: &[],
         };
         let Ok(mut units) = backend.compile(&region) else {
             continue;

@@ -106,6 +106,7 @@ const PINNED: &[(&str, u64)] = &[
     ("ShapeDesc", 8567712297236987577),
     ("AbiDesc", 7959716542126075825),
     ("MetricCell", 7410279485729470277),
+    ("ConstC", 5450046140306820685),
 ];
 
 #[cfg(target_pointer_width = "64")]

@@ -37,6 +37,14 @@ pub fn encode(plan: &MadePlan) -> Result<Vec<u8>, MadeError> {
     Ok(out)
 }
 
+/// One constant as the bytes a stored plan keeps it in, on its own: what a plugin's backend
+/// is given for a constant of a node it compiles.
+pub fn lit_bytes(lit: &Lit) -> Result<Vec<u8>, MadeError> {
+    let mut out = Writer::new();
+    write_lit(&mut out, lit, 0).map_err(MadeError::Wire)?;
+    Ok(out.buf)
+}
+
 type Out<'w> = &'w mut Writer;
 
 fn write_plan(w: Out<'_>, plan: &MadePlan) -> Result<(), WireError> {

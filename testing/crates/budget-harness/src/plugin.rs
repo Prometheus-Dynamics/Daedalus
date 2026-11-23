@@ -68,6 +68,7 @@ impl Backend for OneNode {
             nodes: &[id],
             inputs: &[port(0)],
             outputs: &[port(0)],
+            consts: &[],
         };
         let mut units = self.plugin.backends()[0]
             .compile(&view)

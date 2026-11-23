@@ -88,7 +88,22 @@ pub struct BoundaryPort {
     pub slot: u32,
 }
 
-/// A region as a backend sees it: its node ids in order, and its boundary ports.
+/// A constant the graph gives one input of a region's node. `node` is the node's index in the
+/// region. The value is the constant in the form a stored plan keeps it in, for the backend to
+/// decode: `len` bytes at `value`, valid for the call.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ConstC {
+    pub node: u32,
+    pub reserved: u32,
+    pub port: Text,
+    pub value: *const u8,
+    pub len: usize,
+}
+
+/// A region as a backend sees it: its node ids in order, its boundary ports, and the constants
+/// of its nodes. `reason` is room for the words of a refusal: a backend that cannot compile the
+/// region writes why, up to `reason_cap` bytes, and how many it wrote to `reason_len`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct RegionView {
@@ -98,6 +113,100 @@ pub struct RegionView {
     pub input_count: usize,
     pub outputs: *const BoundaryPort,
     pub output_count: usize,
+    #[cfg(not(daedalus_abi_baseline))]
+    pub consts: *const ConstC,
+    #[cfg(not(daedalus_abi_baseline))]
+    pub const_count: usize,
+    #[cfg(not(daedalus_abi_baseline))]
+    pub reason: *mut u8,
+    #[cfg(not(daedalus_abi_baseline))]
+    pub reason_cap: usize,
+    #[cfg(not(daedalus_abi_baseline))]
+    pub reason_len: *mut usize,
+}
+
+impl RegionView {
+    /// A view of the nodes and ports alone: no constants, and nowhere to say why.
+    pub fn of(nodes: &[Text], inputs: &[BoundaryPort], outputs: &[BoundaryPort]) -> RegionView {
+        RegionView {
+            nodes: nodes.as_ptr(),
+            node_count: nodes.len(),
+            inputs: inputs.as_ptr(),
+            input_count: inputs.len(),
+            outputs: outputs.as_ptr(),
+            output_count: outputs.len(),
+            #[cfg(not(daedalus_abi_baseline))]
+            consts: core::ptr::null(),
+            #[cfg(not(daedalus_abi_baseline))]
+            const_count: 0,
+            #[cfg(not(daedalus_abi_baseline))]
+            reason: core::ptr::null_mut(),
+            #[cfg(not(daedalus_abi_baseline))]
+            reason_cap: 0,
+            #[cfg(not(daedalus_abi_baseline))]
+            reason_len: core::ptr::null_mut(),
+        }
+    }
+
+    /// The view with the constants of its nodes. A build from before a view had them leaves
+    /// them out.
+    #[allow(unused_mut, unused_variables)]
+    pub fn with_consts(mut self, consts: &[ConstC]) -> RegionView {
+        #[cfg(not(daedalus_abi_baseline))]
+        {
+            self.consts = consts.as_ptr();
+            self.const_count = consts.len();
+        }
+        self
+    }
+
+    /// The view with room for a refusal's words: `reason` for the bytes and `len` for how many
+    /// were written.
+    #[allow(unused_mut, unused_variables)]
+    pub fn with_reason(mut self, reason: &mut [u8], len: &mut usize) -> RegionView {
+        #[cfg(not(daedalus_abi_baseline))]
+        {
+            self.reason = reason.as_mut_ptr();
+            self.reason_cap = reason.len();
+            self.reason_len = core::ptr::from_mut(len);
+        }
+        self
+    }
+
+    /// The constants of the region's nodes. Empty for a view that carries none.
+    ///
+    /// # Safety
+    /// The view's `consts` must be valid for `const_count` entries for `'a`.
+    pub unsafe fn consts<'a>(&self) -> &'a [ConstC] {
+        #[cfg(not(daedalus_abi_baseline))]
+        if !self.consts.is_null() && self.const_count != 0 {
+            // SAFETY: the caller promises `const_count` valid entries at `consts` for `'a`.
+            return unsafe { core::slice::from_raw_parts(self.consts, self.const_count) };
+        }
+        &[]
+    }
+
+    /// Writes why the region is refused, as much as there is room for. Nothing is written
+    /// when the view has no room.
+    ///
+    /// # Safety
+    /// The view's `reason` must be writable for `reason_cap` bytes, and `reason_len` writable.
+    #[allow(unused_variables)]
+    pub unsafe fn refuse(&self, why: &str) {
+        #[cfg(not(daedalus_abi_baseline))]
+        if !self.reason.is_null() && !self.reason_len.is_null() {
+            let mut end = why.len().min(self.reason_cap);
+            while !why.is_char_boundary(end) {
+                end -= 1;
+            }
+            // SAFETY: the caller promises `reason_cap` writable bytes at `reason`, `end` is no
+            // more than that, and `reason_len` is writable.
+            unsafe {
+                core::ptr::copy_nonoverlapping(why.as_ptr(), self.reason, end);
+                self.reason_len.write(end);
+            }
+        }
+    }
 }
 
 /// One unit of compiled work: a step, and the index of the region node it runs.

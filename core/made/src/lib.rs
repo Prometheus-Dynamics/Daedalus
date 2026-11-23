@@ -17,8 +17,8 @@ mod stored_outputs;
 mod stored_policies;
 
 pub use bind::{BindError, Bound, bind};
-pub use decode::decode;
-pub use encode::encode;
+pub use decode::{decode, lit_from_bytes};
+pub use encode::{encode, lit_bytes};
 pub use error::MadeError;
 pub use facts::{MadeEdge, MadeMetric, MadeNode, PlanFacts};
 pub use plan::{MadeMove, MadePlan, MadeRegion, declaration};

@@ -37,6 +37,8 @@ pub enum LoadError {
     Stopped { path: PathBuf },
     /// A backend call returned a status the host does not expect.
     Compile { backend: String, status: Status },
+    /// A backend refused to compile a region, and said why.
+    Said { backend: String, reason: String },
     /// A codec conversion refused its input, or the plugin returned a status the host does not expect.
     Codec { key: String, status: Status },
     /// A plugin could not make the bytes asked for, or does not make any.
@@ -77,6 +79,9 @@ impl fmt::Display for LoadError {
             LoadError::Stopped { path } => write!(f, "{}: loading was stopped", path.display()),
             LoadError::Compile { backend, status } => {
                 write!(f, "backend {backend} refused with status {}", status.0)
+            }
+            LoadError::Said { backend, reason } => {
+                write!(f, "backend {backend} refused: {reason}")
             }
             LoadError::Codec { key, status } => {
                 write!(f, "codec for {key} refused with status {}", status.0)

@@ -8,7 +8,8 @@ use alloc::format;
 use alloc::string::{String, ToString};
 
 use daedalus_abi::Step;
-use daedalus_backend::{BodyIndex, CompileCx, NodeBody};
+use daedalus_backend::{BodyIndex, CompileCx, ConstOf, NodeBody};
+use daedalus_graph::Lit;
 use daedalus_registry::NodeRecord;
 use daedalus_types::NodeIndex;
 
@@ -16,10 +17,15 @@ use crate::backend::{Wiring, has_port, ports, step_of};
 use crate::steps::CpuBody;
 use crate::steps::live::Readers;
 
-/// Builds the step of `record` for the node at `node`, with every port in its crossing form.
-/// Refused, in words, for a body that is not a CPU function, a node with a fan-in, and a port
-/// whose type has no crossing form.
-pub fn boundary_step(record: &NodeRecord, node: u32) -> Result<Step, String> {
+/// Builds the step of `record` for the node at `node`, with every port in its crossing form and
+/// `consts` the constants the graph gives its inputs, by port: a config is the one named
+/// `config`. Refused, in words, for a body that is not a CPU function, a node with a fan-in, a
+/// port whose type has no crossing form, and a constant that does not fit its port.
+pub fn boundary_step(
+    record: &NodeRecord,
+    node: u32,
+    consts: &[(&str, Lit)],
+) -> Result<Step, String> {
     let id = record.decl.id;
     let Some(cpu) = record.body.code.downcast_ref::<CpuBody>() else {
         return Err(format!("{id} has no CPU function for a plugin to build"));
@@ -36,6 +42,14 @@ pub fn boundary_step(record: &NodeRecord, node: u32) -> Result<Step, String> {
         outputs: ports(index, outputs),
         inputs: ports(index, inputs),
     };
+    let consts: alloc::vec::Vec<ConstOf<'_>> = consts
+        .iter()
+        .map(|(port, value)| ConstOf {
+            node: index,
+            port,
+            value,
+        })
+        .collect();
     let metadata = BTreeMap::new();
     let body = NodeBody {
         node: index,
@@ -53,7 +67,7 @@ pub fn boundary_step(record: &NodeRecord, node: u32) -> Result<Step, String> {
     };
     let cx = CompileCx {
         types: &[],
-        consts: &[],
+        consts: &consts,
         spaces: &[],
         bodies: &[],
         edges: &[],

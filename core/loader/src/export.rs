@@ -5,7 +5,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use daedalus_abi::{
-    BackendTable, ByteCodecFn, BytesC, CodecC, NodeC, OwnedStep, PluginEntry, PortC,
+    BackendTable, ByteCodecFn, BytesC, CodecC, ConstC, NodeC, OwnedStep, PluginEntry, PortC,
     ProduceBytesFn, RegionView, Slots, Status, Step, StepCx, StepEnd, Text, UnitOut, guard_or,
 };
 use daedalus_abi::{CanTakeFn, CompileFn, write_out};
@@ -36,10 +36,18 @@ pub struct NodeDef {
     pub run: RunFn,
 }
 
-/// Builds a node's step for one place in one graph. `data` is the [`MadeNode`]'s own, and
-/// `position` is the node's place in the region, for a fault to name.
+/// What a node's step is built for: its place in the region, for a fault to name, and the
+/// constants the graph gives its inputs, by port, each in the form a stored plan keeps it in
+/// (`daedalus_made::lit_from_bytes` reads it). A node's config is the constant `config`.
+pub struct Ask<'a> {
+    pub position: u32,
+    pub consts: &'a [(&'a str, &'a [u8])],
+}
+
+/// Builds a node's step for one place in one graph. `data` is the [`MadeNode`]'s own. An `Err`
+/// refuses the region, and its words reach the host's refusal.
 pub type MakeFn =
-    fn(data: &'static (dyn core::any::Any + Send + Sync), position: u32) -> Result<Step, String>;
+    fn(data: &'static (dyn core::any::Any + Send + Sync), ask: &Ask<'_>) -> Result<Step, String>;
 
 /// A node whose step is built for each graph it is in, where a [`NodeDef`] has one function for
 /// all of them: a body that keeps state of its own between ticks is one.
@@ -547,6 +555,8 @@ unsafe extern "C" fn compile_at<P: PluginSpec, const I: usize>(
         }
         // Every step is built before any is written, so a node that can't be built leaves
         // the host's entries as they were.
+        // SAFETY: the host's view is valid for this call, its constants with it.
+        let consts = unsafe { view.consts() };
         let mut steps = Vec::with_capacity(taken.len());
         for (position, node) in taken {
             let step = match node {
@@ -554,15 +564,29 @@ unsafe extern "C" fn compile_at<P: PluginSpec, const I: usize>(
                     run: node.run,
                     node: position,
                 }),
-                Body::Made(made) => match (made.make)(made.data, position) {
-                    Ok(step) => step,
-                    Err(_) => {
-                        for (_, step) in steps {
-                            Step::discard(step);
+                Body::Made(made) => {
+                    let mine: Vec<(&str, &[u8])> = consts
+                        .iter()
+                        .filter(|c| c.node == position)
+                        // SAFETY: each constant's port and bytes are valid for this call.
+                        .map(|c| unsafe { (c.port.as_str(), const_value(c)) })
+                        .collect();
+                    let ask = Ask {
+                        position,
+                        consts: &mine,
+                    };
+                    match (made.make)(made.data, &ask) {
+                        Ok(step) => step,
+                        Err(why) => {
+                            for (_, step) in steps {
+                                Step::discard(step);
+                            }
+                            // SAFETY: the view's room for words is the host's, valid for the call.
+                            unsafe { view.refuse(&why) };
+                            return Status::NOT_SUPPORTED;
                         }
-                        return Status::NOT_SUPPORTED;
                     }
-                },
+                }
             };
             steps.push((position, step));
         }
@@ -578,6 +602,18 @@ unsafe extern "C" fn compile_at<P: PluginSpec, const I: usize>(
         }
         Status::OK
     })
+}
+
+/// The bytes of a constant the host gave.
+///
+/// # Safety
+/// `one.value` must be valid for `one.len` bytes for `'a`.
+unsafe fn const_value<'a>(one: &ConstC) -> &'a [u8] {
+    if one.value.is_null() || one.len == 0 {
+        return &[];
+    }
+    // SAFETY: the caller promises `len` valid bytes at `value` for `'a`.
+    unsafe { core::slice::from_raw_parts(one.value, one.len) }
 }
 
 /// Declares a plugin: writes `daedalus_plugin_shapes` and `daedalus_plugin_describe`, which the
