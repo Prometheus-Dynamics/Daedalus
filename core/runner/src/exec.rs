@@ -278,8 +278,8 @@ pub(crate) fn step_once<'t, E: Env<'t>>(
         }
         let health = env.health(index);
         health.calls = health.calls.saturating_add(1);
-        // The restart flag is spent by the call it was set for.
-        health.restart = false;
+        // A mark is spent by the call it was set for.
+        health.marks = 0;
         let retry = match meta.recovery {
             Recovery::Retry { max } => attempt < max,
             _ => false,

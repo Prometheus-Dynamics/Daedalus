@@ -3,7 +3,8 @@
 //! ```text
 //! budget-harness idle TICKS [STAGES]          a chain ticked with nothing fed
 //! budget-harness chain TICKS [STAGES] [extra|unfused]  a chain with a value in it, fused unless told
-//! budget-harness detector FRAMES              the detector-shaped graph
+//! budget-harness detector FRAMES [metrics|patch]  the detector-shaped graph; `patch` changes
+//!                                             one constant before each frame
 //! budget-harness plugin TICKS LIBRARY         a dylib plugin's node
 //! budget-harness allocations [planted]        allocations per steady-state tick, one row a line
 //! ```
@@ -258,9 +259,16 @@ fn run(args: &[String]) -> Result<(), String> {
             } else {
                 detector()
             };
+            // `detector N patch`: one constant of one node changes before each frame.
+            let patching = args.get(2).is_some_and(|word| word == "patch");
             let picture = picture();
             let mut taken = 0u64;
-            for _ in 0..frames {
+            for at in 0..frames {
+                if patching {
+                    let value = daedalus_graph::Lit::Int(2 + (at & 1) as i64);
+                    host.patch_const("budget.validate#0", "max_errors", value)
+                        .map_err(|error| error.to_string())?;
+                }
                 taken += u64::from(black_box(frame(&mut host, &picture)));
             }
             println!("detector: {frames} frames, {taken} outputs");

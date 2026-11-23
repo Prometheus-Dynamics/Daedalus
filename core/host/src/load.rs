@@ -262,6 +262,11 @@ pub struct LoadedHost {
     pub(crate) planner: Option<Planner>,
     pub(crate) unmerged: bool,
     pub(crate) consts: ConstTable,
+    /// The table came with the plan ([`LoadedHost::load_with_consts`]): its step bodies read it
+    /// themselves, so a patch need not find a step to offer the value to.
+    pub(crate) consts_given: bool,
+    /// How a later value for a constant reaches the steps that can take one.
+    pub(crate) patchers: Vec<std::sync::Arc<dyn daedalus_backend::Repatch>>,
     pub(crate) off_nodes: BTreeSet<String>,
     pub(crate) overhead: Option<TickOverheadWindow>,
     pub(crate) same_as: Vec<Option<String>>,
@@ -325,6 +330,7 @@ pub(crate) struct Parts {
     pub(crate) node_names: Vec<&'static str>,
     pub(crate) metric_list: Vec<MetricInfo>,
     pub(crate) metric_cells: Vec<Option<(u32, u32)>>,
+    pub(crate) patchers: Vec<std::sync::Arc<dyn daedalus_backend::Repatch>>,
 }
 
 /// Builds the host for a plan. Nothing else is touched, so a failure leaves any running graph as
@@ -346,6 +352,7 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
         extra,
         fans,
         edge_names,
+        patchers,
     } = built;
     let node_names: Vec<&'static str> = nodes.iter().map(|node| intern(&node.key)).collect();
     let metric_list = metric_list(bound, &nodes);
@@ -429,6 +436,7 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
             .collect(),
     );
     Ok(Parts {
+        patchers,
         metric_list,
         metric_cells,
         host,
@@ -444,7 +452,9 @@ pub(crate) fn build_host(bound: &mut Bound, options: LoadOptions) -> Result<Part
 impl LoadedHost {
     /// Loads a finished plan. Slots, pools, fences and telemetry arrays are sized once, here.
     pub fn load(planned: impl Into<Bound>, options: LoadOptions) -> Result<LoadedHost, LoadError> {
-        LoadedHost::load_with_consts(planned, options, ConstTable::new())
+        let mut loaded = LoadedHost::load_with_consts(planned, options, ConstTable::new())?;
+        loaded.consts_given = false;
+        Ok(loaded)
     }
 
     /// Loads a made plan: decodes its bytes, binds each region to the backend of its own id and
@@ -460,7 +470,9 @@ impl LoadedHost {
         LoadedHost::load(bound, options)
     }
 
-    /// As [`load`](LoadedHost::load), with a const table the plan's step bodies already hold.
+    /// As [`load`](LoadedHost::load), with a const table the plan's step bodies already hold and
+    /// read for themselves. [`patch_const`](LoadedHost::patch_const) then changes the table
+    /// whether or not a step takes the value, since only those bodies know who reads it.
     pub fn load_with_consts(
         planned: impl Into<Bound>,
         options: LoadOptions,
@@ -478,6 +490,8 @@ impl LoadedHost {
             planner: None,
             unmerged: false,
             consts,
+            consts_given: true,
+            patchers: parts.patchers,
             off_nodes: BTreeSet::new(),
             overhead: (options.overhead_window > 0)
                 .then(|| TickOverheadWindow::new(options.overhead_window)),

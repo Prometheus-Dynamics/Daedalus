@@ -74,6 +74,7 @@ impl Backend for PerNode {
                     may_pend: false,
                     decodes: Vec::new(),
                 },
+                patch: None,
             }
         };
         Ok(Compiled::Steps(region.nodes.iter().map(unit).collect()))

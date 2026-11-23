@@ -131,6 +131,7 @@ fn step(record: &NodeRecord, keep: &[Keep], lent: &[LentRoom]) -> daedalus_abi::
         wire_inputs: 0,
         id: record.decl.id,
         lent,
+        readers: None,
     };
     (body.make)(&setup).unwrap()
 }

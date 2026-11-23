@@ -5,11 +5,12 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::mem;
+use std::sync::Arc;
 use std::vec;
 use std::vec::Vec;
 
 use daedalus_abi::{NO_SLOT, Step};
-use daedalus_backend::{StepUnit, UnitInfo};
+use daedalus_backend::{Repatch, StepUnit, UnitInfo};
 use daedalus_graph::{EdgePolicyDoc, OverflowDoc};
 use daedalus_made::{Bound, Item, Stitched};
 use daedalus_plan::Span;
@@ -30,6 +31,8 @@ pub(crate) struct Built {
     pub(crate) covers: Vec<Vec<u32>>,
     pub(crate) same_as: Vec<Option<String>>,
     pub(crate) transfers: Vec<Option<&'static str>>,
+    /// How a later value for a constant reaches the steps that can take one.
+    pub(crate) patchers: Vec<Arc<dyn Repatch>>,
     /// The slots that keep their value: see [`kept_slots`].
     pub(crate) kept: Vec<u32>,
     /// The slots added to the plan's own, one for each queue a fan-out needs: for each, the plan
@@ -87,6 +90,7 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
     let mut step_covers = Vec::new();
     let mut same_as = Vec::new();
     let mut transfers = Vec::new();
+    let mut patchers = Vec::new();
     let entries = node_entries(bound);
     let mut edges = EdgeRules::new();
     let host_spaces = host_spaces(stitched);
@@ -98,13 +102,14 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
                 reads,
                 writes,
             } => {
-                let Some(StepUnit { step, info }) = units[unit.region as usize]
+                let Some(StepUnit { step, info, patch }) = units[unit.region as usize]
                     .get_mut(unit.unit as usize)
                     .and_then(Option::take)
                 else {
                     return Err(LoadError::NotSteps);
                 };
                 steps.push(step);
+                patchers.extend(patch);
                 step_covers.push(covers.clone());
                 same_as.push(Some(same_step(bound, &entries, covers, &info)));
                 transfers.push(None);
@@ -198,6 +203,7 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
         covers: step_covers,
         same_as,
         transfers,
+        patchers,
     })
 }
 

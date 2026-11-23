@@ -77,7 +77,7 @@ pub use status::Status;
 pub use step::OwnedStep;
 pub use step::{Step, StepEnd, StepWord};
 pub use step_cx::{
-    DetailSink, Fault, FixedError, MetricCell, MetricId, NO_NODE, OWN_CODE, Progress,
+    CONSTS_MOVED, DetailSink, Fault, FixedError, MetricCell, MetricId, NO_NODE, OWN_CODE, Progress,
     REASON_CAPACITY, REASON_CUT, RESTART, StepCx, own,
 };
 pub use version::{ABI_SYMBOL, AbiVersion, DAEDALUS_ABI};

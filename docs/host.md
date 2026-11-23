@@ -177,7 +177,37 @@ Nothing is turned off automatically.
 - `set_node_on(node, on)`: turn a node off or on by hand.
 - `set_unmerged(true)`: run every node as its own step, to find which node in a merged step
   fails. It is never done automatically.
-- `patch_const(node, port, value)`: change a constant between ticks without a reload.
+- `patch_const(node, port, value)`: change a constant between ticks without a replan. The
+  step that reads the constant decodes the value as the call is made, so a value that does
+  not fit is refused there, in the words a plan is refused in, and the old value stays. The
+  runner marks the step's next call, and the step swaps the new value in before it runs: the
+  next tick reads it, the node keeps its state, and no other node is touched. A reload keeps a patched value, whether the node's step
+  is carried across or made again.
+  - What takes a later value: a `#[node]` body on the CPU backend, for each constant input and
+    for its config. A config is one constant, `config`, and is patched whole: a field the value
+    leaves out takes its default. A constant on any other backend was fixed when the graph was
+    planned, and a patch of it is refused by name (`PatchError::NotRead`); it is never
+    answered with a change nothing reads. A host that loads with `load_with_consts` hands the
+    table to bodies that read it themselves, and there a patch changes the table whether or not
+    a step takes the value.
+  - What still needs a replan: anything that changes the plan. A patch reaches the value a
+    body reads and nothing the planner settled from it: a type, an edge, a conversion, or a
+    choice the planner made from the constant stays as planned.
+  - Cost: nothing is compared or shared while a tick runs. The mark rides in the flags
+    every call already carries, and a body tests those flags once before it runs. A body
+    with state already made that test, for a restart; a body without state makes it now,
+    about 3 instructions a call. A patch costs about 6,000 instructions: the decode, the
+    table's new copy, and the step taking the value.
+  - Memory: decoding a constant keeps memory for the life of the process when the value
+    has text, lists, structs or enum names in it. Numbers and bools keep nothing. A text
+    keeps its bytes; a list 32 bytes an element; a struct 48 bytes a field and its field
+    names; an enum its name, and 32 bytes when it carries a value. So a struct of 8 numeric
+    fields given as an input constant keeps 384 bytes and its field names, about 500 bytes,
+    once when its step is built and once for each patch that changes it. A config's own
+    fields are not kept, only what a field's value holds: a config of numbers keeps nothing.
+    `daedalus_cpu::literal_bytes_kept()` is the running count for the process, so this can be
+    read and need not be taken on trust. A value that changes often belongs on a host input,
+    held with `feed_typed`, which keeps nothing.
 
 ## Recovery per step
 

@@ -133,7 +133,12 @@ impl LoadedHost {
         self.metric_cells = parts.metric_cells;
         self.node_names = parts.node_names;
         self.attach_detail();
+        // The steps that were not carried went with the old runner: what read through them
+        // reads nothing now.
+        self.patchers.retain(|patcher| patcher.reads());
+        self.patchers.extend(parts.patchers);
         self.consts.seed(&bound);
+        self.offer_patched();
         self.reapply_off_nodes();
         Ok(report)
     }

@@ -228,7 +228,11 @@ impl Backend for SimBackend {
                     steps
                         .into_iter()
                         .zip(units)
-                        .map(|(step, info)| StepUnit { step, info })
+                        .map(|(step, info)| StepUnit {
+                            step,
+                            info,
+                            patch: None,
+                        })
                         .collect(),
                 )
             }

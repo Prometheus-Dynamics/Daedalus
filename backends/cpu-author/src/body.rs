@@ -74,8 +74,18 @@ macro_rules! __daedalus_body {
                 let (__in, __out) = __cells.split_at_mut(__this.inputs as usize);
                 let (__fixed, __fan) = __in.split_at_mut($fixed);
                 $($crate::__check!($role $at; __fixed, __this);)*
-                if __cx.restarting() {
-                    __this.state = ::core::default::Default::default();
+                // The runner marked this call: a restart, or a constant a host changed. One
+                // test, as there was for the restart alone.
+                if __cx.marked() {
+                    if __cx.restarting() {
+                        __this.state = ::core::default::Default::default();
+                    }
+                    if __cx.consts_moved() {
+                        $crate::__cpu::ConstTable::refresh(
+                            &mut __this.consts,
+                            &mut __this.config,
+                        );
+                    }
                 }
                 let mut __next = __fixed.iter_mut();
                 $($crate::__ready!($okind $oat; __out, __this);)*
@@ -98,11 +108,12 @@ macro_rules! __daedalus_body {
             )),*])?;
             let mut __consts = $crate::__cpu::consts_for(__setup, $fixed);
             $($crate::__const!($role $at $port: $ty; __setup, __consts);)*
+            let __config = $crate::__config!(__setup, __consts; $($config)?);
             let mut __run = __Run {
                 node: __setup.node.0,
                 inputs: u32::from(__setup.inputs),
                 state: ::core::default::Default::default(),
-                config: $crate::__config!(__setup; $($config)?),
+                config: __config,
                 consts: __consts,
                 outs: [[0; 16]; __OUTPUTS],
                 wire: __setup.wire_inputs,
@@ -515,14 +526,15 @@ macro_rules! __const {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __config {
-    ($setup:ident;) => {
+    ($setup:ident, $consts:ident;) => {
         ()
     };
-    ($setup:ident; $config:ty) => {{
-        let __fields = $setup.config_fields();
-        <$config>::from_literals(|name| $crate::__cpu::field(&__fields, name))
-            .map_err(|_| $crate::__cpu::StepString::from("the config doesn't fit its type"))?
-    }};
+    ($setup:ident, $consts:ident; $config:ty) => {
+        $crate::__cpu::read_config($setup, &mut $consts, |__fields| {
+            <$config>::from_literals(|name| $crate::__cpu::field(__fields, name))
+                .map_err(|_| $crate::__cpu::StepString::from("the config doesn't fit its type"))
+        })?
+    };
 }
 
 /// Binds one parameter.

@@ -106,7 +106,11 @@ impl Backend for Test {
             seen: None,
             value: 0,
         });
-        Ok(Compiled::Steps(vec![StepUnit { step, info }]))
+        Ok(Compiled::Steps(vec![StepUnit {
+            step,
+            info,
+            patch: None,
+        }]))
     }
 }
 
@@ -228,6 +232,29 @@ fn a_reader_keeps_what_it_took_when_a_patch_lands() {
     assert_eq!(
         *host.consts().get("gain", "amount").unwrap().value,
         Lit::Int(9)
+    );
+}
+
+#[test]
+fn a_const_no_step_takes_a_later_value_for_is_refused_by_name() {
+    // The same plan, loaded without the table its bodies read: nothing takes a later value
+    // for `amount`, so a patch is refused rather than answered with a change nothing sees.
+    let backend = Test {
+        consts: ConstTable::new(),
+        decodes: Arc::new(AtomicU32::new(0)),
+    };
+    let planned = plan(&graph(), &registry(), &[&backend], &Config::default()).unwrap();
+    let mut host = LoadedHost::load(planned, LoadOptions::default()).unwrap();
+    let error = host.patch_const("gain", "amount", Lit::Int(5)).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "no step reads const `gain.amount` while the graph runs: its backend fixed it when the \
+         graph was planned, so changing it takes a replan"
+    );
+    assert!(matches!(error, PatchError::NotRead { .. }));
+    assert_eq!(
+        *host.consts().get("gain", "amount").unwrap().value,
+        Lit::Int(2)
     );
 }
 

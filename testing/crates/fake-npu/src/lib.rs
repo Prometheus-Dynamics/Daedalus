@@ -297,6 +297,7 @@ impl Backend for FakeNpu {
                         may_pend: false,
                         decodes: Vec::new(),
                     },
+                    patch: None,
                 }
             })
             .collect();

@@ -18,6 +18,8 @@ pub use daedalus_abi::{FixedError, OwnedStep, Slot, Slots, StepCx, StepEnd};
 #[cfg(feature = "alloc")]
 mod list_view;
 #[cfg(feature = "alloc")]
+pub mod live;
+#[cfg(feature = "alloc")]
 mod out_view;
 #[cfg(feature = "alloc")]
 mod setup;
@@ -28,7 +30,10 @@ pub use list_view::{ListView, list_viewed};
 #[cfg(feature = "alloc")]
 pub use out_view::{OutSlot, OutView, Refused};
 #[cfg(feature = "alloc")]
-pub use setup::{Consts, Lit, Setup, StepString, check_wire, consts_for, field, store_const};
+pub use setup::{
+    Consts, Lit, Setup, StepString, check_wire, consts_for, field, literal_bytes_kept, read_config,
+    store_const,
+};
 
 /// In a build with no allocator there are no literals, so nothing can be decoded from one.
 #[cfg(not(feature = "alloc"))]
@@ -267,6 +272,11 @@ impl<T> NotLit<T> for LitOf<T> {}
 /// Where a step finds an input's constant.
 pub trait ConstTable {
     fn slot(&self, at: usize) -> Option<&Slot>;
+
+    /// Takes the later values that arrived: an input's constant into the table, a config into
+    /// `config`. Called when the runner marks the call ([`StepCx::consts_moved`]), so a run
+    /// that has nothing to take does nothing for it.
+    fn refresh<C: 'static>(&mut self, _config: &mut C) {}
 }
 
 /// For a step whose constants are written into its input cells before it runs.

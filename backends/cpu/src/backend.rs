@@ -15,6 +15,7 @@ use daedalus_backend::{
 };
 use daedalus_types::{NodeIndex, PortIndex};
 
+use crate::steps::live::Readers;
 use crate::steps::{CpuBody, Keep, Setup};
 
 pub const BACKEND_ID: &str = "cpu";
@@ -167,6 +168,7 @@ pub(crate) fn step_of(
     body: &NodeBody<'_>,
     cx: &CompileCx<'_>,
     wiring: &Wiring,
+    readers: &Readers,
 ) -> Result<(Step, Vec<Decode>), Refusal> {
     // A body is a `#[node]` function, or a closure a host made at run time.
     enum Make<'b> {
@@ -207,6 +209,7 @@ pub(crate) fn step_of(
         wire_inputs,
         id: body.id,
         lent: cx.lent,
+        readers: Some(readers),
     };
     let step = match make {
         Make::Function(cpu) => (cpu.make)(&setup),
@@ -249,8 +252,10 @@ pub(crate) fn unit(
     wiring: &Wiring,
 ) -> Result<StepUnit, Refusal> {
     let body = body_of(node, cx)?;
-    let (step, decodes) = step_of(node, body, cx, wiring)?;
+    let readers = Readers::default();
+    let (step, decodes) = step_of(node, body, cx, wiring, &readers)?;
     Ok(StepUnit {
+        patch: readers.into_patch(),
         step,
         info: UnitInfo {
             covers: vec![node],
@@ -341,6 +346,7 @@ impl Backend for CpuBackend {
             wire_inputs: 0,
             id: "transfer",
             lent: cx.lent,
+            readers: None,
         };
         Some((cpu.make)(&setup).map_err(|reason| Refusal::whole_region(&reason)))
     }

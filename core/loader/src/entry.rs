@@ -403,6 +403,7 @@ impl Backend {
                 may_pend: true,
                 decodes: Vec::new(),
             },
+            patch: None,
         }
     }
 

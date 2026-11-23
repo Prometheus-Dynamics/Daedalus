@@ -213,7 +213,11 @@ impl Backend for TestBackend {
             probe,
             out: [0; INLINE_BYTES],
         });
-        Ok(Compiled::Steps(vec![StepUnit { step, info }]))
+        Ok(Compiled::Steps(vec![StepUnit {
+            step,
+            info,
+            patch: None,
+        }]))
     }
 }
 

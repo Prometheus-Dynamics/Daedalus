@@ -594,6 +594,10 @@ impl Backend for ProcessBackend {
             #[cfg(target_os = "linux")]
             self.dmabufs.clone(),
         ));
-        Ok(Compiled::Steps(vec![StepUnit { step, info }]))
+        Ok(Compiled::Steps(vec![StepUnit {
+            step,
+            info,
+            patch: None,
+        }]))
     }
 }

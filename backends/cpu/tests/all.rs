@@ -48,6 +48,8 @@ mod node_fault;
 mod node_metrics;
 #[path = "owned_code.rs"]
 mod owned_code;
+#[path = "patch_const.rs"]
+mod patch_const;
 #[cfg(feature = "merge")]
 #[path = "reload_state.rs"]
 mod reload_state;

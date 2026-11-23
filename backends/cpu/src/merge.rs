@@ -134,6 +134,7 @@ fn merged_unit(
     let local = |port: PortRef| links.iter().position(|link| *link == port);
 
     let mut writes = Vec::new();
+    let readers = crate::steps::live::Readers::default();
     let mut steps = Vec::with_capacity(nodes.len());
     for (at, &node) in nodes.iter().enumerate() {
         let body = body_of(node, cx)?;
@@ -168,7 +169,7 @@ fn merged_unit(
         }
         // An output that feeds the next node in the chain is a link, never a region output, so it
         // stays a Rust value.
-        let (step, decoded) = step_of(node, body, cx, &wiring)?;
+        let (step, decoded) = step_of(node, body, cx, &wiring, &readers)?;
         decodes.extend(decoded);
         steps.push(NestedStep {
             metrics: body.metrics,
@@ -185,6 +186,7 @@ fn merged_unit(
         first_write,
     };
     Ok(StepUnit {
+        patch: readers.into_patch(),
         step: Step::boxed(merged),
         info: UnitInfo {
             covers: nodes.to_vec(),
