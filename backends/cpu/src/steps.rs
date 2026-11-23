@@ -31,8 +31,8 @@ pub use list_view::{ListView, list_viewed};
 pub use out_view::{OutSlot, OutView, Refused};
 #[cfg(feature = "alloc")]
 pub use setup::{
-    Consts, Lit, Setup, StepString, check_wire, consts_for, field, literal_bytes_kept, read_config,
-    store_const,
+    Consts, Lit, OutputNames, Setup, StepString, check_wire, consts_for, field, literal_bytes_kept,
+    read_config, store_const,
 };
 
 /// In a build with no allocator there are no literals, so nothing can be decoded from one.

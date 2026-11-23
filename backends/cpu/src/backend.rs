@@ -100,7 +100,7 @@ fn wire_reads(
         match at < fixed {
             true if wire_bit(at) == 0 => {
                 return Err(format!(
-                    "input {} of {} comes from a worker, and a CPU node reads values from workers on its first 31 inputs only",
+                    "input `{}` of {} comes from outside this program, and a CPU node reads such values on its first 31 inputs only",
                     param.port, body.id
                 ));
             }
@@ -114,7 +114,7 @@ fn wire_reads(
         match param.wire {
             WireRead::Refused => {
                 return Err(format!(
-                    "input {} of {} comes from a worker, but {ty} has no wire form: add #[derive(WireForm)] to {ty}",
+                    "input `{}` of {} comes from outside this program (a worker or a plugin), but {ty} has no crossing form: add #[derive(WireForm)] to {ty}",
                     param.port, body.id
                 ));
             }

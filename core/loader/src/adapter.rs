@@ -2,17 +2,74 @@
 
 use std::sync::Arc;
 
-use daedalus_abi::BoundaryPort;
+use std::borrow::Cow;
+
+use daedalus_abi::{BoundaryPort, OwnedStep, SlotState, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{
-    CompileCx, Compiled, MemorySpace, NodeRef, Offer, PortRef, Refusal, Region, SpaceKind, Transfer,
+    CompileCx, Compiled, MemorySpace, NodeRef, Offer, PortRef, Refusal, Region, SpaceKind,
+    Transfer, TransferCost,
 };
 use daedalus_types::NodeIndex;
 
 use crate::{Plugin, RegionIn};
 
 /// The memory every plugin backend's values live in. They share it, so a value passes from one
-/// plugin's node to another's with no transfer.
+/// plugin's node to another's with no transfer. A value reaches it from a node linked into the
+/// host, and leaves it for one, through [`CPU_WIRE`].
 pub const PLUGIN_SPACE: &str = "plugin.host";
+
+/// The CPU backend's space whose cells hold their type's wire form: the form a value has when it
+/// crosses between a node linked into the host and a plugin's node.
+pub const CPU_WIRE: &str = "cpu.wire";
+
+pub const TO_PLUGIN: &str = "plugin.from_cpu_wire";
+pub const FROM_PLUGIN: &str = "plugin.to_cpu_wire";
+
+/// The two moves between the CPU backend and the plugin space, for any type. Each hands the
+/// cell on as it is: the linked node on one side wrote, or reads, its type's wire form, and a
+/// plugin's node reads and writes that form. Nothing is copied by the move.
+///
+/// There is no move between the plugin space and `cpu.host`, where a cell holds a Rust value in
+/// the host's memory: such a value never reaches a plugin. A linked node whose output has no
+/// wire form is refused when its step is built, by the node, the output and the type.
+fn transfers() -> Vec<Transfer> {
+    let entry = |id, from, to| Transfer {
+        id,
+        key: None,
+        from: Cow::Borrowed(from),
+        to: Cow::Borrowed(to),
+        cost: TransferCost::Handoff,
+        make: hand,
+    };
+    vec![
+        entry(TO_PLUGIN, CPU_WIRE, PLUGIN_SPACE),
+        entry(FROM_PLUGIN, PLUGIN_SPACE, CPU_WIRE),
+    ]
+}
+
+fn hand(_: &CompileCx<'_>) -> Result<Step, Refusal> {
+    Ok(Step::boxed(Hand))
+}
+
+/// Hands a cell on from one space to the other, as it is: the output is marked to take the
+/// input's value by reference, which the runner settles when the step returns.
+struct Hand;
+
+impl OwnedStep for Hand {
+    fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
+        let cells = slots.as_mut_slice();
+        let [input, out] = cells else {
+            cx.fault(None, "a plugin move has one input and one output");
+            return StepEnd::Fault;
+        };
+        if input.state != SlotState::Full as u32 {
+            cx.fault(None, "a plugin move was given no value");
+            return StepEnd::Fault;
+        }
+        daedalus_abi::forward(out, 0);
+        StepEnd::Done
+    }
+}
 
 /// One backend of a loaded plugin, as the planner sees it. It keeps the plugin, so the library
 /// stays open while a planner or a host holds the backend.
@@ -77,7 +134,7 @@ impl daedalus_backend::Backend for PluginBackend {
     }
 
     fn transfers(&self) -> Vec<Transfer> {
-        Vec::new()
+        transfers()
     }
 
     /// An offer carries no node ids, so everything with a body for this backend is taken here.

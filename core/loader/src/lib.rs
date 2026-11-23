@@ -16,7 +16,7 @@ mod pod;
 mod records;
 mod retry;
 
-pub use adapter::{PLUGIN_SPACE, PluginBackend};
+pub use adapter::{CPU_WIRE, FROM_PLUGIN, PLUGIN_SPACE, PluginBackend, TO_PLUGIN};
 pub use codec::{Codec, Direction};
 pub use entry::{Backend, Loader, Plugin, RegionIn, plugin_tables_held};
 

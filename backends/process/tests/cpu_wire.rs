@@ -275,7 +275,7 @@ fn a_reader_of_a_type_with_no_wire_form_is_refused_with_the_fix() {
         .map(|_| ())
         .expect_err("a value from a worker can't be read with no wire form");
     assert!(
-        reason.contains("input in of edge.unpad_unwired"),
+        reason.contains("input `in` of edge.unpad_unwired"),
         "{reason}"
     );
     assert!(reason.contains("add #[derive(WireForm)] to"), "{reason}");

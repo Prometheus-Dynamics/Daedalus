@@ -200,13 +200,33 @@ impl ConstTable for Consts {
     }
 }
 
-/// Refuses an output placed in `cpu.wire` whose type has no wire form: `outputs` are each output's
-/// name, whether its type has a wire form, and the type's name.
+/// What a body's declaration calls its outputs, for a refusal to name one.
+pub trait OutputNames {
+    fn output_name(&self, at: usize) -> &'static str;
+}
+
+impl OutputNames for daedalus_registry::NodeDecl {
+    fn output_name(&self, at: usize) -> &'static str {
+        self.outputs.get(at).map_or("out", |port| port.name)
+    }
+}
+
+/// A transfer has one output, the value it moved.
+impl OutputNames for daedalus_registry::TransferRecord {
+    fn output_name(&self, _: usize) -> &'static str {
+        "value"
+    }
+}
+
+/// Refuses an output placed in `cpu.wire` whose type has no wire form, which is the only form a
+/// value leaves this program in: a Rust value in the host's memory never reaches a worker or a
+/// plugin. `outputs` are each output's name, whether its type has a wire form, and the type's
+/// name.
 pub fn check_wire(setup: &Setup<'_>, outputs: &[(&str, bool, &str)]) -> Result<(), String> {
     for (at, (name, has, ty)) in outputs.iter().enumerate() {
         if setup.keep.get(at) == Some(&Keep::Wire) && !has {
             return Err(format!(
-                "output {name} of {} goes to a worker, but {ty} has no wire form: add #[derive(WireForm)] to {ty}",
+                "output `{name}` of {} is read outside this program (by a worker or a plugin), but {ty} has no crossing form: add #[derive(WireForm)] to {ty}",
                 setup.id
             ));
         }

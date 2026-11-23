@@ -7,6 +7,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use daedalus_cpu::CpuBackend;
+use daedalus_derive::Type;
 use daedalus_fake_npu::PluginNpu;
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, NodeDoc, NodeKindDoc, PortRefDoc};
 use daedalus_host::{LoadOptions, LoadedHost};
@@ -14,13 +15,44 @@ use daedalus_loader::{Loader, Plugin, PluginBackend};
 use daedalus_macros::node;
 use daedalus_planner::explain::explain_plan;
 use daedalus_planner::{Config, plan};
-use daedalus_registry::Registry;
+use daedalus_registry::{NodeRecord, Registry};
 
 /// A node linked into this program.
 #[node(id = "t.inc", inputs(x), outputs(y))]
 fn inc(x: u32) -> u32 {
     x + 1
 }
+
+/// A type of the host's own, with no wire form: a Rust value that lives in this program's memory.
+#[derive(Clone, Type)]
+#[type_key("host.kept")]
+struct Kept {
+    #[allow(dead_code)] // made and never read: the graph that would pass it on does not plan
+    inner: u32,
+}
+
+#[node(id = "t.seal", inputs(x), outputs(y))]
+fn seal(x: u32) -> Kept {
+    Kept { inner: x }
+}
+
+/// Where the bytes it was given are, and how many: to tell a read in place from a copy.
+#[node(id = "t.where", inputs(bytes), outputs(at, len))]
+fn where_at(bytes: &[u8]) -> (u64, u32) {
+    (bytes.as_ptr() as u64, bytes.len() as u32)
+}
+
+#[node(id = "t.fill", inputs(x), outputs(bytes))]
+fn fill(x: u32) -> Vec<u8> {
+    vec![x as u8; 3000]
+}
+
+#[node(id = "t.sum", inputs(bytes), outputs(sum))]
+fn sum(bytes: &[u8]) -> u32 {
+    bytes.iter().map(|byte| u32::from(*byte)).sum()
+}
+
+const LINKED: [&NodeRecord; 5] = [&INC_NODE, &SEAL_NODE, &WHERE_AT_NODE, &FILL_NODE, &SUM_NODE];
 
 /// The first plugin: the fake device's, which cargo builds beside this test.
 fn npu_library() -> PathBuf {
@@ -102,8 +134,8 @@ fn loaded(loader: &mut Loader) -> (Arc<Plugin>, Arc<Plugin>, Registry) {
     let fixture = Arc::new(loader.open(fixture_library()).expect("the second loads"));
     let mut registry = Registry::new();
     registry
-        .register_all(&[&INC_NODE])
-        .expect("the linked node registers");
+        .register_all(&LINKED)
+        .expect("the linked nodes register");
     npu.join(&mut registry)
         .expect("the first plugin's nodes join");
     fixture
@@ -142,7 +174,16 @@ fn two_plugins_run_one_graph_built_from_what_they_declare() {
     let ids = |plugin: &Plugin| -> Vec<String> {
         plugin.nodes().iter().map(|node| node.id.clone()).collect()
     };
-    assert_eq!(ids(&npu), ["npu.scale", "npu.add", "npu.negate"]);
+    assert_eq!(
+        ids(&npu),
+        [
+            "npu.scale",
+            "npu.add",
+            "npu.negate",
+            "npu.keep",
+            "npu.number"
+        ]
+    );
     assert!(ids(&fixture).contains(&"fixture.pass".to_string()));
 
     let graph = two_plugin_graph(&npu, &fixture);
@@ -165,34 +206,209 @@ fn two_plugins_run_one_graph_built_from_what_they_declare() {
 }
 
 #[test]
-fn a_linked_node_beside_a_plugin_node_is_refused_by_name_today() {
+fn a_linked_node_and_a_plugin_node_pass_a_number_both_ways() {
     let (_npu, fixture, registry) = loaded(&mut Loader::new());
     let (pass, pass_in, pass_out) = from_inventory(&fixture, "fixture.pass");
+    let mut before = NodeDoc::new("t.inc");
+    before.label = Some("before".to_string());
+    let mut after = NodeDoc::new("t.inc");
+    after.label = Some("after".to_string());
     let graph = GraphBody {
-        nodes: vec![bridge(), NodeDoc::new("t.inc"), pass],
+        nodes: vec![bridge(), before, pass, after],
         edges: vec![
             edge(0, "x", 1, "x"),
             edge(1, "y", 2, &pass_in),
-            edge(2, &pass_out, 0, "out"),
+            edge(2, &pass_out, 3, "x"),
+            edge(3, "y", 0, "out"),
         ],
         groups: Vec::new(),
     };
     let cells = PluginBackend::new(Arc::clone(&fixture), 0);
-    let refused = plan(
+    let planned = plan(
         &graph,
         &registry,
         &[&cells, &CpuBackend],
         &Config::default(),
     )
-    .expect_err("nothing moves a value from the CPU backend's space to the plugin's");
-    // The edge and both spaces are named. Nothing of the linked node's reaches the plugin.
-    let told = format!("{refused:?}");
+    .expect("the graph plans");
+    // The plan says how each value crosses: written in the crossing space, handed on.
+    let crossing: Vec<(Option<String>, Vec<String>, Option<String>)> = explain_plan(&planned)
+        .edges
+        .into_iter()
+        .filter(|edge| edge.to_node == 2 || edge.from_node == 2)
+        .map(|edge| (edge.written_in, edge.transfer, edge.read_in))
+        .collect();
+    let space = |id: &str| Some(id.to_string());
+    assert_eq!(
+        crossing,
+        [
+            (
+                space("cpu.wire"),
+                vec!["plugin.from_cpu_wire".to_string()],
+                space("plugin.host")
+            ),
+            (
+                space("plugin.host"),
+                vec!["plugin.to_cpu_wire".to_string()],
+                space("cpu.wire")
+            ),
+        ]
+    );
+    let mut host = LoadedHost::load(planned, LoadOptions::default()).expect("the plan loads");
+    for x in [0u32, 1, 41, u32::MAX - 2] {
+        assert_eq!(through(&mut host, x), Some(x + 2));
+    }
+}
+
+/// A host bridge whose ports have the given type keys.
+fn bridge_of(ports: &[(&str, &str)]) -> NodeDoc {
+    let mut bridge = NodeDoc::new("host");
+    bridge.kind = NodeKindDoc::HostBridge;
+    for (port, key) in ports {
+        bridge
+            .port_types
+            .insert((*port).to_string(), (*key).to_string());
+    }
+    bridge
+}
+
+fn plan_with(
+    fixture: &Arc<Plugin>,
+    registry: &Registry,
+    graph: &GraphBody,
+) -> Result<daedalus_planner::Planned, daedalus_planner::PlanError> {
+    let cells = PluginBackend::new(Arc::clone(fixture), 0);
+    plan(graph, registry, &[&cells, &CpuBackend], &Config::default())
+}
+
+#[test]
+fn a_rust_value_with_no_crossing_form_is_refused_by_name() {
+    let (npu, _fixture, registry) = loaded(&mut Loader::new());
+    let (keep, keep_in, keep_out) = from_inventory(&npu, "npu.keep");
+    let graph = GraphBody {
+        nodes: vec![
+            bridge_of(&[("x", "u32"), ("out", "host.kept")]),
+            NodeDoc::new("t.seal"),
+            keep,
+        ],
+        edges: vec![
+            edge(0, "x", 1, "x"),
+            edge(1, "y", 2, &keep_in),
+            edge(2, &keep_out, 0, "out"),
+        ],
+        groups: Vec::new(),
+    };
+    let refused = plan_with(&npu, &registry, &graph).expect_err("a Rust value can't cross");
+    // The node, the output and the type are named, with what to do about it.
+    assert_eq!(
+        refused.to_string(),
+        "no backend can run node `t.seal` (cpu: refused (output `y` of t.seal is read outside \
+         this program (by a worker or a plugin), but mixed::Kept has no crossing form: add \
+         #[derive(WireForm)] to mixed::Kept))"
+    );
+}
+
+#[test]
+fn a_megabyte_a_plugin_hands_over_is_read_in_place_by_a_linked_node() {
+    let (_npu, fixture, registry) = loaded(&mut Loader::new());
+    let (handover, handover_in, handover_out) = from_inventory(&fixture, "fixture.handover");
+    let graph = GraphBody {
+        nodes: vec![
+            bridge_of(&[
+                ("x", "u32"),
+                ("bytes", "bytes"),
+                ("at", "u64"),
+                ("len", "u32"),
+            ]),
+            handover,
+            NodeDoc::new("t.where"),
+        ],
+        edges: vec![
+            edge(0, "x", 1, &handover_in),
+            edge(1, &handover_out, 2, "bytes"),
+            edge(1, &handover_out, 0, "bytes"),
+            edge(2, "at", 0, "at"),
+            edge(2, "len", 0, "len"),
+        ],
+        groups: Vec::new(),
+    };
+    let planned = plan_with(&fixture, &registry, &graph).expect("the graph plans");
+    let mut host = LoadedHost::load(planned, LoadOptions::default()).expect("the plan loads");
+    let io = host.host();
+    io.feed_inline("x", &1u32.to_le_bytes()).expect("a feed");
+    io.step().expect("a tick");
+    let held = io.take_value("bytes").expect("a take").expect("the bytes");
+    let bytes = held.bytes().expect("bytes");
+    assert_eq!((bytes.len(), bytes[0]), (1 << 20, 7));
+    // The linked node read the plugin's megabyte where the plugin has it.
+    assert_eq!(io.take_copy::<u32>("len").expect("a take"), Some(1 << 20));
+    assert_eq!(
+        io.take_copy::<u64>("at").expect("a take"),
+        Some(bytes.as_ptr() as u64)
+    );
+}
+
+#[test]
+fn bytes_from_a_linked_node_pass_through_a_plugin_to_a_linked_node() {
+    let (_npu, fixture, registry) = loaded(&mut Loader::new());
+    let (pass, pass_in, pass_out) = from_inventory(&fixture, "fixture.pass_bytes");
+    let graph = GraphBody {
+        nodes: vec![
+            bridge_of(&[("x", "u32"), ("out", "u32")]),
+            NodeDoc::new("t.fill"),
+            pass,
+            NodeDoc::new("t.sum"),
+        ],
+        edges: vec![
+            edge(0, "x", 1, "x"),
+            edge(1, "bytes", 2, &pass_in),
+            edge(2, &pass_out, 3, "bytes"),
+            edge(3, "sum", 0, "out"),
+        ],
+        groups: Vec::new(),
+    };
+    let planned = plan_with(&fixture, &registry, &graph).expect("the graph plans");
+    let mut host = LoadedHost::load(planned, LoadOptions::default()).expect("the plan loads");
+    for x in [1u32, 9] {
+        assert_eq!(through(&mut host, x), Some(x * 3000));
+    }
+}
+
+#[test]
+fn a_graph_that_needs_a_plugins_codec_does_not_plan_today() {
+    let (npu, fixture, registry) = loaded(&mut Loader::new());
+    let (number, number_in, number_out) = from_inventory(&npu, "npu.number");
+    let graph = GraphBody {
+        nodes: vec![
+            bridge(),
+            NodeDoc::new("t.inc"),
+            number,
+            NodeDoc::new("t.inc"),
+        ],
+        edges: vec![
+            edge(0, "x", 1, "x"),
+            edge(1, "y", 2, &number_in),
+            edge(2, &number_out, 3, "x"),
+            edge(3, "y", 0, "out"),
+        ],
+        groups: Vec::new(),
+    };
+    // The planner finds the other plugin's codec between `u32` and its type and puts the
+    // conversions in. They are declared for that plugin's backend, which has no step for them.
+    let device = PluginBackend::new(Arc::clone(&npu), 0);
+    let cells = PluginBackend::new(Arc::clone(&fixture), 0);
+    let refused = plan(
+        &graph,
+        &registry,
+        &[&device, &cells, &CpuBackend],
+        &Config::default(),
+    )
+    .expect_err("no step for a conversion");
+    let told = refused.to_string();
     for part in [
-        "NoTransfer",
-        "fixture.pass.in",
-        "t.inc.y",
-        "cpu.host",
-        "plugin.host",
+        "dylib.number.from_value",
+        "dylib.number.to_value",
+        "fixture.cpu",
     ] {
         assert!(told.contains(part), "{told}");
     }

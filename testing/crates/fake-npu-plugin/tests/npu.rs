@@ -163,7 +163,16 @@ fn loads_as_plugin() {
         .collect();
     assert_eq!(backends, [BACKEND_ID]);
     let nodes: Vec<&str> = plugin.nodes().iter().map(|node| node.id.as_str()).collect();
-    assert_eq!(nodes, ["npu.scale", "npu.add", "npu.negate"]);
+    assert_eq!(
+        nodes,
+        [
+            "npu.scale",
+            "npu.add",
+            "npu.negate",
+            "npu.keep",
+            "npu.number"
+        ]
+    );
 
     // A registry that had never heard of them now plans a graph with one.
     let mut registry = registry(&[&INC_NODE]);
