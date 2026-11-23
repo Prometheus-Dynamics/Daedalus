@@ -57,6 +57,11 @@ the move. The same plan still explains, and runs as steps.
   consumer reads the value where it was written: nothing moves it and nothing copies it. That is
   what tells a read in place from an edge with a transfer missing. An edge inside a region a
   backend merged into one step has no value of its own, and both spaces are absent.
+- `queued` lists each edge that holds more than one value into a node that waits for its other
+  inputs (a `fire = "all"` node with another connected input): the node, the port, the edge's
+  depth and the inputs it waits on. While the node waits the edge fills, and a queued value that
+  holds something scarce, a camera frame from a small pool, pins it. Such an edge usually wants
+  `latest_only` or `per_tick`.
 - `decodes` lists each input a step converts as it reads it, with the node, the port, the type
   read and why. Nothing else in the plan shows that cost. A CPU node reading a value in `cpu.wire`
   decodes it from its wire form unless it reads a list of numbers as `&[T]`, or a list of

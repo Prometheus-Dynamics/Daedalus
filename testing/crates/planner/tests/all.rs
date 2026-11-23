@@ -5,6 +5,8 @@
 
 #[path = "b10_control.rs"]
 mod b10_control;
+#[path = "b11_explain_queued.rs"]
+mod b11_explain_queued;
 #[path = "b11_lint_explain.rs"]
 mod b11_lint_explain;
 #[path = "b12_hash_cache.rs"]
