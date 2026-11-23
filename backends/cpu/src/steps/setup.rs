@@ -41,19 +41,16 @@ impl Setup<'_> {
             .map(|one| one.value)
     }
 
-    /// The config's fields as literals: from a `config` struct, and any set one by one.
+    /// The config's fields as literals, from its `config` struct. The planner folds a field set
+    /// by a const of its own into that struct, so this is the one form a plan gives.
     pub fn config_fields(&self) -> Vec<(String, Literal)> {
-        let mut fields = Vec::new();
-        for one in self.consts.iter().filter(|one| one.node == self.node) {
-            match (one.port, one.value) {
-                ("config", Lit::Struct(all)) => fields.extend(
-                    all.iter()
-                        .map(|field| (field.name.clone(), literal(&field.value))),
-                ),
-                (port, value) => fields.push((String::from(port), literal(value))),
-            }
+        match self.value("config") {
+            Some(Lit::Struct(all)) => all
+                .iter()
+                .map(|field| (field.name.clone(), literal(&field.value)))
+                .collect(),
+            _ => Vec::new(),
         }
-        fields
     }
 }
 

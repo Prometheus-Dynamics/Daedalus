@@ -253,8 +253,12 @@ struct Range {
 fn clamp(x: f64, range: &Range) -> f64 { x.clamp(range.low as f64, range.high as f64) }
 ```
 
-The graph sets its fields as one struct constant on the port `config`, and a field it leaves out
-keeps its default. A value outside a field's limits, or of the wrong type, fails planning.
+The graph sets its fields as one struct constant on the port `config`, or one constant a field,
+named after the field; a group exposes a stage's field the same way, as an input that maps to it.
+The planner folds the fields set one by one into the struct, so a backend reads one form, and
+refuses a field set both ways. A name that is an input port stays the port. A field it leaves out
+keeps its default. A value outside a field's limits, or of the wrong type, fails planning, and a
+constant that names neither a port nor a field is refused with the config's field names listed.
 
 ## State
 

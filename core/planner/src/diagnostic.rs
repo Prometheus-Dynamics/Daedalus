@@ -198,8 +198,15 @@ impl From<&TypeCheckError> for Diagnostic {
 
 impl From<&ConstError> for Diagnostic {
     fn from(error: &ConstError) -> Diagnostic {
-        let ConstError::TypeMismatch { node, port, .. } = error;
-        Diagnostic::error(Code::ConstMismatch, error).at(node, port)
+        match error {
+            ConstError::TypeMismatch { node, port, .. }
+            | ConstError::ConfigFieldTwice { node, field: port } => {
+                Diagnostic::error(Code::ConstMismatch, error).at(node, port)
+            }
+            ConstError::NoPortOrField { node, name, .. } => {
+                Diagnostic::error(Code::PortMissing, error).at(node, name)
+            }
+        }
     }
 }
 
