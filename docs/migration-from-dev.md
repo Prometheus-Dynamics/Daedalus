@@ -80,6 +80,39 @@ and cannot say:
 So a dylib suits a backend or a codec shipped apart from the host (an NPU runtime, say), and
 nodes written in Rust for the CPU belong in a linked crate.
 
+## A host's calls, from dev to next
+
+For a consumer that drove graphs through `dev`'s engine. The left column is the `dev` name as a
+consumer wrote it; nothing on `next` keeps it.
+
+| On `dev` | On `next` |
+|---|---|
+| `Engine`, `EngineConfig` | No engine object. `plan(&graph, &registry, &backends, &Config)` gives a plan, and `LoadedHost::load(planned, LoadOptions)` loads it |
+| `EngineConfig` metrics level | `Telemetry::new(Level)` for counters and per-step rows; `LoadOptions::overhead_window` for per-step time and bytes; `LoadOptions::node_metrics` for what nodes report |
+| `EngineConfig` frame overhead, `HostGraph::frame_overhead` | `LoadOptions::overhead_window`, read with `loaded.tick_overhead()` |
+| `planner.enable_gpu` | Whether the GPU backend is in the list of backends given to `plan` |
+| `runtime.mode` Serial | `loaded.step()` runs one tick on the caller's thread, which is the only mode a loaded host has |
+| backpressure settings | Each edge's policy in the graph (`fifo`, `latest_only`, `bounded`, `per_tick`), and `set_port_policy` for a host input at run time |
+| `compile_document_host_graph` | `GraphDoc::parse(text)`, then `plan` on its graph, then `LoadedHost::load` |
+| `HostGraph::explain_plan` | `daedalus_planner::explain::explain_plan(&planned)` |
+| `HostGraph::host_inputs`, `host_outputs` | `loaded.host().ports()`, each with its direction and type key; `port_infos()` adds policy, held and queued |
+| `HostGraph::set_latest_input` | A `latest_only` policy on the edge from the host bridge; a feed then replaces what is queued |
+| `HostGraph::set_held_input` | The host bridge marks the input `held` (or `shared`) in the graph; a feed replaces its value and wakes nothing |
+| `HostGraph::tick` | `loaded.step()` |
+| `HostGraph::tick_ready`, `run_executor_once` | `loaded.start()` gives a `StreamGraph` with `tick_ready()`, `tick_until_idle()` and `drive_blocking(..)`; `step_until_settled(timeout)` on the loaded host waits out work still on a device |
+| `HostGraph::stop_handle` | `StreamGraph::stop_handle()`; `loaded.cancel_handle()` asks a running tick to stop |
+| `HostGraph::inbound_fd` | `StreamGraph::inbound_fd()`, and `wait_for_input(timeout)` |
+| `HostGraph::value_serializers` | A `ValueSerializers` the host builds and passes to `push_value` and `inspect_payload` |
+| `HostBridgeHandle::feed_payload` | `host.feed(port, Value)`, `feed_typed(port, Arc<T>)`, `feed_inline`, `feed_shared`, `feed_handed`; through a `StreamGraph`, `graph.input(port)` gives a handle with `feed` |
+| `HostBridgeHandle::push` | `host.push_value(port, &HostValue, &serializers)`: a plain value, built into the port's type by that type's entry |
+| `Payload` | `daedalus_value::Value` |
+| `FeedOutcome` | `FeedOutcome { woke, dropped }` |
+| `ExecutionTelemetry` node metrics | `Telemetry::report(runner).nodes` (a `NodeRow` a step), and `loaded.metric_rows()` for what nodes report themselves |
+| `ExecutionTelemetry` edge metrics | No per-edge table. `port_infos()` gives a host port's queue depth, `port_drops(port)` its drops, and a full edge fails its tick naming the edge |
+| `registry.graph_document`, `refresh_graph_ports_with` | No registry call. A document is `GraphDoc`; the planner fills a host bridge's ports from the graph's edges and checks every node's ports against its declaration |
+| `registry.graph_requirements`, `GraphDocument::requires` | `GraphDoc::requires` is carried in the document. Nothing on `next` checks it |
+| `GraphDocument::from_json`, `to_json` | `GraphDoc::parse(text)`, `doc.to_json()` |
+
 ## What changed shape
 
 - A backend is asked what it can run and compiles what it is given. There is no device
