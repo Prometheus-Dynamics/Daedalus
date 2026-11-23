@@ -2,7 +2,7 @@
 
 use daedalus_author_fixture::sample::Sample;
 use daedalus_derive::{NodeConfig, Type};
-use daedalus_registry::{FieldRule, TypeRef};
+use daedalus_registry::{PortRule, TypeRef};
 use daedalus_types::{Code, Field, Literal, Scalar, TypeExpr, TypeKey, Typed, Variant};
 
 fn positive(config: &Blur) -> Result<(), &'static str> {
@@ -26,7 +26,14 @@ struct Blur {
         group = "g"
     )]
     radius: u32,
-    #[port(name = "strength", default = 0.5, advanced, description = "How much")]
+    #[port(
+        name = "strength",
+        default = 0.5,
+        min = 0.0,
+        step = 0.0001,
+        advanced,
+        description = "How much"
+    )]
     amount: f64,
     plain: bool,
 }
@@ -58,17 +65,28 @@ fn fields_carry_the_attributes() {
 }
 
 #[test]
-fn limits_are_recorded_for_the_planner() {
+fn a_fields_limits_and_step_are_its_ports_rule() {
     assert_eq!(
-        Blur::RULES,
-        [FieldRule {
-            field: "radius",
+        Blur::FIELDS[0].rule,
+        PortRule {
             min: Some(Literal::Int(1)),
             max: Some(Literal::Int(99)),
+            step: None,
             odd: true,
             policy: "",
-        }]
+        }
     );
+    // A step with no maximum: each part stands alone.
+    assert_eq!(
+        Blur::FIELDS[1].rule,
+        PortRule {
+            min: Some(Literal::Float(0.0)),
+            step: Some(Literal::Float(0.0001)),
+            ..PortRule::NONE
+        }
+    );
+    // A field that declares none has none.
+    assert!(Blur::FIELDS[2].rule.is_none());
     let bad = Blur {
         radius: 0,
         ..Blur::default()

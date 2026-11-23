@@ -25,6 +25,7 @@ struct PortAttr {
     default: Option<Expr>,
     min: Option<Expr>,
     max: Option<Expr>,
+    step: Option<Expr>,
     ty: Option<Type>,
 }
 
@@ -59,6 +60,7 @@ impl Parse for PortAttr {
                 "default" => port.default = Some(value(input)?),
                 "min" => port.min = Some(value(input)?),
                 "max" => port.max = Some(value(input)?),
+                "step" => port.step = Some(value(input)?),
                 "ty" => port.ty = Some(value(input)?),
                 _ => return Err(Error::new(key.span(), "unsupported #[port] argument")),
             }
@@ -147,7 +149,6 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let p = quote!(::daedalus_registry::__private);
     let r = quote!(::daedalus_registry);
     let mut ports = Vec::new();
-    let mut rules = Vec::new();
     let mut reads = Vec::new();
     let mut checks = TokenStream::new();
     for field in &fields.named {
@@ -166,6 +167,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         let (label, unit, group) = (text(&port.label), text(&port.unit), text(&port.group));
         let (description, source) = (text(&port.description), text(&port.source));
         let advanced = port.advanced;
+        let (min, max) = (optional_literal(&port.min)?, optional_literal(&port.max)?);
+        let step = optional_literal(&port.step)?;
+        let (odd, policy) = (port.odd, text(&port.policy));
         ports.push(quote! {
             #r::PortDecl {
                 name: #port_name,
@@ -180,15 +184,15 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 advanced: #advanced,
                 description: #description,
                 source: #source,
+                rule: #r::PortRule {
+                    min: #min,
+                    max: #max,
+                    step: #step,
+                    odd: #odd,
+                    policy: #policy,
+                },
             }
         });
-        if port.min.is_some() || port.max.is_some() || port.odd || port.policy.is_some() {
-            let (min, max) = (optional_literal(&port.min)?, optional_literal(&port.max)?);
-            let (odd, policy) = (port.odd, text(&port.policy));
-            rules.push(quote! {
-                #r::FieldRule { field: #port_name, min: #min, max: #max, odd: #odd, policy: #policy }
-            });
-        }
         let absent = match &port.default {
             Some(expr) => {
                 let value = literal(expr)?;
@@ -227,10 +231,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         #checks
 
         impl #name {
-            /// One entry per field.
+            /// One entry per field, each with its limits and step.
             pub const FIELDS: &'static [#r::PortDecl] = &[#(#ports),*];
-            /// Limits on fields, for the planner to enforce.
-            pub const RULES: &'static [#r::FieldRule] = &[#(#rules),*];
             /// Whole-value checks, for the planner to run.
             pub const CHECKERS: &'static [fn(&Self) -> ::core::result::Result<(), &'static str>] =
                 &[#(#checkers),*];

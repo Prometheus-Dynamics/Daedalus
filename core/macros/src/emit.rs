@@ -39,6 +39,21 @@ fn port_tokens(port: &Port) -> Result<TokenStream> {
     );
     let (description, source) = (text(&port.arg.description), text(&port.arg.source));
     let advanced = port.arg.advanced;
+    let optional_literal = |expr: &Option<Expr>| -> Result<TokenStream> {
+        Ok(match expr {
+            Some(expr) => {
+                let value = literal(expr)?;
+                quote!(::core::option::Option::Some(#value))
+            }
+            None => quote!(::core::option::Option::None),
+        })
+    };
+    let (min, max, step) = (
+        optional_literal(&port.arg.min)?,
+        optional_literal(&port.arg.max)?,
+        optional_literal(&port.arg.step)?,
+    );
+    let (odd, policy) = (port.arg.odd, text(&port.arg.policy));
     Ok(quote! {
         ::daedalus_registry::PortDecl {
             name: #name,
@@ -53,6 +68,13 @@ fn port_tokens(port: &Port) -> Result<TokenStream> {
             advanced: #advanced,
             description: #description,
             source: #source,
+            rule: ::daedalus_registry::PortRule {
+                min: #min,
+                max: #max,
+                step: #step,
+                odd: #odd,
+                policy: #policy,
+            },
         }
     })
 }
@@ -157,7 +179,6 @@ fn config_tokens(args: &NodeArgs) -> TokenStream {
             name: "config",
             ty: #ty,
             fields: <#config>::FIELDS,
-            rules: <#config>::RULES,
         },
     }
 }
@@ -395,6 +416,11 @@ fn clone_ports(ports: &Option<Vec<PortArg>>) -> Option<Vec<PortArg>> {
                 group: port.group.clone(),
                 advanced: port.advanced,
                 description: port.description.clone(),
+                min: port.min.clone(),
+                max: port.max.clone(),
+                step: port.step.clone(),
+                odd: port.odd,
+                policy: port.policy.clone(),
             })
             .collect()
     })

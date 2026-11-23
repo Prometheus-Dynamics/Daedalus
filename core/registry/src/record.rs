@@ -38,6 +38,39 @@ pub enum TypeRef {
     Body,
 }
 
+/// What a port's value may be, and how a control for it steps: the one place a planner's check
+/// and a node editor both read. Every part is optional, and a port with none has [`PortRule::NONE`].
+///
+/// `min`, `max` and `odd` are limits. They are recorded here, for an input port and a config
+/// field alike; nothing checks a value against them yet. `step` is a hint for a control and is
+/// never a limit: a value need not be a multiple of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PortRule {
+    pub min: Option<Literal>,
+    pub max: Option<Literal>,
+    /// How far one step of a control moves the value.
+    pub step: Option<Literal>,
+    /// The value must be odd.
+    pub odd: bool,
+    pub policy: &'static str,
+}
+
+impl PortRule {
+    /// No limit and no step.
+    pub const NONE: PortRule = PortRule {
+        min: None,
+        max: None,
+        step: None,
+        odd: false,
+        policy: "",
+    };
+
+    /// Whether the rule says nothing.
+    pub fn is_none(&self) -> bool {
+        *self == PortRule::NONE
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PortDecl {
     pub name: &'static str,
@@ -55,6 +88,8 @@ pub struct PortDecl {
     pub description: &'static str,
     /// Where a config field's value comes from, by name. Empty for an ordinary port.
     pub source: &'static str,
+    /// The value's limits and step.
+    pub rule: PortRule,
 }
 
 impl PortDecl {
@@ -73,26 +108,17 @@ impl PortDecl {
             advanced: false,
             description: "",
             source: "",
+            rule: PortRule::NONE,
         }
     }
-}
-
-/// Limits on a config field. Recorded here and enforced when a graph is planned.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FieldRule {
-    pub field: &'static str,
-    pub min: Option<Literal>,
-    pub max: Option<Literal>,
-    pub odd: bool,
-    pub policy: &'static str,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConfigDecl {
     pub name: &'static str,
     pub ty: TypeRef,
+    /// One per field. A field's limits and step are its [`PortDecl::rule`].
     pub fields: &'static [PortDecl],
-    pub rules: &'static [FieldRule],
 }
 
 /// Indexed fan-in ports: `prefix0`, `prefix1`, and so on.

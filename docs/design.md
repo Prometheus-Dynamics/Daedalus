@@ -545,8 +545,9 @@ build on them.
 - There is no `ConversionRecord`. A conversion is a marked one-in, one-out node, and
   `Registry::conversions()` gives B4 the table. Memory handlers are in `Registry::transfers()` and
   `Registry::transfer(key, from, to)`.
-- Config types have `FIELDS`, `RULES`, `CHECKERS` and `from_literals`. `ConfigDecl.rules` is what B3
-  enforces. A checker is `fn(&Self) -> Result<(), &'static str>`.
+- Config types have `FIELDS`, `CHECKERS` and `from_literals`. A field's limits and step are its
+  `PortDecl::rule`, the same as an input port's. Nothing checks a value against a rule or runs a
+  checker yet: both are recorded. A checker is `fn(&Self) -> Result<(), &'static str>`.
 - A default key is `rust:<module path>::<name>`, with the name lowercased. Using a type with a
   default key from another crate is a compile error: such a type needs `#[type_key(..)]`.
 - Generated code names `::daedalus_registry`, so an author's crate depends on it. C14 makes that

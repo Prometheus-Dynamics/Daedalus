@@ -283,6 +283,24 @@ node's step did not change: see [host.md](host.md#reload).
 A parameter of type `&Ctx` (from `daedalus_cpu_author`) gives the tick's clock, and lets a long
 body ask whether a cancel was requested and report progress.
 
+## Limits and steps
+
+A port can say what its value may be and how a control for it should step:
+
+```rust
+#[node(id = "pnp.square",
+       inputs(port(name = "side", min = 0.000001, max = 1000.0, step = 0.0001, unit = "m"), corners))]
+```
+
+A config field takes the same words in its `#[port(..)]`. Either way they are the port's rule
+(`PortDecl::rule`, a `PortRule`): `min`, `max`, `step`, `odd` and `policy`, each optional. A host
+reads the rule where it reads the port's label and unit, so a node editor and a check read the
+same facts.
+
+- `min`, `max` and `odd` are limits on the value. They are recorded; nothing checks a value
+  against them yet.
+- `step` is a hint for a control. It is never a limit: a value need not be a multiple of it.
+
 ## Metrics
 
 The host times every node and counts what it publishes (see [host.md](host.md)). When a body has
