@@ -190,6 +190,11 @@ static PORTS: [PortSpec<'static>; 1] = [PortSpec {
 
 /// A host with one input port and no steps that consume it, so its queue can be inspected.
 fn host() -> Host<'static> {
+    Host::new(runner(), Ports::new(&PORTS).unwrap(), &TYPES)
+}
+
+/// The runner under [`host`].
+fn runner() -> Runner<'static> {
     let specs: &'static [SlotSpec] = Box::leak(Box::new([SlotSpec {
         cap: 4,
         kind: SlotKind::Fifo,
@@ -219,7 +224,7 @@ fn host() -> Host<'static> {
         activity: Box::leak(vec![0; 1].into_boxed_slice()),
         inline: Box::leak(vec![[0u8; 16]; 4].into_boxed_slice()),
     };
-    let runner = Runner::load(
+    Runner::load(
         Plan {
             steps,
             meta,
@@ -228,8 +233,7 @@ fn host() -> Host<'static> {
         },
         memory,
     )
-    .unwrap();
-    Host::new(runner, Ports::new(&PORTS).unwrap(), &TYPES)
+    .unwrap()
 }
 
 fn queued(host: &mut Host<'static>) -> u32 {
@@ -324,4 +328,171 @@ fn latest_by_sequence_drops_out_of_order_arrivals() {
         Some(DropReason::OutOfOrder)
     );
     assert_eq!(queued(&mut host), 1);
+}
+
+/// A host whose input slot takes pushes under `slot`, set before the host is made, as a loader
+/// sets an edge's policy.
+fn host_with_slot(slot: Pressure) -> Host<'static> {
+    let mut runner = runner();
+    runner.set_pressure(0, slot).unwrap();
+    Host::new(runner, Ports::new(&PORTS).unwrap(), &TYPES)
+}
+
+/// The bytes queued at the input, oldest first, taken out.
+fn take_all(host: &mut Host<'static>) -> Vec<u8> {
+    let mut out = Vec::new();
+    while let Some(next) = host.runner().take_value(0) {
+        out.push(next.bytes().unwrap()[0]);
+    }
+    out
+}
+
+#[test]
+fn a_latest_only_input_fed_twice_before_a_tick_keeps_the_second_and_reports_the_first_dropped() {
+    let mut host = host_with_slot(Pressure::LatestOnly);
+    assert_eq!(host.feed("in", value(b"1")).unwrap().dropped, None);
+    let second = host.feed("in", value(b"2")).unwrap();
+    assert_eq!(second.dropped, Some(DropReason::LatestOnlyReplace));
+    assert_eq!(host.port_drops("in").unwrap().latest_only, 1);
+    assert_eq!(take_all(&mut host), b"2");
+}
+
+#[test]
+fn a_bounded_drop_oldest_input_gives_up_the_oldest_feed() {
+    let mut host = host_with_slot(bounded(2, Overflow::DropOldest));
+    host.feed("in", value(b"1")).unwrap();
+    host.feed("in", value(b"2")).unwrap();
+    let third = host.feed("in", value(b"3")).unwrap();
+    assert_eq!(third.dropped, Some(DropReason::DropOldest));
+    assert_eq!(take_all(&mut host), b"23");
+}
+
+#[test]
+fn a_bounded_drop_newest_input_gives_up_the_new_feed_and_wakes_no_one() {
+    let mut host = host_with_slot(bounded(2, Overflow::DropNewest));
+    host.feed("in", value(b"1")).unwrap();
+    host.feed("in", value(b"2")).unwrap();
+    let third = host.feed("in", value(b"3")).unwrap();
+    assert_eq!(third.dropped, Some(DropReason::DropNewest));
+    assert_eq!(third.woke, 0);
+    assert_eq!(host.port_drops("in").unwrap().drop_newest, 1);
+    assert_eq!(take_all(&mut host), b"12");
+}
+
+#[test]
+fn a_bounded_error_on_full_input_refuses_a_feed_past_its_bound() {
+    let mut host = host_with_slot(bounded(2, Overflow::ErrorOnFull));
+    host.feed("in", value(b"1")).unwrap();
+    host.feed("in", value(b"2")).unwrap();
+    assert!(matches!(
+        host.feed("in", value(b"3")),
+        Err(HostError::Full { .. })
+    ));
+    assert_eq!(take_all(&mut host), b"12");
+}
+
+#[test]
+fn a_bounded_coalescing_input_follows_its_window_on_the_hosts_clock() {
+    let window = Overflow::Coalesce {
+        keep: Keep::Oldest,
+        window_ns: 100,
+    };
+    let mut host = host_with_slot(bounded(1, window));
+    host.set_clock(10);
+    host.feed("in", value(b"a")).unwrap();
+    host.set_clock(50);
+    let inside = host.feed("in", value(b"b")).unwrap();
+    assert_eq!(inside.dropped, Some(DropReason::Coalesced));
+    assert_eq!(inside.woke, 0);
+    host.set_clock(200);
+    let past = host.feed("in", value(b"c")).unwrap();
+    assert_eq!(past.dropped, Some(DropReason::Coalesced));
+    assert_eq!(host.port_drops("in").unwrap().coalesced, 2);
+    assert_eq!(take_all(&mut host), b"c");
+
+    let mut host = host_with_slot(bounded(
+        1,
+        Overflow::Coalesce {
+            keep: Keep::Newest,
+            window_ns: 100,
+        },
+    ));
+    host.feed("in", value(b"a")).unwrap();
+    let newer = host.feed("in", value(b"b")).unwrap();
+    assert_eq!(newer.dropped, Some(DropReason::Coalesced));
+    assert_eq!(take_all(&mut host), b"b");
+}
+
+#[test]
+fn a_fifo_input_still_refuses_a_feed_into_a_full_queue() {
+    let mut host = host_with_slot(Pressure::BufferAll);
+    for bytes in [b"1", b"2", b"3", b"4"] {
+        assert_eq!(host.feed("in", value(bytes)).unwrap().dropped, None);
+    }
+    assert!(matches!(
+        host.feed("in", value(b"5")),
+        Err(HostError::Full { .. })
+    ));
+    assert_eq!(take_all(&mut host), b"1234");
+}
+
+#[test]
+fn a_typed_feed_follows_the_slots_policy_and_releases_what_it_drops() {
+    let mut host = host_with_slot(Pressure::LatestOnly);
+    let first = std::sync::Arc::new(1_u32);
+    assert_eq!(
+        host.feed_typed("in", std::sync::Arc::clone(&first))
+            .unwrap()
+            .dropped,
+        None
+    );
+    let second = host.feed_typed("in", std::sync::Arc::new(2_u32)).unwrap();
+    assert_eq!(second.dropped, Some(DropReason::LatestOnlyReplace));
+    assert_eq!(std::sync::Arc::strong_count(&first), 1);
+    let kept = host.runner().take_value(0).unwrap();
+    assert_eq!(kept.typed::<u32>().copied(), Some(2));
+}
+
+#[test]
+fn a_typed_feed_follows_the_ports_own_policy() {
+    let mut host = host();
+    let policy = PortPolicy {
+        pressure: bounded(1, Overflow::ErrorOnFull),
+        freshness: Freshness::PreserveAll,
+    };
+    host.set_port_policy("in", policy).unwrap();
+    host.feed_typed("in", std::sync::Arc::new(1_u32)).unwrap();
+    assert!(matches!(
+        host.feed_typed("in", std::sync::Arc::new(2_u32)),
+        Err(HostError::Full { .. })
+    ));
+}
+
+#[test]
+fn the_ports_rule_applies_first_and_then_the_slots() {
+    // The port allows four; the slot keeps one: the slot's rule replaces.
+    let mut host = host_with_slot(Pressure::LatestOnly);
+    let roomy = PortPolicy {
+        pressure: bounded(4, Overflow::DropOldest),
+        freshness: Freshness::PreserveAll,
+    };
+    host.set_port_policy("in", roomy).unwrap();
+    host.feed("in", value(b"1")).unwrap();
+    let second = host.feed("in", value(b"2")).unwrap();
+    assert_eq!(second.dropped, Some(DropReason::LatestOnlyReplace));
+    assert_eq!(take_all(&mut host), b"2");
+
+    // The port refuses at one before the slot is asked.
+    let mut host = host_with_slot(Pressure::LatestOnly);
+    let strict = PortPolicy {
+        pressure: bounded(1, Overflow::ErrorOnFull),
+        freshness: Freshness::PreserveAll,
+    };
+    host.set_port_policy("in", strict).unwrap();
+    host.feed("in", value(b"1")).unwrap();
+    assert!(matches!(
+        host.feed("in", value(b"2")),
+        Err(HostError::Full { .. })
+    ));
+    assert_eq!(take_all(&mut host), b"1");
 }

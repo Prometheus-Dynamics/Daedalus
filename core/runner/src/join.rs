@@ -76,6 +76,6 @@ impl Runner<'_> {
     /// held value is context, not work.
     pub fn replace_held(&mut self, slot: u32, value: Slot) -> Result<(), RunError> {
         self.clear_held(slot)?;
-        self.push(slot, value)
+        self.push(slot, value).map(|_| ())
     }
 }

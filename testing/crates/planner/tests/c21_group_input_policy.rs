@@ -92,33 +92,48 @@ fn registry() -> Registry {
     registry
 }
 
-/// The host's `x` through `src` (on the other backend) into the group's `x` over an edge with
-/// `policy`, the host's `gate` into the group's `gate`, and the group's `out` to the host's `y`.
-fn caller(group: &str, policy: EdgePolicyDoc) -> GraphBody {
+/// Where the group's `x` comes from.
+#[derive(Clone, Copy, Debug)]
+enum Feed {
+    /// The host's `x` through `t.add`, on the other backend, which adds nothing.
+    Node,
+    /// The host's `x` itself.
+    Host,
+}
+
+/// The group's `x` fed from `from` over an edge with `policy`, the host's `gate` into the group's
+/// `gate`, and the group's `out` to the host's `y`.
+fn caller(group: &str, from: Feed, policy: EdgePolicyDoc) -> GraphBody {
     let mut host = node("host");
     host.kind = NodeKindDoc::HostBridge;
     for port in ["x", "gate", "y"] {
         host.port_types.insert(port.to_string(), "u32".to_string());
     }
-    let mut into_group = edge(1, "out", 2, "x");
+    let (mut nodes, mut edges, at) = match from {
+        Feed::Node => (
+            vec![host, node("t.add")],
+            vec![edge(0, "x", 1, "in"), edge(1, "out", 2, "x")],
+            2,
+        ),
+        Feed::Host => (vec![host], vec![edge(0, "x", 1, "x")], 1),
+    };
+    nodes.push(node(group));
+    let into_group = edges.last_mut().unwrap();
     into_group.policy = policy;
+    edges.push(edge(0, "gate", at, "gate"));
+    edges.push(edge(at, "out", 0, "y"));
     GraphBody {
-        nodes: vec![host, node("t.add"), node(group)],
-        edges: vec![
-            edge(0, "x", 1, "in"),
-            into_group,
-            edge(0, "gate", 2, "gate"),
-            edge(2, "out", 0, "y"),
-        ],
+        nodes,
+        edges,
         groups: Vec::new(),
     }
 }
 
 /// Feeds `x` every tick for more ticks than a FIFO holds and `gate` once near the end. The first
 /// failed tick, if any, and what `y` gave.
-fn drive(group: &str, policy: EdgePolicyDoc) -> (Option<String>, Option<u32>) {
+fn drive(group: &str, from: Feed, policy: EdgePolicyDoc) -> (Option<String>, Option<u32>) {
     let planned = plan(
-        &caller(group, policy),
+        &caller(group, from, policy),
         &registry(),
         &[&Test, &Other],
         &Config::default(),
@@ -149,18 +164,25 @@ fn drive(group: &str, policy: EdgePolicyDoc) -> (Option<String>, Option<u32>) {
 #[test]
 fn an_input_fed_conditional_stage_with_latest_only_runs_without_overflow_for_any_caller() {
     let last = LoadOptions::default().fifo_capacity + 15;
-    for caller in [EdgePolicyDoc::Fifo, EdgePolicyDoc::LatestOnly] {
-        let (failed, y) = drive("t.rare", caller.clone());
-        assert_eq!(failed, None, "{caller:?}");
-        // The stage ran once, on the newest `x` and the gate.
-        assert_eq!(y, Some(last + 1000), "{caller:?}");
+    for from in [Feed::Node, Feed::Host] {
+        for caller in [EdgePolicyDoc::Fifo, EdgePolicyDoc::LatestOnly] {
+            let (failed, y) = drive("t.rare", from, caller.clone());
+            assert_eq!(failed, None, "{from:?} {caller:?}");
+            // The stage ran once, on the newest `x` and the gate.
+            assert_eq!(y, Some(last + 1000), "{from:?} {caller:?}");
+        }
     }
 }
 
 #[test]
 fn the_same_stage_with_no_policy_overflows_behind_a_fifo_caller() {
-    let (failed, _) = drive("t.plain", EdgePolicyDoc::Fifo);
-    let failed = failed.expect("a FIFO into a stage that rarely runs must overflow");
-    let at = LoadOptions::default().fifo_capacity;
-    assert!(failed.starts_with(&format!("tick {at}:")), "{failed}");
+    for from in [Feed::Node, Feed::Host] {
+        let (failed, _) = drive("t.plain", from, EdgePolicyDoc::Fifo);
+        let failed = failed.expect("a FIFO into a stage that rarely runs must overflow");
+        let at = LoadOptions::default().fifo_capacity;
+        assert!(
+            failed.starts_with(&format!("tick {at}:")),
+            "{from:?} {failed}"
+        );
+    }
 }

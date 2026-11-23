@@ -8,7 +8,7 @@ use daedalus_types::{SpaceIndex, TypeIndex};
 use daedalus_value::Value;
 
 use crate::error::RunError;
-use crate::{Runner, owned};
+use crate::{Fed, Runner, owned};
 
 enum Held {
     Plain(Value),
@@ -68,32 +68,41 @@ impl Runner<'_> {
         Some(Forward(Some(held)))
     }
 
-    /// Stores a forwarded value at the back of `slot`, as this plan's type `ty` in `space`. Two
-    /// plans number the same type differently, so the caller has already compared their keys.
+    /// Stores a forwarded value at the back of `slot`, as this plan's type `ty` in `space`, under
+    /// the slot's pressure as [`Runner::feed_value`] does. Two plans number the same type
+    /// differently, so the caller has already compared their keys.
     pub fn feed_forward(
         &mut self,
         slot: u32,
         ty: TypeIndex,
         space: SpaceIndex,
         mut forward: Forward,
-    ) -> Result<(), RunError> {
+    ) -> Result<Fed, RunError> {
         let index = self.queue_index(slot)?;
-        if self.queues[index].is_full() {
-            return Err(RunError::Overflow { slot });
+        if forward.0.is_none() {
+            return Ok(Fed::Kept);
+        }
+        let fed = self.room(slot)?;
+        if !fed.stored() {
+            // The handle releases what it holds as it goes.
+            return Ok(fed);
         }
         match forward.0.take() {
             Some(Held::Plain(mut value)) => {
                 value.ty = ty;
                 value.space = space;
-                self.feed_value(slot, value)
+                let at = self.queues[index].tail_index();
+                let raw = owned::encode(value, &mut self.inline[at])
+                    .map_err(|owned::Untyped| RunError::Untyped { slot })?;
+                self.queues[index].push(self.storage, raw);
             }
             Some(Held::Typed(mut raw)) => {
                 raw.type_index = ty.0;
                 raw.space = u32::from(space.0);
                 self.queues[index].push(self.storage, raw);
-                Ok(())
             }
-            None => Ok(()),
+            None => {}
         }
+        Ok(fed)
     }
 }

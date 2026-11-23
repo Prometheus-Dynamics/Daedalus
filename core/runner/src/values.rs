@@ -3,7 +3,7 @@
 
 use daedalus_abi::{Slot, SlotState};
 use daedalus_types::{SpaceIndex, TypeIndex};
-use daedalus_value::Value;
+use daedalus_value::{Decision, DropReason, Value};
 
 use crate::Runner;
 use crate::error::RunError;
@@ -19,22 +19,60 @@ impl Runner<'_> {
         Ok(index)
     }
 
-    /// Stores `value` at the back of `slot`'s queue. It doesn't wake consumers; the host does that.
-    /// A typed payload is refused, since its concrete type is needed to store it: see
-    /// [`Runner::feed_typed`].
-    pub fn feed_value(&mut self, slot: u32, value: Value) -> Result<(), RunError> {
+    /// Makes room in `slot`'s queue for a value the host feeds, under the slot's pressure, as a
+    /// step's publish does: a full `LatestOnly` or `Bounded` queue gives up its oldest value or the
+    /// new one, as its overflow rule says, and a full FIFO, `error_on_full` or `block` queue
+    /// refuses with `Overflow`. What is given up is counted in `dropped`.
+    pub(crate) fn room(&mut self, slot: u32) -> Result<Fed, RunError> {
         let index = self.queue_index(slot)?;
-        if self.queues[index].is_full() {
+        let now = self.cx.now_ns;
+        let queue = &mut self.queues[index];
+        if queue.hidden {
             return Err(RunError::Overflow { slot });
         }
-        let at = self.queues[index].tail_index();
-        let raw = owned::encode(value, &mut self.inline[at])
-            .map_err(|owned::Untyped| RunError::Untyped { slot })?;
-        self.queues[index].push(self.storage, raw);
-        Ok(())
+        let fed = match queue
+            .pressure
+            .decide(queue.len, queue.cap, queue.opened_ns, now)
+        {
+            Decision::Store => {
+                if queue.len == 0 {
+                    queue.opened_ns = now;
+                }
+                return Ok(Fed::Kept);
+            }
+            Decision::Refuse => return Err(RunError::Overflow { slot }),
+            Decision::Discard(reason) => Fed::Discarded(reason),
+            Decision::Evict(reason) => {
+                queue.opened_ns = now;
+                self.drop_oldest(slot)?;
+                Fed::Evicted(reason)
+            }
+        };
+        self.counters.dropped += 1;
+        Ok(fed)
     }
 
-    /// Stores a typed payload of type `ty` in `space` at the back of `slot`'s queue.
+    /// Stores `value` at the back of `slot`'s queue, under the slot's pressure: see
+    /// [`Fed`]. It doesn't wake consumers; the host does that. A typed payload is refused, since
+    /// its concrete type is needed to store it: see [`Runner::feed_typed`].
+    pub fn feed_value(&mut self, slot: u32, value: Value) -> Result<Fed, RunError> {
+        let index = self.queue_index(slot)?;
+        #[cfg(feature = "alloc")]
+        if matches!(value.owner, daedalus_value::Owner::Typed(_)) {
+            return Err(RunError::Untyped { slot });
+        }
+        let fed = self.room(slot)?;
+        if fed.stored() {
+            let at = self.queues[index].tail_index();
+            let raw = owned::encode(value, &mut self.inline[at])
+                .map_err(|owned::Untyped| RunError::Untyped { slot })?;
+            self.queues[index].push(self.storage, raw);
+        }
+        Ok(fed)
+    }
+
+    /// Stores a typed payload of type `ty` in `space` at the back of `slot`'s queue, under the
+    /// slot's pressure, as [`Runner::feed_value`] does.
     #[cfg(feature = "alloc")]
     pub fn feed_typed<T: Send + Sync + 'static>(
         &mut self,
@@ -42,14 +80,14 @@ impl Runner<'_> {
         ty: TypeIndex,
         space: SpaceIndex,
         value: alloc::sync::Arc<T>,
-    ) -> Result<(), RunError> {
+    ) -> Result<Fed, RunError> {
         let index = self.queue_index(slot)?;
-        if self.queues[index].is_full() {
-            return Err(RunError::Overflow { slot });
+        let fed = self.room(slot)?;
+        if fed.stored() {
+            let raw = owned::typed_raw(ty, space, value);
+            self.queues[index].push(self.storage, raw);
         }
-        let raw = owned::typed_raw(ty, space, value);
-        self.queues[index].push(self.storage, raw);
-        Ok(())
+        Ok(fed)
     }
 
     /// Takes the oldest value out of `slot`'s queue, and hands its ownership to the caller. A
@@ -97,6 +135,32 @@ impl Runner<'_> {
         let index = self.queue_index(slot).ok()?;
         let queue = self.queues[index];
         (queue.len > 0).then(|| TypeIndex(self.storage[queue.head_index()].type_index))
+    }
+}
+
+/// What a host feed did under its slot's pressure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fed {
+    /// The value is stored, and nothing was given up.
+    Kept,
+    /// The value is stored, after the oldest one gave way.
+    Evicted(DropReason),
+    /// The value was given up, and the queue is as it was.
+    Discarded(DropReason),
+}
+
+impl Fed {
+    /// Why a value was given up, if one was.
+    pub const fn dropped(self) -> Option<DropReason> {
+        match self {
+            Fed::Kept => None,
+            Fed::Evicted(reason) | Fed::Discarded(reason) => Some(reason),
+        }
+    }
+
+    /// Whether the fed value is in the queue.
+    pub const fn stored(self) -> bool {
+        !matches!(self, Fed::Discarded(_))
     }
 }
 

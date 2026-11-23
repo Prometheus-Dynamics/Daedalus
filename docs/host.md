@@ -67,6 +67,18 @@ that carries a policy of its own, other than a FIFO, that differs from the group
 name, and the fix is to drop that edge's policy or make it the group's. An entry no connect or
 group input leads into, or a second one for the same input, is refused by name too.
 
+A value fed to a host input meets two
+rules, in this order. First the port's own policy, which the host sets at run time
+(`set_port_policy`): it may give the value up, give up the oldest to make room, or refuse. A port
+left on the default FIFO has no rule of its own and passes every value on. Then the policy of the
+edge from the host bridge, as a producing step's publish meets it: `latest_only` replaces the
+queued value, a bound with `drop_oldest` or `drop_newest` does what it says, and a FIFO,
+`error_on_full` or `block` input that is full refuses the feed with `Full`. The queue never holds more than the edge's policy allows, so
+at most one of the two gives a value up on a feed; the feed's `dropped` says why, the port's drop
+counts include it, and a value given up wakes no one. Every feed takes this path: `feed`,
+`feed_typed`, `feed_inline` and the rest, and a value forwarded from another graph. A `held` or
+`shared` input is outside it: its value is replaced on every feed.
+
 A host input's policy on the host bridge says what its value is. A `consume` input (the default)
 is work: a feed wakes its readers, each value is read once, and a domain ticks the graph for it.
 That holds with several readers too, where the one value is kept for all of them until the next
