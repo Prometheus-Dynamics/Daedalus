@@ -3,7 +3,7 @@
 pub mod json;
 
 use daedalus_backend::{Compiled, PortRef};
-use daedalus_graph::EdgeDoc;
+use daedalus_graph::{EdgeDoc, EdgePolicyDoc};
 use daedalus_types::{NodeIndex, PortIndex};
 use serde::{Deserialize, Serialize};
 
@@ -85,6 +85,21 @@ pub struct DecodeExplain {
     pub reason: String,
 }
 
+/// An edge that queues more than one value into a node that waits for its other inputs. While
+/// the node waits, the edge fills: each queued value is held, and a value that holds something
+/// scarce (a camera frame from a small pool) pins it until it is read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedExplain {
+    pub node: u32,
+    pub port: String,
+    /// How many values the edge holds. `None` for a FIFO, whose depth the host sets when it
+    /// loads the plan (64 unless told otherwise).
+    pub depth: Option<u32>,
+    /// The node's other connected inputs, which it waits for.
+    pub waits_on: Vec<String>,
+    pub note: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Explain {
     pub nodes: Vec<NodeExplain>,
@@ -94,6 +109,9 @@ pub struct Explain {
     /// Left out when there are none, as in a record written before steps listed them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decodes: Vec<DecodeExplain>,
+    /// Left out when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queued: Vec<QueuedExplain>,
 }
 
 fn reason(reason: &Reason) -> PlaceReason {
@@ -217,6 +235,54 @@ fn covers(compiled: &Compiled) -> Vec<Vec<u32>> {
     }
 }
 
+/// The edges that queue more than one value into a node that fires only when every connected
+/// input has a new value, and has another one to wait for.
+fn queued(graph: &Graph) -> Vec<QueuedExplain> {
+    let mut out = Vec::new();
+    for edge in &graph.edges {
+        let depth = match &edge.policy {
+            EdgePolicyDoc::Fifo => None,
+            EdgePolicyDoc::Bounded { capacity, .. } if *capacity > 1 => Some(*capacity),
+            _ => continue,
+        };
+        let node = &graph.nodes[edge.to.node as usize];
+        if node.fire != daedalus_registry::Fire::All
+            || node.doc.kind == daedalus_graph::NodeKindDoc::HostBridge
+        {
+            continue;
+        }
+        let mut waits_on: Vec<String> = graph
+            .edges
+            .iter()
+            .filter(|other| other.to.node == edge.to.node && other.to.port != edge.to.port)
+            .map(|other| other.to.port.clone())
+            .collect();
+        waits_on.sort();
+        waits_on.dedup();
+        if waits_on.is_empty() {
+            continue;
+        }
+        let held = match depth {
+            Some(depth) => format!("up to {depth} values"),
+            None => "up to the FIFO depth (64 by default)".to_string(),
+        };
+        out.push(QueuedExplain {
+            node: edge.to.node,
+            port: edge.to.port.clone(),
+            depth,
+            note: format!(
+                "`{}` runs only when {} also has a new value, and until then this edge holds \
+                 {held}; if the value holds something scarce, give the edge latest_only or \
+                 per_tick",
+                node.doc.id,
+                waits_on.join(", ")
+            ),
+            waits_on,
+        });
+    }
+    out
+}
+
 /// The record of how a finished plan was reached.
 pub fn explain_plan(planned: &Planned) -> Explain {
     let (graph, regions) = (&planned.graph, &planned.regions);
@@ -279,5 +345,6 @@ pub fn explain_plan(planned: &Planned) -> Explain {
         regions: described,
         units,
         decodes: converted,
+        queued: queued(graph),
     }
 }
