@@ -195,9 +195,7 @@ fn a_port_with_a_const_is_not_required() {
 fn a_group_sets_its_stage_config_fields_by_name() {
     use daedalus_graph::{GroupDef, StagePort};
     static GROUP: GroupDef = GroupDef {
-        id: "t.grouped",
         stages: &[("s", "t.fields")],
-        connects: &[],
         inputs: &[(
             "dict",
             &[StagePort {
@@ -205,7 +203,6 @@ fn a_group_sets_its_stage_config_fields_by_name() {
                 port: "dictionary",
             }],
         )],
-        outputs: &[],
         consts: &[(
             StagePort {
                 stage: "s",
@@ -213,7 +210,7 @@ fn a_group_sets_its_stage_config_fields_by_name() {
             },
             Literal::Str("tags"),
         )],
-        metadata: &[],
+        ..GroupDef::new("t.grouped")
     };
     let mut registry = registry();
     decl("t.grouped")

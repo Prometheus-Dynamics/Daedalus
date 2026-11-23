@@ -132,6 +132,25 @@
           },
           "type": "array"
         },
+        "edge_policies": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "$ref": "#/$defs/stage_port"
+              },
+              "policy": {
+                "$ref": "#/$defs/edge_policy"
+              }
+            },
+            "required": [
+              "at",
+              "policy"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
         "id": {
           "type": "string"
         },

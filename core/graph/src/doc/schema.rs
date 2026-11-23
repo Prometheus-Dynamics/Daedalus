@@ -128,6 +128,10 @@ pub fn json_schema() -> Value {
                 "consts": { "type": "array", "items": object(
                     json!({ "at": stage, "value": lit }), &["at", "value"]) },
                 "metadata": { "type": "object", "additionalProperties": lits },
+                "edge_policies": { "type": "array", "items": object(json!({
+                    "at": stage,
+                    "policy": { "$ref": "#/$defs/edge_policy" },
+                }), &["at", "policy"]) },
             }), &["id", "stages"]),
             "graph": object(json!({
                 "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },

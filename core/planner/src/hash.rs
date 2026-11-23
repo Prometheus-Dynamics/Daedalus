@@ -207,6 +207,10 @@ impl Canon {
         self.text(&from.port);
         self.word(u64::from(to.node));
         self.text(&to.port);
+        self.policy(policy);
+    }
+
+    fn policy(&mut self, policy: &EdgePolicyDoc) {
         match policy {
             EdgePolicyDoc::Fifo => self.byte(0),
             EdgePolicyDoc::LatestOnly => self.byte(1),
@@ -227,6 +231,7 @@ impl Canon {
             outputs,
             consts,
             metadata,
+            edge_policies,
         } = group;
         self.text(id);
         self.len(stages.len());
@@ -269,6 +274,16 @@ impl Canon {
             for (key, value) in keys {
                 self.text(key);
                 self.lit(value);
+            }
+        }
+        // Only when there are any, so a group without them keeps the key it had before them.
+        if !edge_policies.is_empty() {
+            self.text("edge_policies");
+            self.len(edge_policies.len());
+            for item in edge_policies {
+                self.text(&item.at.stage);
+                self.text(&item.at.port);
+                self.policy(&item.policy);
             }
         }
     }

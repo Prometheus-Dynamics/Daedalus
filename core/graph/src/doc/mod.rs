@@ -301,6 +301,14 @@ pub struct StageConstDoc {
     pub value: Lit,
 }
 
+/// The policy of the connects into one stage input.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StagePolicyDoc {
+    pub at: StagePortDoc,
+    pub policy: EdgePolicyDoc,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GroupDoc {
@@ -319,6 +327,23 @@ pub struct GroupDoc {
     /// from the group's own node, so a key set here wins.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, BTreeMap<String, Lit>>,
+    /// The policy of the connects into a stage input, by that input. A connect not listed is
+    /// `fifo`, and an entry no connect leads into is refused at expansion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_policies: Vec<StagePolicyDoc>,
+}
+
+impl From<crate::EdgePolicy> for EdgePolicyDoc {
+    fn from(policy: crate::EdgePolicy) -> EdgePolicyDoc {
+        match policy {
+            crate::EdgePolicy::Fifo => EdgePolicyDoc::Fifo,
+            crate::EdgePolicy::LatestOnly => EdgePolicyDoc::LatestOnly,
+            crate::EdgePolicy::Bounded { capacity, overflow } => EdgePolicyDoc::Bounded {
+                capacity,
+                overflow: overflow.into(),
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

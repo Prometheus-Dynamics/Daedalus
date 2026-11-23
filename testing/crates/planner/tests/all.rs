@@ -19,6 +19,8 @@ mod b14_patch_refresh;
 mod b15_share;
 #[path = "b1_expand_defaults.rs"]
 mod b1_expand_defaults;
+#[path = "b1_group_edge_policy.rs"]
+mod b1_group_edge_policy;
 #[path = "b2_ports_types.rs"]
 mod b2_ports_types;
 #[path = "b3_const_inputs.rs"]
