@@ -143,7 +143,8 @@ impl From<&ExpandError> for Diagnostic {
             ExpandError::PortMissing { node, port, .. } => base(Code::PortMissing).at(node, port),
             ExpandError::NodeOutOfRange { .. } => base(Code::NodeOutOfRange),
             ExpandError::EdgePolicyUnmatched { stage, port, .. }
-            | ExpandError::EdgePolicyTwice { stage, port, .. } => {
+            | ExpandError::EdgePolicyTwice { stage, port, .. }
+            | ExpandError::EdgePolicyConflict { stage, port, .. } => {
                 base(Code::GroupEdgePolicy).at(stage, port)
             }
         }

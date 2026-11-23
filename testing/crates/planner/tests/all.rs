@@ -53,6 +53,8 @@ mod c12_fault;
 mod c13_fault_detail;
 #[path = "c21_domain.rs"]
 mod c21_domain;
+#[path = "c21_group_input_policy.rs"]
+mod c21_group_input_policy;
 #[path = "c21_host_policy.rs"]
 mod c21_host_policy;
 #[path = "c23_introspect.rs"]
