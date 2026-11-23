@@ -23,6 +23,8 @@ mod closure_node;
 mod common;
 #[path = "compound_ports.rs"]
 mod compound_ports;
+#[path = "config_faults.rs"]
+mod config_faults;
 #[path = "const_shapes.rs"]
 mod const_shapes;
 #[cfg(any(feature = "blob", all(feature = "blob", feature = "receive")))]

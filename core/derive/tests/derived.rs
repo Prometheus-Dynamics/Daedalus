@@ -171,3 +171,69 @@ fn the_default_key_is_the_lowercased_path() {
     );
     assert!(matches!(Sample::EXPR, TypeExpr::Struct(fields) if fields.len() == 2));
 }
+
+/// A config whose `Default` agrees with what it declares.
+#[derive(Clone, NodeConfig)]
+#[validate(fn = side_fits)]
+struct Square {
+    #[port(default = 0.05, min = 0.000001, max = 1000.0, step = 0.0001)]
+    side: f64,
+    #[port(default = 3, min = 1, odd)]
+    taps: u32,
+    name: String,
+}
+
+impl Default for Square {
+    fn default() -> Square {
+        Square {
+            side: 0.05,
+            taps: 3,
+            name: String::new(),
+        }
+    }
+}
+
+fn side_fits(config: &Square) -> Result<(), &'static str> {
+    if config.side > 0.0 {
+        Ok(())
+    } else {
+        Err("side must be positive")
+    }
+}
+
+/// A config with no `Default` at all.
+#[derive(Clone, NodeConfig)]
+struct Bare {
+    #[port(default = 1)]
+    _level: u32,
+}
+
+fn faults(check: fn(daedalus_registry::self_check::Report<'_>)) -> Vec<String> {
+    let mut found = Vec::new();
+    check(&mut |field, what| found.push(format!("{field}: {what}")));
+    found
+}
+
+#[test]
+fn a_config_whose_default_agrees_with_its_declaration_has_no_fault() {
+    assert_eq!(faults(Square::self_check), Vec::<String>::new());
+}
+
+#[test]
+fn a_default_that_breaks_a_limit_drifts_from_the_declared_one_or_fails_the_check_is_reported() {
+    // `Blur` derives `Default`, so every field is zero, whatever `#[port(default = ..)]` says.
+    assert_eq!(
+        faults(Blur::self_check),
+        [
+            "radius: `Default` gives 0, which is below its minimum 1",
+            "radius: declares the default 3, but `Default` gives 0",
+            "strength: declares the default 0.5, but `Default` gives 0.0",
+            ": `Default` is refused by its own check: radius must be positive",
+        ]
+    );
+}
+
+#[test]
+fn a_config_with_no_default_says_so() {
+    assert_eq!(faults(Bare::self_check), [": has no `Default` to check"]);
+}

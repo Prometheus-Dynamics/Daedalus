@@ -15,6 +15,7 @@ mod owned;
 mod record;
 #[cfg(feature = "std")]
 mod registry;
+pub mod self_check;
 #[cfg(feature = "std")]
 mod types;
 

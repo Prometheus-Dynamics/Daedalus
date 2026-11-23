@@ -301,6 +301,21 @@ same facts.
   against them yet.
 - `step` is a hint for a control. It is never a limit: a value need not be a multiple of it.
 
+A config says what a field defaults to in two places, `#[port(default = ..)]` and its Rust
+`Default`, and its limits in a third. `Registry::config_faults()` compares them for every config
+of every node registered: the value `Default` makes must be inside each field's limits and pass
+the config's `#[validate]` checks, and a field's declared default must be the value `Default`
+gives it. It returns one line a fault, naming the node, the config and the field with both
+values, so a crate of nodes checks itself in one test:
+
+```rust
+assert_eq!(registry.config_faults(), Vec::<String>::new());
+```
+
+One config checks itself with `MyConfig::self_check`. A field whose type is not a number has no
+limit to check, and one that can't be compared or printed is passed over; a config with no
+`Default` is reported as such.
+
 ## Metrics
 
 The host times every node and counts what it publishes (see [host.md](host.md)). When a body has

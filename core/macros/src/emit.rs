@@ -179,6 +179,7 @@ fn config_tokens(args: &NodeArgs) -> TokenStream {
             name: "config",
             ty: #ty,
             fields: <#config>::FIELDS,
+            self_check: <#config>::self_check,
         },
     }
 }

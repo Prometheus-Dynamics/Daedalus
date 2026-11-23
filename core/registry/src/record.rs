@@ -113,12 +113,23 @@ impl PortDecl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ConfigDecl {
     pub name: &'static str,
     pub ty: TypeRef,
     /// One per field. A field's limits and step are its [`PortDecl::rule`].
     pub fields: &'static [PortDecl],
+    /// Checks the config's own `Default` against its declaration, and reports each fault: see
+    /// [`crate::self_check`]. [`crate::self_check::nothing`] for a declaration written by hand.
+    pub self_check: fn(crate::self_check::Report<'_>),
+}
+
+/// Two declarations are the same when they say the same things. Their checks are code, and a
+/// function has no identity to compare.
+impl PartialEq for ConfigDecl {
+    fn eq(&self, other: &ConfigDecl) -> bool {
+        (self.name, &self.ty, self.fields) == (other.name, &other.ty, other.fields)
+    }
 }
 
 /// Indexed fan-in ports: `prefix0`, `prefix1`, and so on.
