@@ -283,6 +283,7 @@ daedalus_loader::export_plugin!(PluginDef {
     name: "dylib-fixture",
     backends: &["fixture.cpu"],
     nodes: &NODES,
+    made: &[],
     codecs: &CODECS,
     produce: Some(make_bytes),
 });

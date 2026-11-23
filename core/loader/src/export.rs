@@ -36,11 +36,32 @@ pub struct NodeDef {
     pub run: RunFn,
 }
 
+/// Builds a node's step for one place in one graph. `data` is the [`MadeNode`]'s own, and
+/// `position` is the node's place in the region, for a fault to name.
+pub type MakeFn =
+    fn(data: &'static (dyn core::any::Any + Send + Sync), position: u32) -> Result<Step, String>;
+
+/// A node whose step is built for each graph it is in, where a [`NodeDef`] has one function for
+/// all of them: a body that keeps state of its own between ticks is one.
+pub struct MadeNode {
+    pub id: &'static str,
+    pub source: &'static str,
+    /// The backend this node's body is for. It must be one of the plugin's backends.
+    pub backend: &'static str,
+    pub inputs: &'static [PortDef],
+    pub outputs: &'static [PortDef],
+    pub make: MakeFn,
+    /// What `make` is given: whatever it builds the step from.
+    pub data: &'static (dyn core::any::Any + Send + Sync),
+}
+
 /// Everything a plugin declares.
 pub struct PluginDef {
     pub name: &'static str,
     pub backends: &'static [&'static str],
     pub nodes: &'static [NodeDef],
+    /// Nodes whose steps are built for each graph. Empty for a plugin that has none.
+    pub made: &'static [MadeNode],
     pub codecs: &'static [CodecDef],
     /// Makes the bytes for an index, for the host to take without a copy. `None` for an index the
     /// plugin does not make. Unset for a plugin that makes none.
@@ -133,7 +154,12 @@ pub unsafe fn entry<P: PluginSpec>(out: *mut PluginEntry, room: usize) -> Status
     if def.backends.len() > MAX_BACKENDS || def.codecs.len() > MAX_CODECS {
         return Status::from_errno(22);
     }
-    let nodes: Vec<NodeC> = def.nodes.iter().map(node_c).collect();
+    let nodes: Vec<NodeC> = def
+        .nodes
+        .iter()
+        .map(node_c)
+        .chain(def.made.iter().map(made_c))
+        .collect();
     let tables: Vec<BackendTable> = def
         .backends
         .iter()
@@ -193,6 +219,21 @@ fn node_c(node: &NodeDef) -> NodeC {
         source: Text::of(node.source),
         backend: Text::of(node.backend),
         text: Text::of(node.text),
+        inputs: inputs.0,
+        input_count: inputs.1,
+        outputs: outputs.0,
+        output_count: outputs.1,
+    }
+}
+
+fn made_c(node: &MadeNode) -> NodeC {
+    let inputs = hand_over(node.inputs.iter().map(port_c).collect::<Vec<_>>());
+    let outputs = hand_over(node.outputs.iter().map(port_c).collect::<Vec<_>>());
+    NodeC {
+        id: Text::of(node.id),
+        source: Text::of(node.source),
+        backend: Text::of(node.backend),
+        text: Text::of(""),
         inputs: inputs.0,
         input_count: inputs.1,
         outputs: outputs.0,
@@ -260,11 +301,21 @@ unsafe fn free_ports(ports: *const PortC, count: usize) {
 
 /// The index of the node in `def`, and the node, for each node of the region the backend `index`
 /// takes.
-fn taken<'a>(
-    def: &'a PluginDef,
-    index: usize,
-    view: &RegionView,
-) -> Option<Vec<(u32, &'a NodeDef)>> {
+/// A node of a plugin, of either kind.
+enum Body<'a> {
+    Run(&'a NodeDef),
+    Made(&'a MadeNode),
+}
+
+fn body_of<'a>(def: &'a PluginDef, id: &str) -> Option<(&'a str, Body<'a>)> {
+    if let Some(node) = def.nodes.iter().find(|node| node.id == id) {
+        return Some((node.backend, Body::Run(node)));
+    }
+    let made = def.made.iter().find(|node| node.id == id)?;
+    Some((made.backend, Body::Made(made)))
+}
+
+fn taken<'a>(def: &'a PluginDef, index: usize, view: &RegionView) -> Option<Vec<(u32, Body<'a>)>> {
     let backend = def.backends.get(index)?;
     // SAFETY: the host passes a view whose node texts are valid for this call.
     let ids = unsafe { region_nodes(view) };
@@ -272,8 +323,8 @@ fn taken<'a>(
     for (position, id) in ids.iter().enumerate() {
         // SAFETY: as above.
         let id = unsafe { id.as_str() };
-        let node = def.nodes.iter().find(|node| node.id == id)?;
-        if node.backend != *backend {
+        let (serves, node) = body_of(def, id)?;
+        if serves != *backend {
             return None;
         }
         taken.push((position as u32, node));
@@ -494,11 +545,28 @@ unsafe extern "C" fn compile_at<P: PluginSpec, const I: usize>(
         if cap < taken.len() {
             return Status::BUFFER_TOO_SMALL;
         }
-        for (slot, (position, node)) in taken.into_iter().enumerate() {
-            let step = Step::boxed(NodeStep {
-                run: node.run,
-                node: position,
-            });
+        // Every step is built before any is written, so a node that can't be built leaves
+        // the host's entries as they were.
+        let mut steps = Vec::with_capacity(taken.len());
+        for (position, node) in taken {
+            let step = match node {
+                Body::Run(node) => Step::boxed(NodeStep {
+                    run: node.run,
+                    node: position,
+                }),
+                Body::Made(made) => match (made.make)(made.data, position) {
+                    Ok(step) => step,
+                    Err(_) => {
+                        for (_, step) in steps {
+                            Step::discard(step);
+                        }
+                        return Status::NOT_SUPPORTED;
+                    }
+                },
+            };
+            steps.push((position, step));
+        }
+        for (slot, (position, step)) in steps.into_iter().enumerate() {
             // SAFETY: `slot` is below `cap`, the writable entries the host gave.
             unsafe {
                 out.add(slot).write(UnitOut {
@@ -535,6 +603,16 @@ macro_rules! export_plugin {
             }
         }
 
+        $crate::export_plugin_spec!(__DaedalusPluginSpec);
+    };
+}
+
+/// Writes the two symbols the loader calls, for a type that says what the plugin declares
+/// ([`PluginSpec`](crate::export::PluginSpec)). [`export_plugin!`] is this with the definition
+/// written out; a crate that builds its definition when it is first asked uses this.
+#[macro_export]
+macro_rules! export_plugin_spec {
+    ($spec:ty) => {
         /// Describes this build's shapes to the loader, which checks them before anything
         /// else.
         ///
@@ -558,7 +636,7 @@ macro_rules! export_plugin {
             room: usize,
         ) -> $crate::abi::Status {
             // SAFETY: the loader passes a `PluginEntry` it owns, as `entry` requires.
-            unsafe { $crate::export::entry::<__DaedalusPluginSpec>(out, room) }
+            unsafe { $crate::export::entry::<$spec>(out, room) }
         }
     };
 }

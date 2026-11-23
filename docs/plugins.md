@@ -26,6 +26,7 @@ daedalus_loader::export_plugin!(PluginDef {
     name: "acme-plugin",
     backends: &["acme.cpu"],
     nodes: &NODES,
+    made: &[],
     codecs: &[],
     produce: None,
 });
@@ -33,6 +34,43 @@ daedalus_loader::export_plugin!(PluginDef {
 
 `run` is a function of the step's cells. [`testing/fixtures/dylib`](../testing/fixtures/dylib)
 is a complete plugin.
+
+## A crate of `#[node]` functions as a plugin
+
+A crate whose nodes are written with `#[node]` ships as a plugin without rewriting them. It is
+built as a `cdylib`, depends on `daedalus-cpu-plugin`, and adds one line:
+
+```rust
+daedalus_cpu_plugin::export_nodes!("acme-nodes", NODES);
+```
+
+`NODES` is the array of node records the crate registers when it is linked into a host. The
+plugin carries the CPU backend with it, as a backend of its own under the plugin's name, and
+builds each node's step itself. Nothing about the compiler that built the host has to match:
+the check at load is the one every plugin gets. `testing/crates/node-plugin` is such a crate,
+and its tests load it beside the same nodes linked in.
+
+What such a node gets, and what it does not yet:
+
+- The same outputs as linked, its state between ticks, state kept across a graph reload, a
+  fault with its reason and code, and a restart.
+- Every port is read and written in its type's crossing form: a number or other plain data of
+  16 bytes or less in place, anything else as its wire form. So a type on a port needs
+  `#[derive(WireForm)]`, and a node with a port of a type that has none cannot be built into a
+  step. This holds between two nodes of the same plugin too, for now.
+- A port's type needs a key of its own (`#[type_key("...")]`). A type compared by what it is made
+  of, a list or a tuple, has no name an entry can carry.
+- Constants and config do not reach the node yet: it runs with what its function is given by
+  its inputs.
+- The entry carries a node's id and its ports' names, type keys and whether each may stay
+  unwired. Labels, defaults, config fields and metrics are not declared, so a host lists no
+  metrics for such a node and the node's reports go nowhere.
+- No fan-in. No merging with other nodes, of the host or of the plugin: each node is a step.
+  No blob or source form.
+- Cost, in instructions a tick (`testing/crates/node-plugin/examples/measure.rs`): one node
+  1,733 linked and 1,887 loaded. Two nodes with a small struct between them 2,597 linked and
+  unmerged, 2,870 loaded. Two nodes with a megabyte of `Vec<u8>` between them 60,000 linked and
+  17.9 million loaded: the wire form of a `Vec<u8>` is written a byte at a time.
 
 ## The check at load
 
