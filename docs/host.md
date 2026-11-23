@@ -54,7 +54,9 @@ The host port names are the ports of the graph's host bridge nodes.
 
 An edge is a queue. With no policy it is a FIFO of 64. An edge's policy in the graph can make it
 keep only the newest value, bound it and say what is dropped when it is full, or block the
-producer. A queue keeps a value until its reader runs and takes it, however many ticks that is,
+producer. A bounded edge's `overflow` is one of `drop_oldest`, `drop_newest`, `error_on_full`,
+`block` (the producer waits for room) and `coalesce` (the new value replaces the queued one);
+any other word is refused by name when the graph is planned. A queue keeps a value until its reader runs and takes it, however many ticks that is,
 so a node that did not run when a value was sent reads it when it next runs.
 
 `per_tick` is the policy for a value that means something only in the tick it was sent in
@@ -65,7 +67,15 @@ say) stays pinned. A reader that could not run in that tick, because it was wait
 unfinished work, backing off after faults, held by a full blocking output, or switched out by the
 host's activity mask, still gets the value in the first tick it can run. A value fed from the
 host lives through the next tick. The chip forms, whose queues keep a value until it is read,
-refuse a `per_tick` edge by name. An input port can be given a freshness limit, so a stale value is dropped rather than
+refuse a `per_tick` edge by name.
+
+An output with more than one reader is one value its readers share, with no copy: the newest,
+kept until the output is written again. It is not taken when a reader reads it, so a reader that
+runs on a later tick finds it still there, and a required input fed by it counts as arrived for
+as long as it holds a value. Where the value means something only in the tick it was sent in, put
+`per_tick` on the readers' edges: the shared value is then released when that tick ends, for
+every reader. The readers of one output share its queue, so give every reader's edge the same
+policy: where they differ, one of them applies to all the readers. An input port can be given a freshness limit, so a stale value is dropped rather than
 used.
 
 The edges inside a group take their policy from the group: `edge_policies` lists a stage input

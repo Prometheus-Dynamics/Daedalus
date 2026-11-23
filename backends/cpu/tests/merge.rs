@@ -154,7 +154,7 @@ fn fan_out_a_bounded_edge_and_an_opt_out_stop_a_merge() {
     let mut edge = wire(0, "out", 1, "a");
     edge.policy = EdgePolicyDoc::Bounded {
         capacity: 4,
-        overflow: "error".to_string(),
+        overflow: "error_on_full".to_string(),
     };
     assert_eq!(
         covers(&planned(&["m.src", "m.inc"], vec![edge])),

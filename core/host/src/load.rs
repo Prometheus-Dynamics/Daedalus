@@ -68,6 +68,8 @@ pub enum LoadError {
     Run(daedalus_runner::LoadError),
     /// A node's recovery metadata is malformed, or merged nodes ask for different recoveries.
     Recovery { node: String, reason: String },
+    /// A bounded edge's overflow word names no rule.
+    Overflow { overflow: String },
     /// The made plan's bytes don't read.
     Made(MadeError),
     /// The made plan doesn't bind to this host's backends and registry.
@@ -83,6 +85,11 @@ impl fmt::Display for LoadError {
             LoadError::Ports(error) => write!(f, "the port table is malformed: {error:?}"),
             LoadError::Run(error) => write!(f, "the runner refused the plan: {error:?}"),
             LoadError::Recovery { node, reason } => write!(f, "node `{node}` {reason}"),
+            LoadError::Overflow { overflow } => write!(
+                f,
+                "an edge is bounded with overflow `{overflow}`, which is not one of {}",
+                daedalus_graph::OverflowDoc::WORDS
+            ),
             LoadError::Made(error) => error.fmt(f),
             LoadError::Bind(error) => error.fmt(f),
         }

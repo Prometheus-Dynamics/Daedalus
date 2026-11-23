@@ -32,6 +32,8 @@ pub enum Code {
     GroupDepth,
     /// A group's edge policy names no connect's target, or one target twice.
     GroupEdgePolicy,
+    /// An edge's policy can't be read: a bounded edge's overflow word names no rule.
+    EdgePolicyInvalid,
     NodeOutOfRange,
     BadFire,
     TypeInvalid,
@@ -176,6 +178,9 @@ impl From<&PortError> for Diagnostic {
             PortError::PortDuplicate { node, port, .. } => base(Code::PortDuplicate).at(node, port),
             PortError::TypeInvalid { node, port, .. } => base(Code::TypeInvalid).at(node, port),
             PortError::NodeOutOfRange { .. } => base(Code::NodeOutOfRange),
+            PortError::OverflowUnknown { node, port, .. } => {
+                base(Code::EdgePolicyInvalid).at(node, port)
+            }
         }
     }
 }

@@ -21,6 +21,6 @@ pub use doc::json_schema;
 pub use doc::{
     ControlDoc, ControlOp, DocError, EdgeDoc, EdgePolicyDoc, FORMAT, GraphBody, GraphDoc,
     GraphPatch, GroupDoc, HostInputPolicy, Lit, LitField, NodeDoc, NodeKindDoc, NodeSelector,
-    PatchOp, PortRefDoc, RateDoc, Requirement, SCHEMA_VERSION, StageConstDoc, StagePolicyDoc,
-    StagePortDoc, SyncGroupDoc, SyncPolicy,
+    OverflowDoc, PatchOp, PortRefDoc, RateDoc, Requirement, SCHEMA_VERSION, StageConstDoc,
+    StagePolicyDoc, StagePortDoc, SyncGroupDoc, SyncPolicy,
 };

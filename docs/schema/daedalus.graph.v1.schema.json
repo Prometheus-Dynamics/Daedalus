@@ -67,7 +67,13 @@
               "const": "bounded"
             },
             "overflow": {
-              "type": "string"
+              "enum": [
+                "drop_oldest",
+                "drop_newest",
+                "error_on_full",
+                "block",
+                "coalesce"
+              ]
             }
           },
           "required": [

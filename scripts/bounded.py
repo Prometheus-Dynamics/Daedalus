@@ -21,6 +21,12 @@ zombie, so no other process can take that id and be signalled by mistake.
 DAEDALUS_BOUND_SCALE multiplies every bound, for a machine slower than the one the bounds were
 measured on (the hosted CI runners).
 
+The bound is on the step's own run. A step that first has to wait for another step (for the
+build directory the `test` step is building in, say), or to build what it runs, carries a
+`# wait: N s` line too, and gets DAEDALUS_BOUND_STARTED: a path it creates once that is over. Its
+bound counts from then, so a cold or slow build cannot fail a step that has not run yet. The wait
+has a bound of its own, N, and a step still waiting then fails by name.
+
 A step (`--step`) runs with a TMPDIR of its own: an empty directory made in the gate's TMPDIR,
 removed when the step ends. A step that leaves anything in it fails, and the names are printed:
 tests that leak into a TMPDIR shared by every gate run fill it until unrelated steps fail. A cache
@@ -106,16 +112,34 @@ class Group:
         return self.proc.returncode, left
 
 
-def run(argv, bound, name, out=sys.stderr, **popen):
-    """Runs `argv` within `bound` seconds. Returns its exit code, or TIMED_OUT."""
+def run(argv, bound, name, out=sys.stderr, wait=None, **popen):
+    """Runs `argv` within `bound` seconds. Returns its exit code, or TIMED_OUT. `wait` is
+    (seconds, path): the command may first wait that long, and its bound counts from when it
+    creates the path."""
     group = Group(argv, **popen)
+    waiting = False
     try:
-        ended = group.wait(bound)
+        ended = False
+        if wait is not None:
+            deadline = time.monotonic() + wait[0]
+            waiting = True
+            while not ended and not os.path.exists(wait[1]):
+                if time.monotonic() >= deadline:
+                    break
+                ended = group.wait(0.1)
+            else:
+                waiting = False
+        if not ended and not waiting:
+            ended = group.wait(bound)
     finally:
         # Reached by an ending, a timeout, or a signal (raised by the handler as an exception).
         code, left = group.reap()
     if left and ended:
         print(f"{name}: left {len(left)} processes running in its group: stopped them", file=out)
+    if not ended and waiting:
+        print(f"{name}: still waiting to start at its wait bound of {wait[0]:.0f} s: stopped it",
+              file=out)
+        return TIMED_OUT
     if not ended:
         print(f"{name}: still running at its bound of {bound:.0f} s: stopped it", file=out)
         return TIMED_OUT
@@ -131,11 +155,12 @@ def raise_stopped(signum, _frame):
     raise Stopped(signum)
 
 
-def bound_of(script):
-    """A script's bound, from the `# bound: N s` line it carries beside its code."""
+def bound_of(script, word="bound"):
+    """A script's bound, from the `# bound: N s` line it carries beside its code, or its wait
+    bound from its `# wait: N s` line."""
     with open(script) as file:
         for line in file:
-            match = re.match(r"# bound: (\d+) s", line)
+            match = re.match(rf"# {word}: (\d+) s", line)
             if match:
                 return match.group(1)
     return None
@@ -151,6 +176,7 @@ def main(argv):
             print(f"bounded: {argv[2]} has no `# bound: N s` line: every step the gate runs "
                   "carries its bound", file=sys.stderr)
             return 2
+        wait = bound_of(argv[2], "wait")
         argv = [bound, argv[1], argv[2]]
     if len(argv) < 3:
         print(__doc__.split("\n\n")[1], file=sys.stderr)
@@ -168,13 +194,20 @@ def main(argv):
     own = tempfile.mkdtemp(prefix=f"s-{re.sub(r'[^a-z0-9]', '', name.lower())[:8]}.",
                            dir=gate_tmp)
     env = {**os.environ, "TMPDIR": own, "DAEDALUS_GATE_TMPDIR": gate_tmp}
+    env.pop("DAEDALUS_BOUND_STARTED", None)
+    started = own + ".started"
+    if wait is not None:
+        env["DAEDALUS_BOUND_STARTED"] = started
+        wait = (scaled(wait), started)
     try:
-        code = run(command, bound, name, env=env)
+        code = run(command, bound, name, wait=wait, env=env)
     except Stopped as stopped:
         code = 128 + stopped.signum
     finally:
         left = sorted(os.listdir(own))
         shutil.rmtree(own, ignore_errors=True)
+        if os.path.exists(started):
+            os.remove(started)
     if left:
         shown = ", ".join(left[:20]) + (f", and {len(left) - 20} more" if len(left) > 20 else "")
         print(f"{name}: left {len(left)} entries in its TMPDIR: {shown}", file=sys.stderr)
@@ -372,6 +405,31 @@ def self_test():
                 env=step_env)
             check("a step that cleans up passes, in a TMPDIR of its own", code == 0)
             check("no step's TMPDIR is left in the gate's", os.listdir(gate_tmp) == [])
+
+            # A step that waits for another one: its bound counts from when it says it started.
+            signal_start = 'touch "$DAEDALUS_BOUND_STARTED"'
+            for name, body in (("waited", f"sleep 3; {signal_start}; sleep 1"),
+                               ("slow", f"{signal_start}; sleep 600"),
+                               ("stuck", "sleep 600")):
+                write(os.path.join(tmp, f"{name}.sh"),
+                      f"#!/usr/bin/env bash\n# bound: 2 s (planted)\n# wait: 4 s (planted)\n"
+                      f"{body}\n")
+            step = lambda name: capture(
+                [sys.executable, "-I", me, "--step", name, os.path.join(tmp, f"{name}.sh")], 30,
+                env=step_env)
+            code, out, _, _ = step("waited")
+            check("a step that waited longer than its bound, then ran within it, passes",
+                  code == 0 and out == "")
+            code, out, took, _ = step("slow")
+            check("a step past its bound once it has started fails, named",
+                  code == TIMED_OUT and "slow: still running at its bound of 2 s" in out
+                  and took < 2 + GRACE + 3)
+            code, out, took, _ = step("stuck")
+            check("a step still waiting at its wait bound fails, named",
+                  code == TIMED_OUT
+                  and "stuck: still waiting to start at its wait bound of 4 s" in out
+                  and took < 4 + GRACE + 3)
+            check("no step's start mark is left in the gate's", os.listdir(gate_tmp) == [])
 
             # A command that ends within its bound runs as it would alone.
             code, out, _, ended = capture(

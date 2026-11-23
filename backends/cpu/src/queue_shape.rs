@@ -1,7 +1,7 @@
 //! The queue an edge's policy asks for, in the forms that lay out their own queues.
 
 use daedalus_backend::Refusal;
-use daedalus_graph::EdgePolicyDoc;
+use daedalus_graph::{EdgePolicyDoc, OverflowDoc};
 use daedalus_runner::Overflow;
 use daedalus_types::NodeIndex;
 
@@ -18,10 +18,17 @@ pub(crate) fn queue_shape(
         EdgePolicyDoc::LatestOnly => (1, Overflow::DropOldest),
         EdgePolicyDoc::Bounded { capacity, overflow } => (
             (*capacity).max(1),
-            match overflow.as_str() {
-                "drop_newest" => Overflow::DropNewest,
-                "error_on_full" | "block" => Overflow::Error,
-                _ => Overflow::DropOldest,
+            match OverflowDoc::parse(overflow) {
+                Some(OverflowDoc::DropNewest) => Overflow::DropNewest,
+                Some(OverflowDoc::ErrorOnFull | OverflowDoc::Block) => Overflow::Error,
+                // A new value replaces the queued one either way.
+                Some(OverflowDoc::DropOldest | OverflowDoc::Coalesce) => Overflow::DropOldest,
+                None => {
+                    return Err(Refusal::new(
+                        vec![reader],
+                        "this edge's overflow word names no rule",
+                    ));
+                }
             },
         ),
         EdgePolicyDoc::PerTick => {

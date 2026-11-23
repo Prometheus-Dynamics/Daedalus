@@ -41,7 +41,40 @@ const CONNECTED: GroupDef = GroupDef {
     ..GroupDef::new("t.connected")
 };
 
-static GROUPS: [GroupDef; 4] = [
+/// `pass` feeds two readers, each with a trigger of its own: its output is one slot they share.
+const SHARED: GroupDef = GroupDef {
+    stages: &[
+        ("pass", "t.pass"),
+        ("first", "t.reader"),
+        ("second", "t.reader"),
+    ],
+    connects: &[
+        (stage("pass", "out"), stage("first", "opt")),
+        (stage("pass", "out"), stage("second", "opt")),
+    ],
+    inputs: &[
+        ("trig", &[stage("first", "trig")]),
+        ("trig2", &[stage("second", "trig")]),
+        ("opt", &[stage("pass", "in")]),
+    ],
+    outputs: &[
+        ("out", stage("first", "out")),
+        ("out2", stage("second", "out")),
+    ],
+    edge_policies: &[
+        (stage("first", "opt"), EdgePolicy::PerTick),
+        (stage("second", "opt"), EdgePolicy::PerTick),
+    ],
+    ..GroupDef::new("t.shared")
+};
+
+static GROUPS: [GroupDef; 6] = [
+    SHARED,
+    GroupDef {
+        id: "t.shared_plain",
+        edge_policies: &[],
+        ..SHARED
+    },
     FED,
     CONNECTED,
     GroupDef {
@@ -71,13 +104,14 @@ fn registry() -> Registry {
         .body("t")
         .add(&mut registry);
     for group in &GROUPS {
-        decl(group.id)
+        let mut group_decl = decl(group.id)
             .input("trig", u32_ty())
             .optional("opt", u32_ty())
-            .output("out", u32_ty())
-            .group(group)
-            .body("t")
-            .add(&mut registry);
+            .output("out", u32_ty());
+        if group.outputs.len() == 2 {
+            group_decl = group_decl.input("trig2", u32_ty()).output("out2", u32_ty());
+        }
+        group_decl.group(group).body("t").add(&mut registry);
     }
     registry
 }
@@ -144,4 +178,50 @@ fn a_per_tick_value_is_read_in_the_tick_it_was_sent_in() {
         host.step().unwrap();
         assert_eq!(y(&mut host), Some(105), "{group}");
     }
+}
+
+/// A graph around a two-reader group: `opt` and `trig` on one tick, so the first reader runs and
+/// the second does not, then `trig2` on the next. What each reader gave.
+fn two_readers(group: &str) -> (Option<u32>, Option<u32>) {
+    let mut host = node("host");
+    host.kind = NodeKindDoc::HostBridge;
+    for port in ["trig", "trig2", "opt", "y", "y2"] {
+        host.port_types.insert(port.to_string(), "u32".to_string());
+    }
+    let graph = GraphBody {
+        nodes: vec![host, node(group)],
+        edges: vec![
+            edge(0, "trig", 1, "trig"),
+            edge(0, "trig2", 1, "trig2"),
+            edge(0, "opt", 1, "opt"),
+            edge(1, "out", 0, "y"),
+            edge(1, "out2", 0, "y2"),
+        ],
+        groups: Vec::new(),
+    };
+    let planned = plan(&graph, &registry(), &[&Test, &Other], &Config::default()).unwrap();
+    let mut host = LoadedHost::load(planned, LoadOptions::default()).unwrap();
+    host.host().feed_typed("opt", Arc::new(5_u32)).unwrap();
+    host.host().feed_typed("trig", Arc::new(100_u32)).unwrap();
+    host.step().unwrap();
+    let first = y(&mut host);
+    host.host().feed_typed("trig2", Arc::new(200_u32)).unwrap();
+    host.step().unwrap();
+    let second = host
+        .host()
+        .take_value("y2")
+        .unwrap()
+        .and_then(|value| value.typed::<u32>().copied());
+    (first, second)
+}
+
+#[test]
+fn a_per_tick_output_with_two_readers_is_gone_for_both_when_its_tick_ends() {
+    // The first reader ran in the tick and got it; the second runs a tick later and gets nothing.
+    assert_eq!(two_readers("t.shared"), (Some(105), Some(200)));
+}
+
+#[test]
+fn an_output_with_two_readers_and_no_policy_keeps_its_value_for_the_later_reader() {
+    assert_eq!(two_readers("t.shared_plain"), (Some(105), Some(205)));
 }

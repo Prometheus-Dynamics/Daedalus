@@ -10,12 +10,12 @@ use std::vec::Vec;
 
 use daedalus_abi::{NO_SLOT, Step};
 use daedalus_backend::{StepUnit, UnitInfo};
-use daedalus_graph::EdgePolicyDoc;
+use daedalus_graph::{EdgePolicyDoc, OverflowDoc};
 use daedalus_made::{Bound, Item, Stitched};
 use daedalus_plan::Span;
 use daedalus_runner::{Fire, Recovery, SlotKind, SlotSpec, SlotStamp, StepMeta};
 use daedalus_types::{SpaceIndex, TypeIndex};
-use daedalus_value::{Overflow, Pressure};
+use daedalus_value::{Keep, Overflow, Pressure};
 
 use crate::intern::intern;
 use crate::load::{LoadError, LoadOptions, NodeEntry, node_entries, take_steps};
@@ -99,7 +99,7 @@ pub(crate) fn lay_out(bound: &mut Bound, options: LoadOptions) -> Result<Built, 
                 let connected = connected_reads(bound, &info, reads);
                 let (fire, required) = join_for(bound, covers, &connected);
                 for (slot, edge) in &connected {
-                    apply_edge(&mut edges, *slot, &bound.facts.edges[*edge].policy);
+                    apply_edge(&mut edges, *slot, &bound.facts.edges[*edge].policy)?;
                 }
                 drafts.push(Draft {
                     reads: reads.clone(),
@@ -231,21 +231,33 @@ fn join_for(bound: &Bound, covers: &[u32], connected: &[(u32, usize)]) -> (Fire,
     (fire, required)
 }
 
-/// Records what an edge declared, for the slot it lands on. FIFO is the plain default.
-fn apply_edge(rules: &mut EdgeRules, slot: u32, policy: &EdgePolicyDoc) {
+/// Records what an edge declared, for the slot it lands on. FIFO is the plain default. A bounded
+/// edge whose overflow word names no rule is refused: the planner refuses it first, so this is a
+/// plan that was changed by hand.
+fn apply_edge(rules: &mut EdgeRules, slot: u32, policy: &EdgePolicyDoc) -> Result<(), LoadError> {
+    let mut blocking = false;
     let pressure = match policy {
-        EdgePolicyDoc::Fifo => return,
+        EdgePolicyDoc::Fifo => return Ok(()),
         EdgePolicyDoc::LatestOnly | EdgePolicyDoc::PerTick => Pressure::LatestOnly,
-        EdgePolicyDoc::Bounded { capacity, overflow } => Pressure::Bounded {
-            cap: (*capacity).max(1),
-            overflow: match overflow.as_str() {
-                "drop_newest" => Overflow::DropNewest,
-                "error_on_full" | "block" => Overflow::ErrorOnFull,
-                _ => Overflow::DropOldest,
-            },
-        },
+        EdgePolicyDoc::Bounded { capacity, overflow } => {
+            let rule = OverflowDoc::parse(overflow).ok_or_else(|| LoadError::Overflow {
+                overflow: overflow.clone(),
+            })?;
+            blocking = rule == OverflowDoc::Block;
+            Pressure::Bounded {
+                cap: (*capacity).max(1),
+                overflow: match rule {
+                    OverflowDoc::DropOldest => Overflow::DropOldest,
+                    OverflowDoc::DropNewest => Overflow::DropNewest,
+                    OverflowDoc::ErrorOnFull | OverflowDoc::Block => Overflow::ErrorOnFull,
+                    OverflowDoc::Coalesce => Overflow::Coalesce {
+                        keep: Keep::Newest,
+                        window_ns: 0,
+                    },
+                },
+            }
+        }
     };
-    let blocking = matches!(policy, EdgePolicyDoc::Bounded { overflow, .. } if overflow == "block");
     let per_tick = matches!(policy, EdgePolicyDoc::PerTick);
     let rule = EdgeRule {
         pressure,
@@ -253,6 +265,7 @@ fn apply_edge(rules: &mut EdgeRules, slot: u32, policy: &EdgePolicyDoc) {
         per_tick,
     };
     rules.insert(slot, rule);
+    Ok(())
 }
 
 /// The slots that keep their value: one with several readers keeps it for all of them, and a held
