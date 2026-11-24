@@ -101,8 +101,21 @@ pub struct ConstC {
     pub len: usize,
 }
 
-/// A region as a backend sees it: its node ids in order, its boundary ports, and the constants
-/// of its nodes. `reason` is room for the words of a refusal: a backend that cannot compile the
+/// An edge between two nodes of a region whose value no node outside the region reads: the
+/// producer's output `from_port` of node `from_node`, read by input `to_port` of node `to_node`.
+/// Nodes are by index in the region.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InnerEdgeC {
+    pub from_node: u32,
+    pub to_node: u32,
+    pub from_port: u16,
+    pub to_port: u16,
+    pub reserved: u32,
+}
+
+/// A region as a backend sees it: its node ids in order, its boundary ports, the constants
+/// of its nodes, and the edges inside it whose value stays inside it. `reason` is room for the words of a refusal: a backend that cannot compile the
 /// region writes why, up to `reason_cap` bytes, and how many it wrote to `reason_len`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -123,6 +136,10 @@ pub struct RegionView {
     pub reason_cap: usize,
     #[cfg(not(daedalus_abi_baseline))]
     pub reason_len: *mut usize,
+    #[cfg(not(daedalus_abi_baseline))]
+    pub edges: *const InnerEdgeC,
+    #[cfg(not(daedalus_abi_baseline))]
+    pub edge_count: usize,
 }
 
 impl RegionView {
@@ -145,7 +162,37 @@ impl RegionView {
             reason_cap: 0,
             #[cfg(not(daedalus_abi_baseline))]
             reason_len: core::ptr::null_mut(),
+            #[cfg(not(daedalus_abi_baseline))]
+            edges: core::ptr::null(),
+            #[cfg(not(daedalus_abi_baseline))]
+            edge_count: 0,
         }
+    }
+
+    /// The view with the edges inside the region whose value stays inside it. A build from
+    /// before a view had them leaves them out.
+    #[allow(unused_mut, unused_variables)]
+    pub fn with_edges(mut self, edges: &[InnerEdgeC]) -> RegionView {
+        #[cfg(not(daedalus_abi_baseline))]
+        {
+            self.edges = edges.as_ptr();
+            self.edge_count = edges.len();
+        }
+        self
+    }
+
+    /// The edges inside the region whose value stays inside it. Empty for a view that carries
+    /// none.
+    ///
+    /// # Safety
+    /// The view's `edges` must be valid for `edge_count` entries for `'a`.
+    pub unsafe fn edges<'a>(&self) -> &'a [InnerEdgeC] {
+        #[cfg(not(daedalus_abi_baseline))]
+        if !self.edges.is_null() && self.edge_count != 0 {
+            // SAFETY: the caller promises `edge_count` valid entries at `edges` for `'a`.
+            return unsafe { core::slice::from_raw_parts(self.edges, self.edge_count) };
+        }
+        &[]
     }
 
     /// The view with the constants of its nodes. A build from before a view had them leaves

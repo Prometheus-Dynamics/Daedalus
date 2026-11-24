@@ -112,8 +112,50 @@ fn sum(items: FanIn<'_, u32>) -> u32 {
     items.iter().fold(0, |sum, item| sum.wrapping_add(*item))
 }
 
+/// A value of the crate's own with no crossing form: it goes between two of the plugin's nodes as
+/// it is, and cannot leave the plugin.
+#[derive(Clone, Debug, PartialEq, Type)]
+#[type_key("np.kept")]
+pub struct Kept {
+    pub items: Vec<u32>,
+}
+
+#[node(id = "np.keep", inputs(x), outputs(kept))]
+fn keep(x: u32) -> Kept {
+    Kept {
+        items: (0..x % 64).collect(),
+    }
+}
+
+#[node(id = "np.weigh", inputs(kept), outputs(y))]
+fn weigh(kept: &Kept) -> u32 {
+    kept.items.iter().sum::<u32>() + kept.items.len() as u32
+}
+
+/// Reads the value where it is, and fails on a weight of 15: the value is still in its cell when
+/// the step fails.
+#[node(id = "np.weigh_or_fail", inputs(kept), outputs(y))]
+fn weigh_or_fail(kept: &Kept) -> Result<u32, Fault> {
+    let weight = kept.items.iter().sum::<u32>();
+    if weight == 15 {
+        return Err(Fault {
+            code: 15,
+            reason: "fifteen",
+        });
+    }
+    Ok(weight)
+}
+
+/// How many values this build handed from one of its nodes to another and the host has not yet
+/// released: zero when no cell holds one.
+#[node(id = "np.held", inputs(x), outputs(y))]
+fn held(x: u32) -> u32 {
+    let _ = x;
+    daedalus_cpu::values_held() as u32
+}
+
 /// Every node of this crate: what a host that links it registers.
-pub const NODES: [&NodeRecord; 11] = [
+pub const NODES: [&NodeRecord; 15] = [
     &TRIPLE_NODE,
     &TOTAL_NODE,
     &COUNTED_NODE,
@@ -125,6 +167,10 @@ pub const NODES: [&NodeRecord; 11] = [
     &SCALE_NODE,
     &SHIFTED_NODE,
     &SUM_NODE,
+    &KEEP_NODE,
+    &WEIGH_NODE,
+    &WEIGH_OR_FAIL_NODE,
+    &HELD_NODE,
 ];
 
 daedalus_cpu_plugin::export_nodes!("node-plugin", NODES);

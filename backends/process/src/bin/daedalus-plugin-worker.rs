@@ -431,6 +431,7 @@ fn describe(plugin: &Plugin) -> (Hello, BTreeMap<String, Served>) {
             inputs: &ports_in,
             outputs: &ports_out,
             consts: &[],
+            inner: &[],
         };
         let Ok(mut units) = backend.compile(&region) else {
             continue;

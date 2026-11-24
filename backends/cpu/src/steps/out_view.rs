@@ -73,6 +73,9 @@ pub struct OutSlot {
     lease: Option<Lease>,
     /// The output is written as its wire form; otherwise as the list itself.
     wire: bool,
+    /// Only nodes of the same plugin read the output, as output `at` of the step: the list goes
+    /// to them in a box of the plugin's own.
+    carried: Option<usize>,
     scratch: Vec<u8>,
     /// Where the value starts in `scratch`.
     start: usize,
@@ -110,6 +113,7 @@ impl OutSlot {
             .find(|room| room.port == port_ref)
             .map(|room| room.room.clone());
         self.wire = setup.keep.get(at) == Some(&Keep::Wire);
+        self.carried = (setup.keep.get(at) == Some(&Keep::Carried)).then_some(at);
         self.named = format!("output {port} of {}", setup.id);
     }
 
@@ -259,7 +263,13 @@ impl OutSlot {
                 .as_ref()
                 .and_then(|lists| lists.downcast_ref::<Vec<Arc<Vec<T>>>>())
                 .and_then(|lists| lists.first().cloned());
-            if let Some(list) = handed {
+            let list = match (handed, self.carried) {
+                (Some(list), Some(at)) => {
+                    daedalus_runner::hand_inside(list, None, cx, at, cell).err()
+                }
+                (handed, _) => handed,
+            };
+            if let Some(list) = list {
                 put_typed(cell, ty, space, list);
             }
             return true;

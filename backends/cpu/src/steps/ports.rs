@@ -47,6 +47,16 @@ fn read_wire<T>(slot: &Slot, kind: Kind<T>) -> Option<T> {
 
 const INLINE: u32 = OwnerKind::Inline as u32;
 
+/// The value a cell holds in place: in the type's own in-place form, or, for a type that has
+/// none, its wire form, which a node of the same plugin writes in place when it fits.
+#[inline]
+fn inline_value<T>(slot: &Slot, kind: Kind<T>) -> Option<T> {
+    match kind.read {
+        Some(read) => read(slot),
+        None => read_wire(slot, kind),
+    }
+}
+
 /// A value held behind a reference. There are none without an allocator.
 #[cfg(not(feature = "alloc"))]
 fn typed_view<T: 'static>(_: &Slot) -> Option<&T> {
@@ -85,16 +95,21 @@ pub fn read<'a, T: 'static, C: ConstTable>(
         return hold.as_ref();
     }
     if slot.owner == INLINE {
-        *hold = (kind.read?)(slot);
+        *hold = inline_value(slot, kind);
         return hold.as_ref();
+    }
+    // A value another node of this plugin handed over as it is, a handle among them.
+    #[cfg(feature = "alloc")]
+    if daedalus_runner::is_inside(slot) {
+        return daedalus_runner::inside_view::<T>(slot);
     }
     // A handle is read as another handle to the same value, kept for the call.
     if let Some(handle) = kind.handle {
         *hold = (handle.share)(slot);
         return hold.as_ref();
     }
-    if let Some(bytes) = handed_bytes(slot) {
-        *hold = (kind.from_bytes?)(bytes);
+    if slot.owner == daedalus_abi::OWNER_HANDED {
+        *hold = (kind.from_bytes?)(slot.bytes()?);
         return hold.as_ref();
     }
     typed_view::<T>(slot)
@@ -191,6 +206,11 @@ pub fn take<T: 'static, C: ConstTable>(
     if is_full(cell) && wired(wire, at) {
         return read_wire(cell, kind);
     }
+    // A value another node of this plugin handed over as it is, a handle among them.
+    #[cfg(feature = "alloc")]
+    if is_full(cell) && daedalus_runner::is_inside(cell) {
+        return daedalus_runner::inside_take::<T>(cell, kind.clone);
+    }
     if let Some(handle) = kind.handle {
         // A constant stays for the next tick, so it is shared. An edge's handle is taken as it
         // is: nothing is unwrapped and nothing is made.
@@ -209,13 +229,13 @@ pub fn take<T: 'static, C: ConstTable>(
         }
         return typed_view::<T>(slot).and_then(|value| kind.clone.map(|clone| clone(value)));
     }
-    if let Some(bytes) = handed_bytes(cell) {
+    if cell.owner == daedalus_abi::OWNER_HANDED {
         // A by-value parameter that is not a handle copies the bytes out: the one copy a handed
         // value makes.
-        return (kind.from_bytes?)(bytes);
+        return (kind.from_bytes?)(cell.bytes()?);
     }
     if cell.owner == INLINE {
-        return (kind.read?)(cell);
+        return inline_value(cell, kind);
     }
     // A value the planner kept in a carrier is moved out of it, whatever its type's `Clone`.
     if let Some(taken) = take_carried::<T>(cell) {
@@ -240,9 +260,10 @@ fn take_shared<T: 'static>(_: &mut Slot, _: Kind<T>) -> Option<T> {
     None
 }
 
-/// Stores `value` in `slot`: in `buf` if it's small, otherwise behind a reference that `held`
-/// keeps as `keep` says.
+/// Stores `value` in `slot`, output `at` of the step: in `buf` if it's small, otherwise behind a
+/// reference that `held` keeps as `keep` says.
 #[inline]
+#[allow(clippy::too_many_arguments)] // what the expansion has at hand for one output
 pub fn encode<T: Send + Sync + 'static, S: Keeper<T>>(
     value: T,
     kind: Kind<T>,
@@ -250,6 +271,8 @@ pub fn encode<T: Send + Sync + 'static, S: Keeper<T>>(
     held: &mut S,
     buf: &mut InlineCell,
     slot: &mut Slot,
+    cx: &mut daedalus_abi::StepCx,
+    at: usize,
 ) {
     #[cfg(feature = "alloc")]
     if keep == Keep::Wire
@@ -257,6 +280,27 @@ pub fn encode<T: Send + Sync + 'static, S: Keeper<T>>(
     {
         return write_wire(&value, wire, held.wire_buffers(), buf, slot);
     }
+    // A value written in its cell is the same in any build. Anything else a node of this plugin
+    // reads goes in a box of this build's, a handle too: the host releases the box through the
+    // plugin while the plugin is loaded, and never runs this build's code on a cell itself.
+    #[cfg(feature = "alloc")]
+    let value = if keep == Keep::Carried && kind.write.is_none() {
+        // A wire form that fits in the cell is written there: less work than a box, and the
+        // reader reads it as it reads any value in place.
+        if let Some(wire) = kind.wire
+            && (wire.len)(&value) <= buf.len()
+        {
+            return write_wire(&value, wire, None, buf, slot);
+        }
+        match daedalus_runner::hand_inside(value, held.inside_shelf(), cx, at, slot) {
+            Ok(()) => return,
+            Err(value) => value,
+        }
+    } else {
+        value
+    };
+    #[cfg(not(feature = "alloc"))]
+    let _ = (cx, at);
     if let Some(handle) = kind.handle {
         return (handle.put)(value, slot);
     }

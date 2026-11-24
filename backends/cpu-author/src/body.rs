@@ -728,6 +728,8 @@ macro_rules! __emit {
             &mut $this.keep.$at,
             &mut $this.outs[$at],
             &mut $out[$at],
+            $cx,
+            $at,
         );
     }};
     (option $at:tt $name:ident: $ty:ty; $out:ident, $this:ident, $cx:ident) => {{
@@ -740,6 +742,8 @@ macro_rules! __emit {
                 &mut $this.keep.$at,
                 &mut $this.outs[$at],
                 &mut $out[$at],
+                $cx,
+                $at,
             );
         }
     }};

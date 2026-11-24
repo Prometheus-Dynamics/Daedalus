@@ -65,7 +65,12 @@ fn make(data: &'static (dyn Any + Send + Sync), ask: &Ask<'_>) -> Result<Step, S
         })?;
         consts.push((*port, value));
     }
-    daedalus_cpu::plugin::boundary_step(record, ask.position, &consts)
+    let place = daedalus_cpu::plugin::Place {
+        consts: &consts,
+        inner_inputs: ask.inner_inputs,
+        inner_outputs: ask.inner_outputs,
+    };
+    daedalus_cpu::plugin::boundary_step(record, ask.position, &place)
 }
 
 /// What a plugin named `name` declares for `records`: one backend, named as the plugin is, and

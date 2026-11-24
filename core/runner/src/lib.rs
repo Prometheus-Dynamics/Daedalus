@@ -38,6 +38,8 @@ mod fixed_queue;
 #[cfg(feature = "alloc")]
 mod forward;
 mod inline;
+#[cfg(feature = "alloc")]
+mod inside;
 mod join;
 #[cfg(all(feature = "threads", target_arch = "wasm32", target_os = "unknown"))]
 compile_error!(
@@ -89,6 +91,10 @@ pub use fixed_queue::{FixedQueue, Overflow, QueueFull, Ring};
 #[cfg(feature = "alloc")]
 pub use forward::Forward;
 pub use inline::{read_inline, write_inline};
+#[cfg(feature = "alloc")]
+pub use inside::{
+    InsideShelf, hand_inside, inside_take, inside_values_held, inside_view, is_inside,
+};
 pub use join::Fire;
 #[cfg(feature = "threads")]
 pub use lanes::{LaneError, Lanes, Pool};

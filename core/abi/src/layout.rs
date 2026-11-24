@@ -13,8 +13,8 @@ use crate::foreign::{ForeignHandle, ForeignInterfaceInfo, ForeignOwner};
 use crate::shape::{AbiDesc, FieldInfo, ShapeDesc, ShapeInfo};
 use crate::{
     AbiVersion, BackendTable, BoundaryPort, BytesC, CodecC, ConstC, DetailSink, Fence, FencePoll,
-    HandedRecord, Handle, MetricCell, NodeC, PluginEntry, PortC, RegionView, Slot, Slots, Status,
-    Step, StepCx, StepEnd, Text, UnitOut,
+    HandedRecord, Handle, InnerEdgeC, MetricCell, NodeC, PluginEntry, PortC, RegionView, Slot,
+    Slots, Status, Step, StepCx, StepEnd, Text, UnitOut,
 };
 
 /// FNV-1a over the words, each as little-endian bytes.
@@ -93,7 +93,7 @@ pub const SHAPES: &[ShapeInfo] = shapes! {
     6 frozen Slots { cells, len, reserved }
     7 frozen DetailSink { context, write }
     #[cfg(not(daedalus_abi_baseline))]
-    8 growable StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns, handover | detail, step, metrics_len, metrics }
+    8 growable StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns, handover | detail, step, metrics_len, metrics, handover_more, handover_more_len }
     #[cfg(daedalus_abi_baseline)]
     8 growable StepCx { at, reason_len, reason, cancel, progress, flags, code, now_ns, handover }
     9 frozen StepEnd { }
@@ -107,7 +107,7 @@ pub const SHAPES: &[ShapeInfo] = shapes! {
     17 growable NodeC { id, source, backend, text, inputs, input_count, outputs, output_count }
     18 frozen BoundaryPort { node, port, reserved, type_index, slot }
     #[cfg(not(daedalus_abi_baseline))]
-    19 growable RegionView { nodes, node_count, inputs, input_count, outputs, output_count | consts, const_count, reason, reason_cap, reason_len }
+    19 growable RegionView { nodes, node_count, inputs, input_count, outputs, output_count | consts, const_count, reason, reason_cap, reason_len, edges, edge_count }
     #[cfg(daedalus_abi_baseline)]
     19 growable RegionView { nodes, node_count, inputs, input_count, outputs, output_count }
     20 frozen UnitOut { step, node, reserved }
@@ -120,6 +120,7 @@ pub const SHAPES: &[ShapeInfo] = shapes! {
     27 frozen AbiDesc { shapes, count, reserved }
     28 frozen MetricCell { sum, count, max }
     29 frozen ConstC { node, reserved, port, value, len }
+    30 frozen InnerEdgeC { from_node, to_node, from_port, to_port, reserved }
 };
 
 const COUNT: usize = SHAPES.len();

@@ -54,10 +54,23 @@ What such a node gets, and what it does not yet:
 
 - The same outputs as linked, its state between ticks, state kept across a graph reload, a
   fault with its reason and code, and a restart.
-- Every port is read and written in its type's crossing form: a number or other plain data of
-  16 bytes or less in place, anything else as its wire form. So a type on a port needs
-  `#[derive(WireForm)]`, and a node with a port of a type that has none cannot be built into a
-  step. This holds between two nodes of the same plugin too, for now.
+- A port on an edge that crosses the plugin's boundary is read and written in its type's
+  crossing form: a number or other plain data of 16 bytes or less in place, bytes by handle,
+  anything else as its wire form. So a type on such a port needs `#[derive(WireForm)]`, and a
+  node with one of a type that has none is refused in words: ``output `kept` of np.keep is read
+  by a node outside this plugin: the edge crosses the plugin's boundary, but Kept has no
+  crossing form``.
+- An edge between two nodes of the same plugin, whose value nothing outside the plugin reads,
+  carries the Rust value as it is: both ends are the plugin's own code. The host hands the
+  plugin these edges with the view it compiles. The value goes in a box of the plugin's own,
+  handed over as a record the host counts and releases through the plugin, like any bytes a
+  plugin hands over, so the library stays loaded while a cell holds one, and the box goes back
+  to the output for its next value once released. A handle (`Arc<T>`) and a list an `OutView`
+  wrote go in the box too, so the host never runs the plugin's code on a cell itself. A reader
+  borrows the value where it is, and the last one moves it out. A reader takes a value only from a record
+  its own build made and only of its own type; any other fails the step with words (`an input
+  held a value of another form`), and is never read as its type. A plugin run in a worker
+  process is handed no inner edges, and reads and writes every port in its crossing form.
 - A port's type needs a key of its own (`#[type_key("...")]`). A type compared by what it is made
   of, a list or a tuple, has no name an entry can carry.
 - A constant the graph gives an input reaches the node: the host hands the plugin each
@@ -74,11 +87,15 @@ What such a node gets, and what it does not yet:
 - No fan-in. No merging with other nodes, of the host or of the plugin: each node is a step.
   No blob or source form.
 - Cost, in instructions a tick (`testing/crates/node-plugin/examples/measure.rs`): one node
-  1,733 linked and 1,887 loaded. Two nodes with a small struct between them 2,597 linked and
-  unmerged, 2,870 loaded. Two nodes with a megabyte of `Vec<u8>` between them 60,000 linked and
-  176,000 loaded, where the megabyte is written in its wire form and read back as one block.
-  A megabyte made by a linked node and read by a plugin's node costs the same (`measure
-  handed`).
+  1,733 linked and 1,887 loaded. Two nodes with a small struct between them 2,700 linked and
+  2,920 loaded, where the struct's wire form is written in its cell. Two nodes with a list in a
+  struct that has no crossing form between them (`measure kept`) 2,930 linked and 3,260 loaded,
+  where the struct goes in a box the plugin reuses. Two nodes with a megabyte of `Vec<u8>`
+  between them 60,370 linked and 60,730 loaded. A megabyte made by a linked node and read by a
+  plugin's node costs 176,600 (`measure handed`): it is written in its wire form and read back
+  as one block.
+- A value inside the plugin whose wire form fits in its cell (16 bytes or less) is written
+  there, as at the boundary, since that is less work than a box.
 
 ## The check at load
 

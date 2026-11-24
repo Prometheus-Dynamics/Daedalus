@@ -7,9 +7,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
 use daedalus_abi::{
-    BackendTable, BoundaryPort, CanTakeFn, CompileFn, ConstC, HANDOVER_PENDING, OWNER_HANDED,
-    OwnedStep, PluginEntry, RegionView, SharedBytes, Slot, SlotState, Slots, Status, Step, StepCx,
-    StepEnd, Text, UnitOut,
+    BackendTable, BoundaryPort, BytesC, CanTakeFn, CompileFn, ConstC, HANDOVER_PENDING, InnerEdgeC,
+    OWNER_HANDED, OwnedStep, PluginEntry, RegionView, SharedBytes, Slot, SlotState, Slots, Status,
+    Step, StepCx, StepEnd, Text, UnitOut,
 };
 use daedalus_backend::{PortRef, StepUnit, UnitInfo};
 use daedalus_integrity::{Checked, Integrity};
@@ -29,6 +29,9 @@ pub struct RegionIn<'a> {
     pub outputs: &'a [BoundaryPort],
     /// The constants the graph gives the region's nodes. Empty when it gives none.
     pub consts: &'a [ConstIn<'a>],
+    /// The edges between the region's nodes whose value no node outside the region reads. Their
+    /// values may stay in the backend's own form. Empty when there are none.
+    pub inner: &'a [InnerEdgeC],
 }
 
 /// A constant of one input of a region's node: the node's index in the region, the port, and
@@ -413,6 +416,7 @@ impl Backend {
                 holder: self.holder.clone(),
                 inputs: reads.len(),
                 outputs: writes.len(),
+                more: Room(vec![daedalus_abi::NO_BYTES; writes.len().saturating_sub(2)]),
             }),
             info: UnitInfo {
                 covers: vec![NodeIndex(node)],
@@ -463,6 +467,7 @@ impl Backend {
         let mut written = 0usize;
         let view = RegionView::of(&nodes, region.inputs, region.outputs)
             .with_consts(&consts)
+            .with_edges(region.inner)
             .with_reason(&mut reason, &mut written);
         let status = match body(&view) {
             Ok(result) => return Ok(result),
@@ -490,14 +495,34 @@ struct Pinned {
     /// The frame's inputs come first, so output `k` is cell `inputs + k`.
     inputs: usize,
     outputs: usize,
+    /// Room for the hand-overs of outputs past the first two, lent to the step for each call.
+    more: Room,
 }
+
+/// Hand-over entries, empty between calls: each call's entries are settled and cleared before
+/// `run` returns, so no pointer in them outlives the call.
+struct Room(Vec<BytesC>);
+
+// SAFETY: between calls every entry is `NO_BYTES` (null pointers, no release); the pointers a
+// plugin writes during a call are settled and cleared in that same call, on the calling thread.
+unsafe impl Send for Room {}
 
 impl OwnedStep for Pinned {
     fn run(&mut self, slots: &mut Slots, cx: &mut StepCx) -> StepEnd {
+        // A step of two outputs or fewer hands them over in the context's own room.
+        let more = !self.more.0.is_empty();
+        if more {
+            cx.lend_handover_room(&mut self.more.0);
+        }
         // SAFETY: the step's `run` and `data` belong together, and `_generation` keeps the code
         // loaded. The runner passes exclusive `slots` and `cx` for this call.
         let end = unsafe { (self.step.run)(self.step.data, slots, cx) };
         self.settle_handovers(slots, cx);
+        if more {
+            // The room is this step's: no other step's call sees it, and it is left empty.
+            cx.end_handover_room();
+            self.more.0.fill(daedalus_abi::NO_BYTES);
+        }
         end
     }
 }
@@ -505,51 +530,55 @@ impl OwnedStep for Pinned {
 impl Pinned {
     /// Turns each output cell the step marked as a hand-over into a record. Every marked cell is
     /// settled, even when the step faulted, so no marked cell reaches the runner.
+    #[inline]
     fn settle_handovers(&self, slots: &mut Slots, cx: &StepCx) {
         for k in 0..self.outputs {
             let Some(cell) = slots.cell(self.inputs + k) else {
                 break;
             };
-            if cell.owner != OWNER_HANDED || cell.reserved != HANDOVER_PENDING {
-                continue;
+            if cell.owner == OWNER_HANDED && cell.reserved == HANDOVER_PENDING {
+                self.settle(cell, cx.handed(k));
             }
-            let Some(bytes) = cx
-                .handover
-                .get(k)
-                .copied()
-                .filter(|b| !b.ptr.is_null() || b.len == 0)
-            else {
-                *cell = Slot::EMPTY;
-                continue;
-            };
-            let record = match self.holder.take(bytes) {
-                Some(record) => record,
-                None => {
-                    // The pool has no record to spare: copy the bytes, and let the plugin free its own.
-                    let plugin = if bytes.len == 0 {
-                        &[][..]
-                    } else {
-                        // SAFETY: the plugin's bytes are `len` valid bytes until its release, which
-                        // runs below, after the copy.
-                        unsafe { std::slice::from_raw_parts(bytes.ptr, bytes.len) }
-                    };
-                    let record = self.holder.copy(plugin);
-                    if let Some(release) = bytes.release {
-                        // SAFETY: the plugin handed `data` out with this release, and this is its one call.
-                        unsafe { release(bytes.data) };
-                    }
-                    record
-                }
-            };
-            cell.state = SlotState::Full as u32;
-            cell.owner = OWNER_HANDED;
-            cell.reserved = 0;
-            // SAFETY: `record` holds one count for the cell, and the handle reads only that record.
-            let fields = unsafe { record.as_ref() };
-            cell.data = fields.bytes.ptr.cast_mut();
-            cell.len = fields.bytes.len;
-            cell.cap = record.as_ptr().expose_provenance();
         }
+    }
+
+    /// Settles one output cell the step marked as handed over, from what it handed.
+    #[inline(never)]
+    fn settle(&self, cell: &mut Slot, handed: Option<BytesC>) {
+        let Some(bytes) = handed.filter(|b| !b.ptr.is_null() || b.len == 0) else {
+            *cell = Slot::EMPTY;
+            return;
+        };
+        let record = match self.holder.take(bytes) {
+            Some(record) => record,
+            // A hand-over of no bytes is a value only the plugin reads, which a copy would
+            // lose: it is wrapped as it is, and the record keeps the library open as any does.
+            None if bytes.len == 0 && !bytes.data.is_null() => self.holder.wrap(bytes),
+            None => {
+                // The pool has no record to spare: copy the bytes, and let the plugin free its own.
+                let plugin = if bytes.len == 0 {
+                    &[][..]
+                } else {
+                    // SAFETY: the plugin's bytes are `len` valid bytes until its release, which
+                    // runs below, after the copy.
+                    unsafe { std::slice::from_raw_parts(bytes.ptr, bytes.len) }
+                };
+                let record = self.holder.copy(plugin);
+                if let Some(release) = bytes.release {
+                    // SAFETY: the plugin handed `data` out with this release, and this is its one call.
+                    unsafe { release(bytes.data) };
+                }
+                record
+            }
+        };
+        cell.state = SlotState::Full as u32;
+        cell.owner = OWNER_HANDED;
+        cell.reserved = 0;
+        // SAFETY: `record` holds one count for the cell, and the handle reads only that record.
+        let fields = unsafe { record.as_ref() };
+        cell.data = fields.bytes.ptr.cast_mut();
+        cell.len = fields.bytes.len;
+        cell.cap = record.as_ptr().expose_provenance();
     }
 }
 

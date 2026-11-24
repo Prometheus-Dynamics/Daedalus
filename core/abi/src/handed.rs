@@ -237,7 +237,7 @@ unsafe extern "C" fn free_vec(data: *mut ()) {
 /// # Safety
 /// `record` must be the record `from_vec` leaked, freed once.
 #[cfg(feature = "alloc")]
-unsafe extern "C" fn free_record(record: *mut HandedRecord) {
+pub(crate) unsafe extern "C" fn free_record(record: *mut HandedRecord) {
     // SAFETY: as the caller promises, `record` is that leaked record.
     drop(unsafe { alloc::boxed::Box::from_raw(record) });
 }

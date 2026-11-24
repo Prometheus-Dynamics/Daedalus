@@ -1,14 +1,16 @@
 //! A `#[node]`'s step as a plugin builds it. A plugin carries this backend and compiles its own
-//! bodies, so the step is the one a host would build, with one difference: every input is read
-//! and every output written in its type's crossing form, since that is what the cells of the
-//! plugin's space hold.
+//! bodies, so the step is the one a host would build, with one difference: an input or output on
+//! an edge that crosses the plugin's boundary is read and written in its type's crossing form.
+//! An edge between two of the plugin's own nodes, whose value nothing else reads, carries the
+//! value as it is: both ends are this build's code.
 
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use daedalus_abi::Step;
-use daedalus_backend::{BodyIndex, CompileCx, ConstOf, NodeBody};
+use daedalus_backend::{BodyIndex, CompileCx, ConstOf, NodeBody, PortRef};
 use daedalus_graph::Lit;
 use daedalus_registry::NodeRecord;
 use daedalus_types::NodeIndex;
@@ -17,15 +19,21 @@ use crate::backend::{Wiring, has_port, ports, step_of};
 use crate::steps::CpuBody;
 use crate::steps::live::Readers;
 
-/// Builds the step of `record` for the node at `node`, with every port in its crossing form and
-/// `consts` the constants the graph gives its inputs, by port: a config is the one named
-/// `config`. Refused, in words, for a body that is not a CPU function, a node with a fan-in, a
-/// port whose type has no crossing form, and a constant that does not fit its port.
-pub fn boundary_step(
-    record: &NodeRecord,
-    node: u32,
-    consts: &[(&str, Lit)],
-) -> Result<Step, String> {
+/// Where a plugin's node is in its region: the constants the graph gives its inputs, by port (a
+/// config is the one named `config`), and its ports on edges to and from other nodes of the
+/// plugin that nothing else reads, by index.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Place<'a> {
+    pub consts: &'a [(&'a str, Lit)],
+    pub inner_inputs: &'a [u16],
+    pub inner_outputs: &'a [u16],
+}
+
+/// Builds the step of `record` for the node at `node`. A port on an edge that crosses the
+/// plugin's boundary is in its crossing form; one in `place`'s inner lists carries the value as
+/// it is. Refused, in words, for a body that is not a CPU function, a node with a fan-in, a port
+/// on the boundary whose type has no crossing form, and a constant that does not fit its port.
+pub fn boundary_step(record: &NodeRecord, node: u32, place: &Place<'_>) -> Result<Step, String> {
     let id = record.decl.id;
     let Some(cpu) = record.body.code.downcast_ref::<CpuBody>() else {
         return Err(format!("{id} has no CPU function for a plugin to build"));
@@ -38,11 +46,21 @@ pub fn boundary_step(
     let inputs = cpu.shape.params.iter().filter(|param| has_port(param.role));
     let (inputs, outputs) = (inputs.count() as u16, record.decl.outputs.len() as u16);
     let index = NodeIndex(node);
+    let inputs_across: Vec<PortRef> = ports(index, inputs)
+        .into_iter()
+        .filter(|at| !place.inner_inputs.contains(&at.port.0))
+        .collect();
+    let (outputs_across, carried): (Vec<PortRef>, Vec<PortRef>) = ports(index, outputs)
+        .into_iter()
+        .partition(|at| !place.inner_outputs.contains(&at.port.0));
     let wiring = Wiring {
-        outputs: ports(index, outputs),
-        inputs: ports(index, inputs),
+        outputs: outputs_across,
+        inputs: inputs_across,
+        carried,
+        plugin: true,
     };
-    let consts: alloc::vec::Vec<ConstOf<'_>> = consts
+    let consts: Vec<ConstOf<'_>> = place
+        .consts
         .iter()
         .map(|(port, value)| ConstOf {
             node: index,

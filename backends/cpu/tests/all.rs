@@ -39,6 +39,8 @@ mod fixture;
 mod fusion_equivalence;
 #[path = "handed_bytes.rs"]
 mod handed_bytes;
+#[path = "inside.rs"]
+mod inside;
 #[cfg(feature = "merge")]
 #[path = "merge.rs"]
 mod merge;

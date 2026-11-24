@@ -38,6 +38,9 @@ pub struct Setup<'a> {
     /// Where the step registers how its constants are decoded, so a host can change one while
     /// the graph runs. `None` fixes them as the step is built.
     pub readers: Option<&'a Readers>,
+    /// The step is a plugin's node, built by the plugin: a value placed in its crossing form
+    /// crosses the plugin's boundary, rather than leaving the program for a worker.
+    pub plugin: bool,
 }
 
 impl Setup<'_> {
@@ -225,8 +228,12 @@ impl OutputNames for daedalus_registry::TransferRecord {
 pub fn check_wire(setup: &Setup<'_>, outputs: &[(&str, bool, &str)]) -> Result<(), String> {
     for (at, (name, has, ty)) in outputs.iter().enumerate() {
         if setup.keep.get(at) == Some(&Keep::Wire) && !has {
+            let by = match setup.plugin {
+                true => "by a node outside this plugin: the edge crosses the plugin's boundary",
+                false => "outside this program (by a worker or a plugin)",
+            };
             return Err(format!(
-                "output `{name}` of {} is read outside this program (by a worker or a plugin), but {ty} has no crossing form: add #[derive(WireForm)] to {ty}",
+                "output `{name}` of {} is read {by}, but {ty} has no crossing form: add #[derive(WireForm)] to {ty}",
                 setup.id
             ));
         }
@@ -252,7 +259,16 @@ fn held<T: Send + Sync + 'static>(value: &Lit, port: &str, kind: Kind<T>) -> Res
     let decoded =
         decode(value).ok_or_else(|| format!("the constant for port `{port}` doesn't fit"))?;
     Ok(Held::new(|buf, slot| {
-        ports::encode(decoded, kind, Keep::Fresh, &mut (), buf, slot);
+        ports::encode(
+            decoded,
+            kind,
+            Keep::Fresh,
+            &mut (),
+            buf,
+            slot,
+            &mut daedalus_abi::StepCx::new(),
+            0,
+        );
     }))
 }
 

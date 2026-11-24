@@ -1,6 +1,7 @@
 //! A crate of `#[node]` functions loaded as a plugin gives what the same crate gives linked in:
 //! the same outputs, state kept across a reload, a node's own metrics, the constants and config
-//! a graph gives a node, and a refusal in the plugin's own words.
+//! a graph gives a node, a value with no crossing form between two of its nodes, and a refusal in
+//! the plugin's own words.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,7 +12,8 @@ use daedalus_graph::{
 };
 use daedalus_host::{LoadOptions, LoadedHost};
 use daedalus_loader::{Loader, Plugin, PluginBackend};
-use daedalus_node_plugin::NODES;
+use daedalus_macros::node;
+use daedalus_node_plugin::{Kept, NODES};
 use daedalus_planner::{Config, Planned, plan};
 use daedalus_registry::Registry;
 
@@ -269,5 +271,100 @@ fn a_plugins_refusal_reaches_the_host_in_its_own_words() {
     assert!(
         words.contains("np.sum takes a fan-in, which a plugin's node cannot yet"),
         "the plugin's words are lost: {words}"
+    );
+}
+
+#[test]
+fn a_value_with_no_crossing_form_goes_between_two_plugin_nodes_as_it_is() {
+    let graph = chain(&[("np.keep", "x", "kept"), ("np.weigh", "kept", "y")]);
+    let mut from_file = host(loaded(&plugin_of(), &graph));
+    let mut built_in = host(linked(&graph));
+    for x in [0u32, 1, 5, 63, 64, 100] {
+        let got = through(&mut from_file, x);
+        assert!(got.is_some(), "x = {x}");
+        assert_eq!(got, through(&mut built_in, x), "x = {x}");
+    }
+}
+
+/// How many values the plugin's build holds in boxes, asked of the plugin by a graph of one node.
+fn held_in(host: &mut LoadedHost, plugin: &Arc<Plugin>) -> Option<u32> {
+    let graph = chain(&[("np.held", "x", "y")]);
+    host.reload(loaded(plugin, &graph)).expect("reloads");
+    through(host, 0)
+}
+
+#[test]
+fn every_value_inside_a_plugin_is_released_before_its_library_closes() {
+    let plugin = plugin_of();
+    let probe = plugin.generation_probe();
+
+    // A reload: the old graph's cells give their values back.
+    let graph = chain(&[("np.keep", "x", "kept"), ("np.weigh", "kept", "y")]);
+    let mut host = host(loaded(&plugin, &graph));
+    for x in [3u32, 4, 5] {
+        assert!(through(&mut host, x).is_some());
+    }
+    assert_eq!(held_in(&mut host, &plugin), Some(0), "after a reload");
+
+    // A fault with the value still in its reader's cell, and the restart after it.
+    let mut graph = chain(&[("np.keep", "x", "kept"), ("np.weigh_or_fail", "kept", "y")]);
+    graph.nodes[2].metadata.insert(
+        "daedalus.node.recovery".to_string(),
+        Lit::Str("restart".to_string()),
+    );
+    host.reload(loaded(&plugin, &graph)).expect("reloads");
+    for x in [3u32, 6, 4] {
+        let io = host.host();
+        io.feed_inline("x", &x.to_le_bytes()).expect("a feed");
+        io.step().expect("a tick: the node restarts");
+        let out = io.take_copy::<u32>("out").expect("a take");
+        assert_eq!(out.is_some(), x != 6, "x = {x}");
+    }
+    let faults: Vec<String> = host
+        .fault_reports()
+        .map(|fault| fault.reason().to_string())
+        .collect();
+    assert_eq!(faults, ["fifteen"]);
+    assert_eq!(held_in(&mut host, &plugin), Some(0), "after a fault");
+
+    // Taking the plugin out: the graph goes, then the plugin, and the library closes, which it
+    // cannot while any value it made is held.
+    host.reload(loaded(&plugin, &graph)).expect("reloads");
+    assert!(through(&mut host, 3).is_some());
+    drop(host);
+    drop(plugin);
+    assert!(
+        probe.upgrade().is_none(),
+        "the library closes once the graph and the plugin are gone"
+    );
+}
+
+/// A node of this program that reads the plugin's value.
+#[node(id = "t.weigh", inputs(kept), outputs(y))]
+fn weigh_here(kept: &Kept) -> u32 {
+    kept.items.len() as u32
+}
+
+#[test]
+fn a_value_with_no_crossing_form_cannot_leave_the_plugin_and_is_refused_in_words() {
+    let plugin = plugin_of();
+    let graph = chain(&[("np.keep", "x", "kept"), ("t.weigh", "kept", "y")]);
+    let mut registry = Registry::new();
+    plugin.join(&mut registry).expect("the plugin's nodes join");
+    registry.register(&WEIGH_HERE_NODE).expect("registers");
+    let backend = PluginBackend::new(Arc::clone(&plugin), 0);
+    let error = plan(
+        &graph,
+        &registry,
+        &[&backend, &CpuBackend],
+        &Config::default(),
+    )
+    .expect_err("a value with no crossing form cannot cross");
+    let words = format!("{error:?}");
+    assert!(
+        words.contains(
+            "output `kept` of np.keep is read by a node outside this plugin: the edge crosses the plugin's boundary"
+        ),
+        "{words}"
     );
 }
