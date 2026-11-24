@@ -1,14 +1,11 @@
 //! A step allocates nothing once it's built.
 
-mod common;
+use crate::common;
 
 use common::{call, inline, step_of, value};
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{Slot, StepCx};
 use daedalus_macros::node;
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 #[node(id = "t.mix", inputs(a, b), outputs(sum, flag))]
 fn mix(a: u32, b: &u64) -> (u64, bool) {

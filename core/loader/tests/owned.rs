@@ -1,18 +1,15 @@
 //! Values a plugin made: they keep the generation open, share their bytes, and check plain data.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::testing::{release, run_once};
 use daedalus_abi::{BoundaryPort, Slot, SlotState, Slots, StepCx};
 use daedalus_loader::{Loader, PodBlock, PodError, RegionIn};
 use support::copy_fixture;
-
-#[global_allocator]
-static ALLOCATOR: CountingAlloc = CountingAlloc;
 
 #[test]
 fn shared_bytes_cross_as_handles_without_copying() {

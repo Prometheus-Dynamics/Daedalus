@@ -106,6 +106,8 @@ class Group:
         self.pidfd = os.pidfd_open(self.proc.pid)
         self.lock = threading.Lock()
         self.reaped = False
+        # The CPU seconds of the leader and the children it reaped, once it is reaped.
+        self.cpu = 0.0
 
     def wait(self, timeout):
         """Whether the leader ended within `timeout` seconds. It is left unreaped."""
@@ -162,7 +164,10 @@ class Group:
         left = self.stop()
         with self.lock:
             if not self.reaped:
-                self.proc.wait()
+                # wait4: the leader's CPU time, with that of every child it reaped.
+                _, status, usage = os.wait4(self.proc.pid, 0)
+                self.proc.returncode = os.waitstatus_to_exitcode(status)
+                self.cpu = usage.ru_utime + usage.ru_stime
                 os.close(self.pidfd)
                 self.reaped = True
         return self.proc.returncode, left

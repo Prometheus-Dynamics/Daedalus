@@ -26,5 +26,14 @@ mod lease;
 #[cfg(target_os = "linux")]
 #[path = "raw_gate.rs"]
 mod raw_gate;
+#[path = "region.rs"]
+mod region;
+#[path = "storage.rs"]
+mod storage;
 #[path = "transfer.rs"]
 mod transfer;
+
+// Every file here counts allocations per thread (daedalus_abi::counting), so they share one
+// counting allocator and one process.
+#[global_allocator]
+static ALLOC: daedalus_abi::counting::CountingAlloc = daedalus_abi::counting::CountingAlloc;

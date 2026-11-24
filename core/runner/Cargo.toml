@@ -54,30 +54,6 @@ path = "tests/all.rs"
 
 # Its own process: installs its own global allocator.
 [[test]]
-name = "cancel"
-path = "tests/cancel.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "fence"
-path = "tests/fence.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
 name = "lanes_alloc"
 path = "tests/lanes_alloc.rs"
 
-# Its own process: installs its own global allocator.
-[[test]]
-name = "no_alloc"
-path = "tests/no_alloc.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "progress_handle"
-path = "tests/progress_handle.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "telemetry"
-path = "tests/telemetry.rs"

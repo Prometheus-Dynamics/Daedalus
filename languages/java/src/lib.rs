@@ -200,6 +200,7 @@ pub fn build_jar(out: &Path) -> io::Result<PathBuf> {
     }
     let _ = std::fs::remove_file(&stamp);
     run(Command::new(&tools()?.jar)
+        .args(TOOL_JVM)
         .arg("--create")
         .arg("--file")
         .arg(&jar)
@@ -248,6 +249,11 @@ fn inputs_of(classpath: &[PathBuf], sources: &[PathBuf]) -> io::Result<String> {
 /// The options every compile passes besides `--release`, the class path and the output directory.
 const FLAGS: [&str; 3] = ["-encoding", "UTF-8", "-Xlint:all"];
 
+/// The options of the JVM `javac` and `jar` run in: the first JIT tier alone and the serial
+/// collector. A compile of a few files then takes about half the CPU the default tiers and
+/// collector take, and its output is the same, so they are not in a stamp.
+const TOOL_JVM: [&str; 2] = ["-J-XX:TieredStopAtLevel=1", "-J-XX:+UseSerialGC"];
+
 /// Compiles `sources` into `out` with `javac --release 21`, against `classpath`. A compile of the
 /// same inputs into the same directory is not run again: `out`'s stamp holds the digest of the
 /// inputs it was compiled from. Anything else starts from an empty `out`.
@@ -262,6 +268,7 @@ pub fn compile(out: &Path, classpath: &[PathBuf], sources: &[PathBuf]) -> io::Re
     std::fs::create_dir_all(out)?;
     let mut javac = Command::new(&tools()?.javac);
     javac
+        .args(TOOL_JVM)
         .arg("--release")
         .arg(RELEASE)
         .args(FLAGS)

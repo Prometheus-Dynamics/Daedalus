@@ -3,6 +3,8 @@
 //! `[[test]]` of its own in Cargo.toml, with the reason beside it. A new file goes in one
 //! or the other; the boundary check refuses a test file in neither.
 
+#[path = "alloc.rs"]
+mod alloc;
 #[path = "any_type.rs"]
 mod any_type;
 #[path = "by_reference.rs"]
@@ -18,3 +20,8 @@ mod service_support;
 mod wire_form;
 #[path = "worker.rs"]
 mod worker;
+
+// Every file here counts allocations per thread (daedalus_abi::counting), so they share one
+// counting allocator and one process.
+#[global_allocator]
+static ALLOC: daedalus_abi::counting::CountingAlloc = daedalus_abi::counting::CountingAlloc;

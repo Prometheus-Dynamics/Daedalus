@@ -1,21 +1,18 @@
 //! Progress is read from another thread while a parallel tick runs, without a lock or an
 //! allocation, and a handle outlives the runner.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{OwnedStep, Slots, Step, StepCx, StepEnd};
 use daedalus_runner::owned_run::{self, ProgressHandle};
 use daedalus_runner::{Lanes, Pool, SlotKind, SlotSpec, SlotStamp};
 use daedalus_types::{SpaceIndex, TypeIndex};
 use support::Wiring;
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 const TOTAL: u32 = 2_000;
 const DEADLINE: Duration = Duration::from_secs(20);

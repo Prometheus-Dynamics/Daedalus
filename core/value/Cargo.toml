@@ -30,7 +30,3 @@ workspace = true
 name = "all"
 path = "tests/all.rs"
 
-# Its own process: installs its own global allocator.
-[[test]]
-name = "no_alloc"
-path = "tests/no_alloc.rs"

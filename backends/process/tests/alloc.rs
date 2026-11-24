@@ -1,8 +1,8 @@
 //! A steady-state run allocates nothing on the host's thread once it has run once.
 
-mod support;
+use crate::support;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::testing::{release, run_once};
 use daedalus_abi::{Slot, SlotState, Slots, StepCx, StepEnd};
 use daedalus_backend::{
@@ -11,9 +11,6 @@ use daedalus_backend::{
 use daedalus_backend_process::ProcessBackend;
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex};
 use daedalus_worker_conformance::runner::registry;
-
-#[global_allocator]
-static ALLOCATOR: CountingAlloc = CountingAlloc;
 
 #[test]
 fn a_steady_state_run_allocates_nothing_on_the_host_thread() {

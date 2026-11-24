@@ -64,17 +64,3 @@ workspace = true
 name = "all"
 path = "tests/all.rs"
 
-# Its own process: installs its own global allocator.
-[[test]]
-name = "host_io"
-path = "tests/host_io.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "probe"
-path = "tests/probe.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "telemetry"
-path = "tests/telemetry.rs"

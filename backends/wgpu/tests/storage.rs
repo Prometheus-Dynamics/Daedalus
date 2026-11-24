@@ -1,15 +1,12 @@
 //! Storage buffers in each memory space, the readback pool and the scratch pool, on a real device.
 
-mod common;
+use crate::common;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_wgpu::{
     Options, SPACE_DEVICE, SPACE_HOST_MAPPED, StagingStats, Storage, StorageError, StoragePool,
     Texture, TextureDesc, TextureError, WgpuBackend,
 };
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 /// A backend with a device of its own, so its counters are this test's alone.
 fn private() -> Option<WgpuBackend> {

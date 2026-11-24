@@ -1,12 +1,9 @@
-mod support;
+use crate::support;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{Slots, Step, StepCx, StepEnd};
 use daedalus_runner::{Counters, SlotKind, SlotSpec};
 use support::{Fixture, Link, chain, tagged};
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 #[test]
 fn counters_have_a_fixed_size() {

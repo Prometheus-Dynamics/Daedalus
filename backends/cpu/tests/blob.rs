@@ -2,10 +2,9 @@
 
 #![cfg(feature = "blob")]
 
-#[path = "shared/blob_fixture.rs"]
-mod fixture;
+use crate::fixture;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_cpu::blob::{BlobBackend, Interpreter, Overflow, RunError, Source, StepDesc, encode};
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, Lit, NodeDoc, NodeKindDoc, PortRefDoc};
 use daedalus_planner::{Config, Form, PlanError, plan as make_plan};
@@ -14,9 +13,6 @@ use fixture::{
     BAD, BAD_NODE, FIRST, FIRST_NODE, GAIN_NODE, HEAVY_NODE, LIBRARY, OPT, OPT_NODE, SUM, SUM_NODE,
     edge, host, plan,
 };
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 type Running = Interpreter<2048>;
 

@@ -2,12 +2,9 @@
 
 use std::sync::Arc;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_types::{SpaceIndex, TypeIndex};
 use daedalus_value::*;
-
-#[global_allocator]
-static GLOBAL: CountingAlloc = CountingAlloc;
 
 fn inline() -> Value {
     Value {

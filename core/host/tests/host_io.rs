@@ -3,16 +3,13 @@
 
 use std::sync::{Arc, Mutex};
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{Slots, Step, StepCx, StepEnd, StepWord};
 use daedalus_host::{Dir, Host, HostError, PortSpec, Ports};
 use daedalus_plan::Span;
 use daedalus_runner::{Memory, Plan, Runner, SlotKind, SlotSpec, StepMeta};
 use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex, TypeKey, Typed};
 use daedalus_value::{Owner, Value};
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 const TY_A: TypeIndex = TypeIndex(0);
 const TY_B: TypeIndex = TypeIndex(1);
