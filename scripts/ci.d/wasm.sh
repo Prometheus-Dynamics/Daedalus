@@ -2,6 +2,8 @@
 # bound: 732 s (three times its slowest green run, 244 s, in a cold build on a fresh slot)
 # Builds for WebAssembly without threads and runs the results under Node.
 set -euo pipefail
+# Its lane's build directory: no other lane builds there (scripts/gate.sh).
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/cross"
 
 out="${CARGO_TARGET_DIR:-target}"
 

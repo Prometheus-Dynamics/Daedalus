@@ -3,6 +3,8 @@
 # Checks the crates a program with no operating system uses, for chips with and without
 # compare-and-swap, then the example that puts them together.
 set -euo pipefail
+# Its lane's build directory: no other lane builds there (scripts/gate.sh).
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/cross"
 
 readonly TARGETS=(thumbv7em-none-eabihf thumbv6m-none-eabi riscv32imac-unknown-none-elf)
 readonly CRATES=(daedalus-abi daedalus-types daedalus-value daedalus-graph daedalus-plan daedalus-runner daedalus-cpu)

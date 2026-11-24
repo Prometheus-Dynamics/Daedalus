@@ -38,11 +38,12 @@ crate is making its directory.
 ## The gate
 
 `scripts/gate.sh` is what every change must pass, and what CI runs. It runs every step in
-`scripts/ci.d/`, in five lanes at once: the cargo steps for this machine one after another; what
-a release ships (the crates packaged, the daemon's packaging files and the examples run, built in
-`ship` inside the build directory); the steps whose builds never replace what the first lane runs
-(the daemon built with other features, in `variants` inside the build directory, and the budget
-table); the steps that build only for other targets; and the checks that build nothing. A new step must be
+`scripts/ci.d/`, in six lanes at once: the cargo steps for this machine one after another; the API
+documentation (built in `doc-build` inside the build directory); what a release ships (the crates
+packaged, the daemon's packaging files and the examples run, built in `ship`); the steps whose
+builds never replace what the first lane runs (the daemon built with other features and the budget
+table, in `variants`); the steps that build only for other targets (in `cross`); and the checks
+that build nothing. No two lanes build in one directory, so no lane waits on another's lock. A new step must be
 named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` runs one by name:
 
 | Step | What it checks |
@@ -60,9 +61,9 @@ named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` ru
 | `package` | Every publishable crate lists its files with no warning and has the registry metadata |
 | `semver` | Semantic versioning against the `SEMVER_BASELINE` tag; reports and never fails the gate |
 | `smoke` | The examples run and print what they should |
-| `doc` | The API docs build with no warning, and every link in `docs/` resolves |
+| `doc` | The API docs build with no warning. Every link in `docs/` resolving is a `daedalus` `docs::` test, which the `test` step runs |
 | `tools` | `scripts/affected.py`, `scripts/prune-targets.py`, `scripts/seed-target.py`, `scripts/fixture-locks.sh` and `scripts/bounded.py` against planted cases; the bounds against a planted sleeper and an orphan that holds the output, in `scripts/ci.sh` and `scripts/test-parallel.py` |
-| `vvl-wgpu` | The `daedalus-wgpu` tests, every one that opens a device, the same way as `vvl`. Last in the scripts lane, off the critical path: it waits for the `test` step's build and reuses its binaries |
+| `vvl-wgpu` | The `daedalus-wgpu` tests, every one that opens a device, the same way as `vvl`, on the binaries the `test` step built, after it in the host lane |
 
 Every step runs under a hard bound, written in its own file as `# bound: N s`: three times its
 slowest green run, and never under a minute (the three scripts the scripts lane runs after its
@@ -124,6 +125,19 @@ that depend on it.
 The test fixtures build on their own, outside the workspace, and their lock files aren't committed.
 `scripts/fixture-locks.sh` gives a fixture with none a lock made from the root one, before the gate's
 lanes start, so a fixture builds the workspace's versions of what they share.
+
+## The working area
+
+`scripts/dev/setup.sh` makes the lander's working area from nothing (`DAEDALUS_WORK`, default
+`/mnt/nvme-wd/daedalus`): `wt/` the clones (`work`, `gate`, `seeder`), `target/` a build directory
+for each clone, `cache/` what can be thrown away (the seed, the validation layer, `TMPDIR`) and
+`logs/` the gate logs. `source scripts/dev/env.sh` inside a clone sets what the tools read.
+`scripts/dev/land.sh` gates and lands a change, running only what it can affect: notes no check
+reads cost no gate, and a change to `docs/` alone runs the steps that read it. It writes the gate's
+summary into the commit. `setup.sh --timer` installs the idle job that keeps the seed current
+(`scripts/dev/reseed.sh`); `--board` builds the board's validation layer. The validation layer is
+built from the sources `scripts/vvl.pin` names, with its paths mapped, so it has the pinned hash
+wherever it is built.
 
 ## Adding a backend
 

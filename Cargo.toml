@@ -74,9 +74,11 @@ unimplemented = "deny"
 # kept: the long tests are compute in this code (a tick moving a 1 MiB value, hundreds of device
 # openings), which runs several times faster for a little more build time. Dependencies stay at
 # 0: optimising them costs far more build than it gives back.
+# Unoptimised workspace builds: an edit to a core crate rebuilds nearly every unit, and opt-level 1
+# cost 938 CPU-s against 532 at 0 for the whole test step (build and run, 2026-11-24, load 95-162).
+# What a test spends its time in gets an override of its own below.
 [profile.dev]
 debug = "line-tables-only"
-opt-level = 1
 
 [profile.dev.package."*"]
 debug = false
@@ -84,6 +86,11 @@ opt-level = 0
 
 # The plugin digest. Tests hash every library they load, and sha2 unoptimised is the slowest part.
 [profile.dev.package.sha2]
+opt-level = 3
+
+# The digest's generic update path is compiled in the crate that calls it: unoptimised, a test
+# that loads plugins runs 2-5 times slower (drive conformance 26.6 s against 5.7 s).
+[profile.dev.package.daedalus-integrity]
 opt-level = 3
 
 # What is built to run: one unit, optimised across crates. It is about a fifth smaller than the

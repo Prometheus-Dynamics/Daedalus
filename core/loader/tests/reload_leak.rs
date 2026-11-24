@@ -5,6 +5,7 @@ mod support;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::sync::Mutex;
 
 use daedalus_loader::{Loader, plugin_tables_held};
 use daedalus_registry::{Registry, promoted_declarations};
@@ -54,43 +55,71 @@ unsafe impl GlobalAlloc for Tracking {
 #[global_allocator]
 static GLOBAL: Tracking = Tracking;
 
+/// The rounds a check reloads for. Every count is compared exactly, so a leak of one byte, one
+/// table or one declaration a reload shows after one round; the rounds are there for a leak that
+/// only shows on some reloads. `a_planted_leak_of_one_byte_a_reload_is_caught` shows the count
+/// catches the smallest leak in this many.
+const ROUNDS: usize = 20;
+
+/// The counts of tables and declarations are the process's, so the tests take turns.
+static SERIAL: Mutex<()> = Mutex::new(());
+
 /// One full reload: open the library, join its nodes into a registry, and drop everything. The
 /// plugin's generation retires when this returns.
-fn reload(loader: &mut Loader) {
-    let plugin = loader.open(copy_fixture("reload")).expect("opens");
+fn reload(loader: &mut Loader, name: &str) {
+    let plugin = loader.open(copy_fixture(name)).expect("opens");
     let mut registry = Registry::new();
     plugin.join(&mut registry).expect("joins");
     assert!(registry.entry("fixture.pass").is_some());
 }
 
+/// What `ROUNDS` reloads leave behind, after three that fill the caches the loader and the
+/// registry keep for the process: live bytes, promoted declarations and held plugin tables.
+fn growth(mut once: impl FnMut(&mut Loader)) -> [isize; 3] {
+    let mut loader = Loader::new();
+    for _ in 0..3 {
+        once(&mut loader);
+    }
+    let counts = || {
+        [
+            live_bytes(),
+            promoted_declarations() as isize,
+            plugin_tables_held() as isize,
+        ]
+    };
+    let before = counts();
+    for _ in 0..ROUNDS {
+        once(&mut loader);
+    }
+    let after = counts();
+    [0, 1, 2].map(|i| after[i] - before[i])
+}
+
 #[test]
 fn reloading_a_plugin_many_times_does_not_grow() {
-    let mut loader = Loader::new();
-    // The first loads fill the caches the loader and the registry keep for the process.
-    for _ in 0..3 {
-        reload(&mut loader);
-    }
-    let live = live_bytes();
-    let promoted = promoted_declarations();
-    let tables = plugin_tables_held();
-
-    for _ in 0..200 {
-        reload(&mut loader);
-    }
-
+    let _turn = SERIAL.lock().unwrap_or_else(|held| held.into_inner());
+    let [live, promoted, tables] = growth(|loader| reload(loader, "reload"));
     assert_eq!(
-        promoted_declarations(),
-        promoted,
+        promoted, 0,
         "reloading an unchanged plugin must not promote its declarations again"
     );
     assert_eq!(
-        plugin_tables_held(),
-        tables,
+        tables, 0,
         "every plugin entry must be released once it is read"
     );
     assert_eq!(
-        live_bytes(),
-        live,
+        live, 0,
         "reloading an unchanged plugin must not keep any memory live"
     );
+}
+
+#[test]
+fn a_planted_leak_of_one_byte_a_reload_is_caught() {
+    let _turn = SERIAL.lock().unwrap_or_else(|held| held.into_inner());
+    let [live, promoted, tables] = growth(|loader| {
+        reload(loader, "reload-planted");
+        std::mem::forget(vec![0u8; 1]);
+    });
+    assert_eq!(live, ROUNDS as isize, "one byte a reload, kept live");
+    assert_eq!((promoted, tables), (0, 0));
 }

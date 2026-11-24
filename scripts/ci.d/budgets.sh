@@ -5,4 +5,6 @@
 # regressions that must fail. A row that needs valgrind is not run where valgrind is not
 # installed. The budgets workflow installs it and sets BUDGETS_REQUIRE_ALL=1.
 set -euo pipefail
+# Its lane's build directory: no other lane builds there (scripts/gate.sh).
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/variants"
 exec python3 testing/crates/budget-harness/check.py "$@"

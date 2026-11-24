@@ -1,0 +1,9 @@
+[Unit]
+Description=Daedalus: check the seed's key against next
+
+[Timer]
+OnBootSec=15min
+OnUnitInactiveSec=30min
+
+[Install]
+WantedBy=timers.target

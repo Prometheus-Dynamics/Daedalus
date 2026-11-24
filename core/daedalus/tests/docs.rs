@@ -159,6 +159,8 @@ const POINTERS_ALLOWED: &[&str] = &[
     "scripts/check-capability-audit.sh",
     "scripts/ci.d/capability.sh",
     "scripts/pr-status.py",
+    // The lander names the notes no check reads, which cost no gate.
+    "scripts/dev/land.sh",
     // The rule that a product name may appear in the planning files names them.
     "scripts/boundaries.py",
     // This file names what it looks for.

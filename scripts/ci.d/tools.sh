@@ -14,6 +14,7 @@ scripts/fixture-locks.sh --self-test
 python3 -I testing/crates/budget-harness/record.py --self-test
 python3 -I scripts/bounded.py --self-test
 python3 -I scripts/boundaries.py --self-test
+python3 -I scripts/board/pick-binaries.py --self-test
 # A build directory another checkout built in is refused before anything builds.
 planted="$(mktemp -d)"
 trap 'rm -rf "$planted"' EXIT

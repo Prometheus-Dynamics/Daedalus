@@ -47,33 +47,12 @@ tests() { # package, dest prefix, target names...: copies those test binaries as
   local package="$1" prefix="$2"
   shift 2
   cargo test --release --no-run "${target_args[@]}" -p "$package" --message-format=json 2>>"$LOG" |
-    python3 -c '
-import json, shutil, sys
-wanted = set(sys.argv[2:])
-for line in sys.stdin:
-    try:
-        m = json.loads(line)
-    except ValueError:
-        continue
-    if m.get("executable") and m.get("profile", {}).get("test"):
-        name = "lib" if "lib" in m["target"]["kind"] else m["target"]["name"]
-        if name in wanted:
-            shutil.copy(m["executable"], sys.argv[1] + "." + name)
-' "$BIN/$prefix" "$@"
+    python3 -I scripts/board/pick-binaries.py tests "$BIN/$prefix" "$@" || die "a test binary of $package did not build: see $LOG"
 }
 
 bench() { # package, bench name, dest: copies that bench binary (criterion's, built --no-run)
   cargo bench --no-run "${target_args[@]}" -p "$1" --bench "$2" --message-format=json 2>>"$LOG" |
-    python3 -c '
-import json, shutil, sys
-for line in sys.stdin:
-    try:
-        m = json.loads(line)
-    except ValueError:
-        continue
-    if m.get("executable") and "bench" in m["target"]["kind"] and m["target"]["name"] == sys.argv[1]:
-        shutil.copy(m["executable"], sys.argv[2])
-' "$2" "$BIN/$3"
+    python3 -I scripts/board/pick-binaries.py bench "$2" "$BIN/$3" || die "the $2 bench of $1 did not build: see $LOG"
   [[ -x "$BIN/$3" ]] || die "the $2 bench of $1 did not build: see $LOG"
 }
 
