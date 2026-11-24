@@ -20,7 +20,8 @@ package, and the target's library directories on the library path.
 With DAEDALUS_TEST_PACKAGES set to package names, only those packages' binaries run, from the
 same build: scripts/check.sh runs a change's packages this way, and the gate those whose tests
 did not pass before on the same inputs (scripts/lane-reuse.py). With DAEDALUS_TEST_PASSED set to a
-file, the names of the packages whose every binary passed are written to it, failed run or not.
+file, the names of the packages whose every binary passed are written to it, failed run or not,
+but none when a test built a fixture FIXTURES doesn't name (below): which test did isn't known.
 
 Each binary runs under a bound: three times the slowest it has passed in, and never under FLOOR.
 The bound is on time the binary could use: the time its threads spent waiting for a CPU on a busy
@@ -303,14 +304,16 @@ def main():
           f" {len(shared)} sharing trybuild's build one after another")
     for name, output in failed:
         print(f"\n---- {name} ----\n{output}", end="")
+    # A fixture no test is named for fails the run, and which test built it isn't known: no
+    # package is recorded as passed, or the next gate would reuse them all and never see it.
+    unlisted = unlisted_fixtures()
     passed_file = os.environ.get("DAEDALUS_TEST_PASSED")
     if passed_file:
-        names = set(only.split()) if only is not None else {
+        names = set() if unlisted else set(only.split()) if only is not None else {
             package_of(m["package_id"], m["manifest_path"])[0] for m in found}
         names -= {name.split(" ", 1)[0] for name, _ in failed}
         with open(passed_file, "w") as file:
             file.write("".join(f"{name}\n" for name in sorted(names)))
-    unlisted = unlisted_fixtures()
     if unlisted:
         print("\ntest: a test built a fixture that scripts/test-parallel.py FIXTURES doesn't build"
               " first: " + ", ".join(unlisted))
@@ -322,5 +325,58 @@ def main():
     return 0
 
 
+def self_test():
+    """This runner in a planted tree, with a cargo that lists one test binary and builds nothing:
+    a binary that passes but leaves a fixture FIXTURES doesn't name fails the run and records no
+    package as passed, and one that passes clean passes and records its package."""
+    import shutil
+
+    work = tempfile.mkdtemp(prefix="daedalus-test-parallel.")
+    failures = []
+    try:
+        os.makedirs(os.path.join(work, "scripts"))
+        for name in ("test-parallel.py", "bounded.py"):
+            shutil.copy2(os.path.join(ROOT, "scripts", name), os.path.join(work, "scripts", name))
+        test = os.path.join(work, "t")
+        artifact = json.dumps({
+            "reason": "compiler-artifact", "executable": test, "profile": {"test": True},
+            "target": {"kind": ["test"], "name": "t"},
+            "package_id": f"path+file://{work}#planted@0.1.0",
+            "manifest_path": os.path.join(work, "Cargo.toml")})
+        scripts = {
+            "cargo": f"#!/bin/sh\ncase \" $* \" in *' --no-run '*) echo '{artifact}';; esac\n",
+            "t": '#!/bin/sh\n[ -z "$PLANT_ROGUE" ] || { mkdir -p "$CARGO_TARGET_DIR/tmp/rogue" &&'
+                 ' touch "$CARGO_TARGET_DIR/tmp/rogue/CACHEDIR.TAG"; }\n',
+        }
+        for name, text in scripts.items():
+            with open(os.path.join(work, name), "w") as file:
+                file.write(text)
+            os.chmod(os.path.join(work, name), 0o755)
+        for rogue, code, recorded in (("1", 1, ""), ("", 0, "planted\n")):
+            target, passed = os.path.join(work, "target"), os.path.join(work, "passed")
+            shutil.rmtree(target, ignore_errors=True)
+            if os.path.exists(passed):
+                os.remove(passed)
+            env = {k: v for k, v in os.environ.items() if k != "DAEDALUS_TEST_PACKAGES"}
+            env.update(CARGO=os.path.join(work, "cargo"), CARGO_TARGET_DIR=target,
+                       DAEDALUS_TEST_PASSED=passed, PLANT_ROGUE=rogue)
+            done = subprocess.run([sys.executable, "-I", os.path.join(work, "scripts", "test-parallel.py")],
+                                  env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            got = open(passed).read() if os.path.exists(passed) else ""
+            case = "an unlisted fixture" if rogue else "a clean pass"
+            if done.returncode != code or got != recorded:
+                failures.append(f"{case}: exit {done.returncode} (want {code}), recorded "
+                                f"{got.split() or 'nothing'} (want {recorded.split() or 'nothing'})"
+                                f"\n{done.stdout}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    for failure in failures:
+        print(f"test-parallel self-test: {failure}", file=sys.stderr)
+    if not failures:
+        print("test-parallel self-test: an unlisted fixture fails the run and records no pass;"
+              " a clean pass records its package")
+    return 1 if failures else 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(self_test() if sys.argv[1:] == ["--self-test"] else main())
