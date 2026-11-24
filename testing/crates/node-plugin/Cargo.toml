@@ -20,10 +20,13 @@ daedalus-registry = { path = "../../../core/registry" }
 daedalus-types = { path = "../../../core/types" }
 
 [dev-dependencies]
+daedalus-abi = { path = "../../../core/abi" }
+daedalus-backend = { path = "../../../core/backend" }
 daedalus-graph = { path = "../../../core/graph" }
 daedalus-host = { path = "../../../core/host" }
 daedalus-loader = { path = "../../../core/loader" }
 daedalus-planner = { path = "../../../core/planner" }
+daedalus-planner-tests = { path = "../planner" }
 
 [lints]
 workspace = true

@@ -17,6 +17,11 @@ daedalus-registry = { path = "../registry" }
 daedalus-types = { path = "../types" }
 libloading = { workspace = true }
 
+# The move of bytes from `cpu.host` reads the runner's cells. A build that stands for a plugin
+# made before the newest fields (`daedalus_abi_baseline`) is never a host, and has no move.
+[target.'cfg(not(daedalus_abi_baseline))'.dependencies]
+daedalus-runner = { path = "../runner" }
+
 [dev-dependencies]
 daedalus-abi = { path = "../abi", features = ["count-alloc", "test-run"] }
 daedalus-graph = { path = "../graph" }
@@ -29,6 +34,7 @@ daedalus-planner = { path = "../planner" }
 unsafe_op_in_unsafe_fn = "deny"
 unused_lifetimes = "deny"
 unused_attributes = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(daedalus_abi_baseline)'] }
 
 [lints.clippy]
 dbg_macro = "deny"

@@ -124,6 +124,19 @@ next = 3083
 tolerance_percent = 10
 
 [[row]]
+name = "plugin_linked_bytes_tick"
+measure = "instructions per tick of a megabyte a linked node keeps, read by a plugin's node and handed on to the host: feed, tick, take, drop"
+tool = "callgrind"
+command = "plugin {n} {fixture} linked"
+# A new row, so it has no dev figure. Through `cpu.wire`, the megabyte written in its wire form
+# each tick, this was 95,129; handed to the plugin as it is (`plugin.bytes_from_cpu_host`), this
+# branch measured 3,948 over 1,000 and 3,000 ticks. The limit fails long before a copy comes back.
+dev_callgrind = 3948
+limit = 5000
+next = 3948
+tolerance_percent = 10
+
+[[row]]
 name = "wire_bytes_megabyte"
 measure = "instructions to write a megabyte of Vec<u8> in its wire form into a kept cell and read it back"
 tool = "callgrind"
@@ -151,6 +164,13 @@ tolerance_percent = 10
 [[row]]
 name = "alloc_plugin_handover_tick"
 measure = "allocations per tick of a plugin node that hands a megabyte to the host, taken each tick"
+tool = "alloc"
+dev = 0
+limit = 0
+
+[[row]]
+name = "alloc_plugin_linked_bytes_tick"
+measure = "allocations per tick of a megabyte a linked node keeps, read by a plugin's node and handed on to the host"
 tool = "alloc"
 dev = 0
 limit = 0

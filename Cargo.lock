@@ -1050,6 +1050,7 @@ dependencies = [
  "daedalus-made",
  "daedalus-planner",
  "daedalus-registry",
+ "daedalus-runner",
  "daedalus-types",
  "daedalus-value",
  "libloading 0.9.0",
@@ -1093,6 +1094,8 @@ dependencies = [
 name = "daedalus-node-plugin"
 version = "3.0.1-dev"
 dependencies = [
+ "daedalus-abi",
+ "daedalus-backend",
  "daedalus-cpu",
  "daedalus-cpu-author",
  "daedalus-cpu-plugin",
@@ -1102,6 +1105,7 @@ dependencies = [
  "daedalus-loader",
  "daedalus-macros",
  "daedalus-planner",
+ "daedalus-planner-tests",
  "daedalus-registry",
  "daedalus-types",
 ]

@@ -31,9 +31,10 @@ pub const FROM_PLUGIN: &str = "plugin.to_cpu_wire";
 /// cell on as it is: the linked node on one side wrote, or reads, its type's wire form, and a
 /// plugin's node reads and writes that form. Nothing is copied by the move.
 ///
-/// There is no move between the plugin space and `cpu.host`, where a cell holds a Rust value in
-/// the host's memory: such a value never reaches a plugin. A linked node whose output has no
-/// wire form is refused when its step is built, by the node, the output and the type.
+/// From `cpu.host`, where a cell holds a Rust value in the host's memory, only bytes reach a
+/// plugin, handed over as they are (see `bytes_move`). Any other value goes through `cpu.wire`;
+/// a linked node whose output has no wire form is refused when its step is built, by the node,
+/// the output and the type.
 fn transfers() -> Vec<Transfer> {
     let entry = |id, from, to| Transfer {
         id,
@@ -43,10 +44,17 @@ fn transfers() -> Vec<Transfer> {
         cost: TransferCost::Handoff,
         make: hand,
     };
-    vec![
+    let moves = vec![
         entry(TO_PLUGIN, CPU_WIRE, PLUGIN_SPACE),
         entry(FROM_PLUGIN, PLUGIN_SPACE, CPU_WIRE),
-    ]
+    ];
+    #[cfg(not(daedalus_abi_baseline))]
+    let moves = {
+        let mut moves = moves;
+        moves.push(crate::bytes_move::transfer());
+        moves
+    };
+    moves
 }
 
 fn hand(_: &CompileCx<'_>) -> Result<Step, Refusal> {

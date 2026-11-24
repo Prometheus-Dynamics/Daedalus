@@ -92,8 +92,8 @@ What such a node gets, and what it does not yet:
   struct that has no crossing form between them (`measure kept`) 2,930 linked and 3,260 loaded,
   where the struct goes in a box the plugin reuses. Two nodes with a megabyte of `Vec<u8>`
   between them 60,370 linked and 60,730 loaded. A megabyte made by a linked node and read by a
-  plugin's node costs 176,600 (`measure handed`): it is written in its wire form and read back
-  as one block.
+  plugin's node costs 61,220 (`measure handed`; 60,340 when both are linked): the plugin reads
+  the list where the linked node made it.
 - A value inside the plugin whose wire form fits in its cell (16 bytes or less) is written
   there, as at the boundary, since that is less work than a box.
 
@@ -227,8 +227,13 @@ needs nothing else: `PluginBackend` lists the two moves, and the planner places 
 
 - A plugin's values live in the space `plugin.host`. Every plugin on `PluginBackend` shares it,
   so a value passes from one plugin's node to another's with no move.
-- A linked CPU node's values live in `cpu.host`, as Rust values in the host's memory. Such a
-  value never reaches a plugin: there is no move between `cpu.host` and `plugin.host`.
+- A linked CPU node's values live in `cpu.host`, as Rust values in the host's memory. Only
+  bytes go from there to a plugin: the move `plugin.bytes_from_cpu_host` hands a `Vec<u8>` over
+  where it is, as a record that points at the list's bytes and holds the list until the plugin
+  lets go. Nothing is copied and the record comes from a pool the move keeps, so a megabyte
+  costs about what a handle does. A linked node's output that plugins and linked nodes read
+  stays in `cpu.host`; one that a worker also reads is written once in `cpu.wire`, and the
+  plugin reads that same form. Any other type reaches a plugin through `cpu.wire`.
 - What crosses is a value in its crossing form, in the CPU backend's space `cpu.wire`. A linked
   node whose output a plugin reads writes that form, and a linked node that reads a plugin's
   output reads it. The moves `plugin.from_cpu_wire` and `plugin.to_cpu_wire` hand the cell on as
