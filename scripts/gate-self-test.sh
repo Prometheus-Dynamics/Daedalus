@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# The gate on a planted tree: its own scripts/gate.sh and scripts/ci.sh, with every step and
+# trailing script a stub that passes, fails, or leaves a mark, run exactly as the gate runs. A red
+# step anywhere in a lane fails the gate, names the lane, stops the lane's later steps, and leaves
+# no `Gate-Lanes:` line, the record of a pass. Then the same checks against a gate planted with
+# each way of losing a failure (a lane's status not read, a lane of steps returning only its last
+# step's status, a trailing script's status dropped): each must be caught, so this test has teeth.
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# Its result is a function of the scripts it plants and its own: passed before on these, it passes.
+# On CI, and with GATE_LANE_REUSE=0, it always runs.
+inputs=(scripts/gate-self-test.sh scripts/gate.sh scripts/ci.sh scripts/bounded.py scripts/seed-target.py)
+proved="$(git rev-parse --path-format=absolute --git-common-dir)/daedalus-lane-records/gate-self-test-$(cat "${inputs[@]}" | sha256sum | cut -c1-16)"
+if [[ -z ${CI:-} && ${GATE_LANE_REUSE:-1} != 0 && -e $proved ]]; then
+  echo "gate self-test passed before on these scripts"
+  exit 0
+fi
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+failures=0
+
+plant() { # TREE GATE_SH: a tree of stub steps around the given gate.sh and the real ci.sh
+  local tree="$1" name
+  mkdir -p "$tree/scripts/ci.d" "$tree/testing/boundary"
+  cp "$2" "$tree/scripts/gate.sh"
+  cp scripts/ci.sh scripts/bounded.py scripts/seed-target.py "$tree/scripts/"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$tree/scripts/fixture-locks.sh"
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$tree/scripts/lavapipe-icd.sh"
+  for name in $(sed -nE '/^(lanes|trailing)=/d; s/^[a-z]+=\(([a-z -]+)\)$/\1/p' "$tree/scripts/gate.sh"); do
+    printf '#!/usr/bin/env bash\n# bound: 30 s (planted)\ntouch "%s/ran-%s"\nexit "${FAIL_%s:-0}"\n' \
+      "$tree" "$name" "${name//-/_}" > "$tree/scripts/ci.d/$name.sh"
+  done
+  for name in scripts/check-file-sizes.sh scripts/check-workspace-deps.sh testing/boundary/run.sh; do
+    printf '#!/usr/bin/env bash\n# bound: 30 s (planted)\nexit "${FAIL_TRAILING:-0}"\n' > "$tree/$name"
+  done
+  chmod +x "$tree"/scripts/*.sh "$tree"/scripts/ci.d/*.sh "$tree/testing/boundary/run.sh"
+}
+
+# One run of the planted gate: EXPECT is `pass`, or `fail` naming LANE, and NOT_RAN, if given, is
+# the step after the red one in its lane, which must not have run.
+case_in() { # TREE EXPECT LANE NOT_RAN [VAR=VALUE...]
+  local tree="$1" expect="$2" lane="$3" not_ran="$4"; shift 4
+  rm -f "$tree"/ran-*
+  local out code=0
+  out="$(cd "$tree" && env -u DAEDALUS_TARGET_SEED -u GATE_LANE_STATE_DIR CARGO_TARGET_DIR="$tree/target" \
+    "$@" bash scripts/gate.sh 2>&1)" || code=$?
+  local ok=1
+  if [[ $expect == pass ]]; then
+    [[ $code == 0 ]] && grep -q '^Gate-Lanes: host=passed' <<< "$out" || ok=0
+  else
+    [[ $code != 0 ]] || ok=0
+    grep -q "^gate: failed in lane: .*\b$lane\b" <<< "$out" || ok=0
+    ! grep -q '^Gate-Lanes:' <<< "$out" || ok=0
+    [[ -z $not_ran || ! -e "$tree/ran-$not_ran" ]] || ok=0
+  fi
+  echo $ok
+}
+
+check() { # LABEL GATE_SH EXPECT_ALL_CAUGHT
+  local tree="$work/$1" caught=1 got
+  plant "$tree" "$2"
+  for spec in "pass||" "fail|host|test|FAIL_clippy=1" "fail|scripts||FAIL_TRAILING=1" \
+              "fail|host||FAIL_vvl_wgpu=1" "fail|ship|smoke|FAIL_packaging=1"; do
+    IFS='|' read -r expect lane not_ran setting <<< "$spec"
+    got="$(case_in "$tree" "$expect" "$lane" "$not_ran" ${setting:+"$setting"})"
+    [[ $got == 1 ]] && continue
+    caught=0
+    # A planted bug needs one case to see it; the real gate is checked against every case.
+    [[ $3 == 1 ]] || break
+    echo "gate self-test: ${setting:-all steps passing}: not $expect${lane:+ in $lane}" >&2
+  done
+  echo $caught
+}
+
+if [[ "$(check real scripts/gate.sh 1)" == 1 ]]; then
+  echo "gate self-test: a red step, first or last in its lane, or a red trailing script fails the gate, names its lane, stops the lane, and records no pass"
+else
+  failures=1
+fi
+
+# Each way of losing a failure, planted in a copy of the gate: the cases above must see it.
+mutant() { # LABEL SED_EXPR
+  local copy="$work/$1.sh"
+  sed -E "$2" scripts/gate.sh > "$copy"
+  if cmp -s "$copy" scripts/gate.sh; then
+    echo "gate self-test: the planted bug '$1' no longer applies to scripts/gate.sh: update it" >&2
+    failures=1
+  elif [[ "$(check "$1" "$copy" 0)" == 1 ]]; then
+    echo "gate self-test: a gate that $1 passed every case: the cases have no teeth" >&2
+    failures=1
+  else
+    echo "gate self-test: a gate that $1 is caught"
+  fi
+}
+mutant "ignores a lane's status" 's/wait "\$\{pids\[\$i\]\}" \|\| failed\+=\("\$\{lanes\[\$i\]\}"\)/wait "${pids[$i]}" || true/'
+mutant "keeps only a lane's last step's status" 's/scripts\/ci.sh "\$\{!steps\}"/for s in "${!steps}"; do scripts\/ci.sh "$s"; done/'
+mutant "drops a trailing script's status" 's/"\$script" \|\| status=1/"$script" || true/'
+if [[ $failures == 0 ]]; then
+  mkdir -p "$(dirname "$proved")" && touch "$proved"
+fi
+exit $failures

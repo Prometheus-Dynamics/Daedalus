@@ -17,7 +17,9 @@ export DAEDALUS_VVL_DIR="$work/cache/vvl/$("$(git rev-parse --show-toplevel)/scr
 export LAND_CPUS="${LAND_CPUS:-6-18}" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-13}"
 # The one nice level of every heavy run (gates, builds, tests, measurements), the same in every
 # dependency on this machine: levels that differ starve one run behind another's, and no run's
-# time can then be measured or met. Reported beside the load with every measurement.
+# time can then be measured or met. Reported beside the load with every measurement. The units
+# these runs go in (systemd-run, dd-reseed.service) keep the default CPUWeight of 100: no idle
+# weight and no override, so only the nice level orders them.
 export NICE=10
 # Pushes and PRs go through gh's credentials.
 export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0='!gh auth git-credential' \
