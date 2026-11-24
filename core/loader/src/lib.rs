@@ -6,6 +6,8 @@
 pub use daedalus_abi as abi;
 
 mod adapter;
+#[cfg(not(daedalus_abi_baseline))]
+mod bytes_move;
 mod codec;
 mod convert;
 mod entry;
@@ -18,6 +20,8 @@ mod records;
 mod retry;
 
 pub use adapter::{CPU_WIRE, FROM_PLUGIN, PLUGIN_SPACE, PluginBackend, TO_PLUGIN};
+#[cfg(not(daedalus_abi_baseline))]
+pub use bytes_move::{BYTES_TO_PLUGIN, CPU_HOST};
 pub use codec::{Codec, Direction};
 pub use entry::{Backend, ConstIn, Loader, Plugin, RegionIn, plugin_tables_held};
 

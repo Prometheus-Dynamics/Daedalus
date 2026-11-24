@@ -154,8 +154,15 @@ fn held(x: u32) -> u32 {
     daedalus_cpu::values_held() as u32
 }
 
+/// Where the bytes it was given are, the low 32 bits of their address: to tell bytes read where
+/// another node made them from a copy.
+#[node(id = "np.at", inputs(bytes), outputs(y))]
+fn at(bytes: &[u8]) -> u32 {
+    bytes.as_ptr() as usize as u32
+}
+
 /// Every node of this crate: what a host that links it registers.
-pub const NODES: [&NodeRecord; 15] = [
+pub const NODES: [&NodeRecord; 16] = [
     &TRIPLE_NODE,
     &TOTAL_NODE,
     &COUNTED_NODE,
@@ -171,6 +178,7 @@ pub const NODES: [&NodeRecord; 15] = [
     &WEIGH_NODE,
     &WEIGH_OR_FAIL_NODE,
     &HELD_NODE,
+    &AT_NODE,
 ];
 
 daedalus_cpu_plugin::export_nodes!("node-plugin", NODES);

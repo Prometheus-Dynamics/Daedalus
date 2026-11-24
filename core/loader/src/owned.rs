@@ -30,10 +30,11 @@ pub fn bytes_released() -> usize {
     RELEASED.load(Ordering::Relaxed)
 }
 
-/// What the records of one plugin backend share: its generation, and the pool of records.
+/// What the records of one plugin backend share: its generation, and the pool of records. The
+/// host's own records, which hold no plugin's bytes, have no generation to keep.
 pub(crate) struct Holder {
     /// Held so the library stays open while any record of this holder lives.
-    _generation: Arc<Generation>,
+    _generation: Option<Arc<Generation>>,
     /// Records not in use, ready for the next hand-over.
     free: Mutex<Vec<NonNull<HandedRecord>>>,
     /// Every pooled record, freed with the holder. A record keeps the holder alive, so none is in
@@ -50,6 +51,16 @@ unsafe impl Sync for Holder {}
 impl Holder {
     /// A holder for `generation` with `slots` records in its pool, made now.
     pub(crate) fn new(generation: Arc<Generation>, slots: usize) -> Arc<Holder> {
+        Holder::with(Some(generation), slots)
+    }
+
+    #[cfg_attr(daedalus_abi_baseline, allow(dead_code))] // only the bytes move uses it
+    /// A holder of the host's own records, which keep no plugin open, with `slots` in its pool.
+    pub(crate) fn host(slots: usize) -> Arc<Holder> {
+        Holder::with(None, slots)
+    }
+
+    fn with(generation: Option<Arc<Generation>>, slots: usize) -> Arc<Holder> {
         let mut pooled = Vec::with_capacity(slots);
         for _ in 0..slots {
             let record = Box::new(HandedRecord {

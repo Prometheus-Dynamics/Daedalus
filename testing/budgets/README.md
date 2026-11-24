@@ -19,6 +19,7 @@ message.
 | Five-node firmware | pinned at 2,128 B and 2,672 B flash, 112 B RAM; gate limits 12,288 B flash and 584 B RAM (compiled) | `firmware_compiled`, `firmware_tunable` and `firmware_loaded`, from ELF section sizes on `thumbv7em-none-eabihf` and `thumbv6m-none-eabi`. |
 
 Steady-state running allocates nothing: `alloc_fused_tick`, `alloc_plugin_node_tick`, `alloc_plugin_handover_tick`,
+`alloc_plugin_linked_bytes_tick`,
 `alloc_large_handle_tick`, `alloc_large_handle_moved_tick`, `alloc_detector_frame` and the handoff
 chains passed by handle or as shared bytes are all zero, and so is a warm feed, step or take served
 over a socket (`alloc_socket_path`). A CPU output is kept for reuse by its

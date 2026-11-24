@@ -25,7 +25,8 @@ use std::time::Instant;
 use daedalus_abi::counting::{CountingAlloc, counted};
 use daedalus_budget_harness::detector::{detector, detector_keeping_metrics, frame, picture};
 use daedalus_budget_harness::plugin::{
-    bytes_node, bytes_tick, handover_node, handover_tick, plugin_node, plugin_tick,
+    bytes_node, bytes_tick, handover_node, handover_tick, linked_bytes_node, linked_bytes_tick,
+    plugin_node, plugin_tick,
 };
 use daedalus_budget_harness::{
     Stage, big, chain, chain_tick, fanned_conversion, fanned_conversion_tick, idle_tick,
@@ -184,6 +185,26 @@ fn plugin_allocations(library: &Path) {
         "every hand-over arrives whole"
     );
     println!("alloc_plugin_handover_tick {}", count as u64 / TICKS);
+
+    // A linked node's bytes handed to the plugin's node as they are, and on to the host: the
+    // record comes from the move's pool, so a tick allocates nothing.
+    let mut host = linked_bytes_node(library);
+    for value in 0..WARM_UP as u32 {
+        linked_bytes_tick(&mut host, value);
+    }
+    let (sizes, count) = counted(|| {
+        let mut sizes = 0usize;
+        for value in 0..TICKS as u32 {
+            sizes += linked_bytes_tick(&mut host, value);
+        }
+        sizes
+    });
+    assert_eq!(
+        sizes,
+        TICKS as usize * daedalus_budget_harness::plugin::LINKED_BYTES,
+        "every list arrives whole"
+    );
+    println!("alloc_plugin_linked_bytes_tick {}", count as u64 / TICKS);
 
     // The I3 value into the plugin and back, by reference: the stable-path row I3 sets beside
     // the static ones.
@@ -349,6 +370,15 @@ fn run(args: &[String]) -> Result<(), String> {
                     at(50),
                     at(99)
                 );
+                return Ok(());
+            }
+            if args.get(3).map(String::as_str) == Some("linked") {
+                let mut host = linked_bytes_node(Path::new(library));
+                let mut bytes = 0usize;
+                for value in 0..ticks {
+                    bytes += black_box(linked_bytes_tick(&mut host, value as u32));
+                }
+                println!("linked: {ticks} ticks, {bytes} bytes");
                 return Ok(());
             }
             if args.get(3).map(String::as_str) == Some("handover") {
