@@ -168,3 +168,24 @@ Runtime features on top of the landed host, runner and planner, from the 2026-11
 - [x] [J10](docs/prs/J10.md) A worker registers the nodes it declares (wave 22; needs G3, A8)
 - [x] [J11](docs/prs/J11.md) A node declared at run time can carry code (wave 22; needs A8, D1)
 - [x] [J12](docs/prs/J12.md) The plan says a value is read in place, and a refusal names both ports (wave 23; needs B9, B11, J6)
+
+## K. Plugins as first-class nodes
+
+Rows ruled 2026-11-21 to 2026-11-23, in working order. Each is its own PR. No briefs: the rulings are in the coordinator's messages and the PR bodies.
+
+- [x] K1 A value between two nodes of the same plugin goes as it is (#363)
+- [x] K2 A linked node's `Vec<u8>` reaches a plugin's node where it is: `plugin.bytes_from_cpu_host` (#364)
+- [ ] K3 Nothing the host frees, clones or drops assumes the plugin's Rust layout: a plugin-made output buffer (today an `Arc<[u8]>` released by the host's own `Arc` code) crosses as a counted C record released through the plugin, or as host memory the plugin writes into. The row lists every place the host frees, clones or drops an `Arc`, `Vec`, `Box` or `String` a plugin built. Test: a fixture plugin with a counting `#[global_allocator]` runs every output kind and the counts balance with no cross-heap free.
+- [ ] K4 Decodes in `explain_plan` for a plugin's units: `UnitOut` grows at its end, and an older plugin reads as "none reported".
+- [ ] K5 A refusal of an edge that crosses a plugin's boundary names the reader: the host appends "read by <node>.<port>" to the plugin's words.
+- [ ] K6 An exported node port whose type has no key is refused at describe and load with a status and words, not a panic inside an `extern "C"` function that aborts the host. Failing test first.
+- [ ] K7 A plugin's entry carries full node declarations (labels, descriptions, units, defaults, ranges, config fields, metrics) across the one C boundary in the tagged-bytes shape, growable, with no compiler matching; config on plugin nodes folds in. Design (shape, an older plugin without it, tests) goes to the coordinator before anything is built.
+- [ ] K8 Frames by foreign handle across the plugin boundary.
+- [ ] K9 `patch_const` offered across the plugin boundary, and a plugin config's self-check (needs K7).
+- [ ] K10 Take a plugin out, in process and over the service.
+- [ ] K11 Inventory over the service, with ports.
+
+## Held and parked
+
+- [ ] Port rule, second PR (debt list "B15 PR B", not row B15 above): unordered rows as a borrowed `Literal` row, the rule checked at a patch, `CHECKERS` in `read_config`. Held: waits for the consumer's constants list. The first PR landed as #345.
+- [ ] Node metrics over the service: the service row, trace values, `overhead_window` over the service. Parked: agreed lines, not built until the coordinator opens them.
