@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use std::borrow::Cow;
 
-use daedalus_abi::{BoundaryPort, OwnedStep, SlotState, Slots, Step, StepCx, StepEnd};
+use daedalus_abi::{BoundaryPort, InnerEdgeC, OwnedStep, SlotState, Slots, Step, StepCx, StepEnd};
 use daedalus_backend::{
     CompileCx, Compiled, MemorySpace, NodeRef, Offer, PortRef, Refusal, Region, SpaceKind,
     StepUnit, Transfer, TransferCost, UnitInfo,
@@ -115,6 +115,35 @@ fn ports(nodes: &[NodeIndex], refs: impl Iterator<Item = PortRef>) -> Vec<Bounda
     ports.sort_by_key(|port| (port.node, port.port));
     ports.dedup_by_key(|port| (port.node, port.port));
     ports
+}
+
+/// The edges between two of the plugin's nodes whose value no other node reads, with each node
+/// named by its place among `theirs`. Such a value may stay in the plugin's own form. An output
+/// read by any node that is not the plugin's, here or past the region, crosses for all its
+/// readers, and none of its edges is listed.
+fn inner_edges(theirs: &[NodeIndex], region: &Region<'_>, cx: &CompileCx<'_>) -> Vec<InnerEdgeC> {
+    let place = |node: NodeIndex| theirs.iter().position(|one| *one == node);
+    let stays = |from: PortRef| {
+        !region.outputs.contains(&from)
+            && cx
+                .edges
+                .iter()
+                .filter(|edge| edge.from == from)
+                .all(|edge| place(edge.to.node).is_some())
+    };
+    cx.edges
+        .iter()
+        .filter(|edge| place(edge.from.node).is_some() && stays(edge.from))
+        .filter_map(|edge| {
+            Some(InnerEdgeC {
+                from_node: place(edge.from.node)? as u32,
+                to_node: place(edge.to.node)? as u32,
+                from_port: edge.from.port.0,
+                to_port: edge.to.port.0,
+                reserved: 0,
+            })
+        })
+        .collect()
 }
 
 impl daedalus_backend::Backend for PluginBackend {
@@ -264,11 +293,13 @@ impl PluginBackend {
                 value,
             })
             .collect();
+        let inner = inner_edges(theirs, region, cx);
         let view = RegionIn {
             nodes: &ids,
             inputs: &inputs,
             outputs: &outputs,
             consts: &consts,
+            inner: &inner,
         };
         let backend = self.inner();
         let takes = backend

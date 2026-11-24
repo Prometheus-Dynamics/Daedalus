@@ -30,6 +30,7 @@ fn a_plugin_tick_allocates_nothing_after_warm_up() {
         inputs: &inputs,
         outputs: &outputs,
         consts: &[],
+        inner: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut step = units.pop().expect("unit").step;

@@ -41,6 +41,6 @@ pub use backend::{BACKEND_ID, CpuBackend, HOST_SPACE};
 pub use daedalus_abi::{Fault, FixedError, StepCx as Ctx};
 pub use steps::ports::{FanIn, FanItem};
 #[cfg(feature = "alloc")]
-pub use steps::{ListView, OutView, Refused, literal_bytes_kept};
+pub use steps::{ListView, OutView, Refused, literal_bytes_kept, values_held};
 #[cfg(feature = "std")]
 pub use timed::Timed;

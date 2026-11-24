@@ -44,6 +44,10 @@ pub(crate) struct Wiring {
     /// Inputs that read a value in its wire form: one from a worker, or one a node in this
     /// region wrote for a worker.
     pub inputs: Vec<PortRef>,
+    /// Outputs only nodes of the same plugin read, handed to them as they are.
+    pub carried: Vec<PortRef>,
+    /// The step is a plugin's node: its wire form crosses the plugin's boundary.
+    pub plugin: bool,
 }
 
 impl Wiring {
@@ -63,7 +67,12 @@ impl Wiring {
         let mut inputs: Vec<PortRef> = from_workers.chain(beside_workers).collect();
         inputs.sort_unstable();
         inputs.dedup();
-        Wiring { outputs, inputs }
+        Wiring {
+            outputs,
+            inputs,
+            carried: Vec::new(),
+            plugin: false,
+        }
     }
 }
 
@@ -113,8 +122,14 @@ fn wire_reads(
         let ty = (param.ty)();
         match param.wire {
             WireRead::Refused => {
+                let from = match wiring.plugin {
+                    true => {
+                        "from a node outside this plugin: the edge crosses the plugin's boundary"
+                    }
+                    false => "from outside this program (a worker or a plugin)",
+                };
                 return Err(format!(
-                    "input `{}` of {} comes from outside this program (a worker or a plugin), but {ty} has no crossing form: add #[derive(WireForm)] to {ty}",
+                    "input `{}` of {} comes {from}, but {ty} has no crossing form: add #[derive(WireForm)] to {ty}",
                     param.port, body.id
                 ));
             }
@@ -190,6 +205,8 @@ pub(crate) fn step_of(
             };
             if wiring.outputs.contains(&port) {
                 Keep::Wire
+            } else if wiring.carried.contains(&port) {
+                Keep::Carried
             } else {
                 keep_of(cx, port)
             }
@@ -210,6 +227,7 @@ pub(crate) fn step_of(
         id: body.id,
         lent: cx.lent,
         readers: Some(readers),
+        plugin: wiring.plugin,
     };
     let step = match make {
         Make::Function(cpu) => (cpu.make)(&setup),
@@ -347,6 +365,7 @@ impl Backend for CpuBackend {
             id: "transfer",
             lent: cx.lent,
             readers: None,
+            plugin: false,
         };
         Some((cpu.make)(&setup).map_err(|reason| Refusal::whole_region(&reason)))
     }

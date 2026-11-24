@@ -38,3 +38,25 @@ pub fn wait_fence(fence: &Fence, polls: u64) -> FencePoll {
 
 #[cfg(all(feature = "std", not(daedalus_abi_baseline)))]
 pub use crate::kept::{KeptDetail, keep_detail};
+
+/// Settles output cell `cell`'s hand-over, `bytes` (what the step left in its context), as a
+/// host does: the cell then holds the one count on a record of the bytes, and the last count
+/// releases them through the plugin's release.
+#[cfg(feature = "alloc")]
+pub fn settle(cell: &mut crate::Slot, bytes: crate::BytesC) {
+    use core::sync::atomic::AtomicUsize;
+    let record = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(crate::HandedRecord {
+        refs: AtomicUsize::new(1),
+        bytes,
+        keep: core::ptr::null(),
+        keep_drop: None,
+        recycle: Some(crate::handed::free_record),
+        home: core::ptr::null(),
+    }));
+    cell.state = crate::SlotState::Full as u32;
+    cell.owner = crate::OWNER_HANDED;
+    cell.reserved = 0;
+    cell.data = bytes.ptr.cast_mut();
+    cell.len = bytes.len;
+    cell.cap = record.expose_provenance();
+}

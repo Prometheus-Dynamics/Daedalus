@@ -2,11 +2,12 @@
 //! in or loaded from the crate's library, so the two can be counted against each other:
 //!
 //! ```text
-//! measure triple|pair|bytes|handed linked|unmerged|plugin TICKS [LIBRARY]
+//! measure triple|pair|kept|bytes|handed linked|unmerged|plugin TICKS [LIBRARY]
 //! ```
 //!
-//! `triple` is one node. `pair` is two with a small struct between them, and `bytes` two with
-//! a megabyte between them: the edge inside is what differs between the forms. `handed` is a
+//! `triple` is one node. `pair` is two with a small struct between them, `kept` two with a list
+//! in a struct that has no crossing form, and `bytes` two with a megabyte between them: the edge
+//! inside is what differs between the forms. `handed` is a
 //! megabyte made by a node linked into this tool and read by the plugin's `np.first`: what a
 //! linked node's `Vec<u8>` costs on its way to a plugin. It runs in `plugin` mode only. An instruction
 //! count is the difference between two runs with different counts, divided by the difference.
@@ -73,12 +74,14 @@ fn chain(nodes: &[(&str, &str, &str)]) -> GraphBody {
 fn run(args: &[String]) -> Result<(), String> {
     let [kind, mode, ticks, rest @ ..] = args else {
         return Err(
-            "measure triple|pair|bytes|handed linked|unmerged|plugin TICKS [LIBRARY]".to_owned(),
+            "measure triple|pair|kept|bytes|handed linked|unmerged|plugin TICKS [LIBRARY]"
+                .to_owned(),
         );
     };
     let graph = match kind.as_str() {
         "triple" => chain(&[("np.triple", "x", "y")]),
         "pair" => chain(&[("np.split", "x", "pair"), ("np.join", "pair", "y")]),
+        "kept" => chain(&[("np.keep", "x", "kept"), ("np.weigh", "kept", "y")]),
         "bytes" => chain(&[("np.fill", "x", "bytes"), ("np.first", "bytes", "y")]),
         "handed" => chain(&[("m.fill", "x", "bytes"), ("np.first", "bytes", "y")]),
         other => return Err(format!("no graph `{other}`")),

@@ -26,6 +26,8 @@ mod setup;
 #[cfg(feature = "alloc")]
 pub use daedalus_abi::Step;
 #[cfg(feature = "alloc")]
+pub use daedalus_runner::inside_values_held as values_held;
+#[cfg(feature = "alloc")]
 pub use list_view::{ListView, list_viewed};
 #[cfg(feature = "alloc")]
 pub use out_view::{OutSlot, OutView, Refused};

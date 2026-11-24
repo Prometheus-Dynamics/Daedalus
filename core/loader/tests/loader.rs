@@ -74,6 +74,7 @@ fn a_node_runs_through_its_compiled_step() {
         inputs: &inputs,
         outputs: &outputs,
         consts: &[],
+        inner: &[],
     };
     assert_eq!(backend.can_take(&region).expect("can take"), vec![true]);
 
@@ -113,6 +114,7 @@ fn a_panicking_node_is_a_fault_and_the_host_keeps_running() {
         inputs: &inputs,
         outputs: &outputs,
         consts: &[],
+        inner: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut payload = *b"x";
@@ -151,6 +153,7 @@ fn a_panicking_node_is_a_fault_and_the_host_keeps_running() {
         inputs: &inputs,
         outputs: &outputs,
         consts: &[],
+        inner: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut step = units.pop().expect("unit").step;
@@ -190,7 +193,8 @@ fn a_plugin_describes_the_shapes_this_host_has() {
 #[test]
 fn a_plugin_built_before_the_newest_fields_loads_and_runs() {
     let library = support::baseline_library();
-    // It was built with a `StepCx` that ends before `detail`, `step` and the metric cells.
+    // It was built with a `StepCx` that ends before `detail`, `step`, the metric cells and the
+    // room for more hand-overs.
     let theirs = shapes_of(&library);
     let ours = daedalus_abi::SHAPES
         .iter()
@@ -199,8 +203,8 @@ fn a_plugin_built_before_the_newest_fields_loads_and_runs() {
     let their = daedalus_abi::find(&theirs, ours.id).expect("it describes StepCx");
     assert_eq!(
         (their.fields, ours.fields.len() as u16),
-        (ours.required, ours.required + 4),
-        "four fields fewer than this host"
+        (ours.required, ours.required + 6),
+        "six fields fewer than this host"
     );
     assert!(their.extent < ours.desc().extent);
     assert_ne!(theirs, daedalus_abi::DESCRIPTORS);
@@ -217,6 +221,7 @@ fn a_plugin_built_before_the_newest_fields_loads_and_runs() {
         inputs: &inputs,
         outputs: &outputs,
         consts: &[],
+        inner: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut payload = *b"x";
@@ -245,6 +250,7 @@ fn a_plugin_built_before_the_newest_fields_loads_and_runs() {
         inputs: &inputs,
         outputs: &outputs,
         consts: &[],
+        inner: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut cells = [Slot::EMPTY, Slot::EMPTY];
@@ -401,6 +407,7 @@ fn a_failed_reload_leaves_the_loaded_library_serving_and_is_retried() {
         inputs: &inputs,
         outputs: &outputs,
         consts: &[],
+        inner: &[],
     };
     let mut units = backend.compile(&region).expect("still compiles");
     let mut payload = *b"ok";
@@ -461,6 +468,7 @@ fn a_reload_is_a_new_generation_and_the_old_one_goes_when_its_steps_do() {
         inputs: &inputs,
         outputs: &outputs,
         consts: &[],
+        inner: &[],
     };
     let units = first
         .backend("fixture.cpu")

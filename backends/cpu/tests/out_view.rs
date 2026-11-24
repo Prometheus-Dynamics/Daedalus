@@ -132,6 +132,7 @@ fn step(record: &NodeRecord, keep: &[Keep], lent: &[LentRoom]) -> daedalus_abi::
         id: record.decl.id,
         lent,
         readers: None,
+        plugin: false,
     };
     (body.make)(&setup).unwrap()
 }

@@ -210,6 +210,12 @@ pub struct StepCx {
     /// reading.
     #[cfg(not(daedalus_abi_baseline))]
     pub metrics: *const MetricCell,
+    /// Room for the hand-overs of outputs past the first two: output `k` reads
+    /// `handover_more[k - 2]`. Null, with a length of zero, when the host gives none.
+    #[cfg(not(daedalus_abi_baseline))]
+    pub handover_more: *mut crate::BytesC,
+    #[cfg(not(daedalus_abi_baseline))]
+    pub handover_more_len: usize,
 }
 
 // SAFETY: `cancel` and `progress` point at `Word`s, which are `Sync`, and are only ever read
@@ -237,7 +243,63 @@ impl StepCx {
             metrics_len: 0,
             #[cfg(not(daedalus_abi_baseline))]
             metrics: core::ptr::null(),
+            #[cfg(not(daedalus_abi_baseline))]
+            handover_more: core::ptr::null_mut(),
+            #[cfg(not(daedalus_abi_baseline))]
+            handover_more_len: 0,
         }
+    }
+
+    /// Where output `k` writes the bytes it hands over: `handover[k]`, or past the first two the
+    /// room the host gave. `None` when there is no room for output `k`.
+    pub fn handover_slot(&mut self, k: usize) -> Option<&mut crate::BytesC> {
+        if k < self.handover.len() {
+            return self.handover.get_mut(k);
+        }
+        #[cfg(not(daedalus_abi_baseline))]
+        if !self.handover_more.is_null() && k - 2 < self.handover_more_len {
+            // SAFETY: the host gives `handover_more_len` writable entries for this call, and the
+            // step's context is borrowed for as long as the entry is.
+            return Some(unsafe { &mut *self.handover_more.add(k - 2) });
+        }
+        None
+    }
+
+    /// Lends `room` for the hand-overs of outputs past the first two, for one call of a step: the
+    /// host lends it before the call and ends the loan with [`StepCx::end_handover_room`] after
+    /// it, before `room` is used again. A context built before the room has nowhere to put it.
+    #[inline]
+    pub fn lend_handover_room(&mut self, room: &mut [crate::BytesC]) {
+        #[cfg(not(daedalus_abi_baseline))]
+        {
+            self.handover_more = room.as_mut_ptr();
+            self.handover_more_len = room.len();
+        }
+        #[cfg(daedalus_abi_baseline)]
+        let _ = room;
+    }
+
+    /// Ends the loan [`StepCx::lend_handover_room`] made.
+    #[inline]
+    pub fn end_handover_room(&mut self) {
+        #[cfg(not(daedalus_abi_baseline))]
+        {
+            self.handover_more = core::ptr::null_mut();
+            self.handover_more_len = 0;
+        }
+    }
+
+    /// What output `k` handed over: as [`StepCx::handover_slot`], read.
+    pub fn handed(&self, k: usize) -> Option<crate::BytesC> {
+        if k < self.handover.len() {
+            return self.handover.get(k).copied();
+        }
+        #[cfg(not(daedalus_abi_baseline))]
+        if !self.handover_more.is_null() && k - 2 < self.handover_more_len {
+            // SAFETY: as in `handover_slot`.
+            return Some(unsafe { *self.handover_more.add(k - 2) });
+        }
+        None
     }
 
     /// Whether anybody keeps what [`StepCx::detail`] is given. A body asks before it formats

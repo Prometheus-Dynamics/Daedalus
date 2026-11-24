@@ -21,6 +21,7 @@ pub fn step_with(record: &NodeRecord, inputs: u16, consts: &[ConstOf<'_>]) -> St
         id: "test",
         lent: &[],
         readers: None,
+        plugin: false,
     };
     (body.make)(&setup).unwrap()
 }

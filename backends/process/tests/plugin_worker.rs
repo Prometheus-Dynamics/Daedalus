@@ -138,6 +138,7 @@ fn the_plugin_through_its_worker_gives_the_in_process_outputs() {
         inputs: &[port],
         outputs: &[port],
         consts: &[],
+        inner: &[],
     };
     let mut in_process = backend
         .compile(&region)

@@ -34,6 +34,8 @@ pub enum Keep {
     Taker,
     /// The output is placed in `cpu.wire`: its value's wire form is written, for a worker to read.
     Wire,
+    /// Only nodes of the same plugin read the output: its value is handed to them as it is.
+    Carried,
 }
 
 /// Picks what an output holds between ticks: nothing for an output written inline, and a
@@ -71,6 +73,13 @@ pub trait Keeper<T> {
     /// in its cell.
     #[cfg(feature = "alloc")]
     fn wire_buffers(&mut self) -> Option<&mut WireBuffers> {
+        None
+    }
+
+    /// Where an output handed to nodes of the same plugin keeps a released box for its next
+    /// value. `None` for an output that keeps nothing.
+    #[cfg(feature = "alloc")]
+    fn inside_shelf(&mut self) -> Option<&daedalus_runner::InsideShelf<T>> {
         None
     }
 }
@@ -141,6 +150,8 @@ mod with_alloc {
         Taker(Vec<Arc<Carried<T>>>),
         /// The wire forms an output in `cpu.wire` wrote.
         Wire(super::WireBuffers),
+        /// The box an output handed to nodes of the same plugin has back.
+        Inside(daedalus_runner::InsideShelf<T>),
     }
 
     // A derive would ask for `T: Default`, which a value need not have.
@@ -162,6 +173,16 @@ mod with_alloc {
             }
         }
 
+        fn inside_shelf(&mut self) -> Option<&daedalus_runner::InsideShelf<T>> {
+            if !matches!(self, Spare::Inside(_)) {
+                *self = Spare::Inside(daedalus_runner::InsideShelf::default());
+            }
+            match self {
+                Spare::Inside(shelf) => Some(shelf),
+                _ => None,
+            }
+        }
+
         fn publish(&mut self, value: T, keep: Keep, slot: &mut Slot)
         where
             T: Send + Sync + 'static,
@@ -169,7 +190,7 @@ mod with_alloc {
             match keep {
                 // A wire output was written as its wire form before it got here; a type with no
                 // wire form was refused when the step was built.
-                Keep::Fresh | Keep::Wire => {
+                Keep::Fresh | Keep::Wire | Keep::Carried => {
                     *self = Spare::Empty;
                     put_typed(slot, UNSTAMPED.0, UNSTAMPED.1, Arc::new(value));
                 }

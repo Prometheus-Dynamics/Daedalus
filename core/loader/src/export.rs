@@ -42,6 +42,12 @@ pub struct NodeDef {
 pub struct Ask<'a> {
     pub position: u32,
     pub consts: &'a [(&'a str, &'a [u8])],
+    /// The inputs whose value comes from another node of this plugin in the region and from
+    /// nowhere else, by index: they read the value as the producer made it.
+    pub inner_inputs: &'a [u16],
+    /// The outputs only nodes of this plugin in the region read, by index: they may hand the value
+    /// over as it is, for those readers alone.
+    pub inner_outputs: &'a [u16],
 }
 
 /// Builds a node's step for one place in one graph. `data` is the [`MadeNode`]'s own. An `Err`
@@ -555,8 +561,8 @@ unsafe extern "C" fn compile_at<P: PluginSpec, const I: usize>(
         }
         // Every step is built before any is written, so a node that can't be built leaves
         // the host's entries as they were.
-        // SAFETY: the host's view is valid for this call, its constants with it.
-        let consts = unsafe { view.consts() };
+        // SAFETY: the host's view is valid for this call, its constants and edges with it.
+        let (consts, edges) = unsafe { (view.consts(), view.edges()) };
         let mut steps = Vec::with_capacity(taken.len());
         for (position, node) in taken {
             let step = match node {
@@ -571,9 +577,23 @@ unsafe extern "C" fn compile_at<P: PluginSpec, const I: usize>(
                         // SAFETY: each constant's port and bytes are valid for this call.
                         .map(|c| unsafe { (c.port.as_str(), const_value(c)) })
                         .collect();
+                    let inner_inputs: Vec<u16> = edges
+                        .iter()
+                        .filter(|edge| edge.to_node == position)
+                        .map(|edge| edge.to_port)
+                        .collect();
+                    let mut inner_outputs: Vec<u16> = edges
+                        .iter()
+                        .filter(|edge| edge.from_node == position)
+                        .map(|edge| edge.from_port)
+                        .collect();
+                    inner_outputs.sort_unstable();
+                    inner_outputs.dedup();
                     let ask = Ask {
                         position,
                         consts: &mine,
+                        inner_inputs: &inner_inputs,
+                        inner_outputs: &inner_outputs,
                     };
                     match (made.make)(made.data, &ask) {
                         Ok(step) => step,

@@ -113,6 +113,7 @@ impl Backend for PluginNpu {
             inputs: &inputs,
             outputs: &outputs,
             consts: &[],
+            inner: &[],
         };
         let takes = backend
             .can_take(&view)

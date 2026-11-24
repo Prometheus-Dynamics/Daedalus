@@ -127,6 +127,7 @@ fn a_plugin_value_passes_through_a_plugin_step_and_back() {
         inputs: &[port],
         outputs: &[port],
         consts: &[],
+        inner: &[],
     };
     let mut units = backend.compile(&region).expect("compiles");
     let mut step = units.pop().expect("unit").step;
