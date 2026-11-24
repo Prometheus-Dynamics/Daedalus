@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# bound: 111 s (three times 37 s: its slowest green run, 27 s, in a cold build on a fresh slot,
-#   and the 10 s the starved-test cases of scripts/bounded.py have added since)
+# bound: 216 s (three times 72 s: its slowest green run, 27 s, in a cold build on a fresh slot,
+#   the 10 s the starved-test cases of scripts/bounded.py have added since, and the 35 s of the
+#   reuse keys' self-test, which runs only when scripts/lane-reuse.py changed)
 # The working tools check themselves against planted cases: which packages a change reaches
 # (scripts/check.sh runs those), which build directories may be deleted, what a seed keeps, that
 # the boundaries scan blanks exactly what its one-character-at-a-time oracle did, and
-# what the budget table's kept measurements are keyed by, and that a step or a test binary past its
+# what the budget table's kept measurements are keyed by, what a test's reuse key holds, and that a step or a test binary past its
 # bound goes red, named, with nothing left running.
 set -euo pipefail
 python3 -I scripts/affected.py --self-test
@@ -15,6 +16,7 @@ python3 -I testing/crates/budget-harness/record.py --self-test
 python3 -I scripts/bounded.py --self-test
 python3 -I scripts/boundaries.py --self-test
 python3 -I scripts/board/pick-binaries.py --self-test
+python3 -I scripts/lane-reuse.py --self-test
 # A build directory another checkout built in is refused before anything builds.
 planted="$(mktemp -d)"
 trap 'rm -rf "$planted"' EXIT

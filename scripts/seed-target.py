@@ -2,8 +2,12 @@
 """A seed of dependency builds, to start a new checkout's build directory from.
 
     seed-target.py save SEED   SEED becomes this checkout's build directory less the workspace's
-                               own builds: the dependencies only, with the key they were built at
+                               own builds: the dependencies only, with the key they were built at.
+                               Only a build directory `root` made empty is saved, so a seed holds
+                               the builds one run made and none it outgrew
     seed-target.py use SEED    a build directory that doesn't exist yet starts as a copy of SEED
+    seed-target.py root        a build directory that doesn't exist yet is made, empty, as a btrfs
+                               subvolume of its own where the file system allows it
     seed-target.py stale SEED  exits 1 when SEED is missing or was built at another key than this
                                checkout's: the time to save a new one
     seed-target.py --self-test
@@ -25,7 +29,7 @@ project per crate named `<crate>-tests`) and the fixtures tests build (`tmp/<nam
 dependency builds go in the seed the same way. The rest of `tests` and `tmp` is ours, and so are
 trybuild's projects, whose manifests name this checkout's paths. The steps that build the daemon
 or the examples with features of their own have build directories of their own beside the main
-one (`variants`, `ship`, `cross`, `doc-build`), and they are seeded the same way as the main one.
+one (`variants`, `ship`, `cross`, `doc-build`, `chip`), and they are seeded the same way as the main one.
 
 The build directory is CARGO_TARGET_DIR, or `target` in this checkout. Copies share their blocks
 where the file system can (btrfs, XFS); a seed is replaced whole, under a lock beside it.
@@ -45,7 +49,7 @@ ONLY_OURS = ["doc", "test-parallel-times.json", ".daedalus-checkout"]
 # Ours, except the build directories inside them.
 HOLDING_BUILDS = ["tests", "tmp"]
 # Build directories laid out as the main one, inside it.
-BESIDE = ["variants", "ship", "cross", "doc-build"]
+BESIDE = ["variants", "ship", "cross", "doc-build", "chip"]
 # Written into a seed by `save`: the key its builds were made at.
 KEY_FILE = ".daedalus-seed-key"
 # The files a seed's key covers, besides the build profiles in Cargo.toml and the compiler.
@@ -177,11 +181,22 @@ def copy(source, destination):
     subprocess.run(["cp", "-a", "--reflink=always", source, destination], check=True)
 
 
+# Written by `root` into a build directory it makes empty; never copied into a seed.
+FROM_EMPTY = ".daedalus-from-empty"
+
+
 def save(seed):
     seed = os.path.abspath(seed)
     source = target()
     if not os.path.isdir(source):
         print(f"seed: no build directory at {source}", file=sys.stderr)
+        return 1
+    if not os.path.exists(os.path.join(source, FROM_EMPTY)):
+        # A seeded or long-lived build directory holds builds its later runs no longer name, and
+        # a seed copies them into every slot (a deps/ of 40,906 entries rebuilt a core edit in
+        # 66 s, one of 1,264 in 46 s: another dependency's measure, 2026-11-24).
+        print(f"seed: {source} was not made empty by `seed-target.py root`: only a build directory "
+              "one run built from empty is saved; the seed is unchanged", file=sys.stderr)
         return 1
     ours = members()
     if not ours:
@@ -194,6 +209,7 @@ def save(seed):
         os.rmdir(fresh)
         copy(source, fresh)
         strip(fresh, ours)
+        remove(os.path.join(fresh, FROM_EMPTY))
         # A seed with no dependency build in it would make every slot start cold while looking
         # saved: refuse it, and keep the seed there is.
         kept = sum(name.endswith((".rlib", ".rmeta")) for _, _, names in os.walk(fresh) for name in names)
@@ -209,7 +225,36 @@ def save(seed):
             os.rename(seed, old)
         os.rename(fresh, seed)
         remove(old)
-    print(f"seed: {seed} holds the dependency builds of {source}")
+    entries = sum(len(os.listdir(os.path.join(here, "deps"))) for here, dirs, _ in os.walk(seed)
+                  if "deps" in dirs and ".fingerprint" in dirs)
+    print(f"seed: {seed} holds the dependency builds of {source}: {entries} entries in deps/")
+    return 0
+
+
+def make_root(path):
+    """A build directory's root: a btrfs subvolume of its own where the file system allows it.
+    Compilers that share one subvolume's tree with every other build on the disk queue on its
+    locks (a one-line core edit rebuilt in 62.7 s in the shared tree, 18.9 s in a subvolume of its
+    own, 2026-11-24); elsewhere it is a plain directory."""
+    made = subprocess.run(["btrfs", "subvolume", "create", path], capture_output=True, text=True)
+    if made.returncode != 0:
+        os.makedirs(path)
+
+
+def root():
+    destination = target()
+    if os.path.exists(destination):
+        return 0
+    parent = os.path.dirname(destination)
+    os.makedirs(parent, exist_ok=True)
+    fresh = tempfile.mkdtemp(prefix=os.path.basename(destination) + ".", dir=parent)
+    os.rmdir(fresh)
+    make_root(fresh)
+    open(os.path.join(fresh, FROM_EMPTY), "w").close()
+    try:
+        os.rename(fresh, destination)
+    except OSError:
+        remove(fresh)
     return 0
 
 
@@ -218,25 +263,27 @@ def use(seed):
     destination = target()
     if os.path.exists(destination):
         return 0
+    parent = os.path.dirname(destination)
+    os.makedirs(parent, exist_ok=True)
+    fresh = tempfile.mkdtemp(prefix=os.path.basename(destination) + ".", dir=parent)
+    os.rmdir(fresh)
+    make_root(fresh)
     if not os.path.isdir(seed):
         print(f"seed: no seed at {seed}: {destination} starts empty, and every dependency builds",
               file=sys.stderr)
-        return 0
-    other = differs(key_of(seed), key())
-    if other:
-        print(f"seed: {seed} was built at another {', '.join(other)}: what changed builds again",
-              file=sys.stderr)
-    with open(seed + ".lock", "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_SH)
-        parent = os.path.dirname(destination)
-        os.makedirs(parent, exist_ok=True)
-        fresh = tempfile.mkdtemp(prefix=os.path.basename(destination) + ".", dir=parent)
-        os.rmdir(fresh)
-        copy(seed, fresh)
+    else:
+        other = differs(key_of(seed), key())
+        if other:
+            print(f"seed: {seed} was built at another {', '.join(other)}: what changed builds again",
+                  file=sys.stderr)
+        with open(seed + ".lock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH)
+            copy(seed + "/.", fresh)
     try:
         # Whoever renames first wins; a lane that loses leaves the other's directory.
         os.rename(fresh, destination)
-        print(f"seed: {destination} starts from {seed}")
+        if os.path.isdir(seed):
+            print(f"seed: {destination} starts from {seed}")
     except OSError:
         remove(fresh)
     return 0
@@ -310,8 +357,45 @@ def self_test():
             "[profile.dev]\nopt-level = 1":
         print("seed self-test: the profiles were not read from the manifest alone", file=sys.stderr)
         failed = 1
+    # `root` makes a missing build directory, empty; on btrfs, a subvolume (its root is inode
+    # 256); and leaves one that exists as it is.
+    with tempfile.TemporaryDirectory() as top:
+        made = os.path.join(top, "target")
+        before = os.environ.get("CARGO_TARGET_DIR")
+        os.environ["CARGO_TARGET_DIR"] = made
+        try:
+            root()
+            open(os.path.join(made, "kept"), "w").close()
+            root()
+        finally:
+            if before is None:
+                del os.environ["CARGO_TARGET_DIR"]
+            else:
+                os.environ["CARGO_TARGET_DIR"] = before
+        btrfs = subprocess.run(["stat", "-f", "-c", "%T", top], capture_output=True, text=True).stdout.strip()
+        if sorted(os.listdir(made)) != sorted([FROM_EMPTY, "kept"]):
+            print(f"seed self-test: root left {os.listdir(made)}, not its mark and the file put there",
+                  file=sys.stderr)
+            failed = 1
+        elif btrfs == "btrfs" and os.stat(made).st_ino != 256:
+            print("seed self-test: root on btrfs made no subvolume", file=sys.stderr)
+            failed = 1
+        # A build directory `root` did not make empty is never saved.
+        os.remove(os.path.join(made, FROM_EMPTY))
+        os.environ["CARGO_TARGET_DIR"] = made
+        try:
+            if save(os.path.join(top, "seed")) == 0 or os.path.exists(os.path.join(top, "seed")):
+                print("seed self-test: a build directory not made empty was saved", file=sys.stderr)
+                failed = 1
+        finally:
+            if before is None:
+                del os.environ["CARGO_TARGET_DIR"]
+            else:
+                os.environ["CARGO_TARGET_DIR"] = before
+        remove(made)
     if not failed:
-        print("seed self-test: only the dependencies' builds were kept")
+        print("seed self-test: only the dependencies' builds were kept; root made "
+              + ("a subvolume" if btrfs == "btrfs" else "a directory"))
     return failed
 
 
@@ -331,6 +415,8 @@ def main(args):
         return stale(args[1])
     if len(args) == 2 and args[0] == "save":
         return save(args[1])
+    if args == ["root"]:
+        return root()
     if len(args) == 2 and args[0] == "use":
         return use(args[1])
     print(__doc__, file=sys.stderr)

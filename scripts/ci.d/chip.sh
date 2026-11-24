@@ -49,12 +49,17 @@ check_budget() {
   fi
 }
 
-out="${CARGO_TARGET_DIR:-target}"
+# Its lane's build directory: no other lane builds there (scripts/gate.sh).
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/chip"
+out="$CARGO_TARGET_DIR"
 status=0
+# One cargo call for every target, so the targets build side by side.
+target_args=()
+for entry in "${TARGETS[@]}"; do target_args+=(--target "${entry%%:*}"); done
+CARGO_INCREMENTAL=0 cargo build --locked -q "${target_args[@]}" --profile chip -p daedalus-chip-blink --bins
+cargo check --locked -q "${target_args[@]}" -p daedalus-cpu --no-default-features --features chip
 for entry in "${TARGETS[@]}"; do
   IFS=: read -r target pin_flash pin_ram <<<"$entry"
-  CARGO_INCREMENTAL=0 cargo build --locked -q --target "$target" --profile chip -p daedalus-chip-blink --bins
-  cargo check --locked -q --target "$target" -p daedalus-cpu --no-default-features --features chip
   check_budget "$target" daedalus-chip-blink "$MAX_FLASH" "$MAX_RAM"
   check_budget "$target" daedalus-chip-blink-tunable "$TUNABLE_MAX_FLASH" "$TUNABLE_MAX_RAM"
   check_budget "$target" daedalus-chip-blink-loaded "$LOADED_MAX_FLASH" "$LOADED_MAX_RAM"

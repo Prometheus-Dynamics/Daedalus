@@ -23,7 +23,8 @@ if [[ -n "${DAEDALUS_TARGET_SEED:-}" ]]; then
 fi
 scripts/fixture-locks.sh
 target="${CARGO_TARGET_DIR:-target}"
-mkdir -p "$target"
+# Unseeded, it starts empty, in a btrfs subvolume of its own where it can (scripts/seed-target.py).
+python3 -I scripts/seed-target.py root
 owner="$(cat "$target/.daedalus-checkout" 2>/dev/null || true)"
 if [[ -n "$owner" && "$owner" != "$PWD" ]]; then
   echo "ci: the build directory $target belongs to the checkout $owner; its builds carry that" >&2

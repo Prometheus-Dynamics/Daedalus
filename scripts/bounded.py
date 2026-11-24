@@ -116,7 +116,10 @@ class Group:
         """Whether the leader ended before it had `bound` seconds that it could use: wall time,
         less the time its threads spent waiting for a CPU, or before `outer` times `bound` of
         wall time whatever it waited for. It is left unreaped. When it did not end, `out` (a list)
-        gets the seconds of wall time it ran for and the seconds taken off."""
+        gets the seconds of wall time it ran for and the seconds taken off. A process of the
+        group that starts and ends between two polls is never seen, so what it waited is not taken
+        off: a binary that runs many short children (the drive suites) is bounded by its slowest
+        green run under load, which test-slowest.json keeps."""
         start = time.monotonic()
         seen, lost = {}, 0.0
         while True:
@@ -349,7 +352,8 @@ def self_test():
             # A command that ends but leaves an orphan holding the output pipe: the reader still
             # sees the end, the run keeps the command's own exit code, and the orphan is stopped
             # and named.
-            os.remove(pids)
+            if os.path.exists(pids):
+                os.remove(pids)
             plant = f"(sleep 600 & echo $! >> {pids}; wait) & echo $! >> {pids}; exit 3"
             code, out, took, ended = capture(
                 [sys.executable, "-I", me, "60", "planted-orphan", "sh", "-c", plant], 30)
@@ -360,7 +364,8 @@ def self_test():
             check("the orphan is stopped", gone(planted(pids)))
 
             # A TERM to the runner stops its group: how a gate that is stopped stops its steps.
-            os.remove(pids)
+            if os.path.exists(pids):
+                os.remove(pids)
             runner = subprocess.Popen(
                 [sys.executable, "-I", me, "600", "planted-stopped", "sh", "-c",
                  f"sleep 600 & echo $! >> {pids}; wait"],
@@ -383,7 +388,7 @@ def self_test():
             scripts = os.path.dirname(me)
             tree = os.path.join(tmp, "tree")
             os.makedirs(os.path.join(tree, "scripts", "ci.d"))
-            for name in ("ci.sh", "bounded.py", "test-parallel.py", "fixture-locks.sh"):
+            for name in ("ci.sh", "bounded.py", "test-parallel.py", "fixture-locks.sh", "seed-target.py"):
                 shutil.copy(os.path.join(scripts, name), os.path.join(tree, "scripts", name))
             plant = (f"sleep 600 & echo $! >> {pids}; (sleep 600 & echo $! >> {pids}; wait) & "
                      f"echo $! >> {pids}; sleep 600")
@@ -393,7 +398,8 @@ def self_test():
                    "VK_DRIVER_FILES": "planted", "VK_ICD_FILENAMES": "planted"}
             env.pop("DAEDALUS_TARGET_SEED", None)
             env.pop("DAEDALUS_BOUND_SCALE", None)
-            os.remove(pids)
+            if os.path.exists(pids):
+                os.remove(pids)
             code, out, took, ended = capture(
                 ["bash", os.path.join(tree, "scripts", "ci.sh"), "planted"], 30, env=env)
             started += planted(pids)
@@ -422,7 +428,8 @@ def self_test():
             # where its build directory has no record of it (600 s, 2 s scaled).
             write(os.path.join(tree, "scripts", "test-slowest.json"),
                   json.dumps({"planted test sleeper": 400.0}))
-            os.remove(pids)
+            if os.path.exists(pids):
+                os.remove(pids)
             code, out, took, ended = capture(
                 [sys.executable, "-I", os.path.join(tree, "scripts", "test-parallel.py")], 30,
                 env={**env, "CARGO": cargo, "DAEDALUS_BOUND_SCALE": str(2 / 600)})

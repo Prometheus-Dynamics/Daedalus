@@ -15,6 +15,10 @@ export DAEDALUS_TARGET_SEED="$work/cache/seed"
 export DAEDALUS_VVL_DIR="$work/cache/vvl/$("$(git rev-parse --show-toplevel)/scripts/dev/vvl-key.sh")/x86_64"
 # The gate's cores: the rest of the machine is other sessions'.
 export LAND_CPUS="${LAND_CPUS:-6-18}" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-13}"
+# The one nice level of every heavy run (gates, builds, tests, measurements), the same in every
+# dependency on this machine: levels that differ starve one run behind another's, and no run's
+# time can then be measured or met. Reported beside the load with every measurement.
+export NICE=10
 # Pushes and PRs go through gh's credentials.
 export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0='!gh auth git-credential' \
   GIT_CONFIG_KEY_1=url.https://github.com/.insteadOf GIT_CONFIG_VALUE_1=git@github.com:

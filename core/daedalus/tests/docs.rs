@@ -161,6 +161,8 @@ const POINTERS_ALLOWED: &[&str] = &[
     "scripts/pr-status.py",
     // The lander names the notes no check reads, which cost no gate.
     "scripts/dev/land.sh",
+    // The test keys name the notes no build or test reads, which are in no key.
+    "scripts/lane-reuse.py",
     // The rule that a product name may appear in the planning files names them.
     "scripts/boundaries.py",
     // This file names what it looks for.
