@@ -2,11 +2,8 @@
 
 use std::io::Cursor;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_wire::{read_packet, write_packet};
-
-#[global_allocator]
-static ALLOCATOR: CountingAlloc = CountingAlloc;
 
 #[test]
 fn a_length_over_the_cap_allocates_nothing() {

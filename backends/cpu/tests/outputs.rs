@@ -10,7 +10,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_cpu::CpuBackend;
 use daedalus_graph::{EdgeDoc, EdgePolicyDoc, GraphBody, NodeDoc, NodeKindDoc, PortRefDoc};
 use daedalus_host::{LoadOptions, LoadedHost};
@@ -18,9 +18,6 @@ use daedalus_macros::node;
 use daedalus_planner::{Config, Planned, plan};
 use daedalus_registry::{NodeRecord, Registry};
 use daedalus_types::{TypeExpr, TypeKey, Typed};
-
-#[global_allocator]
-static COUNTING: CountingAlloc = CountingAlloc;
 
 static TURN: Mutex<()> = Mutex::new(());
 

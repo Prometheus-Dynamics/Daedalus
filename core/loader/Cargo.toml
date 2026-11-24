@@ -49,11 +49,6 @@ path = "tests/all.rs"
 
 # Its own process: installs its own global allocator.
 [[test]]
-name = "alloc"
-path = "tests/alloc.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
 name = "bytes"
 path = "tests/bytes.rs"
 
@@ -62,7 +57,8 @@ path = "tests/bytes.rs"
 name = "fd_reuse"
 path = "tests/fd_reuse.rs"
 
-# Its own process: installs its own global allocator.
+# Its own process: installs its own global allocator, and reads the process-wide counts of
+# released records, which other tests move.
 [[test]]
 name = "handover"
 path = "tests/handover.rs"
@@ -76,11 +72,6 @@ path = "tests/handover_leak.rs"
 [[test]]
 name = "integrity"
 path = "tests/integrity.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "owned"
-path = "tests/owned.rs"
 
 # Its own process: installs its own global allocator.
 [[test]]

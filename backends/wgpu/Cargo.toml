@@ -55,20 +55,10 @@ path = "tests/import_refused.rs"
 name = "planning"
 path = "tests/planning.rs"
 
-# Its own process: installs its own global allocator.
-[[test]]
-name = "region"
-path = "tests/region.rs"
-
 # Its own process: reads a count of the whole process (devices opened, live handles) that other tests move.
 [[test]]
 name = "shared"
 path = "tests/shared.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "storage"
-path = "tests/storage.rs"
 
 # Its own process: reads a count of the whole process (devices opened, live handles) that other tests move.
 [[test]]

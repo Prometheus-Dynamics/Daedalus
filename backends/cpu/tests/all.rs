@@ -4,6 +4,9 @@
 //! or the other; the boundary check refuses a test file in neither.
 
 #[cfg(feature = "blob")]
+#[path = "blob.rs"]
+mod blob;
+#[cfg(feature = "blob")]
 #[path = "blob_library.rs"]
 mod blob_library;
 #[cfg(all(feature = "blob", feature = "receive"))]
@@ -41,13 +44,22 @@ mod fusion_equivalence;
 mod handed_bytes;
 #[path = "inside.rs"]
 mod inside;
+#[path = "list_view.rs"]
+mod list_view;
 #[cfg(feature = "merge")]
 #[path = "merge.rs"]
 mod merge;
+#[path = "no_alloc.rs"]
+mod no_alloc;
 #[path = "node_fault.rs"]
 mod node_fault;
 #[path = "node_metrics.rs"]
 mod node_metrics;
+#[path = "out_view.rs"]
+mod out_view;
+#[cfg(feature = "merge")]
+#[path = "outputs.rs"]
+mod outputs;
 #[path = "owned_code.rs"]
 mod owned_code;
 #[path = "patch_const.rs"]
@@ -63,3 +75,8 @@ mod take_wait;
 mod transfer;
 #[path = "wait.rs"]
 mod wait;
+
+// Every file here counts allocations per thread (daedalus_abi::counting), so they share one
+// counting allocator and one process.
+#[global_allocator]
+static ALLOC: daedalus_abi::counting::CountingAlloc = daedalus_abi::counting::CountingAlloc;

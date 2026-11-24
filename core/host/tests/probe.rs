@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{Slots, Step, StepCx, StepEnd, StepWord};
 use daedalus_host::{Host, PlanReport, Ports, TickOverheadWindow};
 use daedalus_plan::Span;
@@ -11,9 +11,6 @@ use daedalus_runner::{
     TickProbe, TickSample, best_clock,
 };
 use daedalus_types::TypeKey;
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 static TYPES: [TypeKey; 0] = [];
 

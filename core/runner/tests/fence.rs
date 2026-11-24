@@ -1,14 +1,11 @@
-mod support;
+use crate::support;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{Fence, FencePoll, FenceWord, Slots, Step, StepCx, StepEnd, StepWord};
 use support::{Fixture, Wiring};
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 const WORDS: usize = 8;
 /// How many polls each fence word takes before it is ready.

@@ -2,11 +2,11 @@
 //! where it is, record by record, with no decode and no allocation, and from the list itself when
 //! it is a Rust value.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{Slot, StepCx, StepEnd};
 use daedalus_cpu::steps::{CpuBody, ListView, Setup, list_viewed};
 use daedalus_macros::node;
@@ -14,9 +14,6 @@ use daedalus_registry::NodeRecord;
 use daedalus_types::{SpaceIndex, TypeIndex, WireForm};
 
 use common::{NODE, call, value};
-
-#[global_allocator]
-static COUNTING: CountingAlloc = CountingAlloc;
 
 /// A keypoint's shape: 28 bytes, five `f32` and two `i32`.
 #[derive(

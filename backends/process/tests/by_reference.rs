@@ -7,12 +7,12 @@
 
 #![cfg(target_os = "linux")]
 
-mod support;
+use crate::support;
 
 use std::os::fd::BorrowedFd;
 use std::sync::Arc;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::testing::{release, run_once};
 use daedalus_abi::{OWNER_HANDED, Slot, SlotState, Slots, Step, StepCx, StepEnd};
 use daedalus_backend_process::ProcessBackend;
@@ -23,9 +23,6 @@ use daedalus_types::{SpaceIndex, TypeExpr, TypeIndex};
 use daedalus_types::{TypeKey, Typed};
 use daedalus_worker_conformance::runner::registry;
 use support::{spec, step_of};
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 const LARGE: usize = 256 << 10;
 

@@ -66,11 +66,6 @@ path = "tests/all.rs"
 
 # Its own process: installs its own global allocator.
 [[test]]
-name = "blob"
-path = "tests/blob.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
 name = "chip_alloc"
 path = "tests/chip_alloc.rs"
 
@@ -78,26 +73,6 @@ path = "tests/chip_alloc.rs"
 [[test]]
 name = "chip_param"
 path = "tests/chip_param.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "list_view"
-path = "tests/list_view.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "no_alloc"
-path = "tests/no_alloc.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "out_view"
-path = "tests/out_view.rs"
-
-# Its own process: installs its own global allocator.
-[[test]]
-name = "outputs"
-path = "tests/outputs.rs"
 
 # Its own process: installs its own global allocator.
 [[test]]

@@ -1,18 +1,15 @@
 //! Cancellation stops a tick at a step boundary and loses nothing. Progress cells read back what a
 //! body wrote. Neither allocates.
 
-mod support;
+use crate::support;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{OwnedStep, Progress, Slots, Step, StepCx, StepEnd, StepWord};
 use daedalus_runner::{CANCEL_REASON, CancelWord, RunError, SlotKind, SlotSpec, skip_cancelled};
 use support::{Fixture, Link, Wiring, tagged};
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 fn fifo(count: usize) -> Vec<SlotSpec> {
     vec![

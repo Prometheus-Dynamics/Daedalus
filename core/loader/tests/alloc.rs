@@ -1,14 +1,11 @@
 //! A plugin step allocates nothing once it has run once.
 
-mod support;
+use crate::support;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::testing::{release, run_once};
 use daedalus_abi::{BoundaryPort, Slot, SlotState, Slots, StepCx, StepEnd};
 use daedalus_loader::{Loader, RegionIn};
-
-#[global_allocator]
-static ALLOCATOR: CountingAlloc = CountingAlloc;
 
 #[test]
 fn a_plugin_tick_allocates_nothing_after_warm_up() {

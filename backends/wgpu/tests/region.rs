@@ -1,13 +1,13 @@
 //! A region of shader nodes compiled into one step: one submit, one pass per node, values that
 //! stay on the device between the nodes, and results that match the same arithmetic here.
 
-mod common;
+use crate::common;
 
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::testing::{release, run_once};
 use daedalus_abi::{Slot, Slots, StepCx, StepEnd};
 use daedalus_backend::{
@@ -19,9 +19,6 @@ use daedalus_runner::{put_typed, take_typed};
 use daedalus_types::{BackendIndex, NodeIndex, PortIndex, SpaceIndex, TypeIndex};
 use daedalus_wgpu::shader::{BindingKind, BindingSpec, Dispatch, ShaderSpec};
 use daedalus_wgpu::{Options, Storage, WgpuBackend};
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 const fn storage(index: u32, name: &'static str, read_only: bool) -> BindingSpec {
     BindingSpec {

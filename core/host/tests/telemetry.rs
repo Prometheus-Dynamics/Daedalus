@@ -1,15 +1,12 @@
 //! Host telemetry: levels, the clock, the event log, the reports, and no allocation at Basic.
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{Slots, Step, StepCx, StepEnd, StepWord};
 use daedalus_host::{Event, Level, Telemetry};
 use daedalus_plan::Span;
 use daedalus_runner::{
     Memory, Pending, Plan, Queue, Runner, SlotKind, SlotSpec, StepHealth, StepMeta,
 };
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 struct Nop;
 

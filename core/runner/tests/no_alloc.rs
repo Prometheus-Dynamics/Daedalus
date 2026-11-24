@@ -1,12 +1,9 @@
-mod support;
+use crate::support;
 
 use daedalus_abi::Step;
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_runner::{SlotKind, SlotSpec};
 use support::{Fixture, Link, tagged};
-
-#[global_allocator]
-static ALLOC: CountingAlloc = CountingAlloc;
 
 #[test]
 fn ten_thousand_warm_ticks_allocate_nothing() {

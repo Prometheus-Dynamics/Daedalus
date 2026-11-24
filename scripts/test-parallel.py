@@ -11,6 +11,9 @@ is still one process, so its tests share what they share under cargo test: a fix
 a lock on state of the process. Every binary runs, and the step fails if any binary fails; each
 failing binary's output is printed whole.
 
+Each binary's line gives its wall time and its CPU seconds (its own and those of the children it
+reaped), and the last line their sum: the run's share of the step's CPU budget.
+
 A binary is run as cargo runs it: in its package's directory, with cargo's variables for that
 package, and the target's library directories on the library path.
 
@@ -241,6 +244,7 @@ def main():
                 ran_for = []
                 ended = group.wait_fair(bound(name), ran_for)
                 code, left = group.reap()
+                cpu = group.cpu
                 with groups_lock:
                     groups.discard(group)
                 out.seek(0)
@@ -258,7 +262,7 @@ def main():
                        if lost >= 1 else "")
                 output += (f"\n{name}: still running at its bound of {bound(name):.0f} s"
                            f"{' ' + why if why else ''}: stopped it\n")
-            ran.append((message, code, output, left, time.monotonic() - start))
+            ran.append((message, code, output, left, time.monotonic() - start, cpu))
         return ran
 
     started = time.monotonic()
@@ -271,11 +275,11 @@ def main():
     print(f"  {len(FIXTURES)} fixtures built in {time.monotonic() - started:.0f} s")
 
     workers = max(1, len(os.sched_getaffinity(0)))
-    failed, times = [], {}
+    failed, times, spent = [], {}, 0.0
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for ran in pool.map(run, jobs):
-            for message, code, output, left, seconds in ran:
+            for message, code, output, left, seconds, cpu in ran:
                 name = label(message)
                 slowest = last.get(name, [0.0, None])[1]
                 times[name] = [round(seconds, 2),
@@ -284,7 +288,8 @@ def main():
                 status = ("ok" if code == 0 else "TIMED OUT" if code == TIMED_OUT
                           else f"FAILED (exit {code})")
                 stray = f" (left {len(left)} running: stopped)" if left else ""
-                print(f"  {seconds:6.1f} s  {name}: {status} {summary[-1][12:] if summary else ''}"
+                spent += cpu
+                print(f"  {seconds:6.1f} s {cpu:6.1f} cpu-s  {name}: {status} {summary[-1][12:] if summary else ''}"
                       f"{stray}")
                 if code != 0:
                     failed.append((name, output))
@@ -293,7 +298,8 @@ def main():
             json.dump({**last, **times}, file, indent=0, sort_keys=True)
     except OSError:
         pass
-    print(f"  {len(found)} test binaries in {time.monotonic() - started:.0f} s, {workers} at a time,"
+    print(f"  {len(found)} test binaries in {time.monotonic() - started:.0f} s and {spent:.0f} CPU-s,"
+          f" {workers} at a time,"
           f" {len(shared)} sharing trybuild's build one after another")
     for name, output in failed:
         print(f"\n---- {name} ----\n{output}", end="")

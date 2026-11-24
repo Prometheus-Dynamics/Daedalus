@@ -5,18 +5,15 @@
 //! In its own binary, so no other test's allocations are counted. Lent memory is Linux's.
 #![cfg(target_os = "linux")]
 
-mod support;
+use crate::support;
 
 use daedalus::layers::planner::explain::explain_plan;
 use daedalus::prelude::*;
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_backend_process::ProcessBackend;
 use daedalus_cpu::CpuBackend;
 use daedalus_cpu_author::{OutView, Refused};
 use support::spec;
-
-#[global_allocator]
-static ALLOCATOR: CountingAlloc = CountingAlloc;
 
 /// 1 MiB of `f32`.
 const ITEMS: u32 = 1 << 18;

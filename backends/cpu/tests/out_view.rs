@@ -3,11 +3,11 @@
 //! room reserved, or a record that writes another length than its size pass said, fails the step
 //! with words, and a failed tick's lease is given back.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 
-use daedalus_abi::counting::{CountingAlloc, counted};
+use daedalus_abi::counting::counted;
 use daedalus_abi::{
     HeldRegions, Lease, Lend, OWNER_HANDED, Regions, Slot, SlotState, StepCx, StepEnd,
     WritableRegions,
@@ -20,9 +20,6 @@ use daedalus_registry::NodeRecord;
 use daedalus_types::{PortIndex, WireForm};
 
 use common::{NODE, call, inline};
-
-#[global_allocator]
-static COUNTING: CountingAlloc = CountingAlloc;
 
 #[node(id = "view.fill", inputs(port(name = "n")))]
 fn fill(n: u32, mut out: OutView<'_, f32>) -> Result<(), Refused> {
