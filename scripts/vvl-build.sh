@@ -15,9 +15,10 @@
 # The layer is linked with -z nodelete: zig's static libc++ registers a destructor that otherwise
 # runs after the loader has unloaded the layer, and every process exits 139 (E13, 2026-11-20).
 #
-# A build's hash depends on the work directory and the zig version (paths end up in the library).
-# The gate checks the layer it runs against the hash in scripts/vvl.pin, so after a rebuild that
-# changes it, record the new hash there.
+# A build's hash depends on the zig version, not on where it is built: the build's paths are mapped
+# to fixed names. The gate checks the layer it runs against the hash in scripts/vvl.pin, so after a
+# rebuild that changes it, record the new hash there. scripts/dev/setup.sh builds it into the
+# working area's cache, in a directory named by its pinned inputs (scripts/dev/vvl-key.sh).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 repo=$PWD
@@ -58,6 +59,10 @@ if [[ "$have" != "$VVL_COMMIT" ]]; then
   exit 1
 fi
 
+# The paths of the build don't reach the library: every compile, the dependencies' too, maps them
+# to fixed names, so a layer built in any directory has the pinned hash.
+prefix_maps="-ffile-prefix-map=$work=/vvl-work -ffile-prefix-map=$src=/vvl-src"
+
 # zig as the compiler: its linker takes --version-script as two arguments.
 tools="$work/tools-$arch"
 mkdir -p "$tools"
@@ -85,6 +90,8 @@ set(CMAKE_CXX_COMPILER $tools/cxx)
 set(CMAKE_AR $tools/ar)
 set(CMAKE_RANLIB $tools/ranlib)
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_C_FLAGS_INIT "$prefix_maps")
+set(CMAKE_CXX_FLAGS_INIT "$prefix_maps")
 EOF
 export ZIG_GLOBAL_CACHE_DIR="$work/zig-cache" ZIG_LOCAL_CACHE_DIR="$work/zig-cache"
 

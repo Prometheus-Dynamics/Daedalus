@@ -27,7 +27,8 @@ applies them as written. These three were chosen and approved beforehand, not fi
 
 On the host, from a clone on NVMe:
 
-1. `VVL_DIR=/mnt/nvme-wd/daedalus-vvl/aarch64 scripts/board/batch.sh build`, with the layer
+1. `VVL_DIR=$DAEDALUS_WORK/cache/vvl/$(scripts/dev/vvl-key.sh)/aarch64 scripts/board/batch.sh build`
+   (`scripts/dev/setup.sh --board` builds that layer), with the layer
    recorded under "What the board needs". It builds the bundle under `$CARGO_TARGET_DIR/board/batch`: `daedalus-gpu-budgets`, `daedalus-budget-harness`, its `ticks`
    bench (`ticks-bench`), `bounded`, the `vk-sys` unit tests (`vk-sys.lib`), the wgpu `all` and
    `region` tests, the layer, `batch-on-board.sh` and `figures/*.sh`.
@@ -251,7 +252,9 @@ D2 and I2 close on rows from this run.
   - sha256 of `libVkLayer_khronos_validation.so`:
     `4833dd1ba02bdff6489f692fe3079f37a0f0cec1ca0e5824b8273bd13a307a8c`. The script's build on
     2026-11-20 is byte for byte the layer the second 2026-11-20 session ran.
-  - On this machine: `VVL_DIR=/mnt/nvme-wd/daedalus-vvl/aarch64`.
+  - On this machine: `$DAEDALUS_WORK/cache/vvl/$(scripts/dev/vvl-key.sh)/aarch64`, built by
+    `scripts/dev/setup.sh --board`. Its build maps its paths, so a rebuild there must give this
+    hash; if it doesn't, the pin is what to look at before a board session.
 - The locks: `go` holds both `/run/lock/raze-gpu.lock` and `/run/lock/board-gpu.lock` for the whole run
   (`BOARD_LOCKS`, both by default).
 - Other software on the board: only that it holds neither GPU lock during the run. The bundle depends

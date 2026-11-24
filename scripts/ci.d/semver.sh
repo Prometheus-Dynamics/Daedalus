@@ -4,6 +4,8 @@
 # file SEMVER_BASELINE at the repository's root. It reports and never fails the gate. Until a
 # release is called there is no baseline, and this does nothing: the owner writes the file.
 set -uo pipefail
+# Its lane's build directory: no other lane builds there (scripts/gate.sh).
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/ship"
 
 if [[ ! -s SEMVER_BASELINE ]]; then
   echo "  no SEMVER_BASELINE: nothing has been released to compare with"

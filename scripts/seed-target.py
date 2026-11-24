@@ -25,7 +25,7 @@ project per crate named `<crate>-tests`) and the fixtures tests build (`tmp/<nam
 dependency builds go in the seed the same way. The rest of `tests` and `tmp` is ours, and so are
 trybuild's projects, whose manifests name this checkout's paths. The steps that build the daemon
 or the examples with features of their own have build directories of their own beside the main
-one (`variants`, `ship`), and they are seeded the same way as the main one.
+one (`variants`, `ship`, `cross`, `doc-build`), and they are seeded the same way as the main one.
 
 The build directory is CARGO_TARGET_DIR, or `target` in this checkout. Copies share their blocks
 where the file system can (btrfs, XFS); a seed is replaced whole, under a lock beside it.
@@ -45,7 +45,7 @@ ONLY_OURS = ["doc", "test-parallel-times.json", ".daedalus-checkout"]
 # Ours, except the build directories inside them.
 HOLDING_BUILDS = ["tests", "tmp"]
 # Build directories laid out as the main one, inside it.
-BESIDE = ["variants", "ship"]
+BESIDE = ["variants", "ship", "cross", "doc-build"]
 # Written into a seed by `save`: the key its builds were made at.
 KEY_FILE = ".daedalus-seed-key"
 # The files a seed's key covers, besides the build profiles in Cargo.toml and the compiler.
@@ -184,12 +184,23 @@ def save(seed):
         print(f"seed: no build directory at {source}", file=sys.stderr)
         return 1
     ours = members()
+    if not ours:
+        print("seed: the workspace lists no members: not saving a seed that would keep our builds",
+              file=sys.stderr)
+        return 1
     with open(seed + ".lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         fresh = tempfile.mkdtemp(prefix=os.path.basename(seed) + ".", dir=os.path.dirname(seed))
         os.rmdir(fresh)
         copy(source, fresh)
         strip(fresh, ours)
+        # A seed with no dependency build in it would make every slot start cold while looking
+        # saved: refuse it, and keep the seed there is.
+        kept = sum(name.endswith((".rlib", ".rmeta")) for _, _, names in os.walk(fresh) for name in names)
+        if not kept:
+            remove(fresh)
+            print(f"seed: {source} holds no dependency build: the seed is unchanged", file=sys.stderr)
+            return 1
         with open(os.path.join(fresh, KEY_FILE), "w") as file:
             json.dump(key(), file, indent=0, sort_keys=True)
         old = seed + ".old"

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # The check every PR into next must pass. CI runs exactly this.
 #
-# The steps run in five lanes at once, and each lane runs its steps one after another:
+# The steps run in six lanes at once, and each lane runs its steps one after another. No two lanes
+# build in the same build directory, so no lane waits on another's lock:
 #   host:    the cargo steps that build for this machine into the build directory, and run what
-#            they build.
+#            they build. vvl-wgpu runs the wgpu tests the test step built, under the validation
+#            layer, so it runs here, after them.
+#   docs:    the API documentation, built in `doc-build` in the build directory.
 #   ship:    what a release ships: the crates packaged, the daemon's packaging files, and the
 #            examples run. Their `-p` builds have features of their own and would replace the
 #            binaries the host lane's tests run, so packaging and smoke build in `ship` in the build
@@ -12,8 +15,8 @@
 #            the daemon built without the planner or workers build in a directory of their own
 #            (`variants` in the build directory); the budget table builds release binaries, the
 #            firmware, and the fixture the tests build with the same command.
-#   cross:   the steps that build only for other targets (bare metal, WebAssembly). Cargo locks each
-#            target's build directory, so they never wait on the host lane's.
+#   cross:   the steps that build only for other targets (bare metal, WebAssembly), in `cross` in
+#            the build directory.
 #   scripts: the checks that read the tree and build nothing.
 # A lane stops at its first failed step, as the gate always has; the other lanes go on. Each lane's
 # output is printed whole, in lane order, and the gate fails if any lane failed. `scripts/ci.sh <step>` still runs one step by name.
@@ -22,17 +25,18 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # The gate runs every test binary, whatever a caller's scripts/check.sh setting says.
 unset DAEDALUS_TEST_PACKAGES
 
-host=(clippy test vvl chip doc)
+host=(clippy test vvl vvl-wgpu chip)
+docs=(doc)
 ship=(package packaging smoke semver)
 beside=(no-planner no-workers budgets)
 cross=(boundaries nostd wasm)
-scripts=(format capability gpu-async-blocking gpu-driver-lock tools vvl-wgpu)
+scripts=(format capability gpu-async-blocking gpu-driver-lock tools)
 trailing=(scripts/check-file-sizes.sh scripts/check-workspace-deps.sh testing/boundary/run.sh)
 
 # A step in scripts/ci.d that no lane names is a mistake: it would never run.
 for file in scripts/ci.d/*.sh; do
   name="$(basename "$file" .sh)"
-  if [[ " ${host[*]} ${ship[*]} ${beside[*]} ${cross[*]} ${scripts[*]} " != *" $name "* ]]; then
+  if [[ " ${host[*]} ${docs[*]} ${ship[*]} ${beside[*]} ${cross[*]} ${scripts[*]} " != *" $name "* ]]; then
     echo "gate: scripts/ci.d/$name.sh is in no lane of scripts/gate.sh" >&2
     exit 2
   fi
@@ -74,7 +78,7 @@ scripts_lane() {
 }
 
 start=$SECONDS
-lanes=(host ship beside cross scripts)
+lanes=(host docs ship beside cross scripts)
 pids=()
 for lane in "${lanes[@]}"; do
   if [[ $lane == scripts ]]; then

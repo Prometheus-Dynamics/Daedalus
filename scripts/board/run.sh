@@ -80,20 +80,7 @@ bundle() { # rust target: builds the test binaries and gathers them under $out/b
   echo "board: building the tests of $packages for $target"
   env "${env[@]}" cargo test --release --no-run --target "$target" "${flags[@]}" \
     --message-format=json 2>"$out/build.log" |
-    python3 -c '
-import json, os, shutil, sys
-dest = sys.argv[1]
-for line in sys.stdin:
-    try:
-        message = json.loads(line)
-    except ValueError:
-        continue
-    exe = message.get("executable")
-    if exe and message.get("profile", {}).get("test"):
-        # Two packages may each have a test of one name, so the package is part of the name.
-        package = message["package_id"].rsplit("#", 1)[-1].split("@")[0].rsplit("/", 1)[-1]
-        shutil.copy(exe, os.path.join(dest, package + "." + message["target"]["name"]))
-' "$out/bundle/bin" || { tail -20 "$out/build.log" >&2; die "the build failed: $out/build.log"; }
+    python3 -I scripts/board/pick-binaries.py all "$out/bundle/bin" || { tail -20 "$out/build.log" >&2; die "the build failed: $out/build.log"; }
   [[ -n "$(ls "$out/bundle/bin")" ]] || { tail -20 "$out/build.log" >&2; die "no test binary was built"; }
   cp scripts/board/on-board.sh "$out/bundle/"
   git rev-parse --short HEAD > "$out/results/rev.txt" 2>/dev/null || true
