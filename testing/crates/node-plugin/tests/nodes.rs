@@ -4,7 +4,7 @@
 //! the plugin's own words.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use daedalus_cpu::CpuBackend;
 use daedalus_graph::{
@@ -109,6 +109,7 @@ const WHOLE: [(&str, &str, &str); 7] = [
 
 #[test]
 fn the_plugin_declares_the_crates_nodes_with_their_ports() {
+    let _inside = inside();
     let plugin = Loader::new().open(library()).expect("the plugin loads");
     assert_eq!(plugin.name(), "node-plugin");
     let ids: Vec<&str> = plugin.nodes().iter().map(|node| node.id.as_str()).collect();
@@ -126,7 +127,8 @@ fn the_plugin_declares_the_crates_nodes_with_their_ports() {
 
 #[test]
 fn every_node_gives_what_it_gives_linked_and_state_goes_on() {
-    let plugin = Arc::new(Loader::new().open(library()).expect("the plugin loads"));
+    let _inside = inside();
+    let plugin = plugin_of();
     let graph = chain(&WHOLE);
     let mut from_file = host(loaded(&plugin, &graph));
     let mut built_in = host(linked(&graph));
@@ -140,7 +142,8 @@ fn every_node_gives_what_it_gives_linked_and_state_goes_on() {
 
 #[test]
 fn a_reload_keeps_the_state_of_a_plugins_node() {
-    let plugin = Arc::new(Loader::new().open(library()).expect("the plugin loads"));
+    let _inside = inside();
+    let plugin = plugin_of();
     let graph = chain(&[("np.total", "x", "sum")]);
     let mut host = host(loaded(&plugin, &graph));
     assert_eq!([5, 6].map(|x| through(&mut host, x)), [Some(5), Some(11)]);
@@ -151,7 +154,8 @@ fn a_reload_keeps_the_state_of_a_plugins_node() {
 
 #[test]
 fn a_plugins_node_runs_though_its_metrics_do_not_cross_yet() {
-    let plugin = Arc::new(Loader::new().open(library()).expect("the plugin loads"));
+    let _inside = inside();
+    let plugin = plugin_of();
     let graph = chain(&[("np.counted", "x", "y")]);
     let options = LoadOptions {
         node_metrics: true,
@@ -169,7 +173,8 @@ fn a_plugins_node_runs_though_its_metrics_do_not_cross_yet() {
 
 #[test]
 fn a_fault_and_a_restart_go_as_they_go_linked() {
-    let plugin = Arc::new(Loader::new().open(library()).expect("the plugin loads"));
+    let _inside = inside();
+    let plugin = plugin_of();
     let mut graph = chain(&[("np.fragile", "x", "sum")]);
     graph.nodes[1].metadata.insert(
         "daedalus.node.recovery".to_string(),
@@ -200,6 +205,7 @@ fn a_fault_and_a_restart_go_as_they_go_linked() {
 
 #[test]
 fn a_constant_reaches_a_plugins_node_as_it_reaches_it_linked() {
+    let _inside = inside();
     // `host.x -> np.scale (by 3) -> np.triple -> host.out`.
     let mut graph = chain(&[("np.scale", "x", "y"), ("np.triple", "x", "y")]);
     graph.nodes[1].consts.insert("by".to_string(), Lit::Int(3));
@@ -214,6 +220,7 @@ fn a_constant_reaches_a_plugins_node_as_it_reaches_it_linked() {
 
 #[test]
 fn a_patched_constant_is_not_offered_to_a_plugins_node_yet_and_is_refused_by_name() {
+    let _inside = inside();
     let mut graph = chain(&[("np.scale", "x", "y")]);
     graph.nodes[1].consts.insert("by".to_string(), Lit::Int(3));
     let mut host = host(loaded(&plugin_of(), &graph));
@@ -228,12 +235,25 @@ fn a_patched_constant_is_not_offered_to_a_plugins_node_yet_and_is_refused_by_nam
     assert_eq!(through(&mut host, 2), Some(6));
 }
 
+/// Taken by every test that opens the plugin. Each opens the same library, which the process maps
+/// once, so its count of values held is one count for every test, and every graph of two of its
+/// nodes hands a value from one to the other inside it: a test that counts them must be the only
+/// one running the plugin.
+static INSIDE: Mutex<()> = Mutex::new(());
+
+fn inside() -> MutexGuard<'static, ()> {
+    INSIDE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn plugin_of() -> Arc<Plugin> {
     Arc::new(Loader::new().open(library()).expect("the plugin loads"))
 }
 
 #[test]
 fn a_plugins_config_is_refused_by_the_planner_until_the_entry_carries_its_fields() {
+    let _inside = inside();
     let field = |name: &str, value| LitField {
         name: name.to_string(),
         value: Lit::Int(value),
@@ -256,7 +276,8 @@ fn a_plugins_config_is_refused_by_the_planner_until_the_entry_carries_its_fields
 
 #[test]
 fn a_plugins_refusal_reaches_the_host_in_its_own_words() {
-    let plugin = Arc::new(Loader::new().open(library()).expect("the plugin loads"));
+    let _inside = inside();
+    let plugin = plugin_of();
     let mut graph = chain(&[("np.triple", "x", "y")]);
     let mut sum = NodeDoc::new("np.sum");
     sum.label = Some("sum".to_string());
@@ -276,6 +297,7 @@ fn a_plugins_refusal_reaches_the_host_in_its_own_words() {
 
 #[test]
 fn a_value_with_no_crossing_form_goes_between_two_plugin_nodes_as_it_is() {
+    let _inside = inside();
     let graph = chain(&[("np.keep", "x", "kept"), ("np.weigh", "kept", "y")]);
     let mut from_file = host(loaded(&plugin_of(), &graph));
     let mut built_in = host(linked(&graph));
@@ -295,6 +317,7 @@ fn held_in(host: &mut LoadedHost, plugin: &Arc<Plugin>) -> Option<u32> {
 
 #[test]
 fn every_value_inside_a_plugin_is_released_before_its_library_closes() {
+    let _inside = inside();
     let plugin = plugin_of();
     let probe = plugin.generation_probe();
 
@@ -347,6 +370,7 @@ fn weigh_here(kept: &Kept) -> u32 {
 
 #[test]
 fn a_value_with_no_crossing_form_cannot_leave_the_plugin_and_is_refused_in_words() {
+    let _inside = inside();
     let plugin = plugin_of();
     let graph = chain(&[("np.keep", "x", "kept"), ("t.weigh", "kept", "y")]);
     let mut registry = Registry::new();

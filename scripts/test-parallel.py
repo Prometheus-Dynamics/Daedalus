@@ -15,7 +15,9 @@ A binary is run as cargo runs it: in its package's directory, with cargo's varia
 package, and the target's library directories on the library path.
 
 With DAEDALUS_TEST_PACKAGES set to package names, only those packages' binaries run, from the
-same build: scripts/check.sh runs a change's packages this way. The gate unsets it.
+same build: scripts/check.sh runs a change's packages this way, and the gate those whose tests
+did not pass before on the same inputs (scripts/lane-reuse.py). With DAEDALUS_TEST_PASSED set to a
+file, the names of the packages whose every binary passed are written to it, failed run or not.
 
 Each binary runs under a bound: three times the slowest it has passed in, and never under FLOOR.
 The bound is on time the binary could use: the time its threads spent waiting for a CPU on a busy
@@ -295,6 +297,13 @@ def main():
           f" {len(shared)} sharing trybuild's build one after another")
     for name, output in failed:
         print(f"\n---- {name} ----\n{output}", end="")
+    passed_file = os.environ.get("DAEDALUS_TEST_PASSED")
+    if passed_file:
+        names = set(only.split()) if only is not None else {
+            package_of(m["package_id"], m["manifest_path"])[0] for m in found}
+        names -= {name.split(" ", 1)[0] for name, _ in failed}
+        with open(passed_file, "w") as file:
+            file.write("".join(f"{name}\n" for name in sorted(names)))
     unlisted = unlisted_fixtures()
     if unlisted:
         print("\ntest: a test built a fixture that scripts/test-parallel.py FIXTURES doesn't build"

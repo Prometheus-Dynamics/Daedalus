@@ -38,13 +38,27 @@ crate is making its directory.
 ## The gate
 
 `scripts/gate.sh` is what every change must pass, and what CI runs. It runs every step in
-`scripts/ci.d/`, in six lanes at once: the cargo steps for this machine one after another; the API
-documentation (built in `doc-build` inside the build directory); what a release ships (the crates
+`scripts/ci.d/`, in seven lanes at once: the cargo steps for this machine one after another; the API
+documentation (built in `doc-build` inside the build directory); the firmware (in `chip`); what a release ships (the crates
 packaged, the daemon's packaging files and the examples run, built in `ship`); the steps whose
 builds never replace what the first lane runs (the daemon built with other features and the budget
 table, in `variants`); the steps that build only for other targets (in `cross`); and the checks
 that build nothing. No two lanes build in one directory, so no lane waits on another's lock. A new step must be
-named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` runs one by name:
+named in one of the lanes, or the gate refuses to run.
+
+In the gate, the `test` step runs only the packages whose tests have not passed on exactly these
+inputs (`scripts/lane-reuse.py`). A package's key is a hash of what its tests' result depends on:
+every file of each workspace package its tests build, the lock file's entry of every package they
+build, every file outside the packages but the notes, cargo's configuration, the toolchain, the
+programs and Vulkan drivers a test may load, and the environment a build or test reads. A package
+whose sources name a path out of it (a `..` path, a walk up from its manifest or its binary, cargo
+itself, the build directory) is keyed by the whole tree but the planning notes. Every binary is
+still built as the workspace builds it; only the run is skipped. The gate's last line,
+`Gate-Lanes:`, says what each lane did (`passed`, `passed(K-of-N-reused)`, or `not-run(WHY)` for a
+lane `scripts/dev/land.sh` left out), and the commit carries it. On CI, or with
+`GATE_LANE_REUSE=0`, nothing is reused. `lane-reuse.py --explain PACKAGE` lists a key's inputs.
+
+`scripts/ci.sh <step>` runs one by name:
 
 | Step | What it checks |
 |---|---|
@@ -62,7 +76,7 @@ named in one of the lanes, or the gate refuses to run. `scripts/ci.sh <step>` ru
 | `semver` | Semantic versioning against the `SEMVER_BASELINE` tag; reports and never fails the gate |
 | `smoke` | The examples run and print what they should |
 | `doc` | The API docs build with no warning. Every link in `docs/` resolving is a `daedalus` `docs::` test, which the `test` step runs |
-| `tools` | `scripts/affected.py`, `scripts/prune-targets.py`, `scripts/seed-target.py`, `scripts/fixture-locks.sh` and `scripts/bounded.py` against planted cases; the bounds against a planted sleeper and an orphan that holds the output, in `scripts/ci.sh` and `scripts/test-parallel.py` |
+| `tools` | `scripts/affected.py`, `scripts/prune-targets.py`, `scripts/seed-target.py`, `scripts/fixture-locks.sh`, `scripts/lane-reuse.py` (when it changed) and `scripts/bounded.py` against planted cases; the bounds against a planted sleeper and an orphan that holds the output, in `scripts/ci.sh` and `scripts/test-parallel.py` |
 | `vvl-wgpu` | The `daedalus-wgpu` tests, every one that opens a device, the same way as `vvl`, on the binaries the `test` step built, after it in the host lane |
 
 Every step runs under a hard bound, written in its own file as `# bound: N s`: three times its
@@ -107,6 +121,10 @@ in: cargo would reuse those builds, and they carry the other checkout's paths. E
 records its checkout. `scripts/prune-targets.py DIR...` lists the build directories under `DIR`
 whose checkout is finished with: gone, or merged into `origin/next`, clean and unused for two
 days. `--delete` deletes them. A directory with no record is never touched.
+
+A build directory that doesn't exist yet is made as a btrfs subvolume of its own where the file
+system allows it (`scripts/seed-target.py root`, and `use` for a seeded one): compilers that share
+one subvolume with every other build on the disk queue on its locks.
 
 A new checkout's first build can start from the dependencies another one built. `scripts/seed-target.py
 save SEED` keeps this checkout's build directory, less the workspace's own builds, as `SEED`; with

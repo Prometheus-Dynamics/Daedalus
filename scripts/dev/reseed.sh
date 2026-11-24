@@ -26,7 +26,10 @@ fi
 while landing; do sleep 60; done
 rm -rf "$CARGO_TARGET_DIR"
 unset DAEDALUS_TARGET_SEED
-if scripts/gate.sh > "$DAEDALUS_LOGS/reseed.log" 2>&1; then
+# Every step builds everything: a seed is what one whole run built from empty
+# (scripts/seed-target.py save refuses any other), so nothing is reused.
+if GATE_LANE_REUSE=0 taskset -c "$LAND_CPUS" ionice -c3 nice -n"$NICE" scripts/gate.sh \
+    > "$DAEDALUS_LOGS/reseed.log" 2>&1; then
   du -sk "$CARGO_TARGET_DIR" | cut -f1 > "$size_file"
   scripts/seed-target.py save "$seed" && echo "reseed: seed saved"
 else

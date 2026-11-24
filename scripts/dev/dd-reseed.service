@@ -5,7 +5,6 @@ Description=Daedalus: re-seed the dependency builds when next's lock or toolchai
 Type=oneshot
 # The clone is brought to next before the script runs, so the script never changes under itself.
 ExecStart=/usr/bin/bash -c 'cd @WORK@/wt/seeder && git fetch -q origin next && git checkout -qf --detach origin/next && exec scripts/dev/reseed.sh'
-Nice=19
+# Its gate runs at the machine's one nice level for heavy work (NICE, scripts/dev/env.sh).
 IOSchedulingClass=idle
-CPUWeight=idle
 LimitNOFILE=1048576
