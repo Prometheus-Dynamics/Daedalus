@@ -66,10 +66,19 @@ and keyed by content), and every unit it builds must have compiled only from the
 paths of the packages it builds, by rustc's dep-info and what build scripts declare
 (`lane-reuse.py reads`). A package that starts reading outside itself fails the test step, named,
 and nothing is recorded; one that must is listed in `WHOLE_TREE`. With no bwrap, nothing is reused
-or recorded. A package whose sources name a path out of it (a `..` path, a walk up from its
-manifest or its binary, cargo itself, the build directory) is keyed by the whole tree; a path an
-`include!`, `include_str!`, `include_bytes!` or `#[path]` literal names is resolved first, and one
-inside the package is no way out of it. Such a package is keyed by the whole tree but the
+or recorded. What a package's tests read beyond the packages they build is declared in
+`scripts/lane-reuse.py`: `EXTRA_READS` lists paths of the checkout (headers, a corpus, the published
+schema), which its tests see and its key holds by content; the fixtures its tests build (the
+names in `scripts/test-parallel.py` `FIXTURES` its sources give) are built before the keys, and
+each key holds their outputs by what the loader maps (a test's own build of one is answered as
+fresh, and the fixture's sources are not in what it sees); `TARGET_READS` lists the files beside the
+test binary its tests read (a sibling shared library or staticlib, the binary run again), each an
+artifact the key holds, or the plan fails. The build directory is not sandboxed, so that list is
+reviewed, not enforced. A package whose sources name a path out of it anywhere else (a `..` path,
+a walk up from its manifest, the running binary, cargo building no fixture, the build directory,
+trybuild) is keyed by the whole tree; a path an `include!`, `include_str!`, `include_bytes!` or
+`#[path]` literal names is resolved first, and one inside the package is no way out of it. Such a
+package is keyed by the whole tree but the
 planning notes, by content. Every binary is still built; only the run is skipped. The gate's last
 line, `Gate-Lanes:`, says what each lane did (`passed`, `passed(K-of-N-reused)`, or `not-run(WHY)` for a
 lane `scripts/dev/land.sh` left out), and the commit carries it. On CI, or with

@@ -45,17 +45,30 @@ A package's key is a hash of everything its tests' result depends on, taken afte
   reads (with the checkout's path written as <root>, so two clones share nothing but keys);
 - the step's arguments.
 
-A package whose tests may read outside what it builds is keyed by the whole tree but the
-notes TODO.md and AGENTS.md, by content, with the parts above every key holds. Such a package's
-sources name a path out of it: a `..` path, a walk up from its manifest or from the running
-binary, cargo itself, or the build directory. docs/ is read that way (the docs:: tests), so those
-packages run again on a docs change.
+What a package's tests read beyond that is declared, and keyed:
+- EXTRA_READS: paths of the checkout outside the packages they build (headers, a corpus, the
+  published schema), in what they see and in the key by content;
+- the fixtures they build (scripts/test-parallel.py FIXTURES, found by the names their sources
+  give): built before the keys, each by what the loader maps of its outputs. The test's own build
+  of one is answered as fresh (scripts/test-parallel.py `fixture_cargo`), and its sources are not
+  in what the test sees;
+- TARGET_READS: files of the build directory beside the test binary (a sibling shared library or
+  staticlib, the binary itself run again), each an artifact the key already holds, or the plan
+  fails. The build directory is not held to the key: this map is reviewed, not enforced.
+The scratch directory (CARGO_TARGET_TMPDIR) is no read of the tree.
+
+A package whose tests may read outside all that is keyed by the whole tree but the notes TODO.md
+and AGENTS.md, by content, with the parts above every key holds. Such a package's sources name a
+path out of it: a `..` path that resolves nowhere it declares, a walk up from its manifest, the
+running binary without TARGET_READS, cargo building no fixture, the build directory, or trybuild.
 
 Records are kept in the clone's git directory, `daedalus-lane-records/KEY`, each holding the
 hash of the scripts that judged it: a record made by older scripts is never read as a pass.
 On CI, or with GATE_LANE_REUSE=0, nothing is reused.
 """
 import functools
+import importlib.util
+import fnmatch
 import hashlib
 import json
 import os
@@ -87,7 +100,8 @@ NAMED_NOT_KEYED = {
     "scripts/dev/": "the lander's tools: they run the gate, not a test",
     "scripts/step-reuse.py": "keys the steps outside the test lane; the test step never runs it",
     "scripts/release-check.sh": "run before a release, reading the commits' records: never by a step",
-    "testing/fixtures/": "built for and read by packages keyed by the whole tree",
+    "testing/fixtures/": "built before the tests (FIXTURES): a package whose tests build one holds "
+                         "its outputs (`fixture_outputs`)",
 }
 # The notes: no build or test outside a whole-tree package reads them.
 NOTE = re.compile(r"(\.md$|^docs/|^\.github/|^LICENSE-[^/]*$)")
@@ -109,6 +123,57 @@ READ_AS_IT_RUNS = {
     "daedalus-chip-shared": ("examples/chip_shared/generated/",
                              "generated_files_match_the_planner compares the generator's output with "
                              "the checked-in files, which the other tests include!"),
+    "daedalus-planner-tests": ("docs/schema/",
+                               "b12_schema_drift reads the published schema, which daedalus-graph's "
+                               "tests include_str!"),
+    "daedalus-chip-blink": ("examples/chip_blink/generated/",
+                            "generated_files_match_the_planner compares the generator's output with "
+                            "the checked-in files, which the other tests include!"),
+}
+# Paths of the checkout a narrowly keyed package's tests read outside the packages they build, and
+# why. They are in what its tests see (scripts/test-parallel.py) and in its key by content, so the
+# sandbox holds the tests to them. A `..` path in its sources that resolves into one keeps the
+# package narrow. A directory ends in /.
+EXTRA_READS = {
+    "daedalus-capi": (("languages/cpp/sdk/include/",),
+                      "the C++ host test compiles against the C++ SDK's headers"),
+    "daedalus-client-capi": (("core/capi/include/", "languages/cpp/sdk/include/"),
+                             "its header test and C++ client compile against the host's and the SDK's headers"),
+    "daedalus-lang-cpp": (("core/capi/include/",), "its header test compiles against the host's C header"),
+    "daedalus-graph": (("docs/schema/",), "the published graph schema its tests compare with what it writes"),
+    "daedalus-planner-tests": (("docs/schema/",), "b12_schema_drift compares the published graph schema"),
+    "daedalus-chip-blink-nodes": (("examples/chip_blink/graph.json", "examples/chip_blink/graph_b.json",
+                                   "examples/chip_blink/graph_fanin.json", "examples/chip_blink/graph_fanin_b.json",
+                                   "examples/chip_blink/generated/"),
+                                  "the generator reads its parent's graphs and writes its generated/"),
+    "daedalus-drive-conformance": (("core/wire/tests/corpus/service/",), "the service corpus it replays"),
+    "daedalus-lang-python": (("testing/crates/drive-conformance/scenarios/",), "the scenario graphs it drives"),
+    "daedalusd": (("languages/python/fixtures/worker.py",), "the Python worker its worker tests start"),
+}
+# Files of the build directory beside a test binary that the package's tests read, by name (as
+# fnmatch reads it), and why; `itself` is the test binary, run again as a child. Each name must be
+# an artifact the package's key holds (`ran`): if not, plan fails naming the package. The build
+# directory is not held to the key (the tests run from it), so this map is reviewed, not
+# enforced: a test that reads a file there the map doesn't name, of a package its tests don't
+# build, is caught by nothing, and a pass recorded before that file changed is reused after. The
+# self-test plants one and shows its key stays.
+TARGET_READS = {
+    "daedalus-capi": (("libdaedalus_capi.so",), "its C and C++ hosts load the surface built beside the tests"),
+    "daedalus-capi-rust": (("libdaedalus_capi.so",), "the wrapper's contract test loads the surface"),
+    "daedalus-capi-sys": (("libdaedalus_capi.so",), "the shapes test loads the surface"),
+    "daedalus-client-capi": (("libdaedalus_client_capi.so", "itself"),
+                             "its hosts load the client surface; the drive test runs itself as the driver"),
+    "daedalus-lang-cpp": (("libdaedalus_capi.so", "libdaedalus_client_capi.so", "libdaedalus_lang_cpp_sdk-*.a"),
+                          "the C++ builds link the SDK's staticlib and load both surfaces"),
+    "daedalus-lang-python": (("libdaedalus_capi.so", "libdaedalus_client_capi.so"),
+                             "the Python bindings load both surfaces"),
+    "daedalus-fake-npu-plugin": (("libdaedalus_fake_npu_plugin.so",), "its tests load the plugin it builds"),
+    "daedalus-node-plugin": (("libdaedalus_node_plugin.so",), "its tests load the plugin it builds"),
+    "daedalusd": (("libdaedalus_fake_npu_plugin.so",), "two_plugins loads the fake device's plugin"),
+    "daedalus-integrity": (("itself",), "merge runs its own test binary as two writers"),
+    "daedalus-gpu-budgets": (("itself",), "its sections run their own binary as a peer"),
+    "daedalus-example-rust-worker": (("daedalus-example-rust-worker-serve",),
+                                     "the example runs the serve binary beside it"),
 }
 # The environment a build or a test reads. The gate's own settings (where it keeps its state and
 # its builds) are not: none changes what a build makes or a test does.
@@ -127,9 +192,14 @@ PROGRAMS = ("sh", "bash", "cc", "c++", "gcc", "g++", "clang", "ld", "python3", "
 # A path out of the package: see the docstring.
 # A `..` that starts a string or follows a `/` in one (`concat!(env!("CARGO_MANIFEST_DIR"),
 # "/../docs")`), and trybuild, which runs cargo on the workspace: its manifest names every member.
-LEAVES = [re.compile(r'["/]\.\.(/|")'), re.compile(r"current_exe"), re.compile(r"CARGO_TARGET_(TMP)?DIR"),
-          re.compile(r'env!\("CARGO"\)|var(_os)?\("CARGO"\)|Command::new\("cargo"\)'),
-          re.compile(r"trybuild::")]
+UP_PATH, EXE, TARGET_DIR, CARGO, TRYBUILD = (
+    re.compile(r'["/]\.\.(/|")'), re.compile(r"current_exe"), re.compile(r"CARGO_TARGET_DIR"),
+    re.compile(r'env!\("CARGO"\)|var(_os)?\("CARGO"\)|Command::new\("cargo"\)'), re.compile(r"trybuild::"))
+LEAVES = [UP_PATH, EXE, TARGET_DIR, CARGO, TRYBUILD]
+# CARGO_TARGET_TMPDIR, where a test makes its own scratch directories and builds the fixtures it
+# names (`fixtures`): neither is a read of the tree.
+TEST_TMP = re.compile(r"CARGO_TARGET_TMPDIR")
+LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
 UP = re.compile(r"\.parent\(\)|ancestors\(\)")
 FROM_MANIFEST = re.compile(r"CARGO_MANIFEST_DIR")
 # An ELF section the loader maps; one with no bytes in the file; the note that hashes the whole file.
@@ -169,6 +239,49 @@ def records():
 
 def judges_hash():
     return digest("".join(f"{n}\0{file_digest(os.path.join(ROOT, n))}\0" for n in JUDGES).encode())
+
+
+@functools.lru_cache(maxsize=None)
+def fixture_table():
+    """scripts/test-parallel.py FIXTURES: (name, cargo build arguments, compiler flags)."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    spec = importlib.util.spec_from_file_location("test_parallel", os.path.join(ROOT, "scripts", "test-parallel.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return tuple((n, tuple(a), f) for n, a, f in module.FIXTURES)
+
+
+def fixture_names():
+    return [n for n, _, _ in fixture_table()]
+
+
+def fixture_anchors(keys, fixture):
+    """Where a test's sources point to build a fixture: its manifest's directory, or for one built
+    from the workspace (`-p PACKAGE`), the root and that package's directory."""
+    args = dict(zip(*[iter(next(a for n, a, _ in fixture_table() if n == fixture))] * 2))
+    manifest = args.get("--manifest-path", "Cargo.toml")
+    if manifest != "Cargo.toml":
+        return [os.path.dirname(manifest) + "/"]
+    package = args.get("-p")
+    return ["."] + ([keys.dirs[keys.by_name[package]]] if package in keys.by_name else [])
+
+
+def resolve(owner, line):
+    """The path of the checkout a line's string literals name from its package's directory
+    (`owner`), from the first that holds `..` (`[DIR, "..", "docs"]`, `.join("../x")`,
+    `concat!(DIR, "/../x")`), or None for one above the checkout."""
+    line = re.sub(r'env!\(\s*"[^"]*"\s*\)', "", line)
+    said = LITERAL.findall(line)
+    first = next((i for i, l in enumerate(said) if ".." in l.split("/")), None)
+    if first is None:
+        return None
+    target = os.path.normpath(os.path.join(owner or ".", *(l.strip("/") for l in said[first:] if l.strip("/"))))
+    return None if target.startswith("..") else target
+
+
+def test_tmp():
+    """CARGO_TARGET_TMPDIR, where the fixtures are built (scripts/test-parallel.py TEST_TMP)."""
+    return os.path.join(os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target"), "tmp")
 
 
 class Keys:
@@ -237,9 +350,25 @@ class Keys:
         return self.cache[("leaves", name)]
 
     def scan(self, name):
+        """Why the package's sources may read outside what it builds, or None. Each hit is read
+        against what the package declares: a literal path into the package, into its EXTRA_READS or
+        into a fixture it builds; the scratch directory; cargo, run to build a fixture; the
+        running binary, for a package that lists what it reads beside it (TARGET_READS)."""
         if name in WHOLE_TREE:
             return f"listed in WHOLE_TREE: {WHOLE_TREE[name]}"
         home = self.dirs[self.by_name[name]]
+        extra = EXTRA_READS.get(name, ((), ""))[0]
+        uses = self.fixtures(name)
+        anchors = [a for f in uses for a in fixture_anchors(self, f)]
+        declared = name in TARGET_READS or name in EXTRA_READS
+
+        def allowed(target):
+            if (target + "/").startswith(home) or target == home.rstrip("/"):
+                return True
+            if any(target == e.rstrip("/") or (target + "/").startswith(e) for e in extra):
+                return True
+            return any(target == a if a == "." else (target + "/").startswith(a) for a in anchors)
+
         for path, _ in self.files(home):
             if not path.endswith(".rs"):
                 continue
@@ -251,16 +380,44 @@ class Keys:
                 if match.group(1) and "/mod.rs" not in path and not path.endswith(("lib.rs", "main.rs")):
                     # A #[path] in a non-mod file is relative to the file's own module directory.
                     target = os.path.normpath(os.path.join(path[:-3], said))
-                if not (target + "/").startswith(home):
+                if not allowed(target):
                     return f"{path}: names {said}"
-            # Every literal path left the package nowhere: the blunt checks read the rest.
+            # Every literal path left the package nowhere it may not: the other checks read the rest.
             text = NAMED.sub("", text)
-            for pattern in LEAVES:
-                if pattern.search(text):
-                    return f"{path}: {pattern.pattern}"
-            if UP.search(text) and FROM_MANIFEST.search(text):
+            owner = self.owner(path)
+            for line in text.splitlines():
+                if UP_PATH.search(line):
+                    target = resolve(owner, line)
+                    if target is None or not allowed(target):
+                        return f"{path}: {UP_PATH.pattern}: {line.strip()}"
+                if EXE.search(line) and name not in TARGET_READS:
+                    return f"{path}: {EXE.pattern} (list what it reads beside it in TARGET_READS)"
+                if CARGO.search(line) and not uses:
+                    return f"{path}: {CARGO.pattern}"
+                for pattern in (TARGET_DIR, TRYBUILD):
+                    if pattern.search(line):
+                        return f"{path}: {pattern.pattern}"
+            if UP.search(text) and FROM_MANIFEST.search(text) and not declared:
                 return f"{path}: walks up from its manifest"
         return None
+
+    def owner(self, path):
+        """The directory of the member whose file `path` is: the deepest that holds it."""
+        return max((d for d in self.dirs.values() if path.startswith(d)), key=len, default="")
+
+    def fixtures(self, name):
+        """The fixtures (scripts/test-parallel.py FIXTURES) the package's tests build: those whose
+        name its sources give as a literal, in a package that uses the scratch directory."""
+        if ("fixtures", name) not in self.cache:
+            home, said, scratch = self.dirs[self.by_name[name]], set(), False
+            for path, _ in self.files(home):
+                if path.endswith(".rs"):
+                    with open(os.path.join(self.root, path), errors="replace") as file:
+                        text = file.read()
+                    scratch = scratch or bool(TEST_TMP.search(text))
+                    said |= {f for f in fixture_names() if f'"{f}"' in text}
+            self.cache[("fixtures", name)] = sorted(said) if scratch else []
+        return self.cache[("fixtures", name)]
 
     def common(self):
         if "common" not in self.cache:
@@ -345,7 +502,24 @@ class Keys:
                 home = os.path.relpath(os.path.dirname(package["manifest_path"]), self.root)
                 if not home.startswith(".."):
                     found.add(home + "/")
+        found.update(EXTRA_READS.get(name, ((), ""))[0])
         return sorted(found)
+
+    def fixture_outputs(self, fixture):
+        """A fixture's outputs, as built before the tests (scripts/test-parallel.py, before `plan`).
+        A test's own build of it is answered as fresh there (`fixture_cargo`), so these stand for
+        its sources, which the test doesn't see."""
+        if ("fixture", fixture) not in self.cache:
+            out = os.path.join(test_tmp(), fixture, "debug")
+            try:
+                names = sorted(os.listdir(out))
+            except OSError:
+                sys.exit(f"lane-reuse.py: the fixture {fixture} is not built in {out}: "
+                         "scripts/test-parallel.py builds FIXTURES before it keys the tests")
+            self.cache[("fixture", fixture)] = [
+                os.path.join(out, n) for n in names
+                if os.path.isfile(os.path.join(out, n)) and not n.endswith(".d") and not n.startswith(".")]
+        return self.cache[("fixture", fixture)]
 
     def reads(self, artifacts):
         """Each narrowly keyed package's unit that compiled from a file of the checkout its key
@@ -411,6 +585,9 @@ class Keys:
                 paths = [m["executable"]]
             elif {"cdylib", "dylib"} & set(kinds):
                 paths = [f for f in m.get("filenames", []) if f.endswith((".so", ".dylib", ".dll"))]
+            elif "staticlib" in kinds:
+                # Linked by a test's own C or C++ build (TARGET_READS).
+                paths = [f for f in m.get("filenames", []) if f.endswith((".a", ".lib"))]
             else:
                 continue
             for path in paths:
@@ -481,9 +658,18 @@ class Keys:
             for here, _, names in os.walk(out_dir):
                 inputs += sorted((f"{package} OUT_DIR {os.path.relpath(os.path.join(here, n), out_dir)}",
                                   file_digest(os.path.join(here, n))) for n in names)
+        for fixture in self.fixtures(name):
+            outputs = self.fixture_outputs(fixture)
+            inputs += sorted(zip((f"fixture {fixture} {os.path.basename(p)}" for p in outputs), self.load(outputs)))
         files, _ = self.runtime(name, units)
         inputs += [(n, self.file(n)) for n in files]
         return inputs
+
+    def target_reads(self, name, units):
+        """Each name the package lists in TARGET_READS that is no artifact its key holds."""
+        held = [os.path.basename(p) for _, p in self.ran(name, units)[0]]
+        return [n for n in TARGET_READS.get(name, ((), ""))[0]
+                if n != "itself" and not any(fnmatch.fnmatchcase(h, n) for h in held)]
 
 
 def reuse_off():
@@ -605,14 +791,25 @@ def read_units(artifacts):
         return [json.loads(line) for line in file if line.startswith("{")]
 
 
-def plan(state, artifacts, args):
+def check_target_reads(keys, units, names):
+    """Each narrowly keyed package's TARGET_READS names only artifacts its key holds, or the plan
+    stops, naming the package."""
+    for name in names:
+        missing = [] if keys.leaves(name) else keys.target_reads(name, units)
+        if missing:
+            sys.exit(f"lane-reuse.py: {name} lists {', '.join(missing)} in TARGET_READS, which no "
+                     "artifact its key holds is: list only what its tests build (`ran`)")
+
+
+def plan(state, artifacts, args, keys=None):
     """Key every workspace package's tests: a narrowly keyed one by its build (`built_inputs`), one
     keyed by the whole tree by its sources. STATE.visible gets what each narrowly keyed package's
     tests may see of the checkout: the same files its key holds."""
-    keys, off, reused = Keys(), reuse_off(), 0
+    keys, off, reused = keys or Keys(), reuse_off(), 0
     units = read_units(artifacts)
     names = sorted(keys.by_name)
     keys.load([p for n in names if not keys.leaves(n) for _, p in keys.ran(n, units)[0]])
+    check_target_reads(keys, units, names)
     held = {}
     with open(state, "w") as file:
         for name in names:
@@ -946,6 +1143,139 @@ def self_test():
                 failures.append(f"include_bytes! of {said}, {label}: {why}")
             else:
                 print(f"    include_bytes! of {said}, {label}: {why or 'narrow'}")
+        # What a source may name outside the package, and what it must declare to stay narrow.
+        def scanned(source, extra_reads=None, target_reads=None):
+            undo = touch(rs(home), source)
+            if extra_reads:
+                EXTRA_READS[package] = (extra_reads, "the self-test's plant")
+            if target_reads:
+                TARGET_READS[package] = (target_reads, "the self-test's plant")
+            try:
+                copied.reread()
+                return copied.leaves(package)
+            finally:
+                undo()
+                EXTRA_READS.pop(package, None)
+                TARGET_READS.pop(package, None)
+                copied.reread()
+        up = os.path.relpath(".", home)
+        for label, source, kw, narrow in [
+            ("the scratch directory", 'const _: &str = env!("CARGO_TARGET_TMPDIR");', {}, True),
+            ("the build directory", 'const _: &str = "CARGO_TARGET_DIR";', {}, False),
+            ("the running binary, undeclared", "fn f() { let _ = std::env::current_exe(); }", {}, False),
+            ("the running binary, declared", "fn f() { let _ = std::env::current_exe(); }",
+             {"target_reads": ("itself",)}, True),
+            ("a path out of it", f'const _: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/{up}/docs/x");', {}, False),
+            ("a path into its EXTRA_READS", f'const _: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/{up}/docs/x");',
+             {"extra_reads": ("docs/",)}, True),
+            ("cargo, building no fixture", 'fn f() { let _ = std::env::var("CARGO"); }', {}, False),
+            ("cargo, building a fixture it names",
+             'fn f() { let _ = (std::env::var("CARGO"), env!("CARGO_TARGET_TMPDIR"), "dylib-fixture", '
+             f'"{up}/testing/fixtures/dylib/Cargo.toml"); }}', {}, True),
+        ]:
+            why = scanned(f"\n{source}\n", **kw)
+            if (why is None) != narrow:
+                failures.append(f"a source naming {label}: {why or 'narrow'}")
+            else:
+                print(f"    a source naming {label}: {why or 'narrow'}")
+
+        # A file it lists in EXTRA_READS: in what its tests see, and in its key by content.
+        EXTRA_READS[package] = (("docs/development.md",), "the self-test's plant")
+        try:
+            listed = key(package)
+            for label, change, moves in [("a file it lists in EXTRA_READS", "docs/development.md", True),
+                                         ("a note it doesn't list", "docs/testing.md", False)]:
+                undo = touch(change, "\nchanged\n")
+                try:
+                    now = key(package)
+                finally:
+                    undo()
+                if (now != listed) != moves:
+                    failures.append(f"{package}, {label}: the key {'did not move' if moves else 'moved'}")
+                else:
+                    print(f"    {package}, {label}: {'moved' if moves else 'stayed'}")
+        finally:
+            EXTRA_READS.pop(package)
+            copied.reread()
+
+        # A fixture its tests build (scripts/test-parallel.py FIXTURES), built before the keys: its
+        # outputs are in the key, by what the loader maps; its sources aren't, nor in what it sees.
+        target_dir = os.path.join(work, "target")
+        built_at = os.path.join(target_dir, "tmp", "dylib-fixture", "debug")
+        os.makedirs(built_at)
+        fixture_out = os.path.join(built_at, "libdaedalus_dylib_fixture.so")
+        shutil.copyfile(plugin, fixture_out)
+        fixture_src = next(n for n in copied.listed if n.startswith("testing/fixtures/dylib/src/"))
+        uses = touch(rs(home), '\nconst _: (&str, &str) = (env!("CARGO_TARGET_TMPDIR"), "dylib-fixture");\n')
+        saved_target = os.environ.get("CARGO_TARGET_DIR")
+        os.environ["CARGO_TARGET_DIR"] = target_dir
+        try:
+            builder = key(package)
+            for label, change, moves in [
+                ("an output of a fixture it builds", swap(fixture_out, os.path.join(work, "other")), True),
+                ("a source of the fixture, its outputs unchanged", lambda: touch(fixture_src, "\n// changed\n"), False),
+            ]:
+                undo = change()
+                try:
+                    now = key(package)
+                finally:
+                    undo()
+                if (now != builder) != moves:
+                    failures.append(f"{package}, {label}: the key {'did not move' if moves else 'moved'}")
+                else:
+                    print(f"    {package}, {label}: {'moved' if moves else 'stayed'}")
+            copied.reread()
+            seen, _ = copied.runtime(package, [dict(m) for m in planted])
+            if any(n.startswith("testing/fixtures/") for n in seen):
+                failures.append("a fixture's sources are in what its tests see")
+            else:
+                print("    a fixture's sources: not in what its tests see")
+        finally:
+            uses()
+            if saved_target is None:
+                os.environ.pop("CARGO_TARGET_DIR")
+            else:
+                os.environ["CARGO_TARGET_DIR"] = saved_target
+            copied.reread()
+
+        # TARGET_READS: a name no artifact of the key is fails the plan, naming the package; one
+        # that is passes. A sibling shared library the map doesn't name, of a package the tests
+        # don't build, is caught by nothing (the limit written by the map).
+        artifacts = os.path.join(work, "artifacts")
+        for label, names, want in [("an artifact its key holds", ("libplanted_plugin.so", "itself"), None),
+                                   ("one it doesn't", ("libnot_built.so",), package)]:
+            # The plant alone: the tree's own entries name artifacts of a real build.
+            kept = dict(TARGET_READS)
+            TARGET_READS.clear()
+            TARGET_READS[package] = (names, "the self-test's plant")
+            copied.reread()
+            try:
+                if want:
+                    # Through the plan itself, which stops before it keys anything.
+                    with open(artifacts, "w") as file:
+                        file.write("".join(json.dumps(m) + "\n" for m in planted))
+                    plan(os.path.join(work, "state"), artifacts, [], copied)
+                else:
+                    check_target_reads(copied, [dict(m) for m in planted], [package])
+                got = None
+            except SystemExit as stop:
+                got = str(stop)
+            finally:
+                TARGET_READS.clear()
+                TARGET_READS.update(kept)
+            if (got is None) != (want is None) or want and want not in got:
+                failures.append(f"TARGET_READS listing {label}: {got or 'planned'}")
+            else:
+                print(f"    TARGET_READS listing {label}: {'planned' if got is None else 'the plan fails, naming ' + package}")
+        undeclared = os.path.join(units, "libdaedalus_elsewhere.so")
+        shutil.copyfile(plugin, undeclared)
+        before = key(package)
+        shutil.copyfile(os.path.join(work, "other"), undeclared)
+        if key(package) != before:
+            failures.append("a sibling library nothing lists moved the key: update the limit by TARGET_READS")
+        else:
+            print("    a sibling library it reads but nothing lists: the key stays, caught by nothing "
+                  "(the limit by TARGET_READS)")
         bases = {}
         for at, (name, label, moves, change, extra) in enumerate(cases):
             if name not in bases:
