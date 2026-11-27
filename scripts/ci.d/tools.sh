@@ -6,7 +6,7 @@
 # The working tools check themselves against planted cases: which packages a change reaches
 # (scripts/check.sh runs those), which build directories may be deleted, what a seed keeps, that
 # the boundaries scan blanks exactly what its one-character-at-a-time oracle did, and
-# what the budget table's kept measurements are keyed by, what a test's reuse key holds, and that a step or a test binary past its
+# what the budget table's kept measurements are keyed by, what a test's and a step's reuse keys hold, and that a step or a test binary past its
 # bound goes red, named, with nothing left running, and that a red step or trailing script fails
 # its lane and the gate and records no pass, and that a release is refused while a budget table the
 # gate left to CI has no green budgets job on its exact commit.
@@ -20,6 +20,7 @@ python3 -I scripts/bounded.py --self-test
 python3 -I scripts/boundaries.py --self-test
 python3 -I scripts/board/pick-binaries.py --self-test
 python3 -I scripts/lane-reuse.py --self-test
+python3 -I scripts/step-reuse.py --self-test
 python3 -I scripts/test-parallel.py --self-test
 scripts/gate-self-test.sh
 scripts/release-check.sh --self-test

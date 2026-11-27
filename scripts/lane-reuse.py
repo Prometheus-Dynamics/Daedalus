@@ -69,6 +69,7 @@ NAMED_NOT_KEYED = {
     "scripts/check-workspace-deps.sh": "the scripts lane's checks, run beside the test step",
     "testing/boundary/": "the scripts lane's boundary check, run beside the test step",
     "scripts/dev/": "the lander's tools: they run the gate, not a test",
+    "scripts/step-reuse.py": "keys the steps outside the test lane; the test step never runs it",
     "scripts/release-check.sh": "run before a release, reading the commits' records: never by a step",
     "testing/fixtures/": "built for and read by packages keyed by the whole tree",
 }

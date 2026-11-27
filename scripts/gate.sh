@@ -140,9 +140,12 @@ for lane in "${lanes[@]}"; do
   fi
   line+=" $lane=$result"
 done
-# The budget table, when the gate left it to the budgets workflow (testing/crates/budget-harness/
-# check.py): scripts/release-check.sh reads it.
-if [[ -s "$GATE_LANE_STATE_DIR/budgets.status" ]]; then
-  line+=" budgets=$(cat "$GATE_LANE_STATE_DIR/budgets.status")"
-fi
+# Each step that says more than its lane's result: the budget table left to the budgets workflow
+# (testing/crates/budget-harness/check.py; scripts/release-check.sh reads it), and a step that
+# passed before on the same inputs (scripts/step-reuse.py), with its key.
+for file in "$GATE_LANE_STATE_DIR"/*.status; do
+  name="$(basename "$file" .status)"
+  [[ $name == test || ! -s $file ]] && continue
+  line+=" $name=$(cat "$file")"
+done
 echo "$line"

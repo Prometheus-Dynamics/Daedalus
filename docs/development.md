@@ -66,6 +66,13 @@ still built as the workspace builds it; only the run is skipped. The gate's last
 lane `scripts/dev/land.sh` left out), and the commit carries it. On CI, or with
 `GATE_LANE_REUSE=0`, nothing is reused. `lane-reuse.py --explain PACKAGE` lists a key's inputs.
 
+A step outside the test lane can be reused the same way: `scripts/step-reuse.py` keys it by the
+parts every key holds, its own script, and every file of the packages it builds (their closure
+without dev-dependencies). After each run, rustc's dep-info for what it compiled must stay inside
+that key, or the step fails, named, and records nothing. A step that passed before on its key is
+not run again, and its token on the line reads `passed(reused:KEY)`. `nostd` is the first such
+step.
+
 The budget table (`budgets`) is measured in the local gate only when its build directory has
 measured these inputs before. When the change reaches what the measured release binaries are built
 from, or the build directory is cold, the step builds nothing. It leaves the table to the budgets
