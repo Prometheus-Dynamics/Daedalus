@@ -67,7 +67,9 @@ paths of the packages it builds, by rustc's dep-info and what build scripts decl
 (`lane-reuse.py reads`). A package that starts reading outside itself fails the test step, named,
 and nothing is recorded; one that must is listed in `WHOLE_TREE`. With no bwrap, nothing is reused
 or recorded. A package whose sources name a path out of it (a `..` path, a walk up from its
-manifest or its binary, cargo itself, the build directory) is keyed by the whole tree but the
+manifest or its binary, cargo itself, the build directory) is keyed by the whole tree; a path an
+`include!`, `include_str!`, `include_bytes!` or `#[path]` literal names is resolved first, and one
+inside the package is no way out of it. Such a package is keyed by the whole tree but the
 planning notes, by content. Every binary is still built; only the run is skipped. The gate's last
 line, `Gate-Lanes:`, says what each lane did (`passed`, `passed(K-of-N-reused)`, or `not-run(WHY)` for a
 lane `scripts/dev/land.sh` left out), and the commit carries it. On CI, or with
