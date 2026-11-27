@@ -40,6 +40,7 @@ elseif(WIN32)
 endif()
 
 add_library(daedalus INTERFACE)
+target_compile_features(daedalus INTERFACE cxx_std_17)
 target_include_directories(daedalus INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(daedalus INTERFACE daedalus_rust ${daedalus_platform_libs})
 
@@ -59,11 +60,13 @@ endif()
 
 # The host: daedalus.h and daedalus_host.hpp, over the host C API.
 add_library(daedalus_host INTERFACE)
+target_compile_features(daedalus_host INTERFACE cxx_std_17)
 target_include_directories(daedalus_host INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include ${daedalus_api_headers})
 target_link_libraries(daedalus_host INTERFACE daedalus_host_lib ${daedalus_platform_libs})
 
 # The client: daedalus_client.h and daedalus_client.hpp, over the client C API.
 add_library(daedalus_client INTERFACE)
+target_compile_features(daedalus_client INTERFACE cxx_std_17)
 target_include_directories(daedalus_client INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include ${daedalus_api_headers})
 target_link_libraries(daedalus_client INTERFACE daedalus_client_lib ${daedalus_platform_libs})
 

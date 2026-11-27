@@ -179,8 +179,9 @@ def run(argv, bound, name, out=sys.stderr, wait=None, **popen):
     creates the path."""
     group = Group(argv, **popen)
     waiting = False
+    ended = False
     try:
-        ended = False
+        ready(True)
         if wait is not None:
             deadline = time.monotonic() + wait[0]
             waiting = True
@@ -193,8 +194,13 @@ def run(argv, bound, name, out=sys.stderr, wait=None, **popen):
         if not ended and not waiting:
             ended = group.wait(bound)
     finally:
-        # Reached by an ending, a timeout, or a signal (raised by the handler as an exception).
-        code, left = group.reap()
+        # Reached by an ending, a timeout, or a signal (raised by the handler as an exception). A
+        # second signal is held while the group is stopped; one that lands before it is held still
+        # leaves by the inner finally, which stops the group.
+        try:
+            ready(False)
+        finally:
+            code, left = group.reap()
     if left and ended:
         print(f"{name}: left {len(left)} processes running in its group: stopped them", file=out)
     if not ended and waiting:
@@ -212,8 +218,26 @@ class Stopped(Exception):
         self.signum = signum
 
 
+# A stop raises only where a run can stop what it started: inside run()'s try. One that comes
+# before (while the group is being made, or before the run) is held, and raised there.
+_ready = False
+_held = []
+
+
 def raise_stopped(signum, _frame):
+    if not _ready:
+        _held.append(signum)
+        return
     raise Stopped(signum)
+
+
+def ready(now):
+    """Whether a stop is raised where it lands, or held: on becoming ready, a held stop is
+    raised."""
+    global _ready
+    _ready = now
+    if now and _held:
+        raise Stopped(_held.pop(0))
 
 
 def bound_of(script, word="bound"):
@@ -325,6 +349,7 @@ def planted(path):
 
 
 def self_test():
+    import io
     import json
     import shutil
     import tempfile
@@ -390,6 +415,36 @@ def self_test():
                 code = runner.wait()
             started += planted(pids)
             check("a TERM to the runner stops its group",
+                  code == 128 + signal.SIGTERM and gone(planted(pids)))
+
+            # A TERM that lands while the group is still being made, before the run is ready for
+            # it: the group it made is stopped all the same. Sent from inside the making, so it
+            # lands there on every run.
+            if os.path.exists(pids):
+                os.remove(pids)
+            made = Group.__init__
+
+            def term_while_made(self, *args, **kwargs):
+                made(self, *args, **kwargs)
+                deadline = time.monotonic() + 30
+                while not planted(pids) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                os.kill(os.getpid(), signal.SIGTERM)
+
+            handlers = {signum: signal.signal(signum, raise_stopped)
+                        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+            Group.__init__ = term_while_made
+            try:
+                code = run(["sh", "-c", f"sleep 600 & echo $! >> {pids}; wait"], 600,
+                           "planted-early", out=io.StringIO())
+            except Stopped as stopped:
+                code = 128 + stopped.signum
+            finally:
+                Group.__init__ = made
+                for signum, handler in handlers.items():
+                    signal.signal(signum, handler)
+            started += planted(pids)
+            check("a TERM while its group is being made stops the group",
                   code == 128 + signal.SIGTERM and gone(planted(pids)))
 
             # The gate's own runners on a planted tree: a step and a test binary that sleep past

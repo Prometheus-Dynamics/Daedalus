@@ -5,6 +5,9 @@
 #   daedalus::host       daedalus.h and daedalus_host.hpp, over the host C API library
 #   daedalus::client     daedalus_client.h and daedalus_client.hpp, over the client C API library
 #
+# The headers need C++17: each target carries it, so a consumer at an older standard (MSVC's default
+# is C++14) is raised to it.
+#
 # A program built with MSVC must use the release DLL C runtime, as the Rust libraries do. CMake's
 # default there is that runtime, so a consumer keeps the default or sets
 # CMAKE_MSVC_RUNTIME_LIBRARY to MultiThreadedDLL. The host and client libraries are shared: a
@@ -23,6 +26,7 @@ endif()
 if(NOT TARGET daedalus::daedalus)
   add_library(daedalus::daedalus INTERFACE IMPORTED)
   set_target_properties(daedalus::daedalus PROPERTIES
+    INTERFACE_COMPILE_FEATURES cxx_std_17
     INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@DAEDALUS_INCLUDE_INSTALL_DIR@"
     INTERFACE_LINK_LIBRARIES "daedalus::rust;@DAEDALUS_PLATFORM_LINK_LIBS@")
 endif()
@@ -50,6 +54,7 @@ endif()
 if(NOT TARGET daedalus::host)
   add_library(daedalus::host INTERFACE IMPORTED)
   set_target_properties(daedalus::host PROPERTIES
+    INTERFACE_COMPILE_FEATURES cxx_std_17
     INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@DAEDALUS_INCLUDE_INSTALL_DIR@"
     INTERFACE_LINK_LIBRARIES "daedalus::host_library;@DAEDALUS_PLATFORM_LINK_LIBS@")
 endif()
@@ -57,6 +62,7 @@ endif()
 if(NOT TARGET daedalus::client)
   add_library(daedalus::client INTERFACE IMPORTED)
   set_target_properties(daedalus::client PROPERTIES
+    INTERFACE_COMPILE_FEATURES cxx_std_17
     INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@DAEDALUS_INCLUDE_INSTALL_DIR@"
     INTERFACE_LINK_LIBRARIES "daedalus::client_library;@DAEDALUS_PLATFORM_LINK_LIBS@")
 endif()
