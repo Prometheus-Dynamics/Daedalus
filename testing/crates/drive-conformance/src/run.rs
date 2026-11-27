@@ -531,6 +531,7 @@ mod tests {
     }
 
     /// Waits for the process whose pid `file` holds to end, so the test leaves nothing running.
+    #[cfg(unix)]
     fn wait_for_end(file: &Path) {
         let deadline = Instant::now() + Duration::from_secs(30);
         let pid = loop {

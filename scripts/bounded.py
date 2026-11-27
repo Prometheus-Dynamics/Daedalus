@@ -329,6 +329,10 @@ def self_test():
     import shutil
     import tempfile
 
+    # The planted bounds are seconds, said in the checks: a runner's scale (CI sets 4) would make
+    # a planted 2 s bound 8 s, and every check that names a bound fail. One case sets its own.
+    os.environ.pop("DAEDALUS_BOUND_SCALE", None)
+
     me = os.path.abspath(__file__)
     failures = []
     started = []

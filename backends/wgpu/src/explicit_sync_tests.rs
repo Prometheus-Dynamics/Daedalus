@@ -224,7 +224,12 @@ fn a_fence_that_cant_be_attached_makes_the_host_wait_and_says_why() {
     let stats = backend.sync_stats().expect("a device is open");
     assert_eq!((stats.attaches, stats.host_waits), (0, 1));
     let why = stats.host_wait_reason.expect("the wait is named");
-    assert!(why.contains("refused the fence"), "{why}");
+    match context.sync_fd_signal() {
+        // A device that exports a sync fd makes the fence, and the kernel refuses it on a memfd.
+        Ok(_) => assert!(why.contains("refused the fence"), "{why}"),
+        // One that can't (lavapipe of Mesa 26.0 on the hosted runners) makes none, and says so.
+        Err(cannot) => assert!(why.contains(cannot), "{why}, not {cannot}"),
+    }
     // The host waited for the device before the run gave its ticket.
     assert!(ticket.is_done());
 }

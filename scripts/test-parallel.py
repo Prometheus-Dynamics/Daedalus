@@ -43,7 +43,8 @@ directory. Those builds are made here first, each with the command its tests use
 binary runs: a test's own build then finds everything fresh, and a fixture that has to be rebuilt
 after a change is not timed against a binary's bound. A fixture that fails to build fails the step,
 named. After the run, a build directory under the test target directory that FIXTURES doesn't name
-fails the step too, so a test that starts building a fixture of its own is added here.
+fails the step too, so a test that starts building a fixture of its own is added here. One there
+before the run (a restored cache's, of a fixture since renamed) is removed first.
 
 Binaries that link trybuild run one after another: trybuild builds every crate's compile tests in
 one shared directory under the same binary names, so two at once overwrite each other's builds.
@@ -266,6 +267,13 @@ def main():
             ran.append((message, code, output, left, time.monotonic() - start, cpu))
         return ran
 
+    # A build directory here that FIXTURES doesn't name, from before this run, belongs to no test
+    # of this tree: a restored CI cache keeps those of fixtures since renamed. It goes, so one
+    # found after the run is one a test of this tree built.
+    import shutil
+    for stale in unlisted_fixtures():
+        shutil.rmtree(os.path.join(TEST_TMP, stale), ignore_errors=True)
+        print(f"  removed {stale} from {TEST_TMP}: a build directory no test here makes")
     started = time.monotonic()
     broken = build_fixtures()
     for name, output in broken:
@@ -352,9 +360,15 @@ def self_test():
             with open(os.path.join(work, name), "w") as file:
                 file.write(text)
             os.chmod(os.path.join(work, name), 0o755)
-        for rogue, code, recorded in (("1", 1, ""), ("", 0, "planted\n")):
+        # A restored cache's build directory of a fixture no test builds any more, left from
+        # before the run, is not a test's doing: the run passes and it is gone.
+        for rogue, stale, code, recorded in (("1", "", 1, ""), ("", "", 0, "planted\n"),
+                                             ("", "1", 0, "planted\n")):
             target, passed = os.path.join(work, "target"), os.path.join(work, "passed")
             shutil.rmtree(target, ignore_errors=True)
+            if stale:
+                os.makedirs(os.path.join(target, "tmp", "stale-fixture"))
+                open(os.path.join(target, "tmp", "stale-fixture", "CACHEDIR.TAG"), "w").close()
             if os.path.exists(passed):
                 os.remove(passed)
             env = {k: v for k, v in os.environ.items() if k != "DAEDALUS_TEST_PACKAGES"}
@@ -363,7 +377,11 @@ def self_test():
             done = subprocess.run([sys.executable, "-I", os.path.join(work, "scripts", "test-parallel.py")],
                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             got = open(passed).read() if os.path.exists(passed) else ""
-            case = "an unlisted fixture" if rogue else "a clean pass"
+            case = ("an unlisted fixture" if rogue else
+                    "a stale fixture from before the run" if stale else "a clean pass")
+            left = os.path.exists(os.path.join(target, "tmp", "stale-fixture"))
+            if left:
+                failures.append(f"{case}: the stale build directory is still there")
             if done.returncode != code or got != recorded:
                 failures.append(f"{case}: exit {done.returncode} (want {code}), recorded "
                                 f"{got.split() or 'nothing'} (want {recorded.split() or 'nothing'})"
@@ -374,7 +392,7 @@ def self_test():
         print(f"test-parallel self-test: {failure}", file=sys.stderr)
     if not failures:
         print("test-parallel self-test: an unlisted fixture fails the run and records no pass;"
-              " a clean pass records its package")
+              " a clean pass records its package; a stale one from before the run is removed")
     return 1 if failures else 0
 
 

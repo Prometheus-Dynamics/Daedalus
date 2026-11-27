@@ -7,6 +7,8 @@
 //! added, and then the table, the header and the library all gain it. A baseline function that is
 //! removed, renamed or given another prototype fails the baseline test.
 
+// Only the Linux checks read the built library.
+#[cfg(target_os = "linux")]
 use crate::support;
 
 use daedalus_client_capi::*;
