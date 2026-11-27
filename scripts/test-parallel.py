@@ -216,9 +216,11 @@ def sandboxed(seen):
     if seen is None:
         return []
     argv = ["bwrap", "--dev-bind", "/", "/", "--tmpfs", ROOT]
+    blank = []
     if isinstance(seen, dict):
         for path in seen["make"]:
             argv += ["--dir", os.path.join(ROOT, path.rstrip("/"))]
+        blank = seen.get("blank", [])
         seen = seen["bind"]
     inside = [os.path.join(ROOT, path.rstrip("/")) for path in seen]
     if os.path.realpath(TARGET).startswith(os.path.realpath(ROOT) + os.sep):
@@ -226,6 +228,9 @@ def sandboxed(seen):
     for path in inside:
         if os.path.exists(path):
             argv += ["--bind", path, path]
+    # Files that are there, empty (scripts/lane-reuse.py blanks).
+    for path in blank:
+        argv += ["--ro-bind", "/dev/null", os.path.join(ROOT, path)]
     return argv + ["--"]
 
 
@@ -465,7 +470,8 @@ one it was compiled from, can't be read."""
                      ' touch "$CARGO_TARGET_DIR/tmp/rogue/CACHEDIR.TAG"; }\n'
                      '[ -z "$PLANT_FIXTURE" ] || { "$CARGO" build -q --manifest-path planted-fixture'
                      ' --target-dir "$CARGO_TARGET_DIR/tmp/dylib-fixture" && "$CARGO" planted-other; } || exit 1\n'
-                     '[ -z "$PLANT_READ" ] || cat "$PLANT_READ" > /dev/null\n',
+                     '[ -z "$PLANT_READ" ] || cat "$PLANT_READ" > /dev/null || exit 1\n'
+                     '[ -z "$PLANT_BLANK" ] || { [ -e "$PLANT_BLANK" ] && ! [ -s "$PLANT_BLANK" ]; }\n',
             "outside.txt": "read by the planted test\n",
         }
         for name, text in scripts.items():
@@ -493,6 +499,12 @@ one it was compiled from, can't be read."""
                  False, {"bind": ["bin/t"], "make": ["bin/"]}, 1, ""),
                 ("a narrow key's test reading a file its key holds", {"PLANT_READ": outside},
                  False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
+                # A file it sees empty (a member a trybuild package doesn't build): there, with
+                # nothing in it.
+                ("a narrow key's test reading a file it sees empty", {"PLANT_BLANK": outside},
+                 False, {"bind": ["bin/t"], "make": ["bin/"], "blank": ["outside.txt"]}, 0, "planted\n"),
+                ("the same file bound whole", {"PLANT_BLANK": outside},
+                 False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 1, ""),
                 # A fixture built before the keys: the test's own build of it is answered as fresh,
                 # with none of its sources in sight; any other cargo run is the real one.
                 ("a narrow key's test building a fixture", {"PLANT_FIXTURE": "1"},

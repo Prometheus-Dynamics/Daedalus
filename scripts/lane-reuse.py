@@ -55,12 +55,14 @@ What a package's tests read beyond that is declared, and keyed:
 - TARGET_READS: files of the build directory beside the test binary (a sibling shared library or
   staticlib, the binary itself run again), each an artifact the key already holds, or the plan
   fails. The build directory is not held to the key: this map is reviewed, not enforced.
-The scratch directory (CARGO_TARGET_TMPDIR) is no read of the tree.
+The scratch directory (CARGO_TARGET_TMPDIR) is no read of the tree. A package whose tests run
+trybuild, which compiles its cases from source as the test runs, is keyed by its sources: every
+file it sees (the packages it builds, the root's, cargo's config, the lockfile), by content.
 
 A package whose tests may read outside all that is keyed by the whole tree but the notes TODO.md
 and AGENTS.md, by content, with the parts above every key holds. Such a package's sources name a
 path out of it: a `..` path that resolves nowhere it declares, a walk up from its manifest, the
-running binary without TARGET_READS, cargo building no fixture, the build directory, or trybuild.
+running binary without TARGET_READS, cargo building no fixture, or the build directory.
 
 Records are kept in the clone's git directory, `daedalus-lane-records/KEY`, each holding the
 hash of the scripts that judged it: a record made by older scripts is never read as a pass.
@@ -192,6 +194,8 @@ PROGRAMS = ("sh", "bash", "cc", "c++", "gcc", "g++", "clang", "ld", "python3", "
 # A path out of the package: see the docstring.
 # A `..` that starts a string or follows a `/` in one (`concat!(env!("CARGO_MANIFEST_DIR"),
 # "/../docs")`), and trybuild, which runs cargo on the workspace: its manifest names every member.
+# trybuild compiles its cases from source as the test runs: a package that uses it is keyed by its
+# sources (`source_inputs`), not by what was built.
 UP_PATH, EXE, TARGET_DIR, CARGO, TRYBUILD = (
     re.compile(r'["/]\.\.(/|")'), re.compile(r"current_exe"), re.compile(r"CARGO_TARGET_DIR"),
     re.compile(r'env!\("CARGO"\)|var(_os)?\("CARGO"\)|Command::new\("cargo"\)'), re.compile(r"trybuild::"))
@@ -394,12 +398,42 @@ class Keys:
                     return f"{path}: {EXE.pattern} (list what it reads beside it in TARGET_READS)"
                 if CARGO.search(line) and not uses:
                     return f"{path}: {CARGO.pattern}"
-                for pattern in (TARGET_DIR, TRYBUILD):
-                    if pattern.search(line):
-                        return f"{path}: {pattern.pattern}"
+                if TARGET_DIR.search(line):
+                    return f"{path}: {TARGET_DIR.pattern}"
+                if TRYBUILD.search(line):
+                    self.cache.setdefault(("sources", name), f"{path}: {TRYBUILD.pattern}")
             if UP.search(text) and FROM_MANIFEST.search(text) and not declared:
                 return f"{path}: walks up from its manifest"
         return None
+
+    def sources(self, name):
+        """Why a narrowly keyed package is keyed by its sources (it runs trybuild), or None."""
+        return None if self.leaves(name) else self.cache.get(("sources", name))
+
+    def source_inputs(self, name, args=()):
+        """The key of a package whose tests compile from source as they run (trybuild): every
+        file they see (`visible`: the packages they build, the root's, cargo's config, the
+        lockfile), by content, with the parts every key holds and the lockfile's entries."""
+        inputs = self.common()
+        inputs += [("package", name), ("arguments", " ".join(args)), ("keyed by", self.sources(name))]
+        for package_id in sorted(self.built(name)):
+            package = self.packages[package_id]
+            entry = self.lock.get((package["name"], package["version"]), "absent")
+            inputs.append((f"Cargo.lock {package['name']} {package['version']}", digest(entry.encode())))
+        files, _ = self.runtime(name, [])
+        inputs.append(("the other members' files, empty", digest("\0".join(self.blanks(name)).encode())))
+        return inputs + [(n, self.file(n)) for n in files]
+
+    def blanks(self, name):
+        """For a package keyed by its sources, the files of the members it doesn't build, but their
+        manifests: its tests see each as an empty file. trybuild's cargo run loads the whole
+        workspace and finds each member's targets by their files; it compiles none of them, and a
+        test that reads one reads nothing. Their names are in the key."""
+        if not self.sources(name):
+            return []
+        files, _ = self.runtime(name, [])
+        seen = set(files)
+        return [n for n in self.listed if n.startswith(tuple(self.dirs.values())) and n not in seen]
 
     def owner(self, path):
         """The directory of the member whose file `path` is: the deepest that holds it."""
@@ -480,6 +514,8 @@ class Keys:
         messages), or for a package that may read outside what it builds, the whole tree."""
         why = self.leaves(name)
         if not why:
+            if self.sources(name):
+                return self.source_inputs(name, args)
             return self.built_inputs(name, units, args)
         return self.common() + [
             ("package", name), ("arguments", " ".join(args)), ("reads outside what it builds", why),
@@ -503,6 +539,9 @@ class Keys:
                 if not home.startswith(".."):
                     found.add(home + "/")
         found.update(EXTRA_READS.get(name, ((), ""))[0])
+        if self.sources(name):
+            # trybuild's cargo run resolves its cases with the workspace's lockfile.
+            found.add(LOCKFILE)
         return sorted(found)
 
     def fixture_outputs(self, fixture):
@@ -635,6 +674,12 @@ class Keys:
         tests don't see it: one that reads it as it runs fails, named (scripts/test-parallel.py)."""
         held = self.visible(name)
         dirs = tuple(h for h in held if h.endswith("/"))
+        if self.sources(name):
+            # trybuild compiles them again as the tests run: every one stays, keyed by content. Its
+            # cargo run loads the whole workspace: every member's manifest too.
+            files = [n for n in self.listed if n in held or n.startswith(dirs)
+                     or os.path.basename(n) == "Cargo.toml" and n.startswith(tuple(self.dirs.values()))]
+            return sorted(set(files)), list(dirs)
         compiled = self.compiled(name, units)
         gone = tuple(c for c in compiled if c.endswith("/"))
         read = READ_AS_IT_RUNS.get(name, ("\0",))[0]
@@ -820,7 +865,7 @@ def plan(state, artifacts, args, keys=None):
             file.write(f"{name}\t{key}\t{'reused' if use else 'run'}\n")
             if narrow and off is None:
                 files, dirs = keys.runtime(name, units)
-                held[name] = {"bind": files, "make": dirs}
+                held[name] = {"bind": files, "make": dirs, "blank": keys.blanks(name)}
     with open(state + ".visible", "w") as file:
         json.dump(held, file)
     print(f"  reuse: {reused} of {len(names)} packages' tests passed before on these inputs"
@@ -1178,6 +1223,55 @@ def self_test():
                 failures.append(f"a source naming {label}: {why or 'narrow'}")
             else:
                 print(f"    a source naming {label}: {why or 'narrow'}")
+
+        # A package that runs trybuild: narrow, keyed by its sources. A comment in a file it compiles
+        # from moves its key (trybuild compiles it again as the test runs), as does the lockfile; a
+        # package it doesn't build doesn't. Its tests see the files they compile from.
+        def new_file(name):
+            open(os.path.join(copy, name), "w").close()
+            copied.listed.append(name)
+            return lambda: (os.remove(os.path.join(copy, name)), copied.listed.remove(name))
+
+        uses_trybuild = touch(rs(home), "\nfn planted_ui() { let _ = trybuild::TestCases::new(); }\n")
+        try:
+            copied.reread()
+            why, kind = copied.leaves(package), copied.sources(package)
+            if why or not kind:
+                failures.append(f"a package that runs trybuild: whole-tree {why}, sources {kind}")
+            else:
+                print(f"    a package that runs trybuild: keyed by its sources ({kind})")
+            from_source = key(package)
+            for label, change, moves in [
+                (f"a comment in a file it compiles from ({dep})", lambda: touch(rs(dep)), True),
+                ("the lockfile", lambda: touch("Cargo.lock", "\n"), True),
+                (f"a package it doesn't build ({apart})", lambda: touch(rs(apart)), False),
+                # Its sources stand for what was built from them.
+                ("its test binary truncated", truncate, False),
+                # The other members' files are empty to it, by name.
+                (f"a new file of a package it doesn't build ({apart})", lambda: new_file(f"{apart}planted.rs"), True),
+            ]:
+                undo = change()
+                try:
+                    now = key(package)
+                finally:
+                    undo()
+                if (now != from_source) != moves:
+                    failures.append(f"{package} with trybuild, {label}: the key {'did not move' if moves else 'moved'}")
+                else:
+                    print(f"    {package} with trybuild, {label}: {'moved' if moves else 'stayed'}")
+            copied.reread()
+            seen, _ = copied.runtime(package, [dict(m) for m in planted])
+            blank = copied.blanks(package)
+            if rs(home) not in seen or LOCKFILE not in seen or f"{apart}Cargo.toml" not in seen \
+                    or rs(apart) not in blank or f"{apart}Cargo.toml" in blank:
+                failures.append("a package that runs trybuild doesn't see its sources, the lockfile and "
+                                "every manifest, with the other members' files empty")
+            else:
+                print("    a package that runs trybuild: sees its sources, the lockfile and every "
+                      "manifest; the other members' files are empty to it")
+        finally:
+            uses_trybuild()
+            copied.reread()
 
         # A file it lists in EXTRA_READS: in what its tests see, and in its key by content.
         EXTRA_READS[package] = (("docs/development.md",), "the self-test's plant")
