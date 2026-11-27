@@ -2,6 +2,11 @@
 """Which packages' tests passed before on exactly these inputs, and need not run again.
 
     lane-reuse.py members                   the workspace's packages, one a line
+    lane-reuse.py visible                   for each narrowly keyed package, the paths of the
+                                            checkout its key holds (JSON): all its tests see
+    lane-reuse.py reads ARTIFACTS           fails naming each narrowly keyed package whose units
+                                            compiled from a file of the checkout its key doesn't
+                                            hold (cargo's artifact messages; rustc's dep-info)
     lane-reuse.py plan STATE PACKAGE... [-- ARGS...]
                                             key each package's tests (run with ARGS); STATE
                                             gets one line each: PACKAGE, key, `run` or `reused`
@@ -72,6 +77,10 @@ NOTE = re.compile(r"(\.md$|^docs/|^\.github/|^LICENSE-[^/]*$)")
 LOCKFILE = "Cargo.lock"
 # Read by nothing at all.
 NEVER_READ = {"TODO.md", "AGENTS.md"}
+# Packages keyed by the whole tree whose sources don't show it, and why. The gate finds the others:
+# rustc's dep-info names every file a package compiles from (`reads`), and in the gate a narrowly
+# keyed package's tests see no more of the checkout than its key (`visible`, scripts/test-parallel.py).
+WHOLE_TREE = {}
 # The environment a build or a test reads. The gate's own settings (where it keeps its state and
 # its builds) are not: none changes what a build makes or a test does.
 ENV = re.compile(r"^(CARGO_|RUST|CC|CXX|AR(_|$)|CFLAGS|CXXFLAGS|LDFLAGS|TARGET_|HOST_|ZIG|PKG_CONFIG|"
@@ -82,8 +91,11 @@ NOT_IN_KEY = {"CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "DAEDALUS_WORK", "DAEDALUS
 PROGRAMS = ("sh", "bash", "cc", "c++", "gcc", "g++", "clang", "ld", "python3", "node", "java",
             "javac", "cmake", "make", "pkg-config", "zig", "valgrind")
 # A path out of the package: see the docstring.
-LEAVES = [re.compile(r'"\.\.(/|")'), re.compile(r"current_exe"), re.compile(r"CARGO_TARGET_(TMP)?DIR"),
-          re.compile(r'env!\("CARGO"\)|var(_os)?\("CARGO"\)|Command::new\("cargo"\)')]
+# A `..` that starts a string or follows a `/` in one (`concat!(env!("CARGO_MANIFEST_DIR"),
+# "/../docs")`), and trybuild, which runs cargo on the workspace: its manifest names every member.
+LEAVES = [re.compile(r'["/]\.\.(/|")'), re.compile(r"current_exe"), re.compile(r"CARGO_TARGET_(TMP)?DIR"),
+          re.compile(r'env!\("CARGO"\)|var(_os)?\("CARGO"\)|Command::new\("cargo"\)'),
+          re.compile(r"trybuild::")]
 UP = re.compile(r"\.parent\(\)|ancestors\(\)")
 FROM_MANIFEST = re.compile(r"CARGO_MANIFEST_DIR")
 NAMED = re.compile(r'#\[path\s*=\s*"([^"]+)"\]|include_(?:str|bytes)!\(\s*"([^"]+)"')
@@ -180,6 +192,8 @@ class Keys:
 
     def leaves(self, name):
         """Why the package's sources may read outside what it builds, or None."""
+        if name in WHOLE_TREE:
+            return f"listed in WHOLE_TREE: {WHOLE_TREE[name]}"
         home = self.dirs[self.by_name[name]]
         for path, _ in self.files(home):
             if not path.endswith(".rs"):
@@ -279,6 +293,60 @@ class Keys:
                 inputs.extend(self.files(home))
         return inputs
 
+    def root_files(self):
+        """The files at the checkout's root that a narrow key holds."""
+        return [n for n in self.listed if "/" not in n and not NOTE.search(n) and n != LOCKFILE]
+
+    def visible(self, name):
+        """The paths of the checkout a narrowly keyed package's key holds, and so all its tests may
+        see of it: the root's files, cargo's config, and the directories of the packages it builds."""
+        found = set(self.root_files()) | {".cargo/"}
+        for package_id in self.built(name):
+            package = self.packages[package_id]
+            if package_id in self.members:
+                found.add(self.dirs[package_id])
+            elif package["source"] is None:
+                home = os.path.relpath(os.path.dirname(package["manifest_path"]), self.root)
+                if not home.startswith(".."):
+                    found.add(home + "/")
+        return sorted(found)
+
+    def reads(self, artifacts):
+        """Each narrowly keyed package's unit that compiled from a file of the checkout its key
+        doesn't hold, from rustc's dep-info beside the unit: (package, file)."""
+        target = os.path.realpath(os.environ.get("CARGO_TARGET_DIR") or os.path.join(self.root, "target"))
+        root = os.path.realpath(self.root) + os.sep
+        found, seen = [], {}
+        for message in artifacts:
+            reason = message.get("reason")
+            if reason not in ("compiler-artifact", "build-script-executed") \
+                    or message["package_id"] not in self.members:
+                continue
+            if reason == "compiler-artifact" and "custom-build" in message["target"]["kind"]:
+                continue
+            name = self.packages[message["package_id"]]["name"]
+            if name not in seen:
+                seen[name] = None if self.leaves(name) else tuple(self.visible(name))
+            allowed = seen[name]
+            if allowed is None:
+                continue
+            if reason == "compiler-artifact":
+                # cargo runs rustc from the workspace's root: its paths are relative to it.
+                paths = [os.path.join(self.root, p) for d in dep_info_files(message) for p in dep_info(d)]
+            else:
+                # What the build script said it read, relative to its package.
+                home = os.path.join(self.root, self.dirs[message["package_id"]])
+                paths = [os.path.join(home, p) for p in build_script_reads(message)]
+            dirs = tuple(a for a in allowed if a.endswith("/"))
+            for path in paths:
+                real = os.path.realpath(path)
+                if not real.startswith(root) or real.startswith(target + os.sep):
+                    continue
+                rel = real[len(root):]
+                if rel not in allowed and not rel.startswith(dirs):
+                    found.append((name, rel))
+        return sorted(set(found))
+
     def key(self, name, args=()):
         return digest(json.dumps(self.inputs(name, args)).encode())
 
@@ -288,6 +356,9 @@ def reuse_off():
         return "on CI"
     if os.environ.get("GATE_LANE_REUSE") == "0":
         return "GATE_LANE_REUSE=0"
+    if not shutil.which("bwrap"):
+        # A narrow key holds only while the package's tests see no more than it (`visible`).
+        return "no bwrap to run a narrowly keyed package's tests in"
     return None
 
 
@@ -297,6 +368,52 @@ def passed_before(key):
             return file.read() == f"{FORMAT} {judges_hash()}\n"
     except OSError:
         return False
+
+
+def dep_info_files(message):
+    """The dep-info files rustc wrote beside a unit's outputs: `name-hash.d`."""
+    found = set()
+    for path in message.get("filenames", []):
+        base, ext = os.path.splitext(os.path.basename(path))
+        if ext in (".rlib", ".rmeta", ".so", ".a", ".dylib") and base.startswith("lib"):
+            base = base[3:]
+        depfile = os.path.join(os.path.dirname(path), base + ".d")
+        if os.path.isfile(depfile):
+            found.add(depfile)
+            continue
+        # A binary copied up out of deps/ has no hash in its name: the file in deps/ it is a link
+        # of has, and its dep-info beside it.
+        deps = os.path.join(os.path.dirname(path), "deps")
+        crate = message["target"]["name"].replace("-", "_")
+        try:
+            names = [n for n in os.listdir(deps) if n.startswith(crate + "-") and "." not in n]
+        except OSError:
+            continue
+        for name in names:
+            if os.path.exists(path) and os.path.samefile(path, os.path.join(deps, name)) \
+                    and os.path.isfile(os.path.join(deps, name + ".d")):
+                found.add(os.path.join(deps, name + ".d"))
+    return sorted(found)
+
+
+def build_script_reads(message):
+    """The paths a build script's run declared with `rerun-if-changed`, from its output file."""
+    output = os.path.join(os.path.dirname(message.get("out_dir") or ""), "output")
+    try:
+        with open(output, errors="replace") as file:
+            lines = file.read().splitlines()
+    except OSError:
+        return []
+    return [line.split("rerun-if-changed=", 1)[1] for line in lines
+            if re.match(r"cargo::?rerun-if-changed=", line)]
+
+
+def dep_info(depfile):
+    """The files a dep-info file says its unit was compiled from."""
+    with open(depfile, errors="replace") as file:
+        first = file.readline()
+    _, _, deps = first.partition(": ")
+    return [p.replace("\\ ", " ") for p in re.split(r"(?<!\\) ", deps.strip()) if p]
 
 
 def read_state(state):
@@ -320,6 +437,8 @@ def plan(state, names, args):
 
 
 def record(state, names):
+    if reuse_off():
+        return 0
     rows = {name: key for name, key, _ in read_state(state)}
     os.makedirs(records(), exist_ok=True)
     for name in names:
@@ -453,6 +572,60 @@ def self_test():
                         continue
                     failures.append(f"{script} names {said}: add it to RUNNERS, or to NAMED_NOT_KEYED"
                                     " with why it changes no test's result")
+        # What a unit compiled from, by rustc's dep-info, and what a build script said it read:
+        # inside a narrow key's paths it passes; outside, the package and the file are named.
+        units = os.path.join(work, "units")
+        os.makedirs(units)
+
+        def unit(name, sources, said=()):
+            crate = name.replace("-", "_")
+            with open(os.path.join(units, f"{crate}-1.d"), "w") as file:
+                file.write(f"{units}/lib{crate}-1.rlib: {' '.join(sources)}\n")
+            out = os.path.join(units, f"{crate}-build", "out")
+            os.makedirs(out, exist_ok=True)
+            with open(os.path.join(os.path.dirname(out), "output"), "w") as file:
+                file.write("".join(f"cargo:rerun-if-changed={p}\n" for p in said))
+            package_id = copied.by_name[name]
+            return [{"reason": "compiler-artifact", "package_id": package_id,
+                     "target": {"kind": ["lib"], "name": crate},
+                     "filenames": [f"{units}/lib{crate}-1.rlib"]},
+                    {"reason": "build-script-executed", "package_id": package_id, "out_dir": out}]
+
+        up = os.path.relpath(copy, os.path.join(copy, home))
+        own = [rs(home)]
+        for label, plant, want in [
+            ("its own sources", lambda: unit(package, own), []),
+            ("a script, by dep-info", lambda: unit(package, own + ["scripts/check.sh"]),
+             [(package, "scripts/check.sh")]),
+            ("a note, by its build script",
+             lambda: unit(package, own, [f"{up}/docs/development.md"]),
+             [(package, "docs/development.md")]),
+            ("a script, for a package keyed by the whole tree",
+             lambda: unit(whole, own + ["scripts/check.sh"]), []),
+        ]:
+            copied.reread()
+            got = copied.reads(plant())
+            if got != want:
+                failures.append(f"compiling from {label}: named {got}, not {want}")
+            else:
+                print(f"    compiling from {label}: {'named' if want else 'passed'}")
+        # The plant a static scan misses: a test that reads a file of the checkout by a path it is
+        # given at run time. Its source names no path, and rustc's dep-info doesn't list a file read
+        # at run time, so both keep the package narrow; scripts/test-parallel.py's self-test runs
+        # the same read held to a narrow key and sees it fail, named.
+        undo = touch(rs(home), '\n#[test]\nfn planted_read() {\n    '
+                     'let _ = std::fs::read(std::env::var("PLANT_READ").unwrap());\n}\n')
+        try:
+            copied.reread()
+            why, got = copied.leaves(package), copied.reads(unit(package, own))
+        finally:
+            undo()
+            copied.reread()
+        if why is not None or got:
+            failures.append(f"a read by a run-time path: the static checks saw it ({why}, {got}); "
+                            "the plant no longer stands for what only the sandbox catches")
+        else:
+            print("    a read by a run-time path: missed by the source scan and the dep-info, as planted")
         bases = {}
         for name, label, moves, change, extra in cases:
             if name not in bases:
@@ -486,6 +659,24 @@ def main(argv):
         args = rest[rest.index("--") + 1:] if "--" in rest else []
         names = rest[:rest.index("--")] if "--" in rest else rest
         return plan(argv[1], names, args)
+    if argv == ["visible"]:
+        if reuse_off():
+            # Nothing is reused, so nothing needs a test held to its key.
+            print("{}")
+            return 0
+        keys = Keys()
+        print(json.dumps({name: keys.visible(name) for name in sorted(keys.by_name)
+                          if not keys.leaves(name)}))
+        return 0
+    if len(argv) == 2 and argv[0] == "reads":
+        with open(argv[1]) as file:
+            artifacts = [json.loads(line) for line in file if line.startswith("{")]
+        found = Keys().reads(artifacts)
+        for name, path in found:
+            print(f"lane-reuse: {name} compiles from {path}, which its reuse key doesn't hold: name "
+                  f"the path in its sources as scripts/lane-reuse.py looks for (LEAVES), or list "
+                  f"{name} in WHOLE_TREE there", file=sys.stderr)
+        return 1 if found else 0
     if argv == ["members"]:
         print("\n".join(sorted(Keys().by_name)))
         return 0
