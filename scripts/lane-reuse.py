@@ -79,6 +79,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 FORMAT = "daedalus-lane-record 1"
@@ -217,12 +218,48 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+# Digests of files outside the checkout (programs, Vulkan drivers, cargo's config), by the file's
+# identity and change marks: a write moves its ctime, which nothing sets back. A file changed less
+# than RACY before it was hashed isn't kept: a clock that ticks coarsely could give a second write
+# in the same tick the same marks. Every key a process takes reads the same programs and drivers:
+# the self-test's 48 keys hashed them 22 875 times.
+OUTSIDE = {}
+RACY = 2_000_000_000
+
+
 def file_digest(path):
     try:
-        with open(path, "rb") as file:
-            return digest(file.read())
-    except (FileNotFoundError, IsADirectoryError):
+        real = os.path.realpath(path)
+        if real.startswith(ROOT + os.sep):
+            with open(path, "rb") as file:
+                return digest(file.read())
+        mark = os.stat(real)
+        mark = (real, mark.st_dev, mark.st_ino, mark.st_size, mark.st_mtime_ns, mark.st_ctime_ns)
+        if mark in OUTSIDE:
+            return OUTSIDE[mark]
+        started = time.time_ns()
+        with open(real, "rb") as file:
+            said = digest(file.read())
+        if mark[5] < started - RACY:
+            OUTSIDE[mark] = said
+        return said
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
         return "absent"
+
+
+# What each toolchain program says it is, by what picks the program: PATH, the toolchain's
+# environment, and the toolchain files at the root. The same for every key a process takes.
+VERSIONS = {}
+
+
+def version(words):
+    picks = (tuple(words), os.environ.get("PATH", ""),
+             tuple(sorted((k, v) for k, v in os.environ.items()
+                          if k.startswith(("RUSTUP_", "RUSTC", "CARGO")) or k in ("CC", "CXX"))),
+             tuple(file_digest(os.path.join(ROOT, n)) for n in ("rust-toolchain.toml", "rust-toolchain")))
+    if picks not in VERSIONS:
+        VERSIONS[picks] = run(words)
+    return VERSIONS[picks]
 
 
 def run(args):
@@ -470,7 +507,7 @@ class Keys:
             for name in ("config.toml", "config"):
                 inputs.append((f"CARGO_HOME/{name}", file_digest(os.path.join(home, name))))
             for words in (["rustc", "-vV"], ["cargo", "-V"], ["cc", "--version"]):
-                inputs.append((" ".join(words), digest(run(words).encode())))
+                inputs.append((" ".join(words), digest(version(words).encode())))
             env = sorted((k, v.replace(self.root, "<root>")) for k, v in os.environ.items()
                          if ENV.match(k) and k not in NOT_IN_KEY and not k.startswith("GATE_"))
             inputs.append(("environment", digest(json.dumps(env).encode())))
@@ -1401,6 +1438,51 @@ def self_test():
             failures.append("three cuts of a binary gave fewer than three hashes")
         else:
             print("    a binary cut short: hashed whole, each cut its own hash")
+        # A file outside the checkout, as a program is, is hashed once a process, until it changes.
+        # Changed less than RACY ago it isn't kept: rewritten in place to the same size in the same
+        # clock tick, it is hashed again. With every file kept, one rewritten to another size is
+        # hashed again, and one left alone is kept.
+        global RACY
+        program = os.path.join(work, "planted-program")
+        with open(program, "w") as file:
+            file.write("one\n")
+        before = file_digest(program)
+        with open(program, "r+") as file:
+            file.write("two\n")
+        fresh = file_digest(program) != before
+        racy, RACY = RACY, -(1 << 62)
+        try:
+            kept = file_digest(program)
+            kept = kept == file_digest(program) and any(
+                mark[0] == os.path.realpath(program) for mark in OUTSIDE)
+            with open(program, "w") as file:
+                file.write("three\n")
+            moved = file_digest(program) != before
+        finally:
+            RACY = racy
+        if not (fresh and kept and moved):
+            failures.append(f"a program outside the checkout: rewritten fresh, hashed again {fresh}; "
+                            f"left alone, kept {kept}; rewritten longer, hashed again {moved}")
+        else:
+            print("    a program outside the checkout: rewritten just now or to another size, hashed "
+                  "again; left alone, kept")
+        # What a toolchain program says it is, once a process for each program PATH picks.
+        shims = os.path.join(work, "planted-path")
+        os.makedirs(shims)
+        with open(os.path.join(shims, "cc"), "w") as file:
+            file.write("#!/bin/sh\necho planted cc\n")
+        os.chmod(os.path.join(shims, "cc"), 0o755)
+        said = version(["cc", "--version"])
+        saved = os.environ.get("PATH", "")
+        os.environ["PATH"] = shims + os.pathsep + saved
+        try:
+            planted_cc = version(["cc", "--version"])
+        finally:
+            os.environ["PATH"] = saved
+        if planted_cc != "planted cc\n" or version(["cc", "--version"]) != said:
+            failures.append(f"another cc first on PATH said {planted_cc!r}, the first {said!r}")
+        else:
+            print("    another cc first on PATH: asked again, its own answer")
     finally:
         shutil.rmtree(work, ignore_errors=True)
     if failures:
