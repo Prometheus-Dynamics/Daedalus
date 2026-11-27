@@ -40,6 +40,9 @@ plant() { # TREE GATE_SH: a tree of stub steps around the given gate.sh and the 
   # The budget table left to CI, as testing/crates/budget-harness/check.py leaves it.
   printf '[ -z "${PLANT_CI_ONLY:-}" ] || echo "not-run(ci-only:release+callgrind+sizes)" > "$GATE_LANE_STATE_DIR/budgets.status"\n' \
     | sed -i '2r /dev/stdin' "$tree/scripts/ci.d/budgets.sh"
+  # A step reused, as scripts/step-reuse.py marks it.
+  printf '[ -z "${PLANT_CI_ONLY:-}" ] || echo "passed(reused:0123456789ab)" > "$GATE_LANE_STATE_DIR/nostd.status"\n' \
+    | sed -i '2r /dev/stdin' "$tree/scripts/ci.d/nostd.sh"
   for name in scripts/check-file-sizes.sh scripts/check-workspace-deps.sh testing/boundary/run.sh; do
     printf '#!/usr/bin/env bash\n# bound: 30 s (planted)\nexit "${FAIL_TRAILING:-0}"\n' > "$tree/$name"
   done
@@ -92,17 +95,18 @@ else
   failures=1
 fi
 
-# A budget table the gate left to CI is on the Gate-Lanes line, where scripts/release-check.sh
-# reads it: a gate that drops it would let a release through unmeasured. So must a planted gate
+# A budget table the gate left to CI, and a step it reused, are on the Gate-Lanes line, where
+# scripts/release-check.sh reads the first: a gate that drops it would let a release through unmeasured. So must a planted gate
 # that drops it be caught.
 ci_only_named() { # LABEL GATE_SH: whether the line names it
   local tree="$work/ci-only-$1" out
   plant "$tree" "$2"
   out="$(cd "$tree" && env -u DAEDALUS_TARGET_SEED -u GATE_LANE_STATE_DIR CARGO_TARGET_DIR="$tree/target" \
     PLANT_CI_ONLY=1 bash scripts/gate.sh 2>&1)"
-  grep -qE '^Gate-Lanes: host=passed .* budgets=not-run\(ci-only:release\+callgrind\+sizes\)$' <<< "$out"
+  grep -qE '^Gate-Lanes: host=passed .* budgets=not-run\(ci-only:release\+callgrind\+sizes\)( |$)' <<< "$out" &&
+    grep -qE '^Gate-Lanes: host=passed .* nostd=passed\(reused:0123456789ab\)( |$)' <<< "$out"
 }
-sed -E '/line\+=" budgets=/d' scripts/gate.sh > "$work/drops-budgets.sh"
+sed -E '/line\+=" \$name=/d' scripts/gate.sh > "$work/drops-budgets.sh"
 if ! ci_only_named real scripts/gate.sh; then
   echo "gate self-test: a budget table left to CI is missing from the Gate-Lanes line" >&2
   failures=1
@@ -110,7 +114,7 @@ elif cmp -s "$work/drops-budgets.sh" scripts/gate.sh || ci_only_named dropped "$
   echo "gate self-test: a gate that drops the budget table's ci-only status was not caught" >&2
   failures=1
 else
-  echo "gate self-test: a budget table left to CI is named on the Gate-Lanes line; a gate that drops it is caught"
+  echo "gate self-test: a budget table left to CI and a reused step are named on the Gate-Lanes line; a gate that drops them is caught"
 fi
 
 # Each way of losing a failure, planted in a copy of the gate: the cases above must see it.
