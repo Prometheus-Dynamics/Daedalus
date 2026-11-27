@@ -11,6 +11,13 @@ are their counts. The limits are checked every time.
 
 A row whose tool is missing is reported as not run. With BUDGETS_REQUIRE_ALL=1, as in the
 budgets workflow, a row that could not be run is a failure.
+
+In the local gate (BUDGETS_CI_ONLY=1, with the gate's GATE_LANE_STATE_DIR), measurements this build
+directory has no record of are left to the budgets workflow: nothing is built, and the step
+writes `not-run(ci-only:release+callgrind+sizes)` for the gate's `Gate-Lanes:` line. That is when
+the change reaches what the measured release binaries are built from, or the build directory is
+cold. scripts/release-check.sh accepts such a commit only once the budgets workflow has passed on
+the exact commit it releases.
 """
 import os
 import re
@@ -37,6 +44,7 @@ _spec = importlib.util.spec_from_file_location("record", os.path.join(os.path.di
 record = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(record)
 REQUIRE_ALL = os.environ.get("BUDGETS_REQUIRE_ALL") == "1"
+CI_ONLY = "not-run(ci-only:release+callgrind+sizes)"
 LOW, HIGH = 1000, 3000
 
 
@@ -179,7 +187,17 @@ def main():
     wanted = list(dict.fromkeys(wanted))
     key = record.key()
     fresh = "--fresh" in sys.argv[1:] or os.environ.get("BUDGETS_FRESH") == "1"
-    values = {} if fresh else (record.load(RECORD, key) or {})
+    values = {} if fresh else record.load(RECORD, key)
+    state = os.environ.get("GATE_LANE_STATE_DIR")
+    if values is None and not self_test and state and os.environ.get("BUDGETS_CI_ONLY") == "1":
+        why = ("the build directory is cold" if not os.path.exists(RECORD) else
+               "the change reaches what the measured release binaries are built from")
+        with open(os.path.join(state, "budgets.status"), "w") as file:
+            file.write(CI_ONLY + "\n")
+        print(f"budgets: {CI_ONLY}: {why} ({key[:12]}); the budgets workflow measures it, with "
+              "valgrind and BUDGETS_REQUIRE_ALL=1, and scripts/release-check.sh requires it green")
+        return 0
+    values = values or {}
     if measure(rows, wanted, self_test, have_valgrind, values, key):
         record.save(RECORD, key, values)
         print(f"  measured, kept under {key[:12]}")
