@@ -37,6 +37,9 @@ plant() { # TREE GATE_SH: a tree of stub steps around the given gate.sh and the 
     printf '#!/usr/bin/env bash\n# bound: 30 s (planted)\ntouch "%s/ran-%s"\nexit "${FAIL_%s:-0}"\n' \
       "$tree" "$name" "${name//-/_}" > "$tree/scripts/ci.d/$name.sh"
   done
+  # The budget table left to CI, as testing/crates/budget-harness/check.py leaves it.
+  printf '[ -z "${PLANT_CI_ONLY:-}" ] || echo "not-run(ci-only:release+callgrind+sizes)" > "$GATE_LANE_STATE_DIR/budgets.status"\n' \
+    | sed -i '2r /dev/stdin' "$tree/scripts/ci.d/budgets.sh"
   for name in scripts/check-file-sizes.sh scripts/check-workspace-deps.sh testing/boundary/run.sh; do
     printf '#!/usr/bin/env bash\n# bound: 30 s (planted)\nexit "${FAIL_TRAILING:-0}"\n' > "$tree/$name"
   done
@@ -87,6 +90,27 @@ if [[ "$(check real scripts/gate.sh 1)" == 1 ]]; then
   echo "gate self-test: a red step, first or last in its lane, or a red trailing script fails the gate, names its lane, stops the lane, and records no pass"
 else
   failures=1
+fi
+
+# A budget table the gate left to CI is on the Gate-Lanes line, where scripts/release-check.sh
+# reads it: a gate that drops it would let a release through unmeasured. So must a planted gate
+# that drops it be caught.
+ci_only_named() { # LABEL GATE_SH: whether the line names it
+  local tree="$work/ci-only-$1" out
+  plant "$tree" "$2"
+  out="$(cd "$tree" && env -u DAEDALUS_TARGET_SEED -u GATE_LANE_STATE_DIR CARGO_TARGET_DIR="$tree/target" \
+    PLANT_CI_ONLY=1 bash scripts/gate.sh 2>&1)"
+  grep -qE '^Gate-Lanes: host=passed .* budgets=not-run\(ci-only:release\+callgrind\+sizes\)$' <<< "$out"
+}
+sed -E '/line\+=" budgets=/d' scripts/gate.sh > "$work/drops-budgets.sh"
+if ! ci_only_named real scripts/gate.sh; then
+  echo "gate self-test: a budget table left to CI is missing from the Gate-Lanes line" >&2
+  failures=1
+elif cmp -s "$work/drops-budgets.sh" scripts/gate.sh || ci_only_named dropped "$work/drops-budgets.sh"; then
+  echo "gate self-test: a gate that drops the budget table's ci-only status was not caught" >&2
+  failures=1
+else
+  echo "gate self-test: a budget table left to CI is named on the Gate-Lanes line; a gate that drops it is caught"
 fi
 
 # Each way of losing a failure, planted in a copy of the gate: the cases above must see it.

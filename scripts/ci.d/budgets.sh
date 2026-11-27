@@ -7,4 +7,7 @@
 set -euo pipefail
 # Its lane's build directory: no other lane builds there (scripts/gate.sh).
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}/variants"
+# In the local gate, what this build directory never measured is left to the budgets workflow
+# (check.py says when); CI measures every row.
+[[ -n ${CI:-} ]] || export BUDGETS_CI_ONLY=1
 exec python3 testing/crates/budget-harness/check.py "$@"

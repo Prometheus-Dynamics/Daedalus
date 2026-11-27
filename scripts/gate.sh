@@ -140,4 +140,9 @@ for lane in "${lanes[@]}"; do
   fi
   line+=" $lane=$result"
 done
+# The budget table, when the gate left it to the budgets workflow (testing/crates/budget-harness/
+# check.py): scripts/release-check.sh reads it.
+if [[ -s "$GATE_LANE_STATE_DIR/budgets.status" ]]; then
+  line+=" budgets=$(cat "$GATE_LANE_STATE_DIR/budgets.status")"
+fi
 echo "$line"

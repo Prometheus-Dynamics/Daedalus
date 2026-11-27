@@ -66,6 +66,14 @@ still built as the workspace builds it; only the run is skipped. The gate's last
 lane `scripts/dev/land.sh` left out), and the commit carries it. On CI, or with
 `GATE_LANE_REUSE=0`, nothing is reused. `lane-reuse.py --explain PACKAGE` lists a key's inputs.
 
+The budget table (`budgets`) is measured in the local gate only when its build directory has
+measured these inputs before. When the change reaches what the measured release binaries are built
+from, or the build directory is cold, the step builds nothing. It leaves the table to the budgets
+workflow, which runs it with valgrind and `BUDGETS_REQUIRE_ALL=1`, and the line carries
+`budgets=not-run(ci-only:release+callgrind+sizes)`. `scripts/release-check.sh COMMIT` refuses a
+release while any commit since the last tag carries that and the budgets job has not passed on the
+exact commit. The firmware (`chip`) is always checked locally.
+
 `scripts/ci.sh <step>` runs one by name:
 
 | Step | What it checks |
