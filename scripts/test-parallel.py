@@ -58,6 +58,7 @@ one shared directory under the same binary names, so two at once overwrite each 
 """
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -207,31 +208,106 @@ def package_of(package_id, manifest):
     return name, version
 
 
-def sandboxed(seen):
+def sandboxed(seen, stages=None):
     """The command that runs a binary seeing only `seen` of the checkout: the checkout is an empty
-    directory with those paths bound back in, and the build directory if it is inside. `seen` is
-    a list of paths (a directory, ending in /, with all it holds), or {"bind": paths, "make":
-    directories}, the directories made empty first (scripts/lane-reuse.py plan). Nothing else
-    changes: the same processes, devices and the rest of the file system."""
+    directory with those paths in it, and the build directory if it is inside. `seen` is a list of
+    paths (a directory, ending in /, with all it holds), or {"bind": paths, "make": directories},
+    the directories made empty first (scripts/lane-reuse.py plan). Nothing else changes: the same
+    processes, devices and the rest of the file system. Nothing can be written into the checkout but
+into its live directories and the build directory.
+
+    With `stages` (a Stages), the checkout is one read-only mount: a directory holding the files as
+    hard links, laid out once for every binary that sees the same paths. One bind per file costs
+    bwrap seconds a binary under load: 8-10 s for the 1602 of a package keyed by its sources, at
+    load 90. Directories are bound live on top either way (their files may appear as the test
+    runs), then the build directory, then the files it sees empty."""
     if seen is None:
         return []
-    argv = ["bwrap", "--dev-bind", "/", "/", "--tmpfs", ROOT]
-    blank = []
+    make, blank = [], []
     if isinstance(seen, dict):
-        for path in seen["make"]:
-            argv += ["--dir", os.path.join(ROOT, path.rstrip("/"))]
+        make = seen["make"]
         blank = seen.get("blank", [])
         seen = seen["bind"]
-    inside = [os.path.join(ROOT, path.rstrip("/")) for path in seen]
-    if os.path.realpath(TARGET).startswith(os.path.realpath(ROOT) + os.sep):
-        inside.append(TARGET)
-    for path in inside:
-        if os.path.exists(path):
-            argv += ["--bind", path, path]
+    paths = [path for path in seen if os.path.exists(os.path.join(ROOT, path.rstrip("/")))]
+    files = [path for path in paths if not os.path.isdir(os.path.join(ROOT, path))]
+    live = [path for path in paths if path not in files]
+    target = os.path.realpath(TARGET)
+    inside = target.startswith(os.path.realpath(ROOT) + os.sep)
+    # Where the mounts on top go: made in the stage, which is read-only once mounted.
+    points = make + live + ([os.path.relpath(target, os.path.realpath(ROOT))] if inside else [])
+    stage = stages.stage(files, points, blank) if stages is not None else None
+    argv = ["bwrap", "--dev-bind", "/", "/"]
+    if stage:
+        argv += ["--ro-bind", stage, ROOT]
+    else:
+        argv += ["--tmpfs", ROOT]
+        for path in make:
+            argv += ["--dir", os.path.join(ROOT, path.rstrip("/"))]
+        for path in files:
+            argv += ["--ro-bind", os.path.join(ROOT, path), os.path.join(ROOT, path)]
+    for path in live:
+        argv += ["--bind", os.path.join(ROOT, path.rstrip("/")), os.path.join(ROOT, path.rstrip("/"))]
+    if inside:
+        argv += ["--bind", TARGET, TARGET]
     # Files that are there, empty (scripts/lane-reuse.py blanks).
     for path in blank:
         argv += ["--ro-bind", "/dev/null", os.path.join(ROOT, path)]
+    # Bound one by one, the empty directory is read-only too, once every mount is on it.
+    if not stage:
+        argv += ["--remount-ro", ROOT]
     return argv + ["--"]
+
+
+class Stages:
+    """The directories `sandboxed` mounts: each set of files of the checkout as hard links under
+    `under`, made once and shared. A file that can't be linked (`under` on another file system)
+    is never copied: that set's files are bound one by one, and the run says so."""
+
+    def __init__(self, under):
+        self.under, self.made, self.lock = under, {}, threading.Lock()
+
+    def stage(self, files, points, blank):
+        key = json.dumps([sorted(files), sorted(points), sorted(blank)])
+        with self.lock:
+            if key not in self.made:
+                self.made[key] = self.lay_out(files, points, blank)
+            return self.made[key]
+
+    def lay_out(self, files, points, blank):
+        stage = tempfile.mkdtemp(dir=self.under)
+        for path in points:
+            os.makedirs(os.path.join(stage, path.rstrip("/")), exist_ok=True)
+        try:
+            for path in files:
+                into = os.path.join(stage, path)
+                os.makedirs(os.path.dirname(into), exist_ok=True)
+                os.link(os.path.join(ROOT, path), into)
+        except OSError as error:
+            print(f"  test-parallel: can't lay out a key's files as hard links in {self.under} "
+                  f"({error}): binding them one by one, seconds a binary", file=sys.stderr)
+            shutil.rmtree(stage, ignore_errors=True)
+            return None
+        for path in blank:
+            into = os.path.join(stage, path)
+            os.makedirs(os.path.dirname(into), exist_ok=True)
+            open(into, "w").close()
+        if not staged_as_keyed(stage, files, blank):
+            print(f"  test-parallel: the files laid out in {stage} are not the key's: binding them "
+                  "one by one", file=sys.stderr)
+            shutil.rmtree(stage, ignore_errors=True)
+            return None
+        return stage
+
+
+def staged_as_keyed(stage, files, blank):
+    """Whether `stage` holds exactly the key's files, each the checkout's own (the same inode, so
+    the same content), and the files it sees empty."""
+    found = set()
+    for directory, _, names in os.walk(stage):
+        found.update(os.path.relpath(os.path.join(directory, name), stage) for name in names)
+    if found != set(files) | set(blank):
+        return False
+    return all(os.path.samefile(os.path.join(stage, path), os.path.join(ROOT, path)) for path in files)
 
 
 def shares_trybuild(message):
@@ -297,11 +373,17 @@ def main():
     else:
         visible = {}
     import atexit
-    import shutil
     shims = tempfile.mkdtemp(prefix="daedalus-cargo.")
     # Gone however the run ends.
     atexit.register(shutil.rmtree, shims, True)
     held_cargo = fixture_cargo(shims)
+    stages, made = None, [shims]
+    if visible:
+        # In the build directory, beside the checkout's files for hard links: gone however the run
+        # ends, a red or a stop.
+        made.append(tempfile.mkdtemp(prefix=".daedalus-stages.", dir=TARGET))
+        atexit.register(shutil.rmtree, made[-1], True)
+        stages = Stages(made[-1])
     shared = [m for m in found if shares_trybuild(m)]
     jobs = [[m] for m in found if m not in shared] + ([shared] if shared else [])
     jobs.sort(key=lambda job: -sum(last.get(label(m), [0.0])[0] for m in job))
@@ -325,6 +407,8 @@ def main():
             running = list(groups)
         for group in running:
             group.stop()
+        for directory in made:
+            shutil.rmtree(directory, ignore_errors=True)
         os._exit(128 + signum)
 
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -340,7 +424,7 @@ def main():
             if seen is not None:
                 env["CARGO"] = held_cargo
             with tempfile.TemporaryFile() as out:
-                group = Group(sandboxed(seen) + [message["executable"]],
+                group = Group(sandboxed(seen, stages) + [message["executable"]],
                               cwd=os.path.dirname(message["manifest_path"]),
                               env=env, stdout=out,
                               stderr=subprocess.STDOUT)
@@ -439,6 +523,44 @@ def main():
     return 0
 
 
+def stage_plants(work):
+    """Stages, planted: on another file system its files are bound one by one, said, never copied;
+    a stage that holds a file the key doesn't, or a copy of one it does, is not the key's."""
+    failures = []
+    global ROOT
+    root, ROOT = ROOT, work
+    try:
+        elsewhere = tempfile.mkdtemp(dir="/dev/shm") if os.path.isdir("/dev/shm") else None
+        if elsewhere is None or os.stat(elsewhere).st_dev == os.stat(work).st_dev:
+            failures.append("no other file system to lay a key's files out on")
+        else:
+            import contextlib
+            import io
+            said = io.StringIO()
+            with contextlib.redirect_stderr(said):
+                stage = Stages(elsewhere).stage(["outside.txt"], [], [])
+            if stage is not None or "one by one" not in said.getvalue() or os.listdir(elsewhere):
+                failures.append(f"on another file system: staged {stage}, said {said.getvalue()!r}")
+        if elsewhere:
+            shutil.rmtree(elsewhere, ignore_errors=True)
+        under = tempfile.mkdtemp(dir=work)
+        stage = Stages(under).stage(["outside.txt", "bin/t"], ["bin/"], ["empty.txt"])
+        if not stage or not staged_as_keyed(stage, ["outside.txt", "bin/t"], ["empty.txt"]):
+            failures.append(f"a key's files laid out: {stage}, not the key's")
+        else:
+            open(os.path.join(stage, "extra.txt"), "w").close()
+            if staged_as_keyed(stage, ["outside.txt", "bin/t"], ["empty.txt"]):
+                failures.append("a stage with a file the key doesn't hold passes as the key's")
+            os.remove(os.path.join(stage, "extra.txt"))
+            os.remove(os.path.join(stage, "outside.txt"))
+            shutil.copy2(os.path.join(work, "outside.txt"), os.path.join(stage, "outside.txt"))
+            if staged_as_keyed(stage, ["outside.txt", "bin/t"], ["empty.txt"]):
+                failures.append("a stage with a copy of a key's file passes as the key's")
+    finally:
+        ROOT = root
+    return failures
+
+
 def self_test():
     """This runner in a planted tree, with a cargo that lists one test binary and builds nothing.
     A binary that passes but leaves a fixture FIXTURES doesn't name fails the run and records no
@@ -447,8 +569,6 @@ def self_test():
     records nothing; the same read passes unsandboxed, and passes when the key holds the file. Held
 as the gate holds it (files bound into directories made empty), a file the key doesn't bind, as
 one it was compiled from, can't be read."""
-    import shutil
-
     work = tempfile.mkdtemp(prefix="daedalus-test-parallel.")
     failures = []
     try:
@@ -464,16 +584,24 @@ one it was compiled from, can't be read."""
             "target": {"kind": ["test"], "name": "t"},
             "package_id": f"path+file://{work}#planted@0.1.0",
             "manifest_path": os.path.join(work, "Cargo.toml")})
+        # A copy of the binary as a second package's, for a run holding two packages to two keys.
+        second = artifact.replace("#planted@", "#planted-second@").replace(
+            f'"{test}"', f'"{test}2"').replace('"name": "t"', '"name": "t2"')
         scripts = {
-            "cargo": f"#!/bin/sh\ncase \" $* \" in *' --no-run '*) echo '{artifact}';; *) echo \"$*\" >> {work}/target/cargo.log;; esac\n",
+            "cargo": f"#!/bin/sh\ncase \" $* \" in *' --no-run '*) echo '{artifact}'; [ -z \"$PLANT_TWO\" ] || echo '{second}';; *) echo \"$*\" >> {work}/target/cargo.log;; esac\n",
             "bin/t": '#!/bin/sh\n[ -z "$PLANT_ROGUE" ] || { mkdir -p "$CARGO_TARGET_DIR/tmp/rogue" &&'
                      ' touch "$CARGO_TARGET_DIR/tmp/rogue/CACHEDIR.TAG"; }\n'
                      '[ -z "$PLANT_FIXTURE" ] || { "$CARGO" build -q --manifest-path planted-fixture'
                      ' --target-dir "$CARGO_TARGET_DIR/tmp/dylib-fixture" && "$CARGO" planted-other; } || exit 1\n'
                      '[ -z "$PLANT_READ" ] || cat "$PLANT_READ" > /dev/null || exit 1\n'
-                     '[ -z "$PLANT_BLANK" ] || { [ -e "$PLANT_BLANK" ] && ! [ -s "$PLANT_BLANK" ]; }\n',
+                     '[ -z "$PLANT_BLANK" ] || [ -c "$PLANT_BLANK" ] || exit 1\n'
+                     '[ -z "$PLANT_WRITE" ] || { ! (echo changed > outside.txt) 2> /dev/null &&'
+                     ' ! (echo new > made-by-test) 2> /dev/null; } || exit 1\n'
+                     '[ -z "$PLANT_MOUNTS" ] || [ "$(awk -v r="$PWD" \'$5 == r || index($5, r "/") == 1\''
+                     ' /proc/self/mountinfo | wc -l)" -le "$PLANT_MOUNTS" ]\n',
             "outside.txt": "read by the planted test\n",
         }
+        scripts["bin/t2"] = scripts["bin/t"]
         for name, text in scripts.items():
             with open(os.path.join(work, name), "w") as file:
                 file.write(text)
@@ -499,8 +627,8 @@ one it was compiled from, can't be read."""
                  False, {"bind": ["bin/t"], "make": ["bin/"]}, 1, ""),
                 ("a narrow key's test reading a file its key holds", {"PLANT_READ": outside},
                  False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
-                # A file it sees empty (a member a trybuild package doesn't build): there, with
-                # nothing in it.
+                # A file it sees empty (a member a trybuild package doesn't build): /dev/null,
+                # on top of the files laid out.
                 ("a narrow key's test reading a file it sees empty", {"PLANT_BLANK": outside},
                  False, {"bind": ["bin/t"], "make": ["bin/"], "blank": ["outside.txt"]}, 0, "planted\n"),
                 ("the same file bound whole", {"PLANT_BLANK": outside},
@@ -509,6 +637,26 @@ one it was compiled from, can't be read."""
                 # with none of its sources in sight; any other cargo run is the real one.
                 ("a narrow key's test building a fixture", {"PLANT_FIXTURE": "1"},
                  False, {"bind": ["bin/t", "cargo"], "make": ["bin/"]}, 0, "planted\n"),
+                # The files are one mount, however many: the checkout's directory and the build
+                # directory inside it, not a bind for each file.
+                ("a narrow key's files, one mount", {"PLANT_MOUNTS": "2"},
+                 False, {"bind": ["bin/t", "cargo", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
+                # A held test can't write into the checkout: its files are the checkout's own, by
+                # hard links, so a write would change the source.
+                ("a narrow key's test writing into the checkout", {"PLANT_WRITE": "1"},
+                 False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
+                # The same with the build directory on another file system: no hard links, so the
+                # files are bound one by one, said, and still can't be written.
+                ("a narrow key's test writing into the checkout, its files bound one by one",
+                 {"PLANT_WRITE": "1", "PLANT_ELSEWHERE": "1"},
+                 False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
+                # Two packages held to two keys in one run: each sees its own files, whichever
+                # was laid out first.
+                # Both hold both binaries, so either one's files alone would run both.
+                ("two packages, each held to its own key", {"PLANT_READ": outside, "PLANT_TWO": "1"},
+                 False, {"planted": {"bind": ["bin/t", "bin/t2", "outside.txt"], "make": ["bin/"]},
+                         "planted-second": {"bind": ["bin/t", "bin/t2"], "make": ["bin/"]}},
+                 1, "planted\n"),
             ]
         else:
             failures.append("no bwrap: a narrow key's tests can't be held to it")
@@ -516,6 +664,8 @@ one it was compiled from, can't be read."""
             target, passed = os.path.join(work, "target"), os.path.join(work, "passed")
             shutil.rmtree(target, ignore_errors=True)
             os.makedirs(target)
+            if "PLANT_ELSEWHERE" in settings:
+                target = tempfile.mkdtemp(dir="/dev/shm")
             if stale:
                 os.makedirs(os.path.join(target, "tmp", "stale-fixture"))
                 open(os.path.join(target, "tmp", "stale-fixture", "CACHEDIR.TAG"), "w").close()
@@ -529,7 +679,7 @@ one it was compiled from, can't be read."""
                        DAEDALUS_TEST_PASSED=passed, **settings)
             if seen is not None:
                 with open(os.path.join(work, "visible.json"), "w") as file:
-                    json.dump({"planted": seen}, file)
+                    json.dump(seen if "PLANT_TWO" in settings else {"planted": seen}, file)
                 env["DAEDALUS_TEST_VISIBLE"] = os.path.join(work, "visible.json")
             done = subprocess.run([sys.executable, "-I", os.path.join(work, "scripts", "test-parallel.py")],
                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -542,12 +692,24 @@ one it was compiled from, can't be read."""
                                 f"\n{done.stdout}")
             elif code and seen is not None and "ran seeing only" not in done.stdout:
                 failures.append(f"{case}: the failure doesn't say the test ran held to its key")
+            if any(name.startswith(".daedalus-stages.") for name in os.listdir(target)):
+                failures.append(f"{case}: a key's files laid out for the run are still there")
+            if "PLANT_ELSEWHERE" in settings:
+                shutil.rmtree(target, ignore_errors=True)
+                if "one by one" not in done.stdout:
+                    failures.append(f"{case}: binding the files one by one wasn't said")
+            if "PLANT_WRITE" in settings and (open(outside).read() != scripts["outside.txt"] or
+                                              os.path.exists(os.path.join(work, "made-by-test"))):
+                failures.append(f"{case}: the test's writes reached the checkout")
+                with open(outside, "w") as file:
+                    file.write(scripts["outside.txt"])
             if "PLANT_FIXTURE" in settings:
                 ran = open(log).read() if os.path.exists(log) else ""
                 # Held to its key, the build was answered and only the other run reached cargo.
                 want = ("planted-fixture" not in ran) if seen is not None else ("planted-fixture" in ran)
                 if not want or "planted-other" not in ran:
                     failures.append(f"{case}: cargo ran {ran.splitlines()}")
+        failures += stage_plants(work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     for failure in failures:
@@ -556,7 +718,9 @@ one it was compiled from, can't be read."""
         print("test-parallel self-test: an unlisted fixture fails the run and records nothing, a "
               "stale one is removed; a narrow key's test that reads outside it fails, named, and "
               "records nothing, while the same read passes unsandboxed and when the key holds it; "
-              "held to its key, a test's build of a fixture is answered as fresh")
+              "held to its key, a test's build of a fixture is answered as fresh, its files are one "
+              "read-only mount laid out once (by hard links, never copies) and gone after the run, its "
+              "blanks /dev/null on top, and two packages in one run see their own keys")
     return 1 if failures else 0
 
 
