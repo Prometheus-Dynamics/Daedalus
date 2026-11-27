@@ -49,8 +49,11 @@ named in one of the lanes, or the gate refuses to run.
 In the gate, the `test` step runs only the packages whose tests have not passed on exactly these
 inputs (`scripts/lane-reuse.py`). A package's key is a hash of what its tests' result depends on:
 every file of each workspace package its tests build, the lock file's entry of every package they
-build, every file outside the packages but the notes, cargo's configuration, the toolchain, the
-programs and Vulkan drivers a test may load, and the environment a build or test reads. A package
+build, the root's files, the scripts that run and judge the test step, cargo's configuration, the
+toolchain, the programs and Vulkan drivers a test may load, and the environment a build or test
+reads. Other files outside the packages (other steps' scripts, the lander's tools, fixtures that
+are not packages) are read by no test but those of the packages below; the self-test checks that
+every path the test step's scripts name is keyed or listed with why it isn't. A package
 whose sources name a path out of it (a `..` path, a walk up from its manifest or its binary, cargo
 itself, the build directory) is keyed by the whole tree but the planning notes. Every binary is
 still built as the workspace builds it; only the run is skipped. The gate's last line,
