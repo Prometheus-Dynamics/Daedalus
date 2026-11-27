@@ -22,6 +22,10 @@ same build: scripts/check.sh runs a change's packages this way, and the gate tho
 did not pass before on the same inputs (scripts/lane-reuse.py). With DAEDALUS_TEST_PASSED set to a
 file, the names of the packages whose every binary passed are written to it, failed run or not,
 but none when a test built a fixture FIXTURES doesn't name (below): which test did isn't known.
+With DAEDALUS_TEST_VISIBLE set to a JSON file of package names to paths of the checkout (written by
+`scripts/lane-reuse.py visible`), each of those packages' binaries runs under bwrap seeing only those
+paths of the checkout, the rest of the machine as it is. With DAEDALUS_TEST_ARTIFACTS set to a file,
+cargo's artifact messages for the build are written to it (`scripts/lane-reuse.py reads`).
 
 Each binary runs under a bound: three times the slowest it has passed in, and never under FLOOR.
 The bound is on time the binary could use: the time its threads spent waiting for a CPU on a busy
@@ -121,6 +125,11 @@ def binaries(args):
         [CARGO, "test", *args, "--no-run", "--message-format=json-render-diagnostics"],
         cwd=ROOT, stdout=subprocess.PIPE, check=True, text=True,
     ).stdout
+    kept = os.environ.get("DAEDALUS_TEST_ARTIFACTS")
+    if kept:
+        # What every unit was built from (scripts/lane-reuse.py reads).
+        with open(kept, "w") as file:
+            file.write(out)
     found = {}
     for line in out.splitlines():
         if not line.startswith("{"):
@@ -164,6 +173,22 @@ def package_of(package_id, manifest):
     return name, version
 
 
+def sandboxed(seen):
+    """The command that runs a binary seeing only `seen` of the checkout: the checkout is an empty
+    directory with those paths bound back in, and the build directory if it is inside. Nothing else
+    changes: the same processes, devices and the rest of the file system."""
+    if seen is None:
+        return []
+    argv = ["bwrap", "--dev-bind", "/", "/", "--tmpfs", ROOT]
+    inside = [os.path.join(ROOT, path.rstrip("/")) for path in seen]
+    if os.path.realpath(TARGET).startswith(os.path.realpath(ROOT) + os.sep):
+        inside.append(TARGET)
+    for path in inside:
+        if os.path.exists(path):
+            argv += ["--bind", path, path]
+    return argv + ["--"]
+
+
 def shares_trybuild(message):
     """Whether the binary links trybuild, by its symbols: wherever in the test the use sits."""
     with open(message["executable"], "rb") as file:
@@ -203,6 +228,13 @@ def main():
         wanted = set(only.split())
         found = [m for m in found if package_of(m["package_id"], m["manifest_path"])[0] in wanted]
         print(f"  {len(found)} of {built} test binaries: those of DAEDALUS_TEST_PACKAGES")
+    # In the gate, a narrowly keyed package's binaries see only the paths of the checkout its
+    # reuse key holds, so a pass recorded under that key read nothing the key doesn't.
+    try:
+        with open(os.environ["DAEDALUS_TEST_VISIBLE"]) as file:
+            visible = json.load(file)
+    except KeyError:
+        visible = {}
     shared = [m for m in found if shares_trybuild(m)]
     jobs = [[m] for m in found if m not in shared] + ([shared] if shared else [])
     jobs.sort(key=lambda job: -sum(last.get(label(m), [0.0])[0] for m in job))
@@ -236,8 +268,9 @@ def main():
         for message in job:
             name = label(message)
             start = time.monotonic()
+            seen = visible.get(package_of(message["package_id"], message["manifest_path"])[0])
             with tempfile.TemporaryFile() as out:
-                group = Group([message["executable"]],
+                group = Group(sandboxed(seen) + [message["executable"]],
                               cwd=os.path.dirname(message["manifest_path"]),
                               env=package_env(message, sysroot_lib), stdout=out,
                               stderr=subprocess.STDOUT)
@@ -251,6 +284,10 @@ def main():
                     groups.discard(group)
                 out.seek(0)
                 output = out.read().decode(errors="replace")
+            if seen is not None and code != 0:
+                output += (f"\n{name}: ran seeing only the paths of the checkout its package's "
+                           "reuse key holds (scripts/lane-reuse.py visible): a test that reads "
+                           "another fails here. One that must is listed in WHOLE_TREE there.\n")
             if not ended:
                 left = []
             if left:
@@ -334,18 +371,22 @@ def main():
 
 
 def self_test():
-    """This runner in a planted tree, with a cargo that lists one test binary and builds nothing:
-    a binary that passes but leaves a fixture FIXTURES doesn't name fails the run and records no
-    package as passed, and one that passes clean passes and records its package."""
+    """This runner in a planted tree, with a cargo that lists one test binary and builds nothing.
+    A binary that passes but leaves a fixture FIXTURES doesn't name fails the run and records no
+    package; a stale one from before the run is removed and the run passes. A narrowly keyed
+    package's binary that reads a file of the checkout its key doesn't hold fails, says why, and
+    records nothing; the same read passes unsandboxed, and passes when the key holds the file."""
     import shutil
 
     work = tempfile.mkdtemp(prefix="daedalus-test-parallel.")
     failures = []
     try:
-        os.makedirs(os.path.join(work, "scripts"))
+        for name in ("scripts", "bin"):
+            os.makedirs(os.path.join(work, name))
         for name in ("test-parallel.py", "bounded.py"):
             shutil.copy2(os.path.join(ROOT, "scripts", name), os.path.join(work, "scripts", name))
-        test = os.path.join(work, "t")
+        test = os.path.join(work, "bin", "t")
+        outside = os.path.join(work, "outside.txt")
         artifact = json.dumps({
             "reason": "compiler-artifact", "executable": test, "profile": {"test": True},
             "target": {"kind": ["test"], "name": "t"},
@@ -353,17 +394,33 @@ def self_test():
             "manifest_path": os.path.join(work, "Cargo.toml")})
         scripts = {
             "cargo": f"#!/bin/sh\ncase \" $* \" in *' --no-run '*) echo '{artifact}';; esac\n",
-            "t": '#!/bin/sh\n[ -z "$PLANT_ROGUE" ] || { mkdir -p "$CARGO_TARGET_DIR/tmp/rogue" &&'
-                 ' touch "$CARGO_TARGET_DIR/tmp/rogue/CACHEDIR.TAG"; }\n',
+            "bin/t": '#!/bin/sh\n[ -z "$PLANT_ROGUE" ] || { mkdir -p "$CARGO_TARGET_DIR/tmp/rogue" &&'
+                     ' touch "$CARGO_TARGET_DIR/tmp/rogue/CACHEDIR.TAG"; }\n'
+                     '[ -z "$PLANT_READ" ] || cat "$PLANT_READ" > /dev/null\n',
+            "outside.txt": "read by the planted test\n",
         }
         for name, text in scripts.items():
             with open(os.path.join(work, name), "w") as file:
                 file.write(text)
             os.chmod(os.path.join(work, name), 0o755)
-        # A restored cache's build directory of a fixture no test builds any more, left from
-        # before the run, is not a test's doing: the run passes and it is gone.
-        for rogue, stale, code, recorded in (("1", "", 1, ""), ("", "", 0, "planted\n"),
-                                             ("", "1", 0, "planted\n")):
+        sandbox = shutil.which("bwrap") is not None
+        cases = [
+            # (case, settings, the stale fixture, the paths the key holds, exit, recorded)
+            ("an unlisted fixture", {"PLANT_ROGUE": "1"}, False, None, 1, ""),
+            ("a clean pass", {}, False, None, 0, "planted\n"),
+            ("a stale fixture from before the run", {}, True, None, 0, "planted\n"),
+            ("a read outside, unsandboxed", {"PLANT_READ": outside}, False, None, 0, "planted\n"),
+        ]
+        if sandbox:
+            cases += [
+                ("a narrow key's test reading outside it", {"PLANT_READ": outside}, False,
+                 ["bin/"], 1, ""),
+                ("a narrow key's test reading what it holds", {"PLANT_READ": outside}, False,
+                 ["bin/", "outside.txt"], 0, "planted\n"),
+            ]
+        else:
+            failures.append("no bwrap: a narrow key's tests can't be held to it")
+        for case, settings, stale, seen, code, recorded in cases:
             target, passed = os.path.join(work, "target"), os.path.join(work, "passed")
             shutil.rmtree(target, ignore_errors=True)
             if stale:
@@ -371,28 +428,33 @@ def self_test():
                 open(os.path.join(target, "tmp", "stale-fixture", "CACHEDIR.TAG"), "w").close()
             if os.path.exists(passed):
                 os.remove(passed)
-            env = {k: v for k, v in os.environ.items() if k != "DAEDALUS_TEST_PACKAGES"}
+            env = {k: v for k, v in os.environ.items()
+                   if k not in ("DAEDALUS_TEST_PACKAGES", "DAEDALUS_TEST_VISIBLE", "DAEDALUS_TEST_ARTIFACTS")}
             env.update(CARGO=os.path.join(work, "cargo"), CARGO_TARGET_DIR=target,
-                       DAEDALUS_TEST_PASSED=passed, PLANT_ROGUE=rogue)
+                       DAEDALUS_TEST_PASSED=passed, **settings)
+            if seen is not None:
+                with open(os.path.join(work, "visible.json"), "w") as file:
+                    json.dump({"planted": seen}, file)
+                env["DAEDALUS_TEST_VISIBLE"] = os.path.join(work, "visible.json")
             done = subprocess.run([sys.executable, "-I", os.path.join(work, "scripts", "test-parallel.py")],
                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             got = open(passed).read() if os.path.exists(passed) else ""
-            case = ("an unlisted fixture" if rogue else
-                    "a stale fixture from before the run" if stale else "a clean pass")
-            left = os.path.exists(os.path.join(target, "tmp", "stale-fixture"))
-            if left:
+            if os.path.exists(os.path.join(target, "tmp", "stale-fixture")):
                 failures.append(f"{case}: the stale build directory is still there")
             if done.returncode != code or got != recorded:
                 failures.append(f"{case}: exit {done.returncode} (want {code}), recorded "
                                 f"{got.split() or 'nothing'} (want {recorded.split() or 'nothing'})"
                                 f"\n{done.stdout}")
+            elif code and seen is not None and "ran seeing only" not in done.stdout:
+                failures.append(f"{case}: the failure doesn't say the test ran held to its key")
     finally:
         shutil.rmtree(work, ignore_errors=True)
     for failure in failures:
         print(f"test-parallel self-test: {failure}", file=sys.stderr)
     if not failures:
-        print("test-parallel self-test: an unlisted fixture fails the run and records no pass;"
-              " a clean pass records its package; a stale one from before the run is removed")
+        print("test-parallel self-test: an unlisted fixture fails the run and records nothing, a "
+              "stale one is removed; a narrow key's test that reads outside it fails, named, and "
+              "records nothing, while the same read passes unsandboxed and when the key holds it")
     return 1 if failures else 0
 
 

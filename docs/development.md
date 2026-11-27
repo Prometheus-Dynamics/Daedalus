@@ -53,7 +53,12 @@ build, the root's files, the scripts that run and judge the test step, cargo's c
 toolchain, the programs and Vulkan drivers a test may load, and the environment a build or test
 reads. Other files outside the packages (other steps' scripts, the lander's tools, fixtures that
 are not packages) are read by no test but those of the packages below; the self-test checks that
-every path the test step's scripts name is keyed or listed with why it isn't. A package
+every path the test step's scripts name is keyed or listed with why it isn't. The gate holds a
+narrowly keyed package to its key: its tests run under bwrap seeing only the paths of the checkout
+the key holds (`lane-reuse.py visible`), and every unit it builds must have compiled only from those,
+by rustc's dep-info and what build scripts declare (`lane-reuse.py reads`). A package that starts
+reading outside itself fails the test step, named, and nothing is recorded; one that must is listed
+in `WHOLE_TREE`. With no bwrap, nothing is reused or recorded. A package
 whose sources name a path out of it (a `..` path, a walk up from its manifest or its binary, cargo
 itself, the build directory) is keyed by the whole tree but the planning notes. Every binary is
 still built as the workspace builds it; only the run is skipped. The gate's last line,
