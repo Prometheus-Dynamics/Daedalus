@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bound: 276 s (three times 92 s: its slowest green run, 27 s, in a cold build on a fresh slot,
-#   the 10 s the starved-test cases of scripts/bounded.py have added since, the 35 s of the
+#   the 10 s the starved-test cases of scripts/bounded.py added (side by side now), the 35 s of the
 #   reuse keys' self-test and the 20 s at load 60 of the gate's self-test; the longer self-tests
 #   each run only when what they read changed, scripts/tools-reuse.py)
 # The working tools check themselves against planted cases: which packages a change reaches

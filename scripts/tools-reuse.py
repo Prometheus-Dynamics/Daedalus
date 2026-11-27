@@ -36,9 +36,10 @@ _spec.loader.exec_module(lr)
 # name: (command, files it reads, programs common() doesn't hold, reads the tree). The self-tests
 # under a second or two run every time (scripts/ci.d/tools.sh).
 STAMPS = {
-    # Planted sleepers and spinners under its own runner: python3 and the kernel are in common().
+    # Planted sleepers under its own runner, and children held to a CPU quota by a systemd scope:
+    # python3 and the kernel are in common(), systemd-run isn't.
     "bounded": (["python3", "-I", "scripts/bounded.py", "--self-test"],
-                ["scripts/bounded.py"], [], False),
+                ["scripts/bounded.py"], ["systemd-run"], False),
     # Copies itself and bounded.py and runs planted tests under bwrap.
     "test-parallel": (["python3", "-I", "scripts/test-parallel.py", "--self-test"],
                       ["scripts/test-parallel.py", "scripts/bounded.py"], ["bwrap"], False),
