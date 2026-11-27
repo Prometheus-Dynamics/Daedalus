@@ -18,8 +18,11 @@ A package's key is a hash of everything its tests' result depends on:
 - every file, by content, of each workspace package its tests build (normal, build and
   dev-dependencies, on every platform: a superset), and the lockfile's entry of every package
   they build, so a dependency's change reruns only what builds it;
-- every file outside the workspace's packages but the notes (docs/, the Markdown files, CI's
-  own): the scripts, the fixtures that are not packages, the root manifest, the toolchain file;
+- of the files outside the workspace's packages, those a test's result can depend on: the
+  root's (the manifest, the toolchain file), cargo's config, the scripts that run and judge the
+  step (RUNNERS, JUDGES), and the files of any package outside the workspace it builds. Any other
+  file out there (the other steps' scripts, the lander's tools, the fixtures that are not
+  packages) is read only by a package keyed by the whole tree, below, or by no test at all;
 - cargo's config files, the toolchain (`rustc -vV`, `cargo -V`), the C compiler, the programs a
   test may start and the Vulkan drivers it may load, and the environment a build or a test
   reads (with the checkout's path written as <root>, so two clones share nothing but keys);
@@ -47,6 +50,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # What runs and judges a test step: a change to any reruns every package.
 JUDGES = ("scripts/lane-reuse.py", "scripts/ci.sh", "scripts/ci.d/test.sh",
           "scripts/test-parallel.py", "scripts/bounded.py", "scripts/gate.sh")
+# What else the test step runs that can change a test's result: a binary's bound, the Vulkan
+# driver a test gets, the fixtures' lockfiles, the build directory a test runs from.
+RUNNERS = ("scripts/test-slowest.json", "scripts/lavapipe-icd.sh", "scripts/fixture-locks.sh",
+           "scripts/seed-target.py")
+# Paths the runners and judges name that change no test's result, and why: the self-test checks
+# that every other path they name is keyed.
+NAMED_NOT_KEYED = {
+    "scripts/prune-targets.py": "removes build directories no step uses",
+    "scripts/check.sh": "named in prose: it runs a change's packages the same way",
+    "scripts/ci.d": "the other steps; the test step is a judge",
+    "scripts/check-file-sizes.sh": "the scripts lane's checks, run beside the test step",
+    "scripts/check-workspace-deps.sh": "the scripts lane's checks, run beside the test step",
+    "testing/boundary/": "the scripts lane's boundary check, run beside the test step",
+    "scripts/dev/": "the lander's tools: they run the gate, not a test",
+    "testing/fixtures/": "built for and read by packages keyed by the whole tree",
+}
 # The notes: no build or test outside a whole-tree package reads them.
 NOTE = re.compile(r"(\.md$|^docs/|^\.github/|^LICENSE-[^/]*$)")
 # Keyed by each package's own entry, below.
@@ -102,9 +121,10 @@ def judges_hash():
 
 
 class Keys:
-    def __init__(self):
+    def __init__(self, root=ROOT):
+        self.root = root
         listing = subprocess.run(["cargo", "metadata", "--locked", "--format-version", "1"],
-                                 cwd=ROOT, capture_output=True, text=True)
+                                 cwd=self.root, capture_output=True, text=True)
         if listing.returncode != 0:
             sys.exit(f"lane-reuse.py: cargo metadata failed:\n{listing.stderr}")
         meta = json.loads(listing.stdout)
@@ -115,24 +135,32 @@ class Keys:
         self.deps = {n["id"]: [d["pkg"] for d in n["deps"] if any(k["kind"] != "dev" for k in d["dep_kinds"])]
                      for n in nodes}
         self.with_dev = {n["id"]: [d["pkg"] for d in n["deps"]] for n in nodes}
-        self.dirs = {i: os.path.relpath(os.path.dirname(self.packages[i]["manifest_path"]), ROOT) + "/"
+        self.dirs = {i: os.path.relpath(os.path.dirname(self.packages[i]["manifest_path"]), self.root) + "/"
                      for i in self.members}
-        with open(os.path.join(ROOT, "Cargo.lock")) as file:
+        self.read_lock()
+        out = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                             cwd=self.root, capture_output=True, check=True).stdout
+        self.listed = sorted({n.decode() for n in out.split(b"\0") if n
+                              and os.path.isfile(os.path.join(self.root, n.decode()))})
+        self.digests = {}
+        self.cache = {}
+
+    def read_lock(self):
+        with open(os.path.join(self.root, "Cargo.lock")) as file:
             blocks = file.read().split("[[package]]")[1:]
         self.lock = {}
         for block in blocks:
             fields = dict(l.split(" = ", 1) for l in block.strip().splitlines() if " = " in l)
             self.lock[(fields.get("name", "").strip('"'), fields.get("version", "").strip('"'))] = block.strip()
-        out = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-                             cwd=ROOT, capture_output=True, check=True).stdout
-        self.listed = sorted({n.decode() for n in out.split(b"\0") if n
-                              and os.path.isfile(os.path.join(ROOT, n.decode()))})
-        self.digests = {}
-        self.cache = {}
+
+    def reread(self):
+        """Forget what was read of the files and the environment: the self-test changes them."""
+        self.read_lock()
+        self.digests, self.cache = {}, {}
 
     def file(self, name):
         if name not in self.digests:
-            self.digests[name] = file_digest(os.path.join(ROOT, name))
+            self.digests[name] = file_digest(os.path.join(self.root, name))
         return self.digests[name]
 
     def files(self, prefix):
@@ -156,7 +184,7 @@ class Keys:
         for path, _ in self.files(home):
             if not path.endswith(".rs"):
                 continue
-            with open(os.path.join(ROOT, path), errors="replace") as file:
+            with open(os.path.join(self.root, path), errors="replace") as file:
                 text = file.read()
             for pattern in LEAVES:
                 if pattern.search(text):
@@ -176,12 +204,12 @@ class Keys:
     def common(self):
         if "common" not in self.cache:
             inputs = [("format", FORMAT), ("judges", judges_hash())]
-            here = ROOT
+            here = self.root
             while True:
                 for name in ("config.toml", "config"):
                     path = os.path.join(here, ".cargo", name)
                     if os.path.isfile(path):
-                        inputs.append((f"cargo config {path.replace(ROOT, '<root>', 1)}", file_digest(path)))
+                        inputs.append((f"cargo config {path.replace(self.root, '<root>', 1)}", file_digest(path)))
                 if os.path.dirname(here) == here:
                     break
                 here = os.path.dirname(here)
@@ -191,7 +219,7 @@ class Keys:
                 inputs.append((f"CARGO_HOME/{name}", file_digest(os.path.join(home, name))))
             for words in (["rustc", "-vV"], ["cargo", "-V"], ["cc", "--version"]):
                 inputs.append((" ".join(words), digest(run(words).encode())))
-            env = sorted((k, v.replace(ROOT, "<root>")) for k, v in os.environ.items()
+            env = sorted((k, v.replace(self.root, "<root>")) for k, v in os.environ.items()
                          if ENV.match(k) and k not in NOT_IN_KEY and not k.startswith("GATE_"))
             inputs.append(("environment", digest(json.dumps(env).encode())))
             programs = []
@@ -203,7 +231,8 @@ class Keys:
             inputs.append(("vulkan drivers", self.drivers()))
             member_dirs = tuple(self.dirs.values())
             outside = [(n, self.file(n)) for n in self.listed
-                       if not n.startswith(member_dirs) and not NOTE.search(n) and n != LOCKFILE]
+                       if not n.startswith(member_dirs) and not NOTE.search(n) and n != LOCKFILE
+                       and ("/" not in n or n.startswith(".cargo/") or n in RUNNERS + JUDGES)]
             inputs.append(("outside the packages", digest(json.dumps(outside).encode())))
             self.cache["common"] = inputs
         return list(self.cache["common"])
@@ -244,6 +273,10 @@ class Keys:
             inputs.append((f"Cargo.lock {package['name']} {package['version']}", digest(entry.encode())))
             if package_id in self.members:
                 inputs.extend(self.files(self.dirs[package_id]))
+            elif package["source"] is None:
+                # A path package outside the workspace: its files, wherever in the tree.
+                home = os.path.relpath(os.path.dirname(package["manifest_path"]), self.root) + "/"
+                inputs.extend(self.files(home))
         return inputs
 
     def key(self, name, args=()):
@@ -327,18 +360,20 @@ def self_test():
             os.makedirs(os.path.dirname(os.path.join(copy, name)), exist_ok=True)
             shutil.copy2(os.path.join(ROOT, name), os.path.join(copy, name))
         subprocess.run(["git", "init", "-q"], cwd=copy, check=True)
-        env = {k: v for k, v in os.environ.items() if k != "CI" and k != "GATE_LANE_REUSE"}
-        env["CARGO_TARGET_DIR"] = os.path.join(work, "target")
+        # The copy's keys, in this process: one listing of the packages, each key read again.
+        copied = Keys(copy)
         shims = os.path.join(work, "bin")
         os.makedirs(shims)
 
         def key(name, extra=None):
-            out = subprocess.run([sys.executable, os.path.join(copy, "scripts", "lane-reuse.py"),
-                                  "--explain", name], cwd=copy, capture_output=True, text=True,
-                                 env=dict(env, **(extra or {})))
-            if out.returncode != 0:
-                sys.exit(f"self-test: --explain {name} failed:\n{out.stderr}")
-            return out.stdout.strip().splitlines()[-1].split()[-1]
+            saved = dict(os.environ)
+            os.environ.update(extra or {})
+            try:
+                copied.reread()
+                return copied.key(name)
+            finally:
+                os.environ.clear()
+                os.environ.update(saved)
 
         def touch(name, text="\n// changed by the keys' self-test\n"):
             path = os.path.join(copy, name)
@@ -380,7 +415,16 @@ def self_test():
         cases = [
             (package, "a file of the package", True, lambda: touch(rs(home)), None),
             (package, f"a file of a package it builds ({dep})", True, lambda: touch(rs(dep)), None),
-            (package, "a script", True, lambda: touch("scripts/check.sh", "\n# changed\n"), None),
+            (package, "a script the test step runs", True,
+             lambda: touch("scripts/lavapipe-icd.sh", "\n# changed\n"), None),
+            (package, "a test binary's bound", True,
+             lambda: replace("scripts/test-slowest.json", "{"), None),
+            (package, "a script the test step doesn't run", False,
+             lambda: touch("scripts/dev/land.sh", "\n# changed\n"), None),
+            (package, "a fixture that is not a package", False,
+             lambda: touch("testing/fixtures/dylib/Cargo.toml", "\n# changed\n"), None),
+            (whole, "a script the test step doesn't run, for a package that reads the tree", True,
+             lambda: touch("scripts/dev/land.sh", "\n# changed\n"), None),
             (package, "the root manifest", True, lambda: touch("Cargo.toml", "\n# changed\n"), None),
             (package, "the toolchain file", True, lambda: touch("rust-toolchain.toml", "\n# changed\n"), None),
             (package, f"the lockfile's entry of a dependency it builds ({locked})", True,
@@ -400,6 +444,15 @@ def self_test():
             (whole, "TODO.md, for a package that reads the tree", False,
              lambda: touch("TODO.md", "\nchanged\n"), None),
         ]
+        # Every path the runners and judges name outside the packages is keyed or said not to be.
+        for script in RUNNERS + JUDGES:
+            with open(os.path.join(ROOT, script), errors="replace") as file:
+                for said in sorted(set(re.findall(r"(?:scripts|testing)/[A-Za-z0-9_./-]*[A-Za-z0-9_/]", file.read()))):
+                    if (said in RUNNERS + JUDGES or said.startswith(tuple(keys.dirs.values()))
+                            or any(said.startswith(n) for n in NAMED_NOT_KEYED)):
+                        continue
+                    failures.append(f"{script} names {said}: add it to RUNNERS, or to NAMED_NOT_KEYED"
+                                    " with why it changes no test's result")
         bases = {}
         for name, label, moves, change, extra in cases:
             if name not in bases:
