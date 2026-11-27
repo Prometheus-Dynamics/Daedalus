@@ -74,19 +74,32 @@ trap stop_lanes EXIT
 trap 'exit 130' INT TERM
 set -m
 
+# As in scripts/ci.sh: the CPU seconds of the children this shell has waited for, by `times`.
+cpu_seen=0
+children_cpu() {
+  local file="${TMPDIR:-/tmp}/gate-times.$BASHPID"
+  times > "$file"
+  cpu_seen="$(awk 'NR == 2 { for (i = 1; i <= 2; i++) { split($i, t, "m"); s += t[1] * 60 + t[2] } }
+    END { printf "%d", s }' "$file")"
+  rm -f "$file"
+}
+
 scripts_lane() {
   scripts/ci.sh "${scripts[@]}" || return 1
-  local status=0 script start
+  local status=0 script start cpu
   for script in "${trailing[@]}"; do
     echo "==> $script"
     start=$SECONDS
+    children_cpu; cpu=$cpu_seen
     python3 -I scripts/bounded.py --step "$(basename "$script")" "$script" || status=1
-    echo "    $(basename "$script"): $((SECONDS - start)) s"
+    children_cpu
+    echo "    $(basename "$script"): $((SECONDS - start)) s, $((cpu_seen - cpu)) cpu-s"
   done
   return $status
 }
 
 start=$SECONDS
+children_cpu; gate_cpu=$cpu_seen
 lanes=(host docs chips ship beside cross scripts)
 pids=()
 for lane in "${lanes[@]}"; do
@@ -111,7 +124,8 @@ for lane in "${lanes[@]}"; do
   echo "=== lane: $lane"
   cat "$logs/$lane"
 done
-echo "gate: $((SECONDS - start)) s"
+children_cpu
+echo "gate: $((SECONDS - start)) s, $((cpu_seen - gate_cpu)) cpu-s"
 if ((${#failed[@]})); then
   echo "gate: failed in lane: ${failed[*]}" >&2
   exit 1

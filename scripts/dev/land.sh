@@ -45,7 +45,8 @@ if [ $g != 0 ]; then
 fi
 [ "${gate[0]}" != scripts/gate.sh ] || lanes_line="$(command grep -E '^Gate-Lanes: ' "$log" | tail -1)"
 [ -n "${lanes_line:-}" ] || { echo "THE GATE PASSED WITHOUT A Gate-Lanes LINE, log $log"; exit 1; }
-summary="$(printf 'Gate (%s): %s s, load %s, nice %s.\n' "$kind" "$wall" "$(cut -d' ' -f1-3 /proc/loadavg)" "$NICE"; command grep -E '^    [a-z0-9.-]+: [0-9]+ s$' "$log" | sed 's/^ */  /'; printf '\n%s\n' "$lanes_line")"
+cpu="$(command sed -nE 's/^gate: [0-9]+ s, ([0-9]+) cpu-s$/, \1 cpu-s/p' "$log" | tail -1)"
+summary="$(printf 'Gate (%s): %s s%s, load %s, nice %s.\n' "$kind" "$wall" "$cpu" "$(cut -d' ' -f1-3 /proc/loadavg)" "$NICE"; command grep -E '^    [a-z0-9.-]+: [0-9]+ s, [0-9]+ cpu-s$' "$log" | sed 's/^ */  /'; printf '\n%s\n' "$lanes_line")"
 echo "$summary"
 git add -A && git commit -q -m "$id: $title
 
