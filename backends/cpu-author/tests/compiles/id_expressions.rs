@@ -24,7 +24,8 @@ fn scale(value: i32) -> Result<i32, Fault> {
     Ok(value)
 }
 
-fn main() {
+#[test]
+fn id_expressions() {
     assert_eq!(BLUR_DECL.id, "example.blur");
     assert_eq!(SHARPEN_DECL.id, "example.sharpen");
     assert_eq!(SCALE_DECL.id, "example.scale");

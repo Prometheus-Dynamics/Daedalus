@@ -18,5 +18,3 @@ mod two {
 }
 
 pub const NODES: &[&daedalus_registry::NodeRecord] = &[&one::ONE_NODE, &two::TWO_NODE];
-
-fn main() {}

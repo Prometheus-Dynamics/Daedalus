@@ -5,5 +5,3 @@ use daedalus_macros::node;
 pub const BODY: &str = "text";
 
 const _: &daedalus_registry::NodeRecord = &BODY_NODE;
-
-fn main() {}

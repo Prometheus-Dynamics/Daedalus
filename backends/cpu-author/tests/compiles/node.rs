@@ -6,6 +6,7 @@ fn increment(value: i32) -> Result<i32, Fault> {
     Ok(value + 1)
 }
 
-fn main() {
+#[test]
+fn node() {
     assert_eq!(INCREMENT_DECL.id, "ui.ok");
 }

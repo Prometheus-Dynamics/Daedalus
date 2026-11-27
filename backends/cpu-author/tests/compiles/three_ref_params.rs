@@ -11,7 +11,12 @@ fn accumulate(a: &i64, b: &i64, state: &mut Total) -> Result<i64, Fault> {
     Ok(state.0)
 }
 
-fn main() {
-    let names: Vec<_> = ACCUMULATE_DECL.inputs.iter().map(|port| port.name).collect();
+#[test]
+fn three_ref_params() {
+    let names: Vec<_> = ACCUMULATE_DECL
+        .inputs
+        .iter()
+        .map(|port| port.name)
+        .collect();
     assert_eq!(names, ["a", "b"]);
 }

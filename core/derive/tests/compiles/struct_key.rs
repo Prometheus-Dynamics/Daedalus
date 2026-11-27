@@ -5,5 +5,3 @@ use daedalus_derive::Type;
 pub struct Thing {
     pub a: u32,
 }
-
-fn main() {}
