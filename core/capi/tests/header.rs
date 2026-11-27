@@ -3,6 +3,8 @@
 //! table gives it and declares nothing else, and the built library exports exactly these. And
 //! the header compiles as C11 with every warning an error.
 
+// Only the Linux checks read the built library.
+#[cfg(target_os = "linux")]
 use crate::support;
 
 use std::path::Path;
