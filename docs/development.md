@@ -67,7 +67,8 @@ paths of the packages it builds, by rustc's dep-info and what build scripts decl
 (`lane-reuse.py reads`). A package that starts reading outside itself fails the test step, named,
 and nothing is recorded; one that must is listed in `WHOLE_TREE`. With no bwrap, nothing is reused
 or recorded. The files a key holds are one read-only mount: hard links to the checkout's own files
-in a directory under the build directory, laid out once per set of files, shared by every binary
+in a directory under the build directory, laid out once per set of files (side by side, before any
+binary runs, so no binary's time or bound counts it), shared by every binary
 that sees it, checked to be exactly the key's files (the same inodes) before it is mounted, and
 removed when the run ends, red or stopped. One bind per file cost bwrap 8-10 s a binary for the
 1602 files of a package keyed by its sources, at load 90. A file is never copied: where the build
