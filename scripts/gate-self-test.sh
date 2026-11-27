@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # The gate on a planted tree: its own scripts/gate.sh and scripts/ci.sh, with every step and
-# trailing script a stub that passes, fails, or leaves a mark, run exactly as the gate runs. A red
+# trailing script a stub that passes, fails, or leaves a mark, run as the gate runs them. Around
+# them, scripts/bounded.py runs the step in its place and scripts/seed-target.py makes the build
+# directory: what those two do is their own self-tests', and the hundreds of starts of the real ones
+# cost this test most of its CPU, so that under a loaded gate it ran past the tools step's bound. A red
 # step anywhere in a lane fails the gate, names the lane, stops the lane's later steps, and leaves
 # no `Gate-Lanes:` line, the record of a pass. Then the same checks against a gate planted with
 # each way of losing a failure (a lane's status not read, a lane of steps returning only its last
@@ -9,7 +12,7 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # Its result is a function of the scripts it plants and its own: passed before on these, it passes.
 # On CI, and with GATE_LANE_REUSE=0, it always runs.
-inputs=(scripts/gate-self-test.sh scripts/gate.sh scripts/ci.sh scripts/bounded.py scripts/seed-target.py)
+inputs=(scripts/gate-self-test.sh scripts/gate.sh scripts/ci.sh)
 proved="$(git rev-parse --path-format=absolute --git-common-dir)/daedalus-lane-records/gate-self-test-$(cat "${inputs[@]}" | sha256sum | cut -c1-16)"
 if [[ -z ${CI:-} && ${GATE_LANE_REUSE:-1} != 0 && -e $proved ]]; then
   echo "gate self-test passed before on these scripts"
@@ -23,7 +26,11 @@ plant() { # TREE GATE_SH: a tree of stub steps around the given gate.sh and the 
   local tree="$1" name
   mkdir -p "$tree/scripts/ci.d" "$tree/testing/boundary"
   cp "$2" "$tree/scripts/gate.sh"
-  cp scripts/ci.sh scripts/bounded.py scripts/seed-target.py "$tree/scripts/"
+  cp scripts/ci.sh "$tree/scripts/"
+  # Called as the gate calls them: `bounded.py --step NAME SCRIPT`, `seed-target.py root`.
+  printf 'import os, sys\nos.execv(sys.argv[3], [sys.argv[3]])\n' > "$tree/scripts/bounded.py"
+  printf 'import os\nos.makedirs(os.environ.get("CARGO_TARGET_DIR") or "target", exist_ok=True)\n' \
+    > "$tree/scripts/seed-target.py"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$tree/scripts/fixture-locks.sh"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$tree/scripts/lavapipe-icd.sh"
   for name in $(sed -nE '/^(lanes|trailing)=/d; s/^[a-z]+=\(([a-z -]+)\)$/\1/p' "$tree/scripts/gate.sh"); do
