@@ -37,8 +37,11 @@ lr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lr)
 
 
-def closure(keys, names):
-    """The packages a build of `names` builds: theirs and their dependencies', without dev-dependencies."""
+def closure(keys, names, tests=False):
+    """The packages a build of `names` builds: theirs and their dependencies', without
+    dev-dependencies; with `tests`, what their test binaries build (their own dev-dependencies too)."""
+    if tests:
+        return set().union(*(keys.built(n) for n in names))
     seen, todo = set(), [keys.by_name[n] for n in names]
     while todo:
         current = todo.pop()
@@ -59,14 +62,29 @@ def home_of(keys, package_id):
     return None
 
 
-def inputs(keys, step, names):
+def tree_digest(path):
+    """Every file under `path`, by its path there and its contents: a directory a step reads from
+    outside the checkout (the validation layer's)."""
+    found = []
+    for here, dirs, files in os.walk(path):
+        dirs.sort()
+        for name in sorted(files):
+            full = os.path.join(here, name)
+            found.append((os.path.relpath(full, path), lr.file_digest(full)))
+    return lr.digest(json.dumps(found).encode())
+
+
+def inputs(keys, step, names, tests=False, extra=()):
+    """The key's inputs. `extra` is (label, value) pairs the step adds: its own scripts and what
+    it reads from outside the checkout."""
     found = keys.common()
     script = f"scripts/ci.d/{step}.sh"
     found.append(("step", step))
     found.append((script, keys.file(script)))
     # This script judges every step it keys; the test lane's judges don't include it.
     found.append(("scripts/step-reuse.py", keys.file("scripts/step-reuse.py")))
-    for package_id in sorted(closure(keys, names), key=lambda i: keys.packages[i]["id"]):
+    found.extend(extra)
+    for package_id in sorted(closure(keys, names, tests), key=lambda i: keys.packages[i]["id"]):
         package = keys.packages[package_id]
         entry = keys.lock.get((package["name"], package["version"]), "absent")
         found.append((f"Cargo.lock {package['name']} {package['version']}", lr.digest(entry.encode())))
@@ -76,25 +94,29 @@ def inputs(keys, step, names):
     return found
 
 
-def key(keys, step, names):
-    return lr.digest(json.dumps(inputs(keys, step, names)).encode())
+def key(keys, step, names, tests=False, extra=()):
+    return lr.digest(json.dumps(inputs(keys, step, names, tests, extra)).encode())
 
 
-def visible(keys, names):
+def visible(keys, names, tests=False):
+    """The paths of the checkout the key holds: all a step's builds may compile from and its tests
+    may read (scripts/test-parallel.py `sandboxed`)."""
     found = set(keys.root_files()) | {".cargo/"}
-    for package_id in closure(keys, names):
+    for package_id in closure(keys, names, tests):
         home = home_of(keys, package_id)
         if home:
             found.add(home)
     return found
 
 
-def outside(keys, names, artifacts):
+def outside(keys, names, artifacts, tests=False):
     """Each (package, file) a unit of the step compiled from, or a build script said it read, that
-    is a file of the checkout its key doesn't hold."""
+    is a file of the checkout its key doesn't hold. With `tests`, only the units of the packages
+    the key holds: the artifacts are a whole workspace's build."""
+    held = closure(keys, names, tests)
     target = os.path.realpath(os.environ.get("CARGO_TARGET_DIR") or os.path.join(keys.root, "target"))
     root = os.path.realpath(keys.root) + os.sep
-    allowed = visible(keys, names)
+    allowed = visible(keys, names, tests)
     dirs = tuple(a for a in allowed if a.endswith("/"))
     found = []
     for message in artifacts:
@@ -102,6 +124,10 @@ def outside(keys, names, artifacts):
         if reason not in ("compiler-artifact", "build-script-executed"):
             continue
         package_id = message["package_id"]
+        if tests and package_id not in held:
+            continue
+        if tests and reason == "compiler-artifact" and not used(keys, names, message):
+            continue
         name = keys.packages[package_id]["name"] if package_id in keys.packages else package_id
         if reason == "compiler-artifact":
             if "custom-build" in message["target"]["kind"]:
@@ -118,6 +144,18 @@ def outside(keys, names, artifacts):
             if rel not in allowed and not rel.startswith(dirs):
                 found.append((name, rel))
     return sorted(set(found))
+
+
+LIBRARY = {"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro"}
+
+
+def used(keys, names, message):
+    """Whether a unit of a workspace build is one a run of `names`' tests uses: a library of a
+    package they build, or a test unit of one of them. Another target's unit (a dependency's own
+    tests, a bin, an example) is built by the workspace, not for these tests."""
+    library = bool(LIBRARY & set(message["target"]["kind"])) and not message["profile"]["test"]
+    tested = message["package_id"] in {keys.by_name[n] for n in names}
+    return library or (tested and message["profile"]["test"])
 
 
 def off():
@@ -144,18 +182,34 @@ def passed_before(step_key):
         return False
 
 
+def reused(step, step_key):
+    """Whether the step passed before under its key; if so its Gate-Lanes token is written."""
+    if off() is not None or not passed_before(step_key):
+        return False
+    state = os.environ.get("GATE_LANE_STATE_DIR")
+    if state:
+        with open(os.path.join(state, f"{step}.status"), "w") as file:
+            file.write(f"passed(reused:{step_key[:12]})\n")
+    print(f"{step}: passed before on these inputs ({step_key[:12]}): not run again", file=sys.stderr)
+    return True
+
+
+def record(step_key):
+    """The step passed under its key: called last, so a failed or stopped step records nothing."""
+    if off() is None:
+        # The key the step began under: a file changed while it ran is caught on the next run.
+        os.makedirs(records(), exist_ok=True)
+        path = record_path(step_key)
+        with open(path + ".tmp", "w") as file:
+            file.write(f"{lr.FORMAT} {lr.judges_hash()}\n")
+        os.replace(path + ".tmp", path)
+
+
 def begin(step, names):
     step_key = key(lr.Keys(), step, names)
     why = off()
-    if why is None and passed_before(step_key):
-        token = f"passed(reused:{step_key[:12]})"
-        state = os.environ.get("GATE_LANE_STATE_DIR")
-        if state:
-            with open(os.path.join(state, f"{step}.status"), "w") as file:
-                file.write(token + "\n")
+    if reused(step, step_key):
         print(f"reused {step_key}")
-        print(f"{step}: passed before on these inputs ({step_key[:12]}): not run again",
-              file=sys.stderr)
     else:
         print(f"run {step_key}")
         if why:
@@ -173,13 +227,7 @@ def end(step, step_key, artifacts_path, names):
               f"add the package that holds it to the step's packages", file=sys.stderr)
     if found:
         return 1
-    if off() is None:
-        # The key the step began under: a file changed while it ran is caught on the next run.
-        os.makedirs(records(), exist_ok=True)
-        path = record_path(step_key)
-        with open(path + ".tmp", "w") as file:
-            file.write(f"{lr.FORMAT} {lr.judges_hash()}\n")
-        os.replace(path + ".tmp", path)
+    record(step_key)
     return 0
 
 
@@ -200,36 +248,76 @@ def self_test():
     overlay = {}
     lr.file_digest = lambda path: overlay.get(os.path.abspath(path)) or real_digest(path)
 
-    def key_with(path=None, env=None):
+    def key_with(make, path=None, env=None):
         saved = dict(os.environ)
         overlay.clear()
         if path:
-            overlay[os.path.join(ROOT, path)] = "changed by the step-reuse self-test"
+            overlay[os.path.abspath(os.path.join(ROOT, path))] = "changed by the step-reuse self-test"
         os.environ.update(env or {})
         try:
             keys.reread()
-            return key(keys, step, names)
+            return make()
         finally:
             os.environ.clear()
             os.environ.update(saved)
             overlay.clear()
 
-    base = key_with()
-    for label, path, env, moves in [
-        (f"a source of the step's closure ({inside})", inside, None, True),
-        (f"a source outside it ({apart})", apart, None, False),
-        ("the step's script", f"scripts/ci.d/{step}.sh", None, True),
-        ("another step's script", "scripts/ci.d/wasm.sh", None, False),
+    def plants(make, cases):
+        base = key_with(make)
+        for label, path, env, moves in cases:
+            moved = key_with(make, path, env) != base
+            if moved != moves:
+                failures.append(f"{label}: the key {'moved' if moved else 'stayed'}")
+            else:
+                print(f"    {label}: {'moved' if moved else 'stayed'}")
+
+    common = [
         ("a judge on its path (scripts/bounded.py)", "scripts/bounded.py", None, True),
         ("a script on no step's path (scripts/dev/land.sh)", "scripts/dev/land.sh", None, False),
         ("an environment it reads (RUSTFLAGS)", None, {"RUSTFLAGS": "-Cdebug-assertions"}, True),
         ("an environment it doesn't (DAEDALUS_WORK)", None, {"DAEDALUS_WORK": "/elsewhere"}, False),
-    ]:
-        moved = key_with(path, env) != base
-        if moved != moves:
-            failures.append(f"{label}: the key {'moved' if moved else 'stayed'}")
-        else:
-            print(f"    {label}: {'moved' if moved else 'stayed'}")
+        # A step with a wait bound is handed a new path for its start mark on every run (bounded.py).
+        ("its start mark, new each run (DAEDALUS_BOUND_STARTED)", None,
+         {"DAEDALUS_BOUND_STARTED": "/tmp/s-planted.started"}, False),
+    ]
+    print("  nostd, a step that builds:")
+    plants(lambda: key(keys, step, names), [
+        (f"a source of the step's closure ({inside})", inside, None, True),
+        (f"a source outside it ({apart})", apart, None, False),
+        ("the step's script", f"scripts/ci.d/{step}.sh", None, True),
+        ("another step's script", "scripts/ci.d/wasm.sh", None, False),
+    ] + common)
+
+    # A step that runs tests under a directory outside the checkout: vvl-wgpu, as scripts/vvl-run.py
+    # keys it, with a planted layer directory.
+    tested = ["daedalus-vk-sys", "daedalus-wgpu"]
+    run_held = closure(keys, tested, tests=True)
+    wgpu = next(n for n in keys.listed if n.startswith(keys.dirs[keys.by_name["daedalus-wgpu"]])
+                and n.endswith(".rs"))
+    beyond = next(n for n in keys.listed if n.endswith(".rs") and any(
+        n.startswith(keys.dirs[i]) for i in keys.members) and not any(
+        n.startswith(keys.dirs[i]) for i in run_held if i in keys.members))
+    with tempfile.TemporaryDirectory() as layers:
+        layer = os.path.join(layers, "layer")
+        os.makedirs(layer)
+        for name in ("libVkLayer_khronos_validation.so", "VkLayer_khronos_validation.json"):
+            with open(os.path.join(layer, name), "w") as file:
+                file.write(name)
+        with open(os.path.join(layers, "beside"), "w") as file:
+            file.write("beside the layer")
+        make = lambda: key(keys, "vvl-wgpu", tested, tests=True, extra=[
+            ("scripts/vvl-run.py", keys.file("scripts/vvl-run.py")),
+            ("the validation layer", tree_digest(layer))])
+        print("  vvl-wgpu, a step that runs tests:")
+        plants(make, [
+            (f"a source of its tests' closure ({wgpu})", wgpu, None, True),
+            (f"a source outside it ({beyond})", beyond, None, False),
+            ("the step's script", "scripts/ci.d/vvl-wgpu.sh", None, True),
+            ("another step's script", "scripts/ci.d/vvl.sh", None, False),
+            ("its runner (scripts/vvl-run.py)", "scripts/vvl-run.py", None, True),
+            ("a file of the layer", os.path.join(layer, "VkLayer_khronos_validation.json"), None, True),
+            ("a file beside the layer", os.path.join(layers, "beside"), None, False),
+        ] + common)
     lr.file_digest = real_digest
     keys.reread()
 

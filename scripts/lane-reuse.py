@@ -87,8 +87,11 @@ WHOLE_TREE = {}
 # its builds) are not: none changes what a build makes or a test does.
 ENV = re.compile(r"^(CARGO_|RUST|CC|CXX|AR(_|$)|CFLAGS|CXXFLAGS|LDFLAGS|TARGET_|HOST_|ZIG|PKG_CONFIG|"
                  r"SOURCE_DATE_EPOCH|DAEDALUS_|VK_|MESA_|WGPU_|LD_LIBRARY_PATH$|PATH$|HOME$)")
+# DAEDALUS_BOUND_STARTED is the path of a step's start mark, new on every run (scripts/bounded.py);
+# DAEDALUS_TEST_ARTIFACTS and DAEDALUS_TEST_VISIBLE are where a run keeps its own records.
 NOT_IN_KEY = {"CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "DAEDALUS_WORK", "DAEDALUS_LOGS",
-              "DAEDALUS_TARGET_SEED", "DAEDALUS_VVL_DIR", "DAEDALUS_TEST_PACKAGES"}
+              "DAEDALUS_TARGET_SEED", "DAEDALUS_VVL_DIR", "DAEDALUS_TEST_PACKAGES",
+              "DAEDALUS_BOUND_STARTED", "DAEDALUS_TEST_ARTIFACTS", "DAEDALUS_TEST_VISIBLE"}
 # Programs a test may start that the machine has, not the repository.
 PROGRAMS = ("sh", "bash", "cc", "c++", "gcc", "g++", "clang", "ld", "python3", "node", "java",
             "javac", "cmake", "make", "pkg-config", "zig", "valgrind")
