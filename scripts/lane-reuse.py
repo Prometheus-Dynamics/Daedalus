@@ -662,11 +662,6 @@ def self_test():
     package not built, stays."""
     import tempfile
 
-    # Its result is a function of this script alone: it passed before on this one, it passes.
-    proved = os.path.join(records(), "self-test-" + file_digest(os.path.abspath(__file__))[:16])
-    if reuse_off() is None and os.path.exists(proved):
-        print("lane-reuse self-test passed before on this script")
-        return 0
     work = tempfile.mkdtemp(prefix="daedalus-keys.")
     copy = os.path.join(work, "tree")
     failures = []
@@ -964,8 +959,6 @@ def self_test():
     if failures:
         print("lane-reuse self-test FAILED:", *failures, sep="\n  ")
         return 1
-    os.makedirs(records(), exist_ok=True)
-    open(proved, "w").close()
     print("lane-reuse self-test passed")
     return 0
 
