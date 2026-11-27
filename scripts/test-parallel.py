@@ -268,10 +268,13 @@ class Stages:
 
     def stage(self, files, points, blank):
         key = json.dumps([sorted(files), sorted(points), sorted(blank)])
+        # One lock for each set: sets are laid out side by side, a set once.
         with self.lock:
-            if key not in self.made:
-                self.made[key] = self.lay_out(files, points, blank)
-            return self.made[key]
+            entry = self.made.setdefault(key, [threading.Lock(), None, False])
+        with entry[0]:
+            if not entry[2]:
+                entry[1], entry[2] = self.lay_out(files, points, blank), True
+            return entry[1]
 
     def lay_out(self, files, points, blank):
         stage = tempfile.mkdtemp(dir=self.under)
@@ -387,6 +390,17 @@ def main():
     shared = [m for m in found if shares_trybuild(m)]
     jobs = [[m] for m in found if m not in shared] + ([shared] if shared else [])
     jobs.sort(key=lambda job: -sum(last.get(label(m), [0.0])[0] for m in job))
+    if stages is not None:
+        # Every set of files the binaries will see, laid out side by side before any runs: not
+        # time a binary's bound counts, nor a wait the first binary of each package sits out.
+        started = time.monotonic()
+        sets = {json.dumps(seen, sort_keys=True): seen for seen in (
+            visible.get(package_of(m["package_id"], m["manifest_path"])[0]) for m in found)
+            if seen is not None}
+        with ThreadPoolExecutor(max_workers=max(1, len(sets))) as pool:
+            list(pool.map(lambda seen: sandboxed(seen, stages), sets.values()))
+        print(f"  {len(sets)} sets of files laid out in {time.monotonic() - started:.0f} s, "
+              "before the run")
 
     try:
         with open(SLOWEST) as file:
@@ -544,7 +558,11 @@ def stage_plants(work):
         if elsewhere:
             shutil.rmtree(elsewhere, ignore_errors=True)
         under = tempfile.mkdtemp(dir=work)
-        stage = Stages(under).stage(["outside.txt", "bin/t"], ["bin/"], ["empty.txt"])
+        stages = Stages(under)
+        stage = stages.stage(["outside.txt", "bin/t"], ["bin/"], ["empty.txt"])
+        if stage and (stages.stage(["bin/t", "outside.txt"], ["bin/"], ["empty.txt"]) != stage or
+                      len(os.listdir(under)) != 1):
+            failures.append("a set of files asked for again is laid out again")
         if not stage or not staged_as_keyed(stage, ["outside.txt", "bin/t"], ["empty.txt"]):
             failures.append(f"a key's files laid out: {stage}, not the key's")
         else:
@@ -694,6 +712,8 @@ one it was compiled from, can't be read."""
                 failures.append(f"{case}: the failure doesn't say the test ran held to its key")
             if any(name.startswith(".daedalus-stages.") for name in os.listdir(target)):
                 failures.append(f"{case}: a key's files laid out for the run are still there")
+            if "PLANT_TWO" in settings and "2 sets of files laid out" not in done.stdout:
+                failures.append(f"{case}: the two sets of files weren't laid out before the run")
             if "PLANT_ELSEWHERE" in settings:
                 shutil.rmtree(target, ignore_errors=True)
                 if "one by one" not in done.stdout:
