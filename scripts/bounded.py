@@ -348,58 +348,72 @@ def planted(path):
         return []
 
 
+# The checks the self-test makes, each printed once.
+CHECKS = 30
+
+
 def self_test():
+    """The runner against planted commands, steps and test binaries. The cases wait out planted
+    bounds of seconds, so they run side by side, each with its own files, and their checks are
+    printed in one order after; the one that sends this process a TERM runs first, alone."""
     import io
     import json
-    import shutil
-    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
 
     # The planted bounds are seconds, said in the checks: a runner's scale (CI sets 4) would make
     # a planted 2 s bound 8 s, and every check that names a bound fail. One case sets its own.
     os.environ.pop("DAEDALUS_BOUND_SCALE", None)
 
     me = os.path.abspath(__file__)
-    failures = []
-    started = []
+    started, started_lock = [], threading.Lock()
 
-    def check(what, ok):
-        print(f"bounded: {what}: {'ok' if ok else 'FAILED'}")
-        if not ok:
-            failures.append(what)
+    def sleeper(pids):
+        return (f"sleep 600 & echo $! >> {pids}; (sleep 600 & echo $! >> {pids}; wait) & "
+                f"echo $! >> {pids}; sleep 600")
+
+    def seen(pids):
+        found = planted(pids)
+        with started_lock:
+            started.extend(found)
+        return found
 
     with tempfile.TemporaryDirectory() as tmp:
-        pids = os.path.join(tmp, "pids")
-        try:
+        def case(name):
+            directory = os.path.join(tmp, name)
+            os.makedirs(directory)
+            return directory, os.path.join(directory, "pids")
+
+        def a_sleeper():
+            _, pids = case("sleeper")
             # A sleeper past its bound, with a child of its own and an orphan that holds the output
             # pipe: the run fails at the bound, the reader sees the end, and nothing is left.
-            plant = (f"sleep 600 & echo $! >> {pids}; (sleep 600 & echo $! >> {pids}; wait) & "
-                     f"echo $! >> {pids}; sleep 600")
             code, out, took, ended = capture(
-                [sys.executable, "-I", me, "2", "planted-sleeper", "sh", "-c", plant], 30)
-            started += planted(pids)
-            check("a sleeper fails at its bound", code == TIMED_OUT)
-            check("the failure names the step and its bound",
-                  "planted-sleeper: still running at its bound of 2 s" in out)
-            check("its output ends within the bound and the grace", ended and took < 2 + GRACE + 3)
-            check("nothing it started is left running", gone(planted(pids)))
+                [sys.executable, "-I", me, "2", "planted-sleeper", "sh", "-c", sleeper(pids)], 30)
+            seen(pids)
+            return [("a sleeper fails at its bound", code == TIMED_OUT),
+                    ("the failure names the step and its bound",
+                     "planted-sleeper: still running at its bound of 2 s" in out),
+                    ("its output ends within the bound and the grace",
+                     ended and took < 2 + GRACE + 3),
+                    ("nothing it started is left running", gone(planted(pids)))]
 
+        def an_orphan():
+            _, pids = case("orphan")
             # A command that ends but leaves an orphan holding the output pipe: the reader still
             # sees the end, the run keeps the command's own exit code, and the orphan is stopped
             # and named.
-            if os.path.exists(pids):
-                os.remove(pids)
             plant = f"(sleep 600 & echo $! >> {pids}; wait) & echo $! >> {pids}; exit 3"
             code, out, took, ended = capture(
                 [sys.executable, "-I", me, "60", "planted-orphan", "sh", "-c", plant], 30)
-            started += planted(pids)
-            check("an orphan's run keeps the command's exit code", code == 3)
-            check("the orphan is named", "planted-orphan: left" in out)
-            check("the output ends without waiting on the orphan", ended and took < GRACE + 3)
-            check("the orphan is stopped", gone(planted(pids)))
+            seen(pids)
+            return [("an orphan's run keeps the command's exit code", code == 3),
+                    ("the orphan is named", "planted-orphan: left" in out),
+                    ("the output ends without waiting on the orphan", ended and took < GRACE + 3),
+                    ("the orphan is stopped", gone(planted(pids)))]
 
+        def a_term():
+            _, pids = case("term")
             # A TERM to the runner stops its group: how a gate that is stopped stops its steps.
-            if os.path.exists(pids):
-                os.remove(pids)
             runner = subprocess.Popen(
                 [sys.executable, "-I", me, "600", "planted-stopped", "sh", "-c",
                  f"sleep 600 & echo $! >> {pids}; wait"],
@@ -413,15 +427,15 @@ def self_test():
             except subprocess.TimeoutExpired:
                 runner.kill()
                 code = runner.wait()
-            started += planted(pids)
-            check("a TERM to the runner stops its group",
-                  code == 128 + signal.SIGTERM and gone(planted(pids)))
+            seen(pids)
+            return [("a TERM to the runner stops its group",
+                     code == 128 + signal.SIGTERM and gone(planted(pids)))]
 
+        def a_term_while_made():
+            _, pids = case("term-while-made")
             # A TERM that lands while the group is still being made, before the run is ready for
             # it: the group it made is stopped all the same. Sent from inside the making, so it
-            # lands there on every run.
-            if os.path.exists(pids):
-                os.remove(pids)
+            # lands there on every run. It signals this process and patches Group: alone, first.
             made = Group.__init__
 
             def term_while_made(self, *args, **kwargs):
@@ -443,40 +457,46 @@ def self_test():
                 Group.__init__ = made
                 for signum, handler in handlers.items():
                     signal.signal(signum, handler)
-            started += planted(pids)
-            check("a TERM while its group is being made stops the group",
-                  code == 128 + signal.SIGTERM and gone(planted(pids)))
+            seen(pids)
+            return [("a TERM while its group is being made stops the group",
+                     code == 128 + signal.SIGTERM and gone(planted(pids)))]
 
-            # The gate's own runners on a planted tree: a step and a test binary that sleep past
-            # their bounds and leave an orphan on the output pipe go red, named, and stop.
+        def tree_in(directory):
+            """The gate's own runners on a planted tree."""
             scripts = os.path.dirname(me)
-            tree = os.path.join(tmp, "tree")
+            tree = os.path.join(directory, "tree")
             os.makedirs(os.path.join(tree, "scripts", "ci.d"))
             for name in ("ci.sh", "bounded.py", "test-parallel.py", "fixture-locks.sh", "seed-target.py"):
                 shutil.copy(os.path.join(scripts, name), os.path.join(tree, "scripts", name))
-            plant = (f"sleep 600 & echo $! >> {pids}; (sleep 600 & echo $! >> {pids}; wait) & "
-                     f"echo $! >> {pids}; sleep 600")
-            write(os.path.join(tree, "scripts", "ci.d", "planted.sh"),
-                  f"#!/usr/bin/env bash\n# bound: 2 s (planted)\n{plant}\n")
-            env = {**os.environ, "CARGO_TARGET_DIR": os.path.join(tmp, "target"),
+            env = {**os.environ, "CARGO_TARGET_DIR": os.path.join(directory, "target"),
                    "VK_DRIVER_FILES": "planted", "VK_ICD_FILENAMES": "planted"}
             env.pop("DAEDALUS_TARGET_SEED", None)
             env.pop("DAEDALUS_BOUND_SCALE", None)
-            if os.path.exists(pids):
-                os.remove(pids)
+            return tree, env
+
+        def a_gate_step():
+            directory, pids = case("gate-step")
+            tree, env = tree_in(directory)
+            # A step that sleeps past its bound and leaves an orphan on the output pipe goes red,
+            # named, and stops.
+            write(os.path.join(tree, "scripts", "ci.d", "planted.sh"),
+                  f"#!/usr/bin/env bash\n# bound: 2 s (planted)\n{sleeper(pids)}\n")
             code, out, took, ended = capture(
                 ["bash", os.path.join(tree, "scripts", "ci.sh"), "planted"], 30, env=env)
-            started += planted(pids)
-            check("a gate step past its bound fails, named",
-                  code != 0 and "planted: still running at its bound of 2 s" in out)
-            check("the step's output ends within the bound and the grace",
-                  ended and took < 2 + GRACE + 3)
-            check("nothing the step started is left running", gone(planted(pids)))
+            seen(pids)
+            return [("a gate step past its bound fails, named",
+                     code != 0 and "planted: still running at its bound of 2 s" in out),
+                    ("the step's output ends within the bound and the grace",
+                     ended and took < 2 + GRACE + 3),
+                    ("nothing the step started is left running", gone(planted(pids)))]
 
+        def test_binaries():
+            directory, pids = case("test-binaries")
+            tree, env = tree_in(directory)
             # Two test binaries: one sleeps past its bound (600 s for a binary with no time on
             # record, scaled to 2 s here), one passes and leaves an orphan behind.
             artifacts = []
-            for name, body in (("sleeper", plant),
+            for name, body in (("sleeper", sleeper(pids)),
                                ("orphan", f"(sleep 600 & echo $! >> {pids}; wait) & "
                                           f"echo $! >> {pids}; echo 'test result: ok.'")):
                 binary = os.path.join(tree, name)
@@ -492,110 +512,166 @@ def self_test():
             # where its build directory has no record of it (600 s, 2 s scaled).
             write(os.path.join(tree, "scripts", "test-slowest.json"),
                   json.dumps({"planted test sleeper": 400.0}))
-            if os.path.exists(pids):
-                os.remove(pids)
             code, out, took, ended = capture(
                 [sys.executable, "-I", os.path.join(tree, "scripts", "test-parallel.py")], 30,
                 env={**env, "CARGO": cargo, "DAEDALUS_BOUND_SCALE": str(2 / 600)})
-            started += planted(pids)
-            check("a test binary past its bound fails, named",
-                  code == 1 and "planted test sleeper: TIMED OUT" in out
-                  and "planted test sleeper: still running at its bound of 4 s" in out)
-            check("a binary's orphan is stopped and named, and the binary still passes",
-                  "planted test orphan: ok" in out and "(left 2 running: stopped)" in out)
-            check("the run's output ends within the bound and the grace",
-                  ended and took < 4 + GRACE + 3)
-            check("nothing the binaries started is left running", gone(planted(pids)))
+            seen(pids)
+            return [("a test binary past its bound fails, named",
+                     code == 1 and "planted test sleeper: TIMED OUT" in out
+                     and "planted test sleeper: still running at its bound of 4 s" in out),
+                    ("a binary's orphan is stopped and named, and the binary still passes",
+                     "planted test orphan: ok" in out and "(left 2 running: stopped)" in out),
+                    ("the run's output ends within the bound and the grace",
+                     ended and took < 4 + GRACE + 3),
+                    ("nothing the binaries started is left running", gone(planted(pids)))]
 
-            # A step that leaves a file in its TMPDIR fails, naming it; a clean step passes. Both
-            # TMPDIRs are removed, and a step's TMPDIR is not the gate's.
-            gate_tmp = os.path.join(tmp, "gate-tmp")
+        def step_env_in(directory):
+            gate_tmp = os.path.join(directory, "gate-tmp")
             os.makedirs(gate_tmp)
             step_env = {**os.environ, "TMPDIR": gate_tmp}
             step_env.pop("DAEDALUS_GATE_TMPDIR", None)
-            for name, body in (("leaky", 'touch "$TMPDIR/planted-leftover"; mkdir "$TMPDIR/d"'),
-                               ("clean", 'f="$TMPDIR/x"; touch "$f"; rm "$f"; '
-                                         'test "$TMPDIR" != "$DAEDALUS_GATE_TMPDIR"')):
-                write(os.path.join(tmp, f"{name}.sh"),
-                      f"#!/usr/bin/env bash\n# bound: 60 s (planted)\n{body}\n")
-                os.chmod(os.path.join(tmp, f"{name}.sh"), 0o755)
-            code, out, _, _ = capture(
-                [sys.executable, "-I", me, "--step", "leaky", os.path.join(tmp, "leaky.sh")], 30,
-                env=step_env)
-            check("a step that leaves files in its TMPDIR fails, naming them",
-                  code == 1 and "leaky: left 2 entries in its TMPDIR: d, planted-leftover" in out)
-            code, out, _, _ = capture(
-                [sys.executable, "-I", me, "--step", "clean", os.path.join(tmp, "clean.sh")], 30,
-                env=step_env)
-            check("a step that cleans up passes, in a TMPDIR of its own", code == 0)
-            check("no step's TMPDIR is left in the gate's", os.listdir(gate_tmp) == [])
+            return gate_tmp, step_env
 
-            # A step that waits for another one: its bound counts from when it says it started.
-            signal_start = 'touch "$DAEDALUS_BOUND_STARTED"'
-            for name, body in (("waited", f"sleep 3; {signal_start}; sleep 1"),
-                               ("slow", f"{signal_start}; sleep 600"),
-                               ("stuck", "sleep 600")):
-                write(os.path.join(tmp, f"{name}.sh"),
-                      f"#!/usr/bin/env bash\n# bound: 2 s (planted)\n# wait: 4 s (planted)\n"
-                      f"{body}\n")
-            step = lambda name: capture(
-                [sys.executable, "-I", me, "--step", name, os.path.join(tmp, f"{name}.sh")], 30,
-                env=step_env)
-            code, out, _, _ = step("waited")
-            check("a step that waited longer than its bound, then ran within it, passes",
-                  code == 0 and out == "")
-            code, out, took, _ = step("slow")
-            check("a step past its bound once it has started fails, named",
-                  code == TIMED_OUT and "slow: still running at its bound of 2 s" in out
-                  and took < 2 + GRACE + 3)
-            code, out, took, _ = step("stuck")
-            check("a step still waiting at its wait bound fails, named",
-                  code == TIMED_OUT
-                  and "stuck: still waiting to start at its wait bound of 4 s" in out
-                  and took < 4 + GRACE + 3)
-            check("no step's start mark is left in the gate's", os.listdir(gate_tmp) == [])
+        def step(directory, step_env, name, body, header):
+            script = os.path.join(directory, f"{name}.sh")
+            write(script, f"#!/usr/bin/env bash\n{header}{body}\n")
+            os.chmod(script, 0o755)
+            return capture([sys.executable, "-I", me, "--step", name, script], 30, env=step_env)
 
-            # A test binary's bound doesn't count time spent waiting for a CPU. One CPU is shared
-            # with spinners that are not the test's: a worker that needs 1 s of CPU takes longer
-            # than its 2 s bound to get it, and passes; alone on the CPU and spinning for ever it
-            # fails at its bound; starved and spinning for ever it fails at three times it (OUTER
-            # times, for a test binary).
-            cpu = min(os.sched_getaffinity(0))
-            pin = lambda: os.sched_setaffinity(0, {cpu})
-            spin = [sys.executable, "-I", "-c", "while True: pass"]
-            work = [sys.executable, "-I", "-c",
-                    "import time\nwhile time.process_time() < 1: pass"]
+        def tmpdirs():
+            directory, _ = case("tmpdirs")
+            gate_tmp, step_env = step_env_in(directory)
+            # A step that leaves a file in its TMPDIR fails, naming it; a clean step passes. Both
+            # TMPDIRs are removed, and a step's TMPDIR is not the gate's.
+            header = "# bound: 60 s (planted)\n"
+            code, out, _, _ = step(directory, step_env, "leaky",
+                                   'touch "$TMPDIR/planted-leftover"; mkdir "$TMPDIR/d"', header)
+            leaky = code == 1 and "leaky: left 2 entries in its TMPDIR: d, planted-leftover" in out
+            code, out, _, _ = step(directory, step_env, "clean",
+                                   'f="$TMPDIR/x"; touch "$f"; rm "$f"; '
+                                   'test "$TMPDIR" != "$DAEDALUS_GATE_TMPDIR"', header)
+            return [("a step that leaves files in its TMPDIR fails, naming them", leaky),
+                    ("a step that cleans up passes, in a TMPDIR of its own", code == 0),
+                    ("no step's TMPDIR is left in the gate's", os.listdir(gate_tmp) == [])]
 
-            def fair(argv, bound, others, outer=OUTER):
-                crowd = [subprocess.Popen(spin, preexec_fn=pin) for _ in range(others)]
-                group, ran_for = Group(argv, preexec_fn=pin), []
-                begin = time.monotonic()
-                try:
-                    ended = group.wait_fair(bound, ran_for, outer)
-                    took = time.monotonic() - begin
-                finally:
-                    group.reap()
-                    for other in crowd:
-                        other.kill()
-                        other.wait()
-                return ended, took, ran_for
+        # A step that waits for another one: its bound counts from when it says it started.
+        signal_start = 'touch "$DAEDALUS_BOUND_STARTED"'
+        waits = "# bound: 2 s (planted)\n# wait: 4 s (planted)\n"
 
-            ended, took, _ = fair(work, 2, 4)
-            check("a starved test that needs less CPU than its bound passes, however long it took",
-                  ended and took > 2)
-            # The machine may be busy on this CPU too, so what is checked is the time the spinner
-            # could use, not the time on the wall.
-            ended, took, ran_for = fair(spin, 2, 0)
-            check("a test that spins past its bound fails at it",
-                  not ended and ran_for[0] - ran_for[1] < 2 + 2 * POLL and took < OUTER * 2)
-            ended, took, ran_for = fair(spin, 1, 20, outer=3)
-            check("a starved test that never ends fails at a multiple of its bound",
-                  not ended and 3 <= took < 3 + 6 and ran_for[1] > 1)
+        def waiting(name, body, checked):
+            def one():
+                directory, _ = case(name)
+                gate_tmp, step_env = step_env_in(directory)
+                code, out, took, _ = step(directory, step_env, name, body, waits)
+                return [(checked[0], checked[1](code, out, took)),
+                        (f"no step's start mark is left in the gate's ({name})",
+                         os.listdir(gate_tmp) == [])]
+            return one
 
+        # A test binary's bound doesn't count time spent waiting for a CPU. The child under test is
+        # held to a share of one CPU: a worker that needs 1 s of CPU at a quarter of one takes
+        # longer than its 2 s bound and passes; one that runs past its bound waiting for no CPU
+        # fails at it; held to a tenth and spinning for ever it fails at three times its bound
+        # (OUTER times, for a test binary).
+        # How it is held: a systemd scope's CPUQuota (the kernel's throttling counts as waiting
+        # for a CPU), never a crowd of spinning processes on a shared machine. Only on CI (CI=true,
+        # a runner of its own) with no user manager to make the scope does a crowd of spinners on
+        # one CPU starve it. Anywhere else with no user manager the checks fail, saying why.
+        probe = subprocess.run(["systemd-run", "--user", "--scope", "-q", "true"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        quota = probe.returncode == 0
+        method = ("a CPU quota" if quota else
+                  "a crowd on one CPU (CI, no user manager)" if os.environ.get("CI") == "true" else
+                  None)
+        cpus = sorted(os.sched_getaffinity(0))
+
+        def held(share, code, cpu, others):
+            """The child, held to `share` percent of one CPU, and the crowd that holds it there."""
+            if method == "a CPU quota":
+                return ["systemd-run", "--user", "--scope", "-q", "-p", f"CPUQuota={share}%",
+                        sys.executable, "-I", "-c", code], []
+            # The processes pin themselves: a forked child may not run Python beside other threads.
+            pin = f"import os\nos.sched_setaffinity(0, {{{cpu}}})\n"
+            crowd = [subprocess.Popen([sys.executable, "-I", "-c", pin + "while True: pass"])
+                     for _ in range(others)]
+            return [sys.executable, "-I", "-c", pin + code], crowd
+
+        def fair(argv, bound, crowd=(), outer=OUTER, said=None):
+            group, ran_for = Group(argv, stderr=said), []
+            begin = time.monotonic()
+            try:
+                ended = group.wait_fair(bound, ran_for, outer)
+                took = time.monotonic() - begin
+            finally:
+                code = group.reap()[0]
+                for other in crowd:
+                    other.kill()
+                    other.wait()
+            return ended, took, ran_for, code
+
+        def starved(what, share, code, cpu, others, bound, outer, ok):
+            if method is None:
+                return [(f"{what}: no user manager to hold it to a CPU quota (systemd-run --user: "
+                         f"{probe.stderr.strip() or 'exit ' + str(probe.returncode)}), and not on CI",
+                         False)]
+            argv, crowd = held(share, code, cpu, others)
+            # What the child said, the scope's own error if it couldn't be made: in the check
+            # when it fails.
+            with tempfile.TemporaryFile("w+") as said:
+                *measured, code = fair(argv, bound, crowd, outer, said)
+                passed = ok(*measured)
+                said.seek(0)
+                text = said.read().strip()
+            return [(f"{what} (held by {method})" + ("" if passed else
+                     f": it ended with exit {code} and said {text!r}"), passed)]
+
+        def starved_work():
+            return starved("a starved test that needs less CPU than its bound passes, however long "
+                           "it took", 25, "import time\nwhile time.process_time() < 1: pass",
+                           cpus[0], 4, 2, OUTER, lambda ended, took, _: ended and took > 2)
+
+        def past_its_bound():
+            # The machine may be busy, so what is checked is the time the child could use, not
+            # the time on the wall.
+            ended, took, ran_for, _ = fair(["sleep", "600"], 2)
+            return [("a test that runs past its bound, waiting for no CPU, fails at it",
+                     not ended and ran_for[0] - ran_for[1] < 2 + 2 * POLL and took < OUTER * 2)]
+
+        def starved_spinner():
+            return starved("a starved test that never ends fails at a multiple of its bound",
+                           10, "while True: pass", cpus[1 % len(cpus)], 20, 1, 3,
+                           lambda ended, took, ran_for: not ended and 3 <= took < 3 + 6
+                           and ran_for[1] > 1)
+
+        def quick():
             # A command that ends within its bound runs as it would alone.
             code, out, _, ended = capture(
                 [sys.executable, "-I", me, "60", "planted-quick", "sh", "-c", "echo out"], 30)
-            check("a quick command passes through", code == 0 and ended and out == "out\n")
+            return [("a quick command passes through", code == 0 and ended and out == "out\n")]
+
+        cases = [a_sleeper, an_orphan, a_term, a_term_while_made, a_gate_step, test_binaries,
+                 tmpdirs,
+                 waiting("waited", f"sleep 3; {signal_start}; sleep 1",
+                         ("a step that waited longer than its bound, then ran within it, passes",
+                          lambda code, out, took: code == 0 and out == "")),
+                 waiting("slow", f"{signal_start}; sleep 600",
+                         ("a step past its bound once it has started fails, named",
+                          lambda code, out, took: code == TIMED_OUT
+                          and "slow: still running at its bound of 2 s" in out
+                          and took < 2 + GRACE + 3)),
+                 waiting("stuck", "sleep 600",
+                         ("a step still waiting at its wait bound fails, named",
+                          lambda code, out, took: code == TIMED_OUT
+                          and "stuck: still waiting to start at its wait bound of 4 s" in out
+                          and took < 4 + GRACE + 3)),
+                 starved_work, past_its_bound, starved_spinner, quick]
+        results = {}
+        try:
+            results[a_term_while_made] = a_term_while_made()
+            rest = [c for c in cases if c is not a_term_while_made]
+            with ThreadPoolExecutor(max_workers=len(rest)) as pool:
+                for each, checks in zip(rest, pool.map(lambda c: c(), rest)):
+                    results[each] = checks
         finally:
             # Whatever a failed check left behind: only the pids the plants wrote, by number.
             for pid in started:
@@ -604,6 +680,18 @@ def self_test():
                         os.kill(pid, signal.SIGKILL)
                     except OSError:
                         pass
+    failures, printed = [], []
+    for each in cases:
+        for what, ok in results[each]:
+            print(f"bounded: {what}: {'ok' if ok else 'FAILED'}")
+            printed.append(what)
+            if not ok:
+                failures.append(what)
+    # Every check, once: a case dropped, run twice, or cut short is a check not made.
+    if len(set(printed)) != len(printed) or len(printed) != CHECKS:
+        print(f"bounded: {len(set(printed))} distinct checks printed of {len(printed)}, not "
+              f"{CHECKS}: a case was dropped, run twice or cut short", file=sys.stderr)
+        failures.append("every check, once")
     if failures:
         print(f"bounded: {len(failures)} checks failed", file=sys.stderr)
         return 1
