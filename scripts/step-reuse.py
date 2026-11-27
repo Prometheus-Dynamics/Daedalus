@@ -248,14 +248,22 @@ def self_test():
     overlay = {}
     lr.file_digest = lambda path: overlay.get(os.path.abspath(path)) or real_digest(path)
 
-    def key_with(make, path=None, env=None):
+    # common() (the toolchain, the environment, the judges, the files outside the packages) costs
+    # most of a key: it is computed once, and again only for the plants that change what it reads.
+    keys.reread()
+    once = keys.common()
+
+    def key_with(make, path=None, env=None, fresh=False):
         saved = dict(os.environ)
         overlay.clear()
         if path:
             overlay[os.path.abspath(os.path.join(ROOT, path))] = "changed by the step-reuse self-test"
         os.environ.update(env or {})
         try:
-            keys.reread()
+            if fresh:
+                keys.reread()
+            else:
+                keys.digests, keys.cache = {}, {"common": once}
             return make()
         finally:
             os.environ.clear()
@@ -264,21 +272,24 @@ def self_test():
 
     def plants(make, cases):
         base = key_with(make)
-        for label, path, env, moves in cases:
-            moved = key_with(make, path, env) != base
+        for case in cases:
+            label, path, env, moves = case[:4]
+            # A plant of what common() reads (a judge, a script beside it, the environment) is
+            # keyed in full, so a plant that should stay can't stay only because it was cached.
+            moved = key_with(make, path, env, fresh=len(case) > 4) != base
             if moved != moves:
                 failures.append(f"{label}: the key {'moved' if moved else 'stayed'}")
             else:
                 print(f"    {label}: {'moved' if moved else 'stayed'}")
 
     common = [
-        ("a judge on its path (scripts/bounded.py)", "scripts/bounded.py", None, True),
-        ("a script on no step's path (scripts/dev/land.sh)", "scripts/dev/land.sh", None, False),
-        ("an environment it reads (RUSTFLAGS)", None, {"RUSTFLAGS": "-Cdebug-assertions"}, True),
-        ("an environment it doesn't (DAEDALUS_WORK)", None, {"DAEDALUS_WORK": "/elsewhere"}, False),
+        ("a judge on its path (scripts/bounded.py)", "scripts/bounded.py", None, True, "fresh"),
+        ("a script on no step's path (scripts/dev/land.sh)", "scripts/dev/land.sh", None, False, "fresh"),
+        ("an environment it reads (RUSTFLAGS)", None, {"RUSTFLAGS": "-Cdebug-assertions"}, True, "fresh"),
+        ("an environment it doesn't (DAEDALUS_WORK)", None, {"DAEDALUS_WORK": "/elsewhere"}, False, "fresh"),
         # A step with a wait bound is handed a new path for its start mark on every run (bounded.py).
         ("its start mark, new each run (DAEDALUS_BOUND_STARTED)", None,
-         {"DAEDALUS_BOUND_STARTED": "/tmp/s-planted.started"}, False),
+         {"DAEDALUS_BOUND_STARTED": "/tmp/s-planted.started"}, False, "fresh"),
     ]
     print("  nostd, a step that builds:")
     plants(lambda: key(keys, step, names), [
