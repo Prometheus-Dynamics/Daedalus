@@ -5,7 +5,8 @@
 #   each run only when what they read changed, scripts/tools-reuse.py)
 # The working tools check themselves against planted cases: which packages a change reaches
 # (scripts/check.sh runs those), which build directories may be deleted, what a seed keeps, that
-# the boundaries scan blanks exactly what its one-character-at-a-time oracle did, and
+# the boundaries scan blanks exactly what its one-character-at-a-time oracle did, that a crate whose
+# file listing warns or fails is named (scripts/ci.d/package.sh), and
 # what the budget table's kept measurements are keyed by, what a test's and a step's reuse keys hold, and that a step or a test binary past its
 # bound goes red, named, with nothing left running, and that a red step or trailing script fails
 # its lane and the gate and records no pass, and that a release is refused while a budget table the
@@ -17,6 +18,7 @@ python3 -I scripts/seed-target.py --self-test
 scripts/fixture-locks.sh --self-test
 python3 -I scripts/boundaries.py --self-test
 python3 -I scripts/board/pick-binaries.py --self-test
+scripts/ci.d/package.sh --self-test
 python3 -I scripts/tools-reuse.py --self-test
 # The longer self-tests, each run only when what it reads changed (scripts/tools-reuse.py STAMPS).
 stamps="$(mktemp)"
