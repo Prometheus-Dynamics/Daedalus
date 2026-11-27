@@ -106,6 +106,9 @@ READ_AS_IT_RUNS = {
     "daedalus-cpu": ("backends/cpu/tests/fixtures/",
                      "source_fresh compares the generator's output with the checked-in modules, "
                      "which the other tests include!"),
+    "daedalus-chip-shared": ("examples/chip_shared/generated/",
+                             "generated_files_match_the_planner compares the generator's output with "
+                             "the checked-in files, which the other tests include!"),
 }
 # The environment a build or a test reads. The gate's own settings (where it keeps its state and
 # its builds) are not: none changes what a build makes or a test does.
@@ -131,7 +134,9 @@ UP = re.compile(r"\.parent\(\)|ancestors\(\)")
 FROM_MANIFEST = re.compile(r"CARGO_MANIFEST_DIR")
 # An ELF section the loader maps; one with no bytes in the file; the note that hashes the whole file.
 SHF_ALLOC, SHT_NOBITS, BUILD_ID = 0x2, 8, b".note.gnu.build-id"
-NAMED = re.compile(r'#\[path\s*=\s*"([^"]+)"\]|include_(?:str|bytes)!\(\s*"([^"]+)"')
+# A path a source names by a literal: a module's file, or a file it includes. Resolved first: one
+# inside the package is not a way out of it, whatever `..` it takes to get there.
+NAMED = re.compile(r'#\[path\s*=\s*"([^"]+)"\]|include(?:_str|_bytes)?!\(\s*"([^"]+)"')
 
 
 def digest(data):
@@ -240,11 +245,6 @@ class Keys:
                 continue
             with open(os.path.join(self.root, path), errors="replace") as file:
                 text = file.read()
-            for pattern in LEAVES:
-                if pattern.search(text):
-                    return f"{path}: {pattern.pattern}"
-            if UP.search(text) and FROM_MANIFEST.search(text):
-                return f"{path}: walks up from its manifest"
             for match in NAMED.finditer(text):
                 said = match.group(1) or match.group(2)
                 target = os.path.normpath(os.path.join(os.path.dirname(path), said))
@@ -253,6 +253,13 @@ class Keys:
                     target = os.path.normpath(os.path.join(path[:-3], said))
                 if not (target + "/").startswith(home):
                     return f"{path}: names {said}"
+            # Every literal path left the package nowhere: the blunt checks read the rest.
+            text = NAMED.sub("", text)
+            for pattern in LEAVES:
+                if pattern.search(text):
+                    return f"{path}: {pattern.pattern}"
+            if UP.search(text) and FROM_MANIFEST.search(text):
+                return f"{path}: walks up from its manifest"
         return None
 
     def common(self):
@@ -923,6 +930,22 @@ def self_test():
                             "the plant no longer stands for what only the sandbox catches")
         else:
             print("    a read by a run-time path: missed by the source scan and the dep-info, as planted")
+        # A path a source names by a literal, `..` and all: inside the package it keeps the package
+        # narrow; out of it, it is named.
+        here = os.path.dirname(rs(home))
+        for label, said, want in [("inside the package", os.path.relpath(f"{home}Cargo.toml", here), None),
+                                  ("out of it", os.path.relpath("Cargo.lock", here), "names")]:
+            undo = touch(rs(home), f'\nconst _: &[u8] = include_bytes!("{said}");\n')
+            try:
+                copied.reread()
+                why = copied.leaves(package)
+            finally:
+                undo()
+                copied.reread()
+            if (why is None) != (want is None) or want and want not in why:
+                failures.append(f"include_bytes! of {said}, {label}: {why}")
+            else:
+                print(f"    include_bytes! of {said}, {label}: {why or 'narrow'}")
         bases = {}
         for at, (name, label, moves, change, extra) in enumerate(cases):
             if name not in bases:
