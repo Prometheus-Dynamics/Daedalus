@@ -15,12 +15,20 @@ so a layer that isn't loaded can't pass. Then every binary, and any validation l
 With no layer it prints "NAME: not run" and why, and fails: a gate that couldn't validate hasn't
 passed. GitHub's runners have no pinned layer, so there (CI=true) the same line is printed and the
 step passes; the lander's gate is the merge bar.
+
+A step that passed before on exactly these inputs is not run again (scripts/step-reuse.py): its key
+holds what the packages' test binaries build (and the planted call's, vk-sys's), this script, the
+pin, the step's own script, and every file of the layer. Each binary then runs under bwrap seeing
+only the paths of the checkout that key holds, and what each unit compiled from must be inside
+it (rustc's dep-info): a read outside fails the step, named, and nothing is recorded.
 """
 import argparse
 import hashlib
+import json
 import importlib.util
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,6 +39,9 @@ sys.path.insert(0, HERE)
 _spec = importlib.util.spec_from_file_location("test_parallel", os.path.join(HERE, "test-parallel.py"))
 tp = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(tp)
+_spec = importlib.util.spec_from_file_location("step_reuse", os.path.join(HERE, "step-reuse.py"))
+sr = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(sr)
 
 MESSAGES = re.compile(r"Validation (Error|Warning|Performance Warning)|VUID-|SYNC-HAZARD|UNASSIGNED-")
 PLANTED = "VUID-VkBufferCreateInfo-size-00912"
@@ -102,14 +113,18 @@ def wanted(found, spec):
     return picked
 
 
-def run(message, args, extra, log, output, sysroot_lib):
+def run(message, args, extra, log, output, sysroot_lib, held=None):
+    """Runs one binary; with `held` (package name to the paths of the checkout its key holds), it
+    sees only those."""
     env = tp.package_env(message, sysroot_lib)
     env.update(extra)
     env["VK_KHRONOS_VALIDATION_LOG_FILENAME"] = log
+    name, _ = tp.package_of(message["package_id"], message["manifest_path"])
+    prefix = tp.sandboxed(held[name]) if held is not None else []
     with open(output, "a") as out:
         out.write(f"== {tp.label(message)}\n")
         out.flush()
-        return subprocess.run([message["executable"], *args], cwd=os.path.dirname(message["manifest_path"]),
+        return subprocess.run([*prefix, message["executable"], *args], cwd=os.path.dirname(message["manifest_path"]),
                               env=env, stdout=out, stderr=subprocess.STDOUT).returncode
 
 
@@ -123,9 +138,28 @@ def main():
     pinned = pin()
     extra = layer_env(step, pinned)
 
+    # The key: what the binaries build and the planted call's, and what the step runs them with.
+    keys = sr.lr.Keys()
+    names = sorted({spec.partition(":")[0] for spec in opts.packages} | {"daedalus-vk-sys"})
+    step_key = sr.key(keys, step, names, tests=True, extra=[
+        ("scripts/vvl-run.py", keys.file("scripts/vvl-run.py")),
+        ("scripts/vvl.pin", keys.file("scripts/vvl.pin")),
+        ("the validation layer", sr.tree_digest(extra["VK_LAYER_PATH"]))])
+    reuse = sr.off() is None and shutil.which("bwrap") is not None
+    if reuse and sr.reused(step, step_key):
+        return 0
+    held = {n: sorted(sr.visible(keys, [n], tests=True)) for n in names} if reuse else None
+    artifacts = tempfile.NamedTemporaryFile(prefix="vvl-artifacts.", delete=False).name
+    os.environ["DAEDALUS_TEST_ARTIFACTS"] = artifacts
+
     # This waits for the `test` step's build, when that step is still building. The step's bound
     # counts from here: see scripts/bounded.py.
-    found = tp.binaries(WORKSPACE)
+    try:
+        found = tp.binaries(WORKSPACE)
+        with open(artifacts) as file:
+            built = [json.loads(line) for line in file if line.startswith("{")]
+    finally:
+        os.remove(artifacts)
     started = os.environ.get("DAEDALUS_BOUND_STARTED")
     if started:
         open(started, "w").close()
@@ -141,7 +175,7 @@ def main():
             fail(step, f"no single vk-sys test binary was built ({len(planted)} found)")
         log, out = os.path.join(work, "planted.log"), os.path.join(work, "planted.out")
         if run(planted[0], ["planted"], {**extra, "DAEDALUS_PLANT_VALIDATION_ERROR": "1"}, log, out,
-               sysroot_lib) != 0:
+               sysroot_lib, held) != 0:
             fail(step, "the planted run failed", out)
         if not os.path.exists(log) or PLANTED not in open(log, errors="replace").read():
             fail(step, f"the layer didn't name the planted call ({PLANTED})")
@@ -153,8 +187,10 @@ def main():
                 fail(step, f"no test binary of {spec} was built")
         log, out = os.path.join(work, "tests.log"), os.path.join(work, "tests.out")
         for message in binaries:
-            if run(message, args, extra, log, out, sysroot_lib) != 0:
-                fail(step, f"{tp.label(message)} failed under the layer", out)
+            if run(message, args, extra, log, out, sysroot_lib, held) != 0:
+                fail(step, f"{tp.label(message)} failed under the layer" + (
+                     ", seeing only the paths of the checkout its key holds (scripts/step-reuse.py): "
+                     "a test that reads another fails here" if held is not None else ""), out)
         lines = []
         for path in (log, out):
             if os.path.exists(path):
@@ -170,6 +206,10 @@ def main():
                     passed += int(line.split()[3])
         if passed == 0:
             fail(step, "no test ran")
+    if reuse:
+        for name, path in sr.outside(keys, names, built, tests=True):
+            fail(step, f"{name} compiles from {path}, which the step's key doesn't hold")
+        sr.record(step_key)
     print(f"{step}: {passed} tests of {', '.join(opts.packages)} ({len(binaries)} binaries) under "
           f"{pinned.get('VVL_TAG')}, the planted call named, no validation line")
     return 0

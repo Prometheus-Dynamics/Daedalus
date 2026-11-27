@@ -71,7 +71,9 @@ parts every key holds, its own script, and every file of the packages it builds 
 without dev-dependencies). After each run, rustc's dep-info for what it compiled must stay inside
 that key, or the step fails, named, and records nothing. A step that passed before on its key is
 not run again, and its token on the line reads `passed(reused:KEY)`. `nostd` is the first such
-step.
+step. `vvl` and `vvl-wgpu` (scripts/vvl-run.py) are keyed the same way by what their test binaries
+build, and by every file of the validation layer. When reuse is on, each binary runs under bwrap
+and sees only the paths of the checkout its key holds, as the test step's narrowly keyed packages do.
 
 The budget table (`budgets`) is measured in the local gate only when its build directory has
 measured these inputs before. When the change reaches what the measured release binaries are built
