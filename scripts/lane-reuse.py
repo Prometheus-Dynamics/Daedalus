@@ -2,53 +2,69 @@
 """Which packages' tests passed before on exactly these inputs, and need not run again.
 
     lane-reuse.py members                   the workspace's packages, one a line
-    lane-reuse.py visible                   for each narrowly keyed package, the paths of the
-                                            checkout its key holds (JSON): all its tests see
     lane-reuse.py reads ARTIFACTS           fails naming each narrowly keyed package whose units
                                             compiled from a file of the checkout its key doesn't
                                             hold (cargo's artifact messages; rustc's dep-info)
-    lane-reuse.py plan STATE PACKAGE... [-- ARGS...]
-                                            key each package's tests (run with ARGS); STATE
-                                            gets one line each: PACKAGE, key, `run` or `reused`
+    lane-reuse.py plan STATE ARTIFACTS [-- ARGS...]
+                                            key each workspace package's tests (run with ARGS)
+                                            after the build ARTIFACTS lists (cargo's messages);
+                                            STATE gets one line each: PACKAGE, key, `run` or
+                                            `reused`, and STATE.visible what each narrowly keyed
+                                            package's tests may see of the checkout (JSON)
     lane-reuse.py runs STATE                the packages STATE says run, one a line
     lane-reuse.py record STATE PACKAGE...   those packages' tests passed: record their keys
     lane-reuse.py status STATE              `passed`, or `passed(K-of-N-reused)`
-    lane-reuse.py --explain PACKAGE         each input of the package's key, then the key
+    lane-reuse.py --explain PACKAGE ARTIFACTS
+                                            each input of the package's key after the build
+                                            ARTIFACTS lists, then the key
     lane-reuse.py --self-test               in a copy of this tree, changes each kind of input
                                             and checks the key moves (or, for a note or a
                                             crate the package doesn't build, that it stays)
 
-A package's key is a hash of everything its tests' result depends on:
+A package's key is a hash of everything its tests' result depends on, taken after the build:
 
-- every file, by content, of each workspace package its tests build (normal, build and
-  dev-dependencies, on every platform: a superset), and the lockfile's entry of every package
-  they build, so a dependency's change reruns only what builds it;
+- what its tests run and load: their binaries, and each program and shared library of a package
+  they build (a CARGO_BIN_EXE_ program, a plugin), each by what the loader maps of it (its
+  allocated ELF sections, but the build-id note: `loaded_digest`; a file that isn't whole ELF,
+  whole), and the output directories of those packages' build scripts. A change that moves no
+  code or data (an appended comment, a function nothing calls) reruns nothing; a comment above
+  code moves a panic's location, and reruns;
+- every file of the checkout its tests may read as they run: of the files of each workspace
+  package they build, the root's and cargo's config, every one they weren't compiled from
+  (rustc's dep-info, what build scripts declare). In the gate the tests run seeing only those
+  (scripts/test-parallel.py, bwrap): a test that reads a file it was compiled from fails, named;
+- the lockfile's entry of every package they build (normal, build and dev-dependencies, on every
+  platform: a superset);
 - of the files outside the workspace's packages, those a test's result can depend on: the
   root's (the manifest, the toolchain file), cargo's config, the scripts that run and judge the
-  step (RUNNERS, JUDGES), and the files of any package outside the workspace it builds. Any other
-  file out there (the other steps' scripts, the lander's tools, the fixtures that are not
-  packages) is read only by a package keyed by the whole tree, below, or by no test at all;
+  step (RUNNERS, JUDGES). Any other file out there (the other steps' scripts, the lander's tools,
+  the fixtures that are not packages) is read only by a package keyed by the whole tree, below,
+  or by no test at all;
 - cargo's config files, the toolchain (`rustc -vV`, `cargo -V`), the C compiler, the programs a
   test may start and the Vulkan drivers it may load, and the environment a build or a test
   reads (with the checkout's path written as <root>, so two clones share nothing but keys);
 - the step's arguments.
 
 A package whose tests may read outside what it builds is keyed by the whole tree but the
-notes TODO.md and AGENTS.md. Such a package's sources name a path out of it: a `..` path, a
-walk up from its manifest or from the running binary, cargo itself, or the build directory.
-docs/ is read that way (the docs:: tests), so those packages run again on a docs change.
+notes TODO.md and AGENTS.md, by content, with the parts above every key holds. Such a package's
+sources name a path out of it: a `..` path, a walk up from its manifest or from the running
+binary, cargo itself, or the build directory. docs/ is read that way (the docs:: tests), so those
+packages run again on a docs change.
 
 Records are kept in the clone's git directory, `daedalus-lane-records/KEY`, each holding the
 hash of the scripts that judged it: a record made by older scripts is never read as a pass.
 On CI, or with GATE_LANE_REUSE=0, nothing is reused.
 """
+import functools
 import hashlib
 import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 FORMAT = "daedalus-lane-record 1"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -83,15 +99,25 @@ NEVER_READ = {"TODO.md", "AGENTS.md"}
 # rustc's dep-info names every file a package compiles from (`reads`), and in the gate a narrowly
 # keyed package's tests see no more of the checkout than its key (`visible`, scripts/test-parallel.py).
 WHOLE_TREE = {}
+# Files a narrowly keyed package's tests compile from and also read as they run, and why: they stay
+# in what its tests see, keyed by content. The gate finds the others: a test that reads a file it
+# was compiled from fails there, named (scripts/test-parallel.py).
+READ_AS_IT_RUNS = {
+    "daedalus-cpu": ("backends/cpu/tests/fixtures/",
+                     "source_fresh compares the generator's output with the checked-in modules, "
+                     "which the other tests include!"),
+}
 # The environment a build or a test reads. The gate's own settings (where it keeps its state and
 # its builds) are not: none changes what a build makes or a test does.
 ENV = re.compile(r"^(CARGO_|RUST|CC|CXX|AR(_|$)|CFLAGS|CXXFLAGS|LDFLAGS|TARGET_|HOST_|ZIG|PKG_CONFIG|"
                  r"SOURCE_DATE_EPOCH|DAEDALUS_|VK_|MESA_|WGPU_|LD_LIBRARY_PATH$|PATH$|HOME$)")
 # DAEDALUS_BOUND_STARTED is the path of a step's start mark, new on every run (scripts/bounded.py);
-# DAEDALUS_TEST_ARTIFACTS and DAEDALUS_TEST_VISIBLE are where a run keeps its own records.
+# DAEDALUS_TEST_ARTIFACTS, DAEDALUS_TEST_VISIBLE, DAEDALUS_TEST_PLAN and DAEDALUS_TEST_PASSED are
+# where a run keeps its own records.
 NOT_IN_KEY = {"CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "DAEDALUS_WORK", "DAEDALUS_LOGS",
               "DAEDALUS_TARGET_SEED", "DAEDALUS_VVL_DIR", "DAEDALUS_TEST_PACKAGES",
-              "DAEDALUS_BOUND_STARTED", "DAEDALUS_TEST_ARTIFACTS", "DAEDALUS_TEST_VISIBLE"}
+              "DAEDALUS_BOUND_STARTED", "DAEDALUS_TEST_ARTIFACTS", "DAEDALUS_TEST_VISIBLE",
+              "DAEDALUS_TEST_PLAN", "DAEDALUS_TEST_PASSED"}
 # Programs a test may start that the machine has, not the repository.
 PROGRAMS = ("sh", "bash", "cc", "c++", "gcc", "g++", "clang", "ld", "python3", "node", "java",
             "javac", "cmake", "make", "pkg-config", "zig", "valgrind")
@@ -103,6 +129,8 @@ LEAVES = [re.compile(r'["/]\.\.(/|")'), re.compile(r"current_exe"), re.compile(r
           re.compile(r"trybuild::")]
 UP = re.compile(r"\.parent\(\)|ancestors\(\)")
 FROM_MANIFEST = re.compile(r"CARGO_MANIFEST_DIR")
+# An ELF section the loader maps; one with no bytes in the file; the note that hashes the whole file.
+SHF_ALLOC, SHT_NOBITS, BUILD_ID = 0x2, 8, b".note.gnu.build-id"
 NAMED = re.compile(r'#\[path\s*=\s*"([^"]+)"\]|include_(?:str|bytes)!\(\s*"([^"]+)"')
 
 
@@ -129,6 +157,7 @@ def git(*args):
     return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
 
 
+@functools.lru_cache(maxsize=None)
 def records():
     return os.path.join(git("rev-parse", "--path-format=absolute", "--git-common-dir"), "daedalus-lane-records")
 
@@ -161,6 +190,7 @@ class Keys:
                               and os.path.isfile(os.path.join(self.root, n.decode()))})
         self.digests = {}
         self.cache = {}
+        self.loaded = {}
 
     def read_lock(self):
         with open(os.path.join(self.root, "Cargo.lock")) as file:
@@ -173,7 +203,7 @@ class Keys:
     def reread(self):
         """Forget what was read of the files and the environment: the self-test changes them."""
         self.read_lock()
-        self.digests, self.cache = {}, {}
+        self.digests, self.cache, self.loaded = {}, {}, {}
 
     def file(self, name):
         if name not in self.digests:
@@ -197,6 +227,11 @@ class Keys:
 
     def leaves(self, name):
         """Why the package's sources may read outside what it builds, or None."""
+        if ("leaves", name) not in self.cache:
+            self.cache[("leaves", name)] = self.scan(name)
+        return self.cache[("leaves", name)]
+
+    def scan(self, name):
         if name in WHOLE_TREE:
             return f"listed in WHOLE_TREE: {WHOLE_TREE[name]}"
         home = self.dirs[self.by_name[name]]
@@ -276,27 +311,16 @@ class Keys:
                     pass
         return digest(json.dumps(found).encode())
 
-    def inputs(self, name, args=()):
-        inputs = self.common()
-        inputs.append(("package", name))
-        inputs.append(("arguments", " ".join(args)))
+    def inputs(self, name, units, args=()):
+        """Each input of the package's key: from its build (`built_inputs`, of `units`, cargo's
+        messages), or for a package that may read outside what it builds, the whole tree."""
         why = self.leaves(name)
-        if why:
-            inputs.append(("reads outside what it builds", why))
-            inputs.append(("the tree", digest(json.dumps(
-                [(n, self.file(n)) for n in self.listed if n not in NEVER_READ]).encode())))
-            return inputs
-        for package_id in sorted(self.built(name), key=lambda i: self.packages[i]["id"]):
-            package = self.packages[package_id]
-            entry = self.lock.get((package["name"], package["version"]), "absent")
-            inputs.append((f"Cargo.lock {package['name']} {package['version']}", digest(entry.encode())))
-            if package_id in self.members:
-                inputs.extend(self.files(self.dirs[package_id]))
-            elif package["source"] is None:
-                # A path package outside the workspace: its files, wherever in the tree.
-                home = os.path.relpath(os.path.dirname(package["manifest_path"]), self.root) + "/"
-                inputs.extend(self.files(home))
-        return inputs
+        if not why:
+            return self.built_inputs(name, units, args)
+        return self.common() + [
+            ("package", name), ("arguments", " ".join(args)), ("reads outside what it builds", why),
+            ("the tree", digest(json.dumps([(n, self.file(n)) for n in self.listed
+                                            if n not in NEVER_READ]).encode()))]
 
     def root_files(self):
         """The files at the checkout's root that a narrow key holds."""
@@ -352,8 +376,107 @@ class Keys:
                     found.append((name, rel))
         return sorted(set(found))
 
-    def key(self, name, args=()):
-        return digest(json.dumps(self.inputs(name, args)).encode())
+    def key(self, name, units, args=()):
+        return digest(json.dumps(self.inputs(name, units, args)).encode())
+
+    def closure_units(self, name, units):
+        """The units of a build (cargo's artifact messages) that the package's tests are made of:
+        every unit of each package they build but the others' tests, and its build scripts' runs."""
+        own, closure = self.by_name[name], self.built(name)
+        return [m for m in units if m.get("package_id") in closure
+                and (m.get("reason") == "build-script-executed"
+                     or m.get("reason") == "compiler-artifact"
+                     and (not m["profile"]["test"] or m["package_id"] == own))]
+
+    def ran(self, name, units):
+        """What of the build the package's tests run or load: their own binaries, and each program
+        and shared library of a package they build (a CARGO_BIN_EXE_ program, a plugin), as
+        (label, path); and each build script's output directory, which a test may read (OUT_DIR)."""
+        programs, outputs = [], []
+        for m in self.closure_units(name, units):
+            package = self.packages[m["package_id"]]
+            if m["reason"] == "build-script-executed":
+                if package["source"] is None and m.get("out_dir"):
+                    outputs.append((package["name"], m["out_dir"]))
+                continue
+            kinds, test = m["target"]["kind"], m["profile"]["test"]
+            if m.get("executable") and (test or "bin" in kinds):
+                paths = [m["executable"]]
+            elif {"cdylib", "dylib"} & set(kinds):
+                paths = [f for f in m.get("filenames", []) if f.endswith((".so", ".dylib", ".dll"))]
+            else:
+                continue
+            for path in paths:
+                label = f"{package['name']} {'test ' if test else ''}{'/'.join(kinds)} {m['target']['name']}"
+                programs.append((label + os.path.splitext(path)[1], path))
+        return programs, outputs
+
+    def load(self, paths):
+        """Each file's `loaded_digest`, side by side: the step's binaries are hundreds of MB."""
+        todo = sorted(set(paths) - set(self.loaded))
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            self.loaded.update(zip(todo, pool.map(loaded_digest, todo)))
+        return [self.loaded[p] for p in paths]
+
+    def unit_sources(self, message):
+        """The files of the checkout a unit compiled from, by rustc's dep-info, or a build
+        script's run said it read (a directory ends in /)."""
+        if "sources" not in message:
+            root = os.path.realpath(self.root) + os.sep
+            if message["reason"] == "compiler-artifact":
+                # cargo runs rustc from the workspace's root: its paths are relative to it.
+                paths = [os.path.join(self.root, p) for d in dep_info_files(message) for p in dep_info(d)]
+            else:
+                home = os.path.dirname(self.packages[message["package_id"]]["manifest_path"])
+                paths = [os.path.join(home, p) for p in build_script_reads(message)]
+            found = set()
+            for path in paths:
+                real = os.path.realpath(path)
+                if real.startswith(root):
+                    found.add(real[len(root):] + ("/" if os.path.isdir(real) else ""))
+            message["sources"] = found
+        return message["sources"]
+
+    def compiled(self, name, units):
+        """The files of the checkout that each package the package's tests build compiled from,
+        its tests among them: what the tests get of them is in what they run, or nowhere."""
+        closure = self.built(name)
+        return set().union(*(self.unit_sources(m) for m in units if m.get("package_id") in closure
+                             and m.get("reason") in ("compiler-artifact", "build-script-executed")))
+
+    def runtime(self, name, units):
+        """What a narrowly keyed package's tests may read of the checkout as they run: of the paths
+        its key holds (`visible`), every file its tests weren't compiled from, and the directories
+        those paths are, made empty. A file compiled from is keyed by what it compiled to, so the
+        tests don't see it: one that reads it as it runs fails, named (scripts/test-parallel.py)."""
+        held = self.visible(name)
+        dirs = tuple(h for h in held if h.endswith("/"))
+        compiled = self.compiled(name, units)
+        gone = tuple(c for c in compiled if c.endswith("/"))
+        read = READ_AS_IT_RUNS.get(name, ("\0",))[0]
+        files = [n for n in self.listed if (n in held or n.startswith(dirs))
+                 and (n.startswith(read) or n not in compiled and not n.startswith(gone))]
+        return files, list(dirs)
+
+    def built_inputs(self, name, units, args=()):
+        """A narrowly keyed package's key from its build: what its tests run and load, by what the
+        loader maps of each (`loaded_digest`), and every file of the checkout they may read as they
+        run (`runtime`), with the parts every key holds and the lockfile's entries."""
+        inputs = self.common()
+        inputs += [("package", name), ("arguments", " ".join(args)), ("keyed by", "its build")]
+        for package_id in sorted(self.built(name)):
+            package = self.packages[package_id]
+            entry = self.lock.get((package["name"], package["version"]), "absent")
+            inputs.append((f"Cargo.lock {package['name']} {package['version']}", digest(entry.encode())))
+        programs, outputs = self.ran(name, units)
+        inputs += sorted(zip((l for l, _ in programs), self.load([p for _, p in programs])))
+        for package, out_dir in outputs:
+            for here, _, names in os.walk(out_dir):
+                inputs += sorted((f"{package} OUT_DIR {os.path.relpath(os.path.join(here, n), out_dir)}",
+                                  file_digest(os.path.join(here, n))) for n in names)
+        files, _ = self.runtime(name, units)
+        inputs += [(n, self.file(n)) for n in files]
+        return inputs
 
 
 def reuse_off():
@@ -421,21 +544,81 @@ def dep_info(depfile):
     return [p.replace("\\ ", " ") for p in re.split(r"(?<!\\) ", deps.strip()) if p]
 
 
+def loaded_digest(path):
+    """What the loader maps of an ELF file: each allocated (SHF_ALLOC) section's name, type, flags,
+    address and size, and its bytes but for a NOBITS one, which has none; not the build-id note, a
+    hash of the whole file, debug info and all. A comment that moves no code moves none of it; one
+    that moves a line does (a panic's location is in the data). A file that isn't a whole 64-bit
+    little-endian ELF file (truncated, malformed, or something else) is hashed whole."""
+    try:
+        with open(path, "rb") as file:
+            size = os.fstat(file.fileno()).st_size
+            head = file.read(64)
+            if len(head) < 64 or head[:4] != b"\x7fELF" or head[4:6] != b"\x02\x01":
+                raise ValueError("not a 64-bit little-endian ELF file")
+            table_at, = struct.unpack_from("<Q", head, 0x28)
+            entry, count, names_index = struct.unpack_from("<HHH", head, 0x3A)
+            if entry < 64 or not count or names_index >= count or table_at + count * entry > size:
+                raise ValueError("its section table is outside it")
+            file.seek(table_at)
+            table = file.read(count * entry)
+            sections = [struct.unpack_from("<IIQQQQ", table, i * entry) for i in range(count)]
+            names_at, names_size = sections[names_index][4:6]
+            if names_at + names_size > size:
+                raise ValueError("its section names are outside it")
+            file.seek(names_at)
+            names = file.read(names_size)
+            hashed = hashlib.sha256()
+            for name_at, kind, flags, address, offset, length in sections:
+                if not flags & SHF_ALLOC:
+                    continue
+                end = names.find(b"\0", name_at)
+                if end < 0:
+                    raise ValueError("a section's name is outside the section names")
+                if names[name_at:end] == BUILD_ID:
+                    continue
+                hashed.update(names[name_at:end] + b"\0" + struct.pack("<IQQQ", kind, flags, address, length))
+                if kind != SHT_NOBITS:
+                    if offset + length > size:
+                        raise ValueError("a section's bytes are outside it")
+                    file.seek(offset)
+                    hashed.update(file.read(length))
+            return "loaded " + hashed.hexdigest()
+    except (OSError, ValueError, struct.error):
+        return "whole " + file_digest(path)
+
+
 def read_state(state):
     with open(state) as file:
         return [line.rstrip("\n").split("\t") for line in file if line.strip()]
 
 
-def plan(state, names, args):
-    if not names:
-        sys.exit("lane-reuse.py: no package to plan: nothing would be tested")
+def read_units(artifacts):
+    with open(artifacts) as file:
+        return [json.loads(line) for line in file if line.startswith("{")]
+
+
+def plan(state, artifacts, args):
+    """Key every workspace package's tests: a narrowly keyed one by its build (`built_inputs`), one
+    keyed by the whole tree by its sources. STATE.visible gets what each narrowly keyed package's
+    tests may see of the checkout: the same files its key holds."""
     keys, off, reused = Keys(), reuse_off(), 0
+    units = read_units(artifacts)
+    names = sorted(keys.by_name)
+    keys.load([p for n in names if not keys.leaves(n) for _, p in keys.ran(n, units)[0]])
+    held = {}
     with open(state, "w") as file:
         for name in names:
-            key = keys.key(name, args)
+            narrow = not keys.leaves(name)
+            key = keys.key(name, units, args)
             use = off is None and passed_before(key)
             reused += use
             file.write(f"{name}\t{key}\t{'reused' if use else 'run'}\n")
+            if narrow and off is None:
+                files, dirs = keys.runtime(name, units)
+                held[name] = {"bind": files, "make": dirs}
+    with open(state + ".visible", "w") as file:
+        json.dump(held, file)
     print(f"  reuse: {reused} of {len(names)} packages' tests passed before on these inputs"
           + (f" (nothing reused: {off})" if off else ""))
     return 0
@@ -465,6 +648,15 @@ def status(state):
     return 0
 
 
+# The planted test's source: a panic whose location is in the binary's data.
+PLANTED_TEST = """fn main() {
+    if std::env::args().count() > 100 {
+        panic!("planted");
+    }
+}
+"""
+
+
 def self_test():
     """Each kind of input changed in a copy of this tree: the key moves, or for a note or a
     package not built, stays."""
@@ -483,18 +675,67 @@ def self_test():
         for name in keys.listed:
             os.makedirs(os.path.dirname(os.path.join(copy, name)), exist_ok=True)
             shutil.copy2(os.path.join(ROOT, name), os.path.join(copy, name))
+        package = "daedalus-planner"
+        assert not keys.leaves(package), f"{package} is keyed by the whole tree: pick another"
+        home = keys.dirs[keys.by_name[package]]
+        # The package's planted test, built by rustc as cargo would, and a fixture it reads.
+        located, fixture = f"{home}tests/planted_location.rs", f"{home}tests/planted.txt"
+        for name, text in ((located, PLANTED_TEST), (fixture, "read by the planted test\n")):
+            os.makedirs(os.path.dirname(os.path.join(copy, name)), exist_ok=True)
+            with open(os.path.join(copy, name), "w") as file:
+                file.write(text)
         subprocess.run(["git", "init", "-q"], cwd=copy, check=True)
         # The copy's keys, in this process: one listing of the packages, each key read again.
         copied = Keys(copy)
         shims = os.path.join(work, "bin")
         os.makedirs(shims)
+        units = os.path.join(work, "units")
+        os.makedirs(units)
+        built = {keys.dirs[i] for i in keys.built(package) if i in keys.members}
+        dep = next(d for d in sorted(built) if d != home)
+        dep_id = next(i for i in copied.members if copied.dirs[i] == dep)
+        crate = lambda i: copied.packages[i]["name"].replace("-", "_")
+        test, plugin = os.path.join(units, "planted"), os.path.join(units, "libplanted_plugin.so")
 
-        def key(name, extra=None):
+        def build(out=test):
+            subprocess.run(["rustc", "--edition", "2021", "-C", "debuginfo=2", "-o", out,
+                            os.path.join(copy, located)], cwd=copy, check=True)
+
+        def compiled_from(path, sources):
+            with open(path + ".d", "w") as file:
+                file.write(f"{path}: {' '.join(os.path.join(copy, n) for n in sources)}\n")
+
+        build()
+        build(plugin)
+        shutil.copyfile(os.path.realpath(shutil.which("sh")), os.path.join(work, "other"))
+        rs_of = lambda d: [n for n in copied.listed if n.startswith(d) and n.endswith(".rs")]
+        compiled_from(test, rs_of(home))
+        compiled_from(os.path.join(units, f"{crate(dep_id)}-1"), rs_of(dep))
+        # cargo's messages for the build: the package's test, a library and a plugin of a package
+        # it builds.
+        planted = [
+            {"reason": "compiler-artifact", "package_id": copied.by_name[package],
+             "target": {"kind": ["test"], "name": "planted"}, "profile": {"test": True},
+             "executable": test, "filenames": [test]},
+            {"reason": "compiler-artifact", "package_id": dep_id,
+             "target": {"kind": ["lib"], "name": crate(dep_id)}, "profile": {"test": False},
+             "executable": None, "filenames": [os.path.join(units, f"lib{crate(dep_id)}-1.rlib")]},
+            {"reason": "compiler-artifact", "package_id": dep_id,
+             "target": {"kind": ["cdylib"], "name": "planted_plugin"}, "profile": {"test": False},
+             "executable": None, "filenames": [plugin]},
+        ]
+
+        once = []
+
+        def key(name, extra=None, fresh=True):
             saved = dict(os.environ)
             os.environ.update(extra or {})
             try:
                 copied.reread()
-                return copied.key(name)
+                if not fresh:
+                    once[:] = once or [copied.common()]
+                    copied.cache["common"] = once[0]
+                return copied.key(name, [dict(m) for m in planted])
             finally:
                 os.environ.clear()
                 os.environ.update(saved)
@@ -516,14 +757,17 @@ def self_test():
                 file.write(before.replace(old, old + "\n# changed", 1))
             return lambda: open(path, "w").write(before)
 
+        def replace_text(name, old, new):
+            path = os.path.join(copy, name)
+            with open(path) as file:
+                before = file.read()
+            with open(path, "w") as file:
+                file.write(before.replace(old, new, 1))
+            return lambda: open(path, "w").write(before)
+
         def lock_entry(name):
             return next(b for (n, _), b in keys.lock.items() if n == name)
 
-        package = "daedalus-planner"
-        assert not keys.leaves(package), f"{package} is keyed by the whole tree: pick another"
-        built = {keys.dirs[i] for i in keys.built(package) if i in keys.members}
-        home = keys.dirs[keys.by_name[package]]
-        dep = next(d for d in sorted(built) if d != home)
         apart = next(d for d in sorted(keys.dirs.values()) if d not in built and not home.startswith(d))
         whole = "daedalus"
         assert keys.leaves(whole), f"{whole} is no longer keyed by the whole tree: pick another"
@@ -536,9 +780,62 @@ def self_test():
             file.write("#!/bin/sh\nexit 0\n")
         os.chmod(os.path.join(shims, "cc"), 0o755)
         nothing = lambda: (lambda: None)
+        # Another narrowly keyed package, which doesn't build the plugin's package.
+        aside = next(n for n in sorted(keys.by_name) if not keys.leaves(n)
+                     and n != package and dep_id not in copied.built(n))
+
+        def rebuilt(change):
+            def plant():
+                undo = change()
+                build()
+                return lambda: (undo(), build())
+            return plant
+
+        def swap(path, other):
+            def plant():
+                with open(path, "rb") as file:
+                    before = file.read()
+                shutil.copyfile(other, path)
+                return lambda: open(path, "wb").write(before)
+            return plant
+
+        def read_as_it_runs(change):
+            def plant():
+                READ_AS_IT_RUNS[package] = (located, "the self-test's plant")
+                undo = change()
+                return lambda: (undo(), READ_AS_IT_RUNS.pop(package))
+            return plant
+
+        def truncate():
+            with open(test, "rb") as file:
+                before = file.read()
+            with open(test, "wb") as file:
+                file.write(before[:len(before) // 2])
+            return lambda: open(test, "wb").write(before)
+
         cases = [
-            (package, "a file of the package", True, lambda: touch(rs(home)), None),
-            (package, f"a file of a package it builds ({dep})", True, lambda: touch(rs(dep)), None),
+            (package, "a fixture its tests read", True, lambda: touch(fixture, "changed\n"), None),
+            (aside, "a fixture of a package it doesn't build", False, lambda: touch(fixture, "changed\n"), None),
+            (package, f"a file of a package it builds, not compiled from ({dep}Cargo.toml)", True,
+             lambda: touch(f"{dep}Cargo.toml", "\n# changed\n"), None),
+            (package, "a source it compiled from, what it runs unchanged", False, lambda: touch(rs(home)), None),
+            (package, f"a source of a package it builds, what it runs unchanged ({dep})", False,
+             lambda: touch(rs(dep)), None),
+            (package, "a plugin a package it builds makes", True,
+             swap(plugin, os.path.join(work, "other")), None),
+            (aside, "a plugin of a package it doesn't build", False,
+             swap(plugin, os.path.join(work, "other")), None),
+            (package, "a comment above code (a panic's location moves)", True,
+             rebuilt(lambda: replace_text(located, "fn main", "// a comment\nfn main")), None),
+            (package, "a comment after the code", False,
+             rebuilt(lambda: touch(located, "// a comment\n")), None),
+            (package, "a comment after the code, in a file it reads as it runs too", True,
+             read_as_it_runs(rebuilt(lambda: touch(located, "// a comment\n"))), None),
+            (package, "its test binary truncated", True, truncate, None),
+        ]
+        # The plants above change none of what every key holds (`common`): it is read once for them.
+        built_only = len(cases)
+        cases += [
             (package, "a script the test step runs", True,
              lambda: touch("scripts/lavapipe-icd.sh", "\n# changed\n"), None),
             (package, "a test binary's bound", True,
@@ -579,7 +876,7 @@ def self_test():
                                     " with why it changes no test's result")
         # What a unit compiled from, by rustc's dep-info, and what a build script said it read:
         # inside a narrow key's paths it passes; outside, the package and the file are named.
-        units = os.path.join(work, "units")
+        units = os.path.join(work, "reads")
         os.makedirs(units)
 
         def unit(name, sources, said=()):
@@ -632,12 +929,12 @@ def self_test():
         else:
             print("    a read by a run-time path: missed by the source scan and the dep-info, as planted")
         bases = {}
-        for name, label, moves, change, extra in cases:
+        for at, (name, label, moves, change, extra) in enumerate(cases):
             if name not in bases:
                 bases[name] = key(name)
             undo = change()
             try:
-                now = key(name, extra)
+                now = key(name, extra, fresh=at >= built_only)
             finally:
                 undo()
             if (now != bases[name]) != moves:
@@ -646,6 +943,22 @@ def self_test():
                 print(f"    {name}, {label}: {'moved' if moves else 'stayed'}")
         if key(package) != bases[package]:
             failures.append("the same inputs gave two keys")
+        # A file that isn't whole ELF is hashed whole: two truncations of a binary are two keys.
+        with open(test, "rb") as file:
+            whole = file.read()
+        cut = os.path.join(work, "cut")
+        seen = set()
+        for size in (len(whole) // 2, len(whole) // 3, 63):
+            with open(cut, "wb") as file:
+                file.write(whole[:size])
+            got = loaded_digest(cut)
+            seen.add(got)
+            if got != "whole " + file_digest(cut):
+                failures.append(f"a binary cut to {size} bytes: {got}, not its whole file's hash")
+        if len(seen) != 3:
+            failures.append("three cuts of a binary gave fewer than three hashes")
+        else:
+            print("    a binary cut short: hashed whole, each cut its own hash")
     finally:
         shutil.rmtree(work, ignore_errors=True)
     if failures:
@@ -658,25 +971,10 @@ def self_test():
 
 
 def main(argv):
-    if len(argv) >= 2 and argv[0] == "plan":
-        # PACKAGE... [-- STEP_ARGS...]
-        rest = argv[2:]
-        args = rest[rest.index("--") + 1:] if "--" in rest else []
-        names = rest[:rest.index("--")] if "--" in rest else rest
-        return plan(argv[1], names, args)
-    if argv == ["visible"]:
-        if reuse_off():
-            # Nothing is reused, so nothing needs a test held to its key.
-            print("{}")
-            return 0
-        keys = Keys()
-        print(json.dumps({name: keys.visible(name) for name in sorted(keys.by_name)
-                          if not keys.leaves(name)}))
-        return 0
+    if len(argv) >= 3 and argv[0] == "plan" and (len(argv) == 3 or argv[3] == "--"):
+        return plan(argv[1], argv[2], argv[4:])
     if len(argv) == 2 and argv[0] == "reads":
-        with open(argv[1]) as file:
-            artifacts = [json.loads(line) for line in file if line.startswith("{")]
-        found = Keys().reads(artifacts)
+        found = Keys().reads(read_units(argv[1]))
         for name, path in found:
             print(f"lane-reuse: {name} compiles from {path}, which its reuse key doesn't hold: name "
                   f"the path in its sources as scripts/lane-reuse.py looks for (LEAVES), or list "
@@ -692,11 +990,11 @@ def main(argv):
         return record(argv[1], argv[2:])
     if len(argv) == 2 and argv[0] == "status":
         return status(argv[1])
-    if len(argv) == 2 and argv[0] == "--explain":
-        keys = Keys()
-        for label, value in keys.inputs(argv[1]):
+    if len(argv) == 3 and argv[0] == "--explain":
+        inputs = Keys().inputs(argv[1], read_units(argv[2]))
+        for label, value in inputs:
             print(f"{label}\t{value}")
-        print("key", keys.key(argv[1]))
+        print("key", digest(json.dumps(inputs).encode()))
         return 0
     if argv == ["--self-test"]:
         return self_test()

@@ -46,25 +46,33 @@ table, in `variants`); the steps that build only for other targets (in `cross`);
 that build nothing. No two lanes build in one directory, so no lane waits on another's lock. A new step must be
 named in one of the lanes, or the gate refuses to run.
 
-In the gate, the `test` step runs only the packages whose tests have not passed on exactly these
-inputs (`scripts/lane-reuse.py`). A package's key is a hash of what its tests' result depends on:
-every file of each workspace package its tests build, the lock file's entry of every package they
-build, the root's files, the scripts that run and judge the test step, cargo's configuration, the
-toolchain, the programs and Vulkan drivers a test may load, and the environment a build or test
-reads. Other files outside the packages (other steps' scripts, the lander's tools, fixtures that
-are not packages) are read by no test but those of the packages below; the self-test checks that
-every path the test step's scripts name is keyed or listed with why it isn't. The gate holds a
-narrowly keyed package to its key: its tests run under bwrap seeing only the paths of the checkout
-the key holds (`lane-reuse.py visible`), and every unit it builds must have compiled only from those,
-by rustc's dep-info and what build scripts declare (`lane-reuse.py reads`). A package that starts
-reading outside itself fails the test step, named, and nothing is recorded; one that must is listed
-in `WHOLE_TREE`. With no bwrap, nothing is reused or recorded. A package
-whose sources name a path out of it (a `..` path, a walk up from its manifest or its binary, cargo
-itself, the build directory) is keyed by the whole tree but the planning notes. Every binary is
-still built as the workspace builds it; only the run is skipped. The gate's last line,
-`Gate-Lanes:`, says what each lane did (`passed`, `passed(K-of-N-reused)`, or `not-run(WHY)` for a
+In the gate, the `test` step builds every binary as the workspace builds it, then runs only the
+packages whose tests have not passed on exactly these inputs (`scripts/lane-reuse.py`). A package's
+key is taken after the build: what its tests run and load (their binaries, and the programs and
+shared libraries of the packages they build), each by what the loader maps of it (its allocated
+ELF sections, without the build-id note; a file that isn't whole ELF is hashed whole), and every
+file of the checkout its tests may read as they run: of the files of each workspace package they
+build, the root's and cargo's config, all but those they were compiled from. A comment or a
+function nothing calls reruns nothing; a comment above code moves a panic's location, and reruns.
+Every key also holds the lock file's entry of every package the tests build, the root's files, the
+scripts that run and judge the test step, cargo's configuration, the toolchain, the programs and
+Vulkan drivers a test may load, and the environment a build or test reads. Other files outside the
+packages (other steps' scripts, the lander's tools, fixtures that are not packages) are read by no
+test but those of the packages below; the self-test checks that every path the test step's scripts
+name is keyed or listed with why it isn't. The gate holds a narrowly keyed package to its key: its
+tests run under bwrap seeing only the files of the checkout the key holds, so a test that reads a
+file it was compiled from fails, named (one that must is listed, with why, in `READ_AS_IT_RUNS`,
+and keyed by content), and every unit it builds must have compiled only from the
+paths of the packages it builds, by rustc's dep-info and what build scripts declare
+(`lane-reuse.py reads`). A package that starts reading outside itself fails the test step, named,
+and nothing is recorded; one that must is listed in `WHOLE_TREE`. With no bwrap, nothing is reused
+or recorded. A package whose sources name a path out of it (a `..` path, a walk up from its
+manifest or its binary, cargo itself, the build directory) is keyed by the whole tree but the
+planning notes, by content. Every binary is still built; only the run is skipped. The gate's last
+line, `Gate-Lanes:`, says what each lane did (`passed`, `passed(K-of-N-reused)`, or `not-run(WHY)` for a
 lane `scripts/dev/land.sh` left out), and the commit carries it. On CI, or with
-`GATE_LANE_REUSE=0`, nothing is reused. `lane-reuse.py --explain PACKAGE` lists a key's inputs.
+`GATE_LANE_REUSE=0`, nothing is reused. `lane-reuse.py --explain PACKAGE ARTIFACTS` lists a key's
+inputs after a build (cargo's messages, as the test step keeps them).
 
 A step outside the test lane can be reused the same way: `scripts/step-reuse.py` keys it by the
 parts every key holds, its own script, and every file of the packages it builds (their closure
