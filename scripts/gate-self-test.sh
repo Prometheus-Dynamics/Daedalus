@@ -47,6 +47,9 @@ case_in() { # TREE EXPECT LANE NOT_RAN [VAR=VALUE...]
   local ok=1
   if [[ $expect == pass ]]; then
     [[ $code == 0 ]] && grep -q '^Gate-Lanes: host=passed' <<< "$out" || ok=0
+    # Every step's line, and the gate's, give wall and CPU seconds: scripts/dev/land.sh reads them.
+    [[ $(grep -cE '^    [a-z0-9.-]+: [0-9]+ s, [0-9]+ cpu-s$' <<< "$out") == "$steps" ]] || ok=0
+    grep -qE '^gate: [0-9]+ s, [0-9]+ cpu-s$' <<< "$out" || ok=0
   else
     [[ $code != 0 ]] || ok=0
     grep -q "^gate: failed in lane: .*\b$lane\b" <<< "$out" || ok=0
@@ -57,8 +60,9 @@ case_in() { # TREE EXPECT LANE NOT_RAN [VAR=VALUE...]
 }
 
 check() { # LABEL GATE_SH EXPECT_ALL_CAUGHT
-  local tree="$work/$1" caught=1 got
+  local tree="$work/$1" caught=1 got steps
   plant "$tree" "$2"
+  steps=$(( $(ls "$tree/scripts/ci.d" | wc -l) + 3 ))
   for spec in "pass||" "fail|host|test|FAIL_clippy=1" "fail|scripts||FAIL_TRAILING=1" \
               "fail|host||FAIL_vvl_wgpu=1" "fail|ship|smoke|FAIL_packaging=1"; do
     IFS='|' read -r expect lane not_ran setting <<< "$spec"

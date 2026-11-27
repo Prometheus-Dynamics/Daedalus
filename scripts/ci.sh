@@ -37,6 +37,18 @@ if [[ $# -eq 0 ]]; then
   set -- format clippy test boundaries
 fi
 
+# The CPU seconds of the children this shell has waited for (bash's `times`, second line), which
+# hold each step's own and those of everything it waited for: cargo's rustc, the test binaries.
+# `times` runs in this shell, not a subshell, where it would count only the subshell's children.
+cpu_seen=0
+children_cpu() {
+  local file="${TMPDIR:-/tmp}/ci-times.$$"
+  times > "$file"
+  cpu_seen="$(awk 'NR == 2 { for (i = 1; i <= 2; i++) { split($i, t, "m"); s += t[1] * 60 + t[2] } }
+    END { printf "%d", s }' "$file")"
+  rm -f "$file"
+}
+
 for name in "$@"; do
   file="scripts/ci.d/$name.sh"
   if [[ ! -x "$file" ]]; then
@@ -45,10 +57,12 @@ for name in "$@"; do
   fi
   echo "==> $name"
   start=$SECONDS
+  children_cpu; cpu_start=$cpu_seen
   # Each step carries its bound beside its code, and runs in a process group of its own: past its
   # bound the group is stopped and the step fails, named; what it leaves running is stopped too.
   python3 -I scripts/bounded.py --step "$name" "$file"
-  echo "    $name: $((SECONDS - start)) s"
+  children_cpu
+  echo "    $name: $((SECONDS - start)) s, $((cpu_seen - cpu_start)) cpu-s"
 done
 
 echo "passed: $*"
