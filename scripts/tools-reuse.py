@@ -67,7 +67,7 @@ def tree(keys):
     """What a self-test that reads the tree depends on: the manifests and the lock file, which
     files exist, and which members are keyed by the whole tree."""
     manifests = [(n, keys.file(n)) for n in keys.listed if n == "Cargo.toml" or n.endswith("/Cargo.toml")]
-    verdicts = sorted((n, bool(keys.leaves(n))) for n in keys.by_name)
+    verdicts = sorted((n, bool(keys.leaves(n)), bool(keys.sources(n))) for n in keys.by_name)
     return [("manifests", lr.digest(json.dumps(manifests).encode())),
             ("Cargo.lock", keys.file("Cargo.lock")),
             ("the files' names", lr.digest("\0".join(keys.listed).encode())),
@@ -177,7 +177,7 @@ def self_test():
         try:
             return key(keys, name)
         finally:
-            scanned.update((k, v) for k, v in keys.cache.items() if k[0] == "leaves" and k[1] != verdict)
+            scanned.update((k, v) for k, v in keys.cache.items() if k[0] in ("leaves", "sources") and k[1] != verdict)
             keys.listed = saved
             overlay.clear()
 

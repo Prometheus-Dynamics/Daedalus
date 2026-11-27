@@ -75,8 +75,9 @@ fresh, and the fixture's sources are not in what it sees); `TARGET_READS` lists 
 test binary its tests read (a sibling shared library or staticlib, the binary run again), each an
 artifact the key holds, or the plan fails. The build directory is not sandboxed, so that list is
 reviewed, not enforced. A package whose sources name a path out of it anywhere else (a `..` path,
-a walk up from its manifest, the running binary, cargo building no fixture, the build directory,
-trybuild) is keyed by the whole tree; a path an `include!`, `include_str!`, `include_bytes!` or
+a walk up from its manifest, the running binary, cargo building no fixture, the build directory)
+is keyed by the whole tree. One whose tests run trybuild, which compiles its cases from source as
+the test runs, is keyed by its sources: every file it sees, by content; a path an `include!`, `include_str!`, `include_bytes!` or
 `#[path]` literal names is resolved first, and one inside the package is no way out of it. Such a
 package is keyed by the whole tree but the
 planning notes, by content. Every binary is still built; only the run is skipped. The gate's last
