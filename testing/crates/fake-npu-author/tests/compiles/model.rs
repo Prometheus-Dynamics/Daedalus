@@ -8,7 +8,8 @@ use daedalus_macros::node;
 )]
 const DOUBLE: &str = "scale2";
 
-fn main() {
+#[test]
+fn model() {
     assert_eq!(DOUBLE_NODE.body.backend, "fake-npu");
     assert_eq!(DOUBLE_NODE.body.text, "scale2");
 }

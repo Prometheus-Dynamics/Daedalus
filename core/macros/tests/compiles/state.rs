@@ -9,5 +9,3 @@ pub fn f(a: u32, s: &mut S) -> u32 {
     s.0 += a;
     s.0
 }
-
-fn main() {}

@@ -8,5 +8,3 @@ pub enum Choice {
     One,
     Two(u8),
 }
-
-fn main() {}

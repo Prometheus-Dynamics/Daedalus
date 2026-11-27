@@ -11,5 +11,3 @@ pub struct Settings {
     pub size: u32,
     pub flag: bool,
 }
-
-fn main() {}

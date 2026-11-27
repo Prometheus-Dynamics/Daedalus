@@ -5,5 +5,3 @@ use daedalus_macros::node;
 pub fn f(a: u32) -> u32 {
     a
 }
-
-fn main() {}

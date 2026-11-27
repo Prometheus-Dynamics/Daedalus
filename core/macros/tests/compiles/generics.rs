@@ -8,5 +8,3 @@ pub fn g<T: Copy>(a: &T) -> T {
 
 const _: &daedalus_registry::NodeRecord = &G_U32_NODE;
 const _: &daedalus_registry::NodeRecord = &G_SMALL_NODE;
-
-fn main() {}

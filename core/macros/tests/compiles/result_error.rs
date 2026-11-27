@@ -5,5 +5,3 @@ use daedalus_macros::node;
 pub fn r(a: u32) -> Result<u32, String> {
     Ok(a)
 }
-
-fn main() {}

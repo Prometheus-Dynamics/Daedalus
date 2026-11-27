@@ -7,5 +7,3 @@ pub fn plain(a: u32) -> u32 {
 }
 
 const _: &daedalus_registry::NodeRecord = &PLAIN_NODE;
-
-fn main() {}

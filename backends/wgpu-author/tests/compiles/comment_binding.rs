@@ -16,7 +16,8 @@ const DOUBLE: &str = "
     }
 ";
 
-fn main() {
+#[test]
+fn a_commented_binding_and_a_const_workgroup_size() {
     let spec = (DOUBLE_NODE.body.code as &dyn std::any::Any)
         .downcast_ref::<ShaderSpec>()
         .expect("a shader spec");
