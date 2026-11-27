@@ -10,14 +10,6 @@
 # step's status, a trailing script's status dropped): each must be caught, so this test has teeth.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-# Its result is a function of the scripts it plants and its own: passed before on these, it passes.
-# On CI, and with GATE_LANE_REUSE=0, it always runs.
-inputs=(scripts/gate-self-test.sh scripts/gate.sh scripts/ci.sh)
-proved="$(git rev-parse --path-format=absolute --git-common-dir)/daedalus-lane-records/gate-self-test-$(cat "${inputs[@]}" | sha256sum | cut -c1-16)"
-if [[ -z ${CI:-} && ${GATE_LANE_REUSE:-1} != 0 && -e $proved ]]; then
-  echo "gate self-test passed before on these scripts"
-  exit 0
-fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 failures=0
@@ -134,7 +126,4 @@ mutant() { # LABEL SED_EXPR
 mutant "ignores a lane's status" 's/wait "\$\{pids\[\$i\]\}" \|\| failed\+=\("\$\{lanes\[\$i\]\}"\)/wait "${pids[$i]}" || true/'
 mutant "keeps only a lane's last step's status" 's/scripts\/ci.sh "\$\{!steps\}"/for s in "${!steps}"; do scripts\/ci.sh "$s"; done/'
 mutant "drops a trailing script's status" 's/"\$script" \|\| status=1/"$script" || true/'
-if [[ $failures == 0 ]]; then
-  mkdir -p "$(dirname "$proved")" && touch "$proved"
-fi
 exit $failures

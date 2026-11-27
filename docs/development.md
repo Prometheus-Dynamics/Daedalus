@@ -83,6 +83,12 @@ step. `vvl` and `vvl-wgpu` (scripts/vvl-run.py) are keyed the same way by what t
 build, and by every file of the validation layer. When reuse is on, each binary runs under bwrap
 and sees only the paths of the checkout its key holds, as the test step's narrowly keyed packages do.
 
+The `tools` step's longer self-tests are reused the same way (`scripts/tools-reuse.py`): each is
+keyed by the parts every key holds, the files it reads and the programs it starts, and for those
+that read the tree (the reuse keys' own and the budget table's), every manifest, the lock file,
+the names of the checkout's files and which packages are keyed by the whole tree. A comment in a
+package's source reruns none of them.
+
 The budget table (`budgets`) is measured in the local gate only when its build directory has
 measured these inputs before. When the change reaches what the measured release binaries are built
 from, or the build directory is cold, the step builds nothing. It leaves the table to the budgets

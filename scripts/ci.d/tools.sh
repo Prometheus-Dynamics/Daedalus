@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # bound: 276 s (three times 92 s: its slowest green run, 27 s, in a cold build on a fresh slot,
 #   the 10 s the starved-test cases of scripts/bounded.py have added since, the 35 s of the
-#   reuse keys' self-test, which runs only when scripts/lane-reuse.py changed, and the 20 s at
-#   load 60 of the gate's self-test, which runs only when the scripts it plants changed)
+#   reuse keys' self-test and the 20 s at load 60 of the gate's self-test; the longer self-tests
+#   each run only when what they read changed, scripts/tools-reuse.py)
 # The working tools check themselves against planted cases: which packages a change reaches
 # (scripts/check.sh runs those), which build directories may be deleted, what a seed keeps, that
 # the boundaries scan blanks exactly what its one-character-at-a-time oracle did, and
@@ -15,18 +15,19 @@ python3 -I scripts/affected.py --self-test
 python3 -I scripts/prune-targets.py --self-test
 python3 -I scripts/seed-target.py --self-test
 scripts/fixture-locks.sh --self-test
-python3 -I testing/crates/budget-harness/record.py --self-test
-python3 -I scripts/bounded.py --self-test
 python3 -I scripts/boundaries.py --self-test
 python3 -I scripts/board/pick-binaries.py --self-test
-python3 -I scripts/lane-reuse.py --self-test
-python3 -I scripts/step-reuse.py --self-test
-python3 -I scripts/test-parallel.py --self-test
-scripts/gate-self-test.sh
-scripts/release-check.sh --self-test
+python3 -I scripts/tools-reuse.py --self-test
+# The longer self-tests, each run only when what it reads changed (scripts/tools-reuse.py STAMPS).
+stamps="$(mktemp)"
+trap 'rm -f "$stamps"' EXIT
+python3 -I scripts/tools-reuse.py plan "$stamps"
+while IFS=$'\t' read -r name _; do
+  python3 -I scripts/tools-reuse.py run "$stamps" "$name"
+done < "$stamps"
 # A build directory another checkout built in is refused before anything builds.
 planted="$(mktemp -d)"
-trap 'rm -rf "$planted"' EXIT
+trap 'rm -rf "$planted" "$stamps"' EXIT
 echo /a/checkout/elsewhere > "$planted/.daedalus-checkout"
 status=0
 refused="$(CARGO_TARGET_DIR="$planted" scripts/ci.sh format 2>&1)" || status=$?
