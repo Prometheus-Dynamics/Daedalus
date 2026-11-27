@@ -111,6 +111,37 @@ def build_fixtures():
         return [(name, output) for name, code, output in pool.map(build, FIXTURES) if code != 0]
 
 
+def fixture_cargo(directory):
+    """A cargo for a narrowly keyed package's tests, written into `directory`: the fixtures were
+    built before their keys (scripts/lane-reuse.py holds each by its outputs), so a test's own
+    `cargo build` of one into its directory under TEST_TMP is answered as fresh, and the fixture's
+    sources stay out of what the test sees. Any other cargo run is the real one."""
+    import shlex
+    path = os.path.join(directory, "cargo")
+    built = " | ".join(shlex.quote(os.path.join(TEST_TMP, name)) for name, _, _ in FIXTURES)
+    with open(path, "w") as file:
+        file.write(f"""#!/bin/sh
+# scripts/test-parallel.py fixture_cargo: a build of a fixture built before the keys is fresh.
+target= previous=
+for argument in "$@"; do [ "$previous" = --target-dir ] && target=$argument; previous=$argument; done
+if [ "$1" = build ]; then
+  case "$target" in
+    {built}) exit 0 ;;
+  esac
+fi
+exec {shlex.quote(CARGO)} "$@"
+""")
+    os.chmod(path, 0o755)
+    return path
+
+
+def fixtures_failed(broken):
+    for name, output in broken:
+        print(f"\n---- fixture {name} ----\n{output}", end="")
+    print("\ntest: the fixtures did not build: " + ", ".join(name for name, _ in broken))
+    return 1
+
+
 def unlisted_fixtures():
     """Build directories under TEST_TMP that FIXTURES doesn't name: cargo marks its own."""
     named = {name for name, _, _ in FIXTURES} | NOT_TESTS
@@ -235,7 +266,14 @@ def main():
     only = os.environ.get("DAEDALUS_TEST_PACKAGES")
     visible = os.environ.get("DAEDALUS_TEST_VISIBLE")
     plan = os.environ.get("DAEDALUS_TEST_PLAN")
+    broken = None
     if plan:
+        # The fixtures first: a package whose tests build one is keyed by what it built.
+        started = time.monotonic()
+        broken = build_fixtures()
+        if broken:
+            return fixtures_failed(broken)
+        print(f"  {len(FIXTURES)} fixtures built in {time.monotonic() - started:.0f} s, before the keys")
         # Each package keyed by what was just built: only those that didn't pass before on it run.
         subprocess.run([sys.executable, "-I", os.path.join(ROOT, "scripts", "lane-reuse.py"), "plan",
                         plan, os.environ["DAEDALUS_TEST_ARTIFACTS"], "--", *sys.argv[1:]], check=True)
@@ -253,6 +291,12 @@ def main():
             visible = json.load(file)
     else:
         visible = {}
+    import atexit
+    import shutil
+    shims = tempfile.mkdtemp(prefix="daedalus-cargo.")
+    # Gone however the run ends.
+    atexit.register(shutil.rmtree, shims, True)
+    held_cargo = fixture_cargo(shims)
     shared = [m for m in found if shares_trybuild(m)]
     jobs = [[m] for m in found if m not in shared] + ([shared] if shared else [])
     jobs.sort(key=lambda job: -sum(last.get(label(m), [0.0])[0] for m in job))
@@ -287,10 +331,13 @@ def main():
             name = label(message)
             start = time.monotonic()
             seen = visible.get(package_of(message["package_id"], message["manifest_path"])[0])
+            env = package_env(message, sysroot_lib)
+            if seen is not None:
+                env["CARGO"] = held_cargo
             with tempfile.TemporaryFile() as out:
                 group = Group(sandboxed(seen) + [message["executable"]],
                               cwd=os.path.dirname(message["manifest_path"]),
-                              env=package_env(message, sysroot_lib), stdout=out,
+                              env=env, stdout=out,
                               stderr=subprocess.STDOUT)
                 with groups_lock:
                     groups.add(group)
@@ -326,19 +373,15 @@ def main():
     # A build directory here that FIXTURES doesn't name, from before this run, belongs to no test
     # of this tree: a restored CI cache keeps those of fixtures since renamed. It goes, so one
     # found after the run is one a test of this tree built.
-    import shutil
     for stale in unlisted_fixtures():
         shutil.rmtree(os.path.join(TEST_TMP, stale), ignore_errors=True)
         print(f"  removed {stale} from {TEST_TMP}: a build directory no test here makes")
     started = time.monotonic()
     # With no binary to run (every package passed before on what was built), no test reads one.
-    broken = build_fixtures() if found else []
-    for name, output in broken:
-        print(f"\n---- fixture {name} ----\n{output}", end="")
-    if broken:
-        print("\ntest: the fixtures did not build: " + ", ".join(name for name, _ in broken))
-        return 1
-    if found:
+    if broken is None and found:
+        broken = build_fixtures()
+        if broken:
+            return fixtures_failed(broken)
         print(f"  {len(FIXTURES)} fixtures built in {time.monotonic() - started:.0f} s")
 
     workers = max(1, len(os.sched_getaffinity(0)))
@@ -417,9 +460,11 @@ one it was compiled from, can't be read."""
             "package_id": f"path+file://{work}#planted@0.1.0",
             "manifest_path": os.path.join(work, "Cargo.toml")})
         scripts = {
-            "cargo": f"#!/bin/sh\ncase \" $* \" in *' --no-run '*) echo '{artifact}';; esac\n",
+            "cargo": f"#!/bin/sh\ncase \" $* \" in *' --no-run '*) echo '{artifact}';; *) echo \"$*\" >> {work}/target/cargo.log;; esac\n",
             "bin/t": '#!/bin/sh\n[ -z "$PLANT_ROGUE" ] || { mkdir -p "$CARGO_TARGET_DIR/tmp/rogue" &&'
                      ' touch "$CARGO_TARGET_DIR/tmp/rogue/CACHEDIR.TAG"; }\n'
+                     '[ -z "$PLANT_FIXTURE" ] || { "$CARGO" build -q --manifest-path planted-fixture'
+                     ' --target-dir "$CARGO_TARGET_DIR/tmp/dylib-fixture" && "$CARGO" planted-other; } || exit 1\n'
                      '[ -z "$PLANT_READ" ] || cat "$PLANT_READ" > /dev/null\n',
             "outside.txt": "read by the planted test\n",
         }
@@ -434,6 +479,7 @@ one it was compiled from, can't be read."""
             ("a clean pass", {}, False, None, 0, "planted\n"),
             ("a stale fixture from before the run", {}, True, None, 0, "planted\n"),
             ("a read outside, unsandboxed", {"PLANT_READ": outside}, False, None, 0, "planted\n"),
+            ("a fixture's build, unsandboxed", {"PLANT_FIXTURE": "1"}, False, None, 0, "planted\n"),
         ]
         if sandbox:
             cases += [
@@ -447,17 +493,24 @@ one it was compiled from, can't be read."""
                  False, {"bind": ["bin/t"], "make": ["bin/"]}, 1, ""),
                 ("a narrow key's test reading a file its key holds", {"PLANT_READ": outside},
                  False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
+                # A fixture built before the keys: the test's own build of it is answered as fresh,
+                # with none of its sources in sight; any other cargo run is the real one.
+                ("a narrow key's test building a fixture", {"PLANT_FIXTURE": "1"},
+                 False, {"bind": ["bin/t", "cargo"], "make": ["bin/"]}, 0, "planted\n"),
             ]
         else:
             failures.append("no bwrap: a narrow key's tests can't be held to it")
         for case, settings, stale, seen, code, recorded in cases:
             target, passed = os.path.join(work, "target"), os.path.join(work, "passed")
             shutil.rmtree(target, ignore_errors=True)
+            os.makedirs(target)
             if stale:
                 os.makedirs(os.path.join(target, "tmp", "stale-fixture"))
                 open(os.path.join(target, "tmp", "stale-fixture", "CACHEDIR.TAG"), "w").close()
             if os.path.exists(passed):
                 os.remove(passed)
+            # In the build directory, which a held test sees.
+            log = os.path.join(target, "cargo.log")
             env = {k: v for k, v in os.environ.items()
                    if k not in ("DAEDALUS_TEST_PACKAGES", "DAEDALUS_TEST_VISIBLE", "DAEDALUS_TEST_ARTIFACTS")}
             env.update(CARGO=os.path.join(work, "cargo"), CARGO_TARGET_DIR=target,
@@ -477,6 +530,12 @@ one it was compiled from, can't be read."""
                                 f"\n{done.stdout}")
             elif code and seen is not None and "ran seeing only" not in done.stdout:
                 failures.append(f"{case}: the failure doesn't say the test ran held to its key")
+            if "PLANT_FIXTURE" in settings:
+                ran = open(log).read() if os.path.exists(log) else ""
+                # Held to its key, the build was answered and only the other run reached cargo.
+                want = ("planted-fixture" not in ran) if seen is not None else ("planted-fixture" in ran)
+                if not want or "planted-other" not in ran:
+                    failures.append(f"{case}: cargo ran {ran.splitlines()}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
     for failure in failures:
@@ -484,7 +543,8 @@ one it was compiled from, can't be read."""
     if not failures:
         print("test-parallel self-test: an unlisted fixture fails the run and records nothing, a "
               "stale one is removed; a narrow key's test that reads outside it fails, named, and "
-              "records nothing, while the same read passes unsandboxed and when the key holds it")
+              "records nothing, while the same read passes unsandboxed and when the key holds it; "
+              "held to its key, a test's build of a fixture is answered as fresh")
     return 1 if failures else 0
 
 
