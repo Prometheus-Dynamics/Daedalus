@@ -37,8 +37,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
-      # rust-toolchain.toml selects the toolchain and its components.
-      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml's pin, and no other toolchain (see the action).
+      - uses: ./.github/actions/rust-pin
       - uses: Swatinem/rust-cache@v2
         with:
           # Pull requests restore next's caches and save none: their own would only push next's
@@ -61,7 +61,8 @@ jobs:
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      # rust-toolchain.toml's pin, and no other toolchain (see the action).
+      - uses: ./.github/actions/rust-pin
       - uses: Swatinem/rust-cache@v2
         with:
           # Pull requests restore next's caches and save none: their own would only push next's
