@@ -1,0 +1,43 @@
+name: Rust toolchain (the pin in rust-toolchain.toml)
+description: >
+  Installs rust-toolchain.toml's channel with its components, makes it the default, removes every
+  other toolchain, and stops the job unless the pin is the active rustc and the only one installed.
+# Every build here uses the pin: rust-toolchain.toml overrides any default in the checkout. Yet
+# `dtolnay/rust-toolchain@stable` installed and defaulted the current stable beside it, and the
+# runner image ships a stable too, and Swatinem/rust-cache hashes every installed rustc into its key
+# ("Rust Versions"). So a stable point release or an image update moved every job's key with no
+# change here, and left a cold cache (1.100.0 -> 1.100.1: run 46058186902 found no cache at all).
+# With the pin the only toolchain, the key moves only with the pin, the lock or the manifests.
+# Steps that add targets (`rustup target add`) add them to the pin, the active toolchain.
+runs:
+  using: composite
+  steps:
+    - name: Install the pin, make it the default, remove every other toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        # rust-toolchain.toml is plain: `channel = "..."` and `components = ["...", ...]`. Read with
+        # sed, not tomllib: the Windows runner has no python3.
+        pin=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
+        components=$(sed -n 's/^components *= *\[\(.*\)\].*/\1/p' rust-toolchain.toml | tr -d '" ')
+        [ -n "$pin" ] || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+        args=(--profile minimal --no-self-update)
+        [ -z "$components" ] || args+=(--component "$components")
+        rustup toolchain install "$pin" "${args[@]}"
+        rustup default "$pin"
+        rustup toolchain list | tr -d '\r' | awk '{print $1}' | while read -r tc; do
+          case "$tc" in "$pin"-*) ;; *) rustup toolchain uninstall "$tc" ;; esac
+        done
+    - name: The active rustc is the pin, and the only toolchain installed
+      shell: bash
+      run: |
+        set -euo pipefail
+        pin=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
+        here=$(rustc -vV | tr -d '\r' | sed -n 's/^release: //p')
+        default=$(cd / && rustc -vV | tr -d '\r' | sed -n 's/^release: //p')
+        rustc -vV
+        rustup toolchain list
+        [ "$here" = "$pin" ] && [ "$default" = "$pin" ] || {
+          echo "::error::active rustc $here (default $default), rust-toolchain.toml pins $pin"; exit 1; }
+        others=$(rustup toolchain list | tr -d '\r' | awk '{print $1}' | grep -v "^$pin-" || true)
+        [ -z "$others" ] || { echo "::error::toolchains beside the pin $pin: $others"; exit 1; }
