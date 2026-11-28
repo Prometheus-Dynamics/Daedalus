@@ -74,7 +74,9 @@ removed when the run ends, red or stopped. One bind per file cost bwrap 8-10 s a
 1602 files of a package keyed by its sources, at load 90. A file is never copied: where the build
 directory is on another file system, the files are bound one by one and the run says so. Either
 way nothing can be written into the checkout but into the live directories and the build
-directory, and a file seen empty is /dev/null on top. What a package's tests read beyond the packages they build is declared in
+directory, and a file seen empty is an empty, read-only regular file of the gate's own (in the
+stage, checked to be one: one link, not the checkout's; bound one by one, one such file on each;
+never /dev/null, which a bind mounts nodev, where it can't be opened to be read). What a package's tests read beyond the packages they build is declared in
 `scripts/lane-reuse.py`: `EXTRA_READS` lists paths of the checkout (headers, a corpus, the published
 schema), which its tests see and its key holds by content; the fixtures its tests build (the
 names in `scripts/test-parallel.py` `FIXTURES` its sources give) are built before the keys, and
