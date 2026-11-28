@@ -12,6 +12,9 @@ export DAEDALUS_WORK="$work" DAEDALUS_LOGS="$work/logs"
 export CARGO_TARGET_DIR="$work/target/$checkout"
 export TMPDIR="$work/cache/tmp"
 export DAEDALUS_TARGET_SEED="$work/cache/seed"
+# The gate's own cargo homes (scripts/dev/cargo-home.sh, which land.sh and reseed.sh run first):
+# offline, filled before a gate. Unset here, so a build outside the lander keeps ~/.cargo.
+export DAEDALUS_CARGO_HOME="$work/cache/cargo-home"
 export DAEDALUS_VVL_DIR="$work/cache/vvl/$("$(git rev-parse --show-toplevel)/scripts/dev/vvl-key.sh")/x86_64"
 # The gate's cores: the rest of the machine is other sessions'.
 export LAND_CPUS="${LAND_CPUS:-6-18}" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-13}"

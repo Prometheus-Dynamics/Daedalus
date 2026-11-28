@@ -10,6 +10,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 source scripts/dev/env.sh
+# The homes the gate builds in (scripts/dev/cargo-home.sh): the seed's key holds their paths.
+export CARGO_HOME="$DAEDALUS_CARGO_HOME" GATE_LANE_HOMES="$DAEDALUS_CARGO_HOME.lanes"
 landing() { systemctl --user list-units 'dd-land-*' --state=active --no-legend | command grep -q .; }
 seed="$DAEDALUS_TARGET_SEED"
 size_file="$seed.one-gate"
@@ -24,6 +26,9 @@ if scripts/seed-target.py stale "$seed"; then
   exit 0
 fi
 while landing; do sleep 60; done
+# In the gate's own cargo homes, as land.sh gates: a dependency's source path is in what it builds.
+scripts/dev/cargo-home.sh host docs chips ship beside cross scripts > "$DAEDALUS_LOGS/fetch-reseed.log" 2>&1 \
+  || { echo "reseed: the fetch failed; the seed is unchanged (log $DAEDALUS_LOGS/fetch-reseed.log)"; exit 1; }
 rm -rf "$CARGO_TARGET_DIR"
 unset DAEDALUS_TARGET_SEED
 # Every step builds everything: a seed is what one whole run built from empty
