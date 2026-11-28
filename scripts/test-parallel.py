@@ -56,6 +56,8 @@ before the run (a restored cache's, of a fixture since renamed) is removed first
 Binaries that link trybuild run one after another: trybuild builds every crate's compile tests in
 one shared directory under the same binary names, so two at once overwrite each other's builds.
 """
+import contextlib
+import io
 import json
 import os
 import re
@@ -410,6 +412,43 @@ def shares_trybuild(message):
         return b"trybuild" in file.read()
 
 
+def reaching_trybuild(meta):
+    """The packages, of cargo's metadata `meta`, whose test binaries can link trybuild: trybuild
+    is in what their tests build (their dependencies of every kind, then those's own, but not
+    their dev-dependencies). Only their binaries are read for it (`shares_trybuild`): every test
+    binary is 3.5 GiB, read in 15 s at load 124 to find 7."""
+    names = {p["id"]: p["name"] for p in meta["packages"]}
+    edges = {n["id"]: [(d["pkg"], {k["kind"] for k in d["dep_kinds"]}) for d in n["deps"]]
+             for n in meta["resolve"]["nodes"]}
+    reaching = set()
+    for package in edges:
+        seen, todo = set(), [d for d, _ in edges[package]]
+        while todo:
+            current = todo.pop()
+            if current not in seen:
+                seen.add(current)
+                todo.extend(d for d, kinds in edges.get(current, []) if kinds != {"dev"})
+        if any(names.get(i) == "trybuild" for i in seen):
+            reaching.add(package)
+    return reaching
+
+
+def trybuild_candidates(found, cargo=None):
+    """The binaries of `found` that may link trybuild, by cargo metadata (`reaching_trybuild`). If
+    cargo metadata fails, every binary, and the run says so: none is ever left unread."""
+    done = subprocess.run([cargo or CARGO, "metadata", "--locked", "--format-version", "1"], cwd=ROOT,
+                          capture_output=True, text=True)
+    try:
+        reaching = reaching_trybuild(json.loads(done.stdout)) if done.returncode == 0 else None
+    except (ValueError, KeyError):
+        reaching = None
+    if reaching is None:
+        print(f"  test: cargo metadata failed (exit {done.returncode}): every binary is read for "
+              f"trybuild\n{done.stderr.strip()}")
+        return list(found)
+    return [m for m in found if m["package_id"] in reaching]
+
+
 def label(message):
     kinds = message["target"]["kind"]
     kind = "unittests" if any(k in ("lib", "rlib", "proc-macro", "cdylib", "staticlib") for k in kinds) else kinds[0]
@@ -481,7 +520,7 @@ def main():
         made.append(tempfile.mkdtemp(prefix=f".daedalus-stages.{os.getpid()}.", dir=stage_dir()))
         atexit.register(shutil.rmtree, made[-1], True)
         stages = Stages(made[-1])
-    shared = [m for m in found if shares_trybuild(m)]
+    shared = [m for m in trybuild_candidates(found) if shares_trybuild(m)]
     jobs = [[m] for m in found if m not in shared] + ([shared] if shared else [])
     jobs.sort(key=lambda job: -sum(last.get(label(m), [0.0])[0] for m in job))
     if stages is not None:
@@ -645,6 +684,30 @@ def main():
               + ", ".join(name for name, _ in failed))
         return 1
     return 0
+
+
+def trybuild_plants():
+    """Which binaries are read for trybuild: a package that reaches it only through a helper it
+    builds is read, one that has it only as a helper's dev-dependency is not, nor one with no path
+    to it; with cargo metadata failing, every binary is read, said."""
+    failures = []
+    node = lambda i, *deps: {"id": i, "deps": [{"pkg": d, "dep_kinds": [{"kind": k}]} for d, k in deps]}
+    meta = {"packages": [{"id": i, "name": i} for i in ("direct", "helper", "through", "dev-only",
+                                                         "tested", "none", "trybuild")],
+            "resolve": {"nodes": [node("direct", ("trybuild", "dev")), node("helper", ("trybuild", None)),
+                                  node("through", ("helper", "dev")), node("tested", ("trybuild", "dev")),
+                                  node("dev-only", ("tested", "dev")), node("none"), node("trybuild")]}}
+    got = reaching_trybuild(meta)
+    want = {"direct", "helper", "through", "tested"}
+    if got != want:
+        failures.append(f"trybuild reached by {sorted(got)}, not {sorted(want)}")
+    found = [{"package_id": "direct"}, {"package_id": "none"}]
+    said = io.StringIO()
+    with contextlib.redirect_stdout(said):
+        read = trybuild_candidates(found, cargo="false")
+    if read != found or "every binary is read for trybuild" not in said.getvalue():
+        failures.append(f"with cargo metadata failing, read {read}, said {said.getvalue()!r}")
+    return failures
 
 
 def stage_plants(work):
@@ -926,6 +989,7 @@ one it was compiled from, can't be read."""
                 if not want or "planted-other" not in ran:
                     failures.append(f"{case}: cargo ran {ran.splitlines()}")
         failures += stage_plants(work)
+        failures += trybuild_plants()
     finally:
         os.chmod(parent, 0o755)
         shutil.rmtree(parent, ignore_errors=True)
