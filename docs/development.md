@@ -74,7 +74,9 @@ that sees it, checked to be exactly the key's files (the same inodes) before it 
 removed when the run ends, red or stopped. One bind per file cost bwrap 7 s a binary for the
 1263 paths of a package keyed by its sources (0.06 s staged). A file is never copied: with nowhere
 on the checkout's file system to lay them out, the files are bound one by one, and the run's
-summary line says how many sets were. Either
+summary line says how many sets were. The step also says each of its phases in wall and CPU
+seconds (`phases:` the build, the fixtures, the keys, the layout, the run; then `after the run:` the
+reads check and the records), so a slow step shows where its time went. Either
 way nothing can be written into the checkout but into the live directories and the build
 directory, and a file seen empty is an empty, read-only regular file of the gate's own (in the
 stage, checked to be one: one link, not the checkout's; bound one by one, one such file on each;

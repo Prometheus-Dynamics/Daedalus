@@ -155,6 +155,27 @@ def unlisted_fixtures():
                   and os.path.exists(os.path.join(TEST_TMP, e, "CACHEDIR.TAG")))
 
 
+class Phases:
+    """The step's phases, each in wall seconds and CPU seconds: this process's and the children it
+    waited for (cargo's build, lane-reuse.py's keys, the binaries)."""
+
+    def __init__(self):
+        self.done, self.mark = [], self.now()
+
+    @staticmethod
+    def now():
+        spent = os.times()
+        return time.monotonic(), spent[0] + spent[1] + spent[2] + spent[3]
+
+    def end(self, name):
+        wall, cpu = self.now()
+        self.done.append((name, wall - self.mark[0], cpu - self.mark[1]))
+        self.mark = (wall, cpu)
+
+    def line(self):
+        return ", ".join(f"{name} {wall:.1f} s {cpu:.1f} CPU-s" for name, wall, cpu in self.done)
+
+
 def binaries(args):
     """Each test binary cargo would run, with its package's manifest."""
     out = subprocess.run(
@@ -398,7 +419,9 @@ def label(message):
 
 def main():
     args = ["--locked", "--workspace", "--all-targets", *sys.argv[1:]]
+    phases = Phases()
     found = binaries(args)
+    phases.end("build")
     rustc = lambda *words: subprocess.run(["rustc", *words], capture_output=True, text=True,
                                           check=True).stdout.strip()
     host = next(l.split()[1] for l in rustc("-vV").splitlines() if l.startswith("host:"))
@@ -428,9 +451,11 @@ def main():
         if broken:
             return fixtures_failed(broken)
         print(f"  {len(FIXTURES)} fixtures built in {time.monotonic() - started:.0f} s, before the keys")
+        phases.end("fixtures")
         # Each package keyed by what was just built: only those that didn't pass before on it run.
         subprocess.run([sys.executable, "-I", os.path.join(ROOT, "scripts", "lane-reuse.py"), "plan",
                         plan, os.environ["DAEDALUS_TEST_ARTIFACTS"], "--", *sys.argv[1:]], check=True)
+        phases.end("keys")
         with open(plan) as file:
             only = " ".join(l.split("\t")[0] for l in file if l.rstrip("\n").endswith("\trun"))
         visible = plan + ".visible"
@@ -472,6 +497,7 @@ def main():
         print(f"  {len(sets)} sets of files: {len(sets) - alone} laid out, {alone} bound one by one"
               f"{' (no hard links into ' + stages.under + ')' if alone else ''}, in "
               f"{time.monotonic() - started:.0f} s, before the run")
+        phases.end("layout")
         if alone and os.environ.get("DAEDALUS_TEST_STAGES"):
             # For the gate's last line (scripts/gate.sh): a set bound one by one costs seconds a
             # binary, and is said there too.
@@ -567,6 +593,7 @@ def main():
         if broken:
             return fixtures_failed(broken)
         print(f"  {len(FIXTURES)} fixtures built in {time.monotonic() - started:.0f} s")
+        phases.end("fixtures")
 
     workers = max(1, len(os.sched_getaffinity(0)))
     failed, times, spent = [], {}, 0.0
@@ -595,6 +622,8 @@ def main():
     print(f"  {len(found)} test binaries in {time.monotonic() - started:.0f} s and {spent:.0f} CPU-s,"
           f" {workers} at a time,"
           f" {len(shared)} sharing trybuild's build one after another")
+    phases.end("run")
+    print(f"  phases: {phases.line()}")
     for name, output in failed:
         print(f"\n---- {name} ----\n{output}", end="")
     # A fixture no test is named for fails the run, and which test built it isn't known: no
@@ -860,6 +889,10 @@ one it was compiled from, can't be read."""
                 failures.append(f"{case}: a key's files laid out for the run are still there")
             if "PLANT_TWO" in settings and "2 sets of files: 2 laid out" not in done.stdout:
                 failures.append(f"{case}: the two sets of files weren't laid out before the run")
+            if "PLANT_TWO" in settings and not re.search(
+                    r"phases: build [\d.]+ s [\d.]+ CPU-s, (.+, )?layout [\d.]+ s [\d.]+ CPU-s, .*run [\d.]+ s "
+                    r"[\d.]+ CPU-s$", done.stdout, re.M):
+                failures.append(f"{case}: the phases (build, layout, run) aren't said, each in s and CPU-s")
             if "PLANT_LEFTOVER" in settings:
                 if os.path.exists(dead) or "stages left by PID 4194999, which is gone" not in done.stdout:
                     failures.append(f"{case}: a dead run's stages were left, or not named")

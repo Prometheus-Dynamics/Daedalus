@@ -15,13 +15,30 @@ if [[ -z "${GATE_LANE_STATE_DIR:-}" ]]; then
   exec scripts/test-parallel.py "$@"
 fi
 state="$GATE_LANE_STATE_DIR/test"
-rm -f "$state" "$state.visible" "$state.passed" "$state.artifacts" "$GATE_LANE_STATE_DIR/stages.status"
+rm -f "$state" "$state.visible" "$state.passed" "$state.artifacts" "$state.times" "$GATE_LANE_STATE_DIR/stages.status"
 status=0
 # A key's files bound one by one, not laid out (scripts/test-parallel.py stage_home), are said on
 # the gate's last line as stages=K-of-N-bound-one-by-one.
 DAEDALUS_TEST_PLAN="$state" DAEDALUS_TEST_PASSED="$state.passed" \
   DAEDALUS_TEST_ARTIFACTS="$state.artifacts" DAEDALUS_TEST_STAGES="$GATE_LANE_STATE_DIR/stages.status" \
   scripts/test-parallel.py "$@" || status=$?
+# What runs after the binaries (the reads check, the records, the status), in wall and CPU seconds:
+# the CPU of the children this shell waited for, by `times` into a file (a $(...) is a subshell,
+# with no children), as scripts/gate.sh counts it.
+cpu_seen=0
+children_cpu() {
+  times > "$state.times"
+  cpu_seen="$(awk 'NR == 2 { for (i = 1; i <= 2; i++) { split($i, t, "m"); s += t[1] * 60 + t[2] } }
+    END { printf "%.1f", s }' "$state.times")"
+}
+children_cpu
+after_wall=$EPOCHREALTIME after_cpu=$cpu_seen
+after() {
+  children_cpu
+  echo "  after the run: $(awk -v a="$after_wall" -v b="$EPOCHREALTIME" -v c="$after_cpu" -v d="$cpu_seen" \
+    'BEGIN { printf "%.1f s %.1f CPU-s", b - a, d - c }')"
+}
+trap after EXIT
 if [[ ! -s "$state" ]]; then
   echo "test: no package was keyed: the build failed before the plan" >&2
   exit 1
