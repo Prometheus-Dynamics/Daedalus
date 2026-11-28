@@ -26,9 +26,12 @@ plant() { # TREE GATE_SH: a tree of stub steps around the given gate.sh and the 
   printf '#!/usr/bin/env bash\nexit 0\n' > "$tree/scripts/fixture-locks.sh"
   printf '#!/usr/bin/env bash\nexit 1\n' > "$tree/scripts/lavapipe-icd.sh"
   for name in $(sed -nE '/^(lanes|trailing)=/d; s/^[a-z]+=\(([a-z -]+)\)$/\1/p' "$tree/scripts/gate.sh"); do
-    printf '#!/usr/bin/env bash\n# bound: 30 s (planted)\ntouch "%s/ran-%s"\nexit "${FAIL_%s:-0}"\n' \
-      "$tree" "$name" "${name//-/_}" > "$tree/scripts/ci.d/$name.sh"
+    printf '#!/usr/bin/env bash\n# bound: 30 s (planted)\ntouch "%s/ran-%s"\n[ -z "${FAIL_%s:-}" ] || echo "planted %s: red"\nexit "${FAIL_%s:-0}"\n' \
+      "$tree" "$name" "${name//-/_}" "$name" "${name//-/_}" > "$tree/scripts/ci.d/$name.sh"
   done
+  # tools beside the scripts lane's first step: format waits for tools to have started.
+  printf '[ -z "${PLANT_BESIDE:-}" ] || { for _ in $(seq 100); do [ -e "%s/ran-tools" ] && break; sleep 0.1; done; [ -e "%s/ran-tools" ] || { echo "planted format: tools never started"; exit 1; }; }\n' \
+    "$tree" "$tree" | sed -i '2r /dev/stdin' "$tree/scripts/ci.d/format.sh"
   # The budget table left to CI, as testing/crates/budget-harness/check.py leaves it.
   printf '[ -z "${PLANT_CI_ONLY:-}" ] || echo "not-run(ci-only:release+callgrind+sizes)" > "$GATE_LANE_STATE_DIR/budgets.status"\n' \
     | sed -i '2r /dev/stdin' "$tree/scripts/ci.d/budgets.sh"
@@ -68,7 +71,7 @@ check() { # LABEL GATE_SH EXPECT_ALL_CAUGHT
   local tree="$work/$1" caught=1 got steps
   plant "$tree" "$2"
   steps=$(( $(ls "$tree/scripts/ci.d" | wc -l) + 3 ))
-  for spec in "pass||" "fail|host|test|FAIL_clippy=1" "fail|scripts||FAIL_TRAILING=1" \
+  for spec in "pass||" "fail|host|test|FAIL_clippy=1" "fail|scripts||FAIL_TRAILING=1" "fail|scripts||FAIL_tools=1" \
               "fail|host||FAIL_vvl_wgpu=1" "fail|ship|smoke|FAIL_packaging=1"; do
     IFS='|' read -r expect lane not_ran setting <<< "$spec"
     got="$(case_in "$tree" "$expect" "$lane" "$not_ran" ${setting:+"$setting"})"
@@ -109,14 +112,37 @@ else
   echo "gate self-test: a budget table left to CI and a reused step are named on the Gate-Lanes line; a gate that drops them is caught"
 fi
 
+# tools runs beside the scripts lane's other steps (scripts/gate.sh scripts_lane): it has started
+# before format ends, and when it is red the lane and the gate fail with its output shown.
+tools_beside() { # LABEL GATE_SH: 1 when both hold
+  local tree="$work/beside-$1" out code=0
+  plant "$tree" "$2"
+  rm -f "$tree"/ran-*
+  out="$(cd "$tree" && env -u DAEDALUS_TARGET_SEED -u GATE_LANE_STATE_DIR CARGO_TARGET_DIR="$tree/target" \
+    FAIL_tools=1 bash scripts/gate.sh 2>&1)" || code=$?
+  if [[ $code == 0 ]] || ! grep -q '^gate: failed in lane: .*\bscripts\b' <<< "$out" ||
+     ! grep -qx 'planted tools: red' <<< "$out" || grep -q '^Gate-Lanes:' <<< "$out"; then
+    echo 0; return
+  fi
+  rm -f "$tree"/ran-*
+  out="$(cd "$tree" && env -u DAEDALUS_TARGET_SEED -u GATE_LANE_STATE_DIR CARGO_TARGET_DIR="$tree/target" \
+    PLANT_BESIDE=1 bash scripts/gate.sh 2>&1)" && grep -q '^Gate-Lanes: host=passed' <<< "$out" && echo 1 || echo 0
+}
+if [[ "$(tools_beside real scripts/gate.sh)" == 1 ]]; then
+  echo "gate self-test: tools runs beside the scripts lane's other steps; a red tools fails the lane and the gate, its output shown"
+else
+  echo "gate self-test: tools did not run beside the scripts lane's steps, or a red tools did not fail the gate with its output shown" >&2
+  failures=1
+fi
+
 # Each way of losing a failure, planted in a copy of the gate: the cases above must see it.
-mutant() { # LABEL SED_EXPR
+mutant() { # LABEL SED_EXPR [CHECK]: CHECK prints 1 when every case passed (default: check)
   local copy="$work/$1.sh"
   sed -E "$2" scripts/gate.sh > "$copy"
   if cmp -s "$copy" scripts/gate.sh; then
     echo "gate self-test: the planted bug '$1' no longer applies to scripts/gate.sh: update it" >&2
     failures=1
-  elif [[ "$(check "$1" "$copy" 0)" == 1 ]]; then
+  elif [[ "$(if [[ -n ${3:-} ]]; then "$3" "$1" "$copy"; else check "$1" "$copy" 0; fi)" == 1 ]]; then
     echo "gate self-test: a gate that $1 passed every case: the cases have no teeth" >&2
     failures=1
   else
@@ -126,4 +152,7 @@ mutant() { # LABEL SED_EXPR
 mutant "ignores a lane's status" 's/wait "\$\{pids\[\$i\]\}" \|\| failed\+=\("\$\{lanes\[\$i\]\}"\)/wait "${pids[$i]}" || true/'
 mutant "keeps only a lane's last step's status" 's/scripts\/ci.sh "\$\{!steps\}"/for s in "${!steps}"; do scripts\/ci.sh "$s"; done/'
 mutant "drops a trailing script's status" 's/"\$script" \|\| status=1/"$script" || true/'
+mutant "drops tools' status" 's/wait "\$tools_pid" \|\| status=1/wait "$tools_pid" || true/'
+mutant "hides tools' output" '/^  cat "\$logs\/scripts-tools"$/d' tools_beside
+mutant "runs tools after the rest" 's/^  scripts\/ci.sh tools > "\$logs\/scripts-tools" 2>&1 &$/  :/; s/^  wait "\$tools_pid" \|\| status=1$/  scripts\/ci.sh tools > "$logs\/scripts-tools" 2>\&1 || status=1/' tools_beside
 exit $failures
