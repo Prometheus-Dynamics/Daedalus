@@ -227,9 +227,49 @@ OUTSIDE = {}
 RACY = 2_000_000_000
 
 
+# Each directory's real path, resolved once within one read of the tree (`resolved`): a file's real
+# path is then its directory's joined to its name, one lstat, where os.path.realpath takes one per
+# component (the self-test's keys: 29 659 calls, 292 408 lstats). The directories are forgotten as
+# the outermost read starts and as it ends, and by Keys.reread: anything that creates, removes or
+# moves a path does it between two reads, so no read sees a directory resolved before it changed.
+# Outside a read, real_path is os.path.realpath.
+REAL_DIRS = {}
+READING = [0]
+
+
+def resolved(method):
+    """`method` is one read of the tree: within it, real_path resolves each directory once."""
+    @functools.wraps(method)
+    def read(*args, **kwargs):
+        if not READING[0]:
+            REAL_DIRS.clear()
+        READING[0] += 1
+        try:
+            return method(*args, **kwargs)
+        finally:
+            READING[0] -= 1
+            if not READING[0]:
+                REAL_DIRS.clear()
+    return read
+
+
+def real_path(path):
+    """os.path.realpath(path), within one read of the tree (`resolved`) each directory resolved
+    once: realpath(directory) joined to the name is the path's real path unless the name is itself
+    a link (resolved then), or `.` or `..` (the path resolved whole)."""
+    head, tail = os.path.split(path)
+    if not READING[0] or tail in ("", ".", ".."):
+        return os.path.realpath(path)
+    real = REAL_DIRS.get(head)
+    if real is None:
+        real = REAL_DIRS[head] = os.path.realpath(head)
+    joined = os.path.join(real, tail)
+    return os.path.realpath(joined) if os.path.islink(joined) else joined
+
+
 def file_digest(path):
     try:
-        real = os.path.realpath(path)
+        real = real_path(path)
         if real.startswith(ROOT + os.sep):
             with open(path, "rb") as file:
                 return digest(file.read())
@@ -363,6 +403,7 @@ class Keys:
         """Forget what was read of the files and the environment: the self-test changes them."""
         self.read_lock()
         self.digests, self.cache, self.loaded = {}, {}, {}
+        REAL_DIRS.clear()
 
     def file(self, name):
         if name not in self.digests:
@@ -597,6 +638,7 @@ class Keys:
                 if os.path.isfile(os.path.join(out, n)) and not n.endswith(".d") and not n.startswith(".")]
         return self.cache[("fixture", fixture)]
 
+    @resolved
     def reads(self, artifacts):
         """Each narrowly keyed package's unit that compiled from a file of the checkout its key
         doesn't hold, from rustc's dep-info beside the unit: (package, file)."""
@@ -625,7 +667,7 @@ class Keys:
                 paths = [os.path.join(home, p) for p in build_script_reads(message)]
             dirs = tuple(a for a in allowed if a.endswith("/"))
             for path in paths:
-                real = os.path.realpath(path)
+                real = real_path(path)
                 if not real.startswith(root) or real.startswith(target + os.sep):
                     continue
                 rel = real[len(root):]
@@ -633,6 +675,7 @@ class Keys:
                     found.append((name, rel))
         return sorted(set(found))
 
+    @resolved
     def key(self, name, units, args=()):
         return digest(json.dumps(self.inputs(name, units, args)).encode())
 
@@ -678,6 +721,7 @@ class Keys:
             self.loaded.update(zip(todo, pool.map(loaded_digest, todo)))
         return [self.loaded[p] for p in paths]
 
+    @resolved
     def unit_sources(self, message):
         """The files of the checkout a unit compiled from, by rustc's dep-info, or a build
         script's run said it read (a directory ends in /)."""
@@ -691,7 +735,7 @@ class Keys:
                 paths = [os.path.join(home, p) for p in build_script_reads(message)]
             found = set()
             for path in paths:
-                real = os.path.realpath(path)
+                real = real_path(path)
                 if real.startswith(root):
                     found.add(real[len(root):] + ("/" if os.path.isdir(real) else ""))
             message["sources"] = found
@@ -953,6 +997,40 @@ def self_test():
     failures = []
     try:
         keys = Keys()
+        # real_path against os.path.realpath, each case one read of the tree: through a linked
+        # directory, a linked file, a `..` after a link, a `.`, a path that isn't there, a trailing
+        # `..`; a directory link retargeted between two reads, with nothing forgotten by hand, is
+        # seen at its new target; and one retargeted within a read is seen after Keys.reread.
+        links = os.path.join(work, "links")
+        os.makedirs(os.path.join(links, "real", "deep"))
+        os.makedirs(os.path.join(links, "other"))
+        for name in ("real/file", "real/deep/file", "other/file", "outside"):
+            open(os.path.join(links, name), "w").close()
+        os.symlink("real", os.path.join(links, "dir"))
+        os.symlink("../outside", os.path.join(links, "real", "file-link"))
+        asked = ["dir/file", "dir/deep/file", "dir/file-link", "dir/deep/../file", "dir/./file",
+                 "dir/absent", "dir", "real/file-link", "real/deep/.."]
+
+        def retarget(to):
+            os.remove(os.path.join(links, "dir"))
+            os.symlink(to, os.path.join(links, "dir"))
+
+        @resolved
+        def compare(case, before=None):
+            if before:
+                [real_path(os.path.join(links, name)) for name in asked]
+                before()
+            for name in asked:
+                path = os.path.join(links, name)
+                if real_path(path) != os.path.realpath(path):
+                    failures.append(f"real_path({name}), {case}: {real_path(path)}, "
+                                    f"not {os.path.realpath(path)}")
+
+        compare("as made")
+        retarget("other")
+        compare("retargeted between two reads")
+        compare("retargeted within a read, then reread",
+                lambda: (retarget("real"), keys.reread()))
         for name in keys.listed:
             os.makedirs(os.path.dirname(os.path.join(copy, name)), exist_ok=True)
             shutil.copy2(os.path.join(ROOT, name), os.path.join(copy, name))
