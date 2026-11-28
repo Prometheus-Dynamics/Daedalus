@@ -58,6 +58,8 @@ scripts/fixture-locks.sh
 logs="$(mktemp -d)"
 # What the lanes reused (scripts/lane-reuse.py): the test step keeps its plan here.
 export GATE_LANE_STATE_DIR="$logs/state"
+# The gate's PID: a keyed value that holds it is new on every run (scripts/lane-reuse.py per_run).
+export GATE_PID=$$
 mkdir -p "$GATE_LANE_STATE_DIR"
 # Each lane runs in a process group of its own, whose id is the lane's pid, captured as it starts.
 # A gate that ends early (a signal, a timeout) stops the lanes it started that are still running,

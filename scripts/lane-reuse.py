@@ -183,12 +183,41 @@ TARGET_READS = {
 ENV = re.compile(r"^(CARGO_|RUST|CC|CXX|AR(_|$)|CFLAGS|CXXFLAGS|LDFLAGS|TARGET_|HOST_|ZIG|PKG_CONFIG|"
                  r"SOURCE_DATE_EPOCH|DAEDALUS_|VK_|MESA_|WGPU_|LD_LIBRARY_PATH$|PATH$|HOME$)")
 # DAEDALUS_BOUND_STARTED is the path of a step's start mark, new on every run (scripts/bounded.py);
-# DAEDALUS_TEST_ARTIFACTS, DAEDALUS_TEST_VISIBLE, DAEDALUS_TEST_PLAN and DAEDALUS_TEST_PASSED are
-# where a run keeps its own records.
+# DAEDALUS_TEST_ARTIFACTS, DAEDALUS_TEST_VISIBLE, DAEDALUS_TEST_PLAN, DAEDALUS_TEST_PASSED and
+# DAEDALUS_TEST_STAGES are where a run keeps its own records. A keyed variable whose value a run
+# makes anew would move every key on every run (DAEDALUS_TEST_STAGES did, from #392 to its fix: no
+# package was reused): `common` refuses one, named (`per_run`).
 NOT_IN_KEY = {"CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "DAEDALUS_WORK", "DAEDALUS_LOGS",
               "DAEDALUS_TARGET_SEED", "DAEDALUS_VVL_DIR", "DAEDALUS_TEST_PACKAGES",
               "DAEDALUS_BOUND_STARTED", "DAEDALUS_TEST_ARTIFACTS", "DAEDALUS_TEST_VISIBLE",
-              "DAEDALUS_TEST_PLAN", "DAEDALUS_TEST_PASSED"}
+              "DAEDALUS_TEST_PLAN", "DAEDALUS_TEST_PASSED", "DAEDALUS_TEST_STAGES"}
+# A name mktemp or tempfile made: mktemp's tmp.XXXXXXXXXX, tempfile's tmpXXXXXXXX, or a prefix, a dot
+# and eight random characters with a digit or `_` among them (a word rarely has one).
+RANDOM_NAME = re.compile(r"(?:^|/)(?:tmp\.[A-Za-z0-9]{10}|tmp[a-z0-9_]{8}|[\w.-]+\.(?=[a-z0-9_]*[0-9_])[a-z0-9_]{8})"
+                         r"(?:/|$)")
+
+
+def per_run(env):
+    """The keyed variables, of `env`'s (name, value), whose value a gate run makes anew, as (name,
+    why): a path in the gate's state directory (GATE_LANE_STATE_DIR) or under TMPDIR, the gate's
+    PID (GATE_PID), or a name mktemp or tempfile made. Only in a gate, the one place keys are kept."""
+    state = os.environ.get("GATE_LANE_STATE_DIR")
+    if not state:
+        return []
+    tmp, pid = os.environ.get("TMPDIR", "").rstrip("/"), os.environ.get("GATE_PID")
+    found = []
+    for name, value in env:
+        if state in value:
+            found.append((name, f"a path in the gate's state directory {state}"))
+        elif tmp and tmp + "/" in value:
+            found.append((name, f"a path under TMPDIR {tmp}"))
+        elif pid and re.search(rf"(?<![0-9]){re.escape(pid)}(?![0-9])", value):
+            found.append((name, f"the gate's PID {pid}"))
+        elif RANDOM_NAME.search(value):
+            found.append((name, "a name mktemp or tempfile made"))
+    return found
+
+
 # Programs a test may start that the machine has, not the repository.
 PROGRAMS = ("sh", "bash", "cc", "c++", "gcc", "g++", "clang", "ld", "python3", "node", "java",
             "javac", "cmake", "make", "pkg-config", "zig", "valgrind")
@@ -551,6 +580,11 @@ class Keys:
                 inputs.append((" ".join(words), digest(version(words).encode())))
             env = sorted((k, v.replace(self.root, "<root>")) for k, v in os.environ.items()
                          if ENV.match(k) and k not in NOT_IN_KEY and not k.startswith("GATE_"))
+            fresh = per_run(env)
+            if fresh:
+                sys.exit("lane-reuse.py: " + "; ".join(f"{name} holds {why}" for name, why in fresh)
+                         + ": new on every run, so every key would move on every run. Add it to "
+                         "NOT_IN_KEY, or key what it says rather than where")
             inputs.append(("environment", digest(json.dumps(env).encode())))
             programs = []
             for name in PROGRAMS:
@@ -1088,6 +1122,8 @@ def self_test():
 
         def key(name, extra=None, fresh=True):
             saved = dict(os.environ)
+            # Not a gate run unless a case says so: the self-test's own shims are under TMPDIR.
+            os.environ.pop("GATE_LANE_STATE_DIR", None)
             os.environ.update(extra or {})
             try:
                 copied.reread()
@@ -1216,6 +1252,8 @@ def self_test():
             (package, "a program a test starts", True, nothing,
              {"PATH": shims + os.pathsep + os.environ.get("PATH", "")}),
             (package, "the gate's own settings", False, nothing, {"GATE_X": "1", "DAEDALUS_LOGS": "/x"}),
+            (package, "where a run says its sets bound one by one", False, nothing,
+             {"DAEDALUS_TEST_STAGES": "/x/state/stages.status"}),
             (package, "a note in docs/", False, lambda: touch("docs/development.md", "\nchanged\n"), None),
             (package, "TODO.md", False, lambda: touch("TODO.md", "\nchanged\n"), None),
             (package, f"a package it doesn't build ({apart})", False, lambda: touch(rs(apart)), None),
@@ -1224,6 +1262,28 @@ def self_test():
             (whole, "TODO.md, for a package that reads the tree", False,
              lambda: touch("TODO.md", "\nchanged\n"), None),
         ]
+        # In a gate, a keyed variable whose value a run makes anew is refused, named, one plant for
+        # each way: a path in the state directory, under TMPDIR, the gate's PID, a mktemp-made
+        # name. DAEDALUS_TEST_STAGES in the state directory is not keyed, and refused nothing.
+        tmp = os.environ.get("TMPDIR", "/tmp").rstrip("/")
+        gate = {"GATE_LANE_STATE_DIR": "/x/state", "GATE_PID": "4194999", "TMPDIR": tmp}
+        for label, value, why in [
+                ("a path in the state directory", "/x/state/f", "the gate's state directory"),
+                ("a path under TMPDIR", f"{tmp}/planted", "under TMPDIR"),
+                ("the gate's PID", "/x/run-4194999/f", "the gate's PID"),
+                ("a mktemp-made name", "/x/tmp.Ab3dE5gH9k/f", "mktemp or tempfile"),
+                ("DAEDALUS_TEST_STAGES in the state directory", None, None)]:
+            extra = {"DAEDALUS_PLANTED": value} if value else {"DAEDALUS_TEST_STAGES": "/x/state/stages.status"}
+            try:
+                key(package, {**gate, **extra})
+                said = None
+            except SystemExit as stop:
+                said = str(stop)
+            right = said is None if why is None else bool(said and "DAEDALUS_PLANTED" in said and why in said)
+            if not right:
+                failures.append(f"{label}: {'refused: ' + said if said else 'keyed, not refused'}")
+            else:
+                print(f"    {label}: {'not keyed' if why is None else 'refused, named'}")
         # Every path the runners and judges name outside the packages is keyed or said not to be.
         for script in RUNNERS + JUDGES:
             with open(os.path.join(ROOT, script), errors="replace") as file:
