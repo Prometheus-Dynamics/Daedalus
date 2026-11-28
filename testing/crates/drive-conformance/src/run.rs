@@ -530,23 +530,44 @@ mod tests {
         );
     }
 
-    /// Waits for the process whose pid `file` holds to end, so the test leaves nothing running.
+    /// The pid the driver's child wrote to `file`.
     #[cfg(unix)]
-    fn wait_for_end(file: &Path) {
+    fn read_pid(file: &Path) -> u32 {
         let deadline = Instant::now() + Duration::from_secs(30);
-        let pid = loop {
+        loop {
             if let Ok(text) = std::fs::read_to_string(file)
                 && let Ok(pid) = text.trim().parse::<u32>()
             {
-                break pid;
+                return pid;
             }
             assert!(Instant::now() < deadline, "no pid in {}", file.display());
             std::thread::sleep(Duration::from_millis(20));
-        };
-        let proc = PathBuf::from(format!("/proc/{pid}"));
-        while proc.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    /// Whether process `pid` runs: its /proc entry is there and it isn't a zombie.
+    #[cfg(unix)]
+    fn alive(pid: u32) -> bool {
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+            stat.rsplit_once(')')
+                .and_then(|(_, rest)| rest.split_whitespace().next())
+                .is_some_and(|state| state != "Z" && state != "X")
+        })
+    }
+
+    /// Stops the driver's child, by the pid it wrote itself, and waits for it to be gone, so the
+    /// test leaves nothing running and waits out none of its sleep.
+    #[cfg(unix)]
+    fn stop(pid: u32) {
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !alive(pid),
+            "the driver's child {pid} still runs after it was stopped"
+        );
     }
 
     #[cfg(unix)]
@@ -565,13 +586,20 @@ mod tests {
         let started = Instant::now();
         let result = run_child(&cmd, Vec::new(), "");
         let took = started.elapsed();
-        wait_for_end(&pidfile);
+        // When the run returned, the child holding the outputs still ran: the run didn't wait for it.
+        let pid = read_pid(&pidfile);
+        let running = alive(pid);
+        stop(pid);
         let _ = std::fs::remove_dir_all(&dir);
-        let error = result.expect_err("an output left open must fail the run");
         assert!(
             took < Duration::from_secs(9),
             "it waited {took:?} for the pipe"
         );
+        assert!(
+            running,
+            "the driver's child {pid} had ended when the run returned"
+        );
+        let error = result.expect_err("an output left open must fail the run");
         assert!(error.contains("stdout"), "{error}");
         assert!(error.contains("partial"), "{error}");
         assert!(error.contains("noted"), "{error}");
