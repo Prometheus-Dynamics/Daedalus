@@ -15,10 +15,13 @@ if [[ -z "${GATE_LANE_STATE_DIR:-}" ]]; then
   exec scripts/test-parallel.py "$@"
 fi
 state="$GATE_LANE_STATE_DIR/test"
-rm -f "$state" "$state.visible" "$state.passed" "$state.artifacts"
+rm -f "$state" "$state.visible" "$state.passed" "$state.artifacts" "$GATE_LANE_STATE_DIR/stages.status"
 status=0
+# A key's files bound one by one, not laid out (scripts/test-parallel.py stage_home), are said on
+# the gate's last line as stages=K-of-N-bound-one-by-one.
 DAEDALUS_TEST_PLAN="$state" DAEDALUS_TEST_PASSED="$state.passed" \
-  DAEDALUS_TEST_ARTIFACTS="$state.artifacts" scripts/test-parallel.py "$@" || status=$?
+  DAEDALUS_TEST_ARTIFACTS="$state.artifacts" DAEDALUS_TEST_STAGES="$GATE_LANE_STATE_DIR/stages.status" \
+  scripts/test-parallel.py "$@" || status=$?
 if [[ ! -s "$state" ]]; then
   echo "test: no package was keyed: the build failed before the plan" >&2
   exit 1

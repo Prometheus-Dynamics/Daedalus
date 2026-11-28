@@ -58,6 +58,7 @@ one shared directory under the same binary names, so two at once overwrite each 
 """
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -261,6 +262,48 @@ into its live directories and the build directory.
     return argv + ["--"]
 
 
+def stage_home():
+    """Where the stages go: on the checkout's file system, where its files can be hard-linked. The
+    build directory when it is there (CI's, inside the checkout); else beside the checkout, in its
+    parent, when that is there and can be written (a build directory of its own mount); else the
+    build directory, where every set is then bound one by one, and the run says so. Never inside
+    the checkout, which steps beside this one scan."""
+    device = os.stat(ROOT).st_dev
+    for home in (TARGET, os.path.dirname(ROOT)):
+        try:
+            if os.stat(home).st_dev == device and os.access(home, os.W_OK):
+                return home
+        except OSError:
+            continue
+    return TARGET
+
+
+STAGE = re.compile(r"\.daedalus-stages\.(\d+)\.")
+
+
+def stage_dir():
+    """The directory this run's stages go in: the build directory, or beside the checkout one
+    shared by the checkouts there (.daedalus-stages), each run's named by its PID. A run's stages
+    whose PID is gone (stopped by a KILL) are removed here, and named."""
+    home = stage_home()
+    if home != TARGET:
+        home = os.path.join(home, ".daedalus-stages")
+        os.makedirs(home, exist_ok=True)
+    for name in sorted(os.listdir(home)):
+        found = STAGE.match(name)
+        if not found:
+            continue
+        try:
+            os.kill(int(found.group(1)), 0)
+        except ProcessLookupError:
+            shutil.rmtree(os.path.join(home, name), ignore_errors=True)
+            print(f"  removed {os.path.join(home, name)}: stages left by PID {found.group(1)}, "
+                  "which is gone")
+        except PermissionError:
+            pass
+    return home
+
+
 def empty_file(directory):
     """An empty read-only regular file made in `directory`, for the files a key sees empty."""
     path = os.path.join(directory, "empty")
@@ -409,9 +452,8 @@ def main():
     held_cargo = fixture_cargo(shims)
     stages, made = None, [shims]
     if visible:
-        # In the build directory, beside the checkout's files for hard links: gone however the run
-        # ends, a red or a stop.
-        made.append(tempfile.mkdtemp(prefix=".daedalus-stages.", dir=TARGET))
+        # On the checkout's file system, for hard links: gone however the run ends, a red or a stop.
+        made.append(tempfile.mkdtemp(prefix=f".daedalus-stages.{os.getpid()}.", dir=stage_dir()))
         atexit.register(shutil.rmtree, made[-1], True)
         stages = Stages(made[-1])
     shared = [m for m in found if shares_trybuild(m)]
@@ -426,8 +468,20 @@ def main():
             if seen is not None}
         with ThreadPoolExecutor(max_workers=max(1, len(sets))) as pool:
             list(pool.map(lambda seen: sandboxed(seen, stages), sets.values()))
-        print(f"  {len(sets)} sets of files laid out in {time.monotonic() - started:.0f} s, "
-              "before the run")
+        alone = sum(1 for entry in stages.made.values() if entry[1] is None)
+        print(f"  {len(sets)} sets of files: {len(sets) - alone} laid out, {alone} bound one by one"
+              f"{' (no hard links into ' + stages.under + ')' if alone else ''}, in "
+              f"{time.monotonic() - started:.0f} s, before the run")
+        if alone and os.environ.get("DAEDALUS_TEST_STAGES"):
+            # For the gate's last line (scripts/gate.sh): a set bound one by one costs seconds a
+            # binary, and is said there too.
+            with open(os.environ["DAEDALUS_TEST_STAGES"], "w") as file:
+                file.write(f"{alone}-of-{len(sets)}-bound-one-by-one\n")
+        if alone and os.environ.get("CI") == "true":
+            # On CI the build directory is inside the checkout: a set it can't lay out is a bug.
+            print(f"test: {alone} sets of files bound one by one on CI, where the build directory "
+                  "is on the checkout's file system", file=sys.stderr)
+            return 1
 
     try:
         with open(SLOWEST) as file:
@@ -646,7 +700,10 @@ def self_test():
     records nothing; the same read passes unsandboxed, and passes when the key holds the file. Held
 as the gate holds it (files bound into directories made empty), a file the key doesn't bind, as
 one it was compiled from, can't be read."""
-    work = tempfile.mkdtemp(prefix="daedalus-test-parallel.")
+    # The planted checkout, in a parent of its own: made read-only, there is nowhere beside it.
+    parent = tempfile.mkdtemp(prefix="daedalus-test-parallel.")
+    work = os.path.join(parent, "checkout")
+    os.makedirs(work)
     failures = []
     try:
         for name in ("scripts", "bin"):
@@ -722,14 +779,22 @@ one it was compiled from, can't be read."""
                  False, {"bind": ["bin/t", "cargo"], "make": ["bin/"]}, 0, "planted\n"),
                 # The files are one mount, however many: the checkout's directory and the build
                 # directory inside it, not a bind for each file.
-                ("a narrow key's files, one mount", {"PLANT_MOUNTS": "2"},
+                ("a narrow key's files, one mount", {"PLANT_MOUNTS": "2", "PLANT_LEFTOVER": "1"},
                  False, {"bind": ["bin/t", "cargo", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
                 # A held test can't write into the checkout: its files are the checkout's own, by
                 # hard links, so a write would change the source.
                 ("a narrow key's test writing into the checkout", {"PLANT_WRITE": "1"},
                  False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
-                # The same with the build directory on another file system: no hard links, so the
-                # files are bound one by one, said, and still can't be written.
+                # The build directory on another file system: the files are laid out beside the
+                # checkout instead, one mount (the build directory isn't inside), and gone after.
+                ("a narrow key's files with the build directory elsewhere, laid out beside",
+                 {"PLANT_BESIDE": "1", "PLANT_MOUNTS": "1"},
+                 False, {"bind": ["bin/t", "cargo", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
+                # The same with nowhere beside it either: no hard links, so the files are bound
+                # one by one, said, and still can't be written.
+                # On CI, where the build directory is inside the checkout, that is a bug: red.
+                ("a set bound one by one on CI", {"PLANT_ELSEWHERE": "1", "CI": "true"},
+                 False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 1, ""),
                 ("a narrow key's test writing into the checkout, its files bound one by one",
                  {"PLANT_WRITE": "1", "PLANT_ELSEWHERE": "1"},
                  False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
@@ -747,8 +812,10 @@ one it was compiled from, can't be read."""
             target, passed = os.path.join(work, "target"), os.path.join(work, "passed")
             shutil.rmtree(target, ignore_errors=True)
             os.makedirs(target)
-            if "PLANT_ELSEWHERE" in settings:
+            if "PLANT_ELSEWHERE" in settings or "PLANT_BESIDE" in settings:
                 target = tempfile.mkdtemp(dir="/dev/shm")
+            if "PLANT_ELSEWHERE" in settings:
+                os.chmod(parent, 0o555)
             if stale:
                 os.makedirs(os.path.join(target, "tmp", "stale-fixture"))
                 open(os.path.join(target, "tmp", "stale-fixture", "CACHEDIR.TAG"), "w").close()
@@ -757,15 +824,28 @@ one it was compiled from, can't be read."""
             # In the build directory, which a held test sees.
             log = os.path.join(target, "cargo.log")
             env = {k: v for k, v in os.environ.items()
-                   if k not in ("DAEDALUS_TEST_PACKAGES", "DAEDALUS_TEST_VISIBLE", "DAEDALUS_TEST_ARTIFACTS")}
+                   if k not in ("DAEDALUS_TEST_PACKAGES", "DAEDALUS_TEST_VISIBLE", "DAEDALUS_TEST_ARTIFACTS",
+                                "DAEDALUS_TEST_STAGES", "CI")}
+            stages_status = os.path.join(work, "stages.status")
+            if os.path.exists(stages_status):
+                os.remove(stages_status)
             env.update(CARGO=os.path.join(work, "cargo"), CARGO_TARGET_DIR=target,
-                       DAEDALUS_TEST_PASSED=passed, **settings)
+                       DAEDALUS_TEST_PASSED=passed, DAEDALUS_TEST_STAGES=stages_status, **settings)
+            # Stages a run stopped by a KILL left, and a live run's, from before this one.
+            dead = os.path.join(target, ".daedalus-stages.4194999.planted")
+            live = os.path.join(target, f".daedalus-stages.{os.getpid()}.planted")
+            if "PLANT_LEFTOVER" in settings:
+                os.makedirs(dead)
+                os.makedirs(live)
             if seen is not None:
                 with open(os.path.join(work, "visible.json"), "w") as file:
                     json.dump(seen if "PLANT_TWO" in settings else {"planted": seen}, file)
                 env["DAEDALUS_TEST_VISIBLE"] = os.path.join(work, "visible.json")
-            done = subprocess.run([sys.executable, "-I", os.path.join(work, "scripts", "test-parallel.py")],
-                                  env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                done = subprocess.run([sys.executable, "-I", os.path.join(work, "scripts", "test-parallel.py")],
+                                      env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            finally:
+                os.chmod(parent, 0o755)
             got = open(passed).read() if os.path.exists(passed) else ""
             if os.path.exists(os.path.join(target, "tmp", "stale-fixture")):
                 failures.append(f"{case}: the stale build directory is still there")
@@ -773,16 +853,34 @@ one it was compiled from, can't be read."""
                 failures.append(f"{case}: exit {done.returncode} (want {code}), recorded "
                                 f"{got.split() or 'nothing'} (want {recorded.split() or 'nothing'})"
                                 f"\n{done.stdout}")
-            elif code and seen is not None and "ran seeing only" not in done.stdout:
+            elif code and seen is not None and "CI" not in settings and "ran seeing only" not in done.stdout:
                 failures.append(f"{case}: the failure doesn't say the test ran held to its key")
-            if any(name.startswith(".daedalus-stages.") for name in os.listdir(target)):
+            if any(name.startswith(".daedalus-stages.") and name != os.path.basename(live)
+                   for name in os.listdir(target)):
                 failures.append(f"{case}: a key's files laid out for the run are still there")
-            if "PLANT_TWO" in settings and "2 sets of files laid out" not in done.stdout:
+            if "PLANT_TWO" in settings and "2 sets of files: 2 laid out" not in done.stdout:
                 failures.append(f"{case}: the two sets of files weren't laid out before the run")
+            if "PLANT_LEFTOVER" in settings:
+                if os.path.exists(dead) or "stages left by PID 4194999, which is gone" not in done.stdout:
+                    failures.append(f"{case}: a dead run's stages were left, or not named")
+                if not os.path.exists(live):
+                    failures.append(f"{case}: a live run's stages were removed")
+                shutil.rmtree(live, ignore_errors=True)
+            if "CI" in settings and "bound one by one on CI" not in done.stdout:
+                failures.append(f"{case}: a set bound one by one on CI didn't fail the run, named")
+            if "PLANT_BESIDE" in settings:
+                shutil.rmtree(target, ignore_errors=True)
+                if "1 laid out, 0 bound one by one" not in done.stdout or os.listdir(
+                        os.path.join(parent, ".daedalus-stages")) or os.path.exists(stages_status):
+                    failures.append(f"{case}: the files weren't laid out beside the checkout, or "
+                                    "were left there")
             if "PLANT_ELSEWHERE" in settings:
                 shutil.rmtree(target, ignore_errors=True)
-                if "one by one" not in done.stdout:
-                    failures.append(f"{case}: binding the files one by one wasn't said")
+                said = open(stages_status).read() if os.path.exists(stages_status) else ""
+                if "0 laid out, 1 bound one by one (no hard links into" not in done.stdout or (
+                        "CI" not in settings and said != "1-of-1-bound-one-by-one\n"):
+                    failures.append(f"{case}: binding the files one by one wasn't said on the "
+                                    "summary line")
             if "PLANT_WRITE" in settings and (open(outside).read() != scripts["outside.txt"] or
                                               os.path.exists(os.path.join(work, "made-by-test"))):
                 failures.append(f"{case}: the test's writes reached the checkout")
@@ -796,7 +894,8 @@ one it was compiled from, can't be read."""
                     failures.append(f"{case}: cargo ran {ran.splitlines()}")
         failures += stage_plants(work)
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        os.chmod(parent, 0o755)
+        shutil.rmtree(parent, ignore_errors=True)
     for failure in failures:
         print(f"test-parallel self-test: {failure}", file=sys.stderr)
     if not failures:
