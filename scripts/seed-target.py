@@ -53,7 +53,7 @@ BESIDE = ["variants", "ship", "cross", "doc-build", "chip"]
 # Written into a seed by `save`: the key its builds were made at.
 KEY_FILE = ".daedalus-seed-key"
 # The files a seed's key covers, besides the build profiles in Cargo.toml and the compiler.
-KEYED = ["Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml"]
+KEYED = ["Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "scripts/home-remap.sh"]
 
 
 def target():

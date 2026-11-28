@@ -199,7 +199,7 @@ them. Cargo checks every seeded build against the source, so an old seed only me
 The build directories inside it, trybuild's and the test fixtures' under `tmp`, are seeded the same way.
 A seed is copied by reflink, so a copy costs only the blocks a build then changes, and nothing
 writes into a seed once it is saved. `save` records the key its builds were made at (the lock file,
-the toolchain, cargo's configuration, the build profiles, `rustc -vV` and the cargo homes' paths); `stale SEED` exits 1 when
+the toolchain, cargo's configuration, `scripts/home-remap.sh`, the build profiles, `rustc -vV` and the cargo homes' paths); `stale SEED` exits 1 when
 this checkout's key differs, which is when a new seed is worth building, from an empty build
 directory and apart from any gate that uses one. The key never decides what is fresh: a seed made
 at an older lock file was shown to rebuild exactly the dependency that changed and the packages
@@ -233,6 +233,14 @@ cargo takes the package-cache lock for writing while it resolves, even offline, 
 home would wait on each other. The paths never change, since a dependency's source path is in what it
 builds and in the test step's reuse keys; a new fetch is copied into each lane's home, and nothing is
 removed from one. Outside the lander (CI, a developer's build) `CARGO_HOME` is the caller's.
+
+Whatever `scripts/ci.sh` builds, in every profile, names the cargo home's sources as `/cargo/...`
+rather than by the home's path (`scripts/home-remap.sh`: `--remap-path-prefix` in
+`CARGO_BUILD_RUSTFLAGS`), so its bytes don't depend on who built it or where: the daemon's debug
+builds held the builder's home 185 times. `scripts/check-home-remap.sh` builds the daemon in two
+homes, debug and release, and compares the bytes (`--without-remap` shows they differ without it).
+It builds every dependency four times, so it is run by hand, not by a gate. A build outside
+`ci.sh` (a consumer's, `cargo build` in a shell) passes the flag itself, or names its home.
 
 ## Adding a backend
 

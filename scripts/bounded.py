@@ -466,7 +466,8 @@ def self_test():
             scripts = os.path.dirname(me)
             tree = os.path.join(directory, "tree")
             os.makedirs(os.path.join(tree, "scripts", "ci.d"))
-            for name in ("ci.sh", "bounded.py", "test-parallel.py", "fixture-locks.sh", "seed-target.py"):
+            for name in ("ci.sh", "home-remap.sh", "bounded.py", "test-parallel.py", "fixture-locks.sh",
+                         "seed-target.py"):
                 shutil.copy(os.path.join(scripts, name), os.path.join(tree, "scripts", name))
             env = {**os.environ, "CARGO_TARGET_DIR": os.path.join(directory, "target"),
                    "VK_DRIVER_FILES": "planted", "VK_ICD_FILENAMES": "planted"}
