@@ -18,7 +18,8 @@
 #            firmware, and the fixture the tests build with the same command.
 #   cross:   the steps that build only for other targets (bare metal, WebAssembly), in `cross` in
 #            the build directory.
-#   scripts: the checks that read the tree and build nothing.
+#   scripts: the checks that read the tree and build nothing. tools, the longest, runs beside the
+#            others and the trailing scripts (scripts_lane).
 # In the test step, a package whose tests passed before on exactly these inputs is not run again
 # (scripts/lane-reuse.py); the gate's last line, `Gate-Lanes:`, says what each lane reused. On CI,
 # or with GATE_LANE_REUSE=0, nothing is reused.
@@ -86,8 +87,22 @@ children_cpu() {
   rm -f "$file"
 }
 
+# tools, the lane's longest step (its self-tests, when what they read changed), runs beside the
+# lane's other steps and trailing scripts rather than after them; it builds nothing they read. Its
+# output is printed whole after theirs, and its status is the lane's as theirs are.
 scripts_lane() {
-  scripts/ci.sh "${scripts[@]}" || return 1
+  local status=0 script start cpu tools_pid rest=() step
+  for step in "${scripts[@]}"; do [[ $step == tools ]] || rest+=("$step"); done
+  scripts/ci.sh tools > "$logs/scripts-tools" 2>&1 &
+  tools_pid=$!
+  scripts_rest "${rest[@]}" || status=1
+  wait "$tools_pid" || status=1
+  cat "$logs/scripts-tools"
+  return $status
+}
+
+scripts_rest() {
+  scripts/ci.sh "$@" || return 1
   local status=0 script start cpu
   for script in "${trailing[@]}"; do
     echo "==> $script"

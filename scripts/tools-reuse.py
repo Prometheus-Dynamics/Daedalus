@@ -15,7 +15,8 @@ A self-test's key (`inputs`), each part collected so:
     `common` doesn't hold;
   - for a self-test that reads the tree (its package graph, which files exist, which packages are
     keyed by the whole tree): every manifest and the lock file by content, the names of the files
-    of the checkout, and each member's whole-tree verdict (lane-reuse.py `leaves`).
+    of the checkout but the notes (lane-reuse.py NOTE), and each member's whole-tree verdict
+    (lane-reuse.py `leaves`).
 A comment in a package's source changes none of these. The keys are taken once, before any
 self-test runs (`plan`), so a file changed while one runs is caught on the next run. A failed or
 stopped self-test records nothing; a record is read only under its own key and the judges it was
@@ -69,9 +70,14 @@ def tree(keys):
     files exist, and which members are keyed by the whole tree."""
     manifests = [(n, keys.file(n)) for n in keys.listed if n == "Cargo.toml" or n.endswith("/Cargo.toml")]
     verdicts = sorted((n, bool(keys.leaves(n)), bool(keys.sources(n))) for n in keys.by_name)
+    # The notes (lane-reuse.py NOTE: docs, .md files, .github/) are read by no build or test outside
+    # a whole-tree package, and which packages are whole-tree is keyed below: a new note moves none
+    # of these self-tests' results. A self-test that reads a note names it in STAMPS (release-check
+    # reads .github/workflows/bench.yml, by that path).
+    names = [n for n in keys.listed if not lr.NOTE.search(n)]
     return [("manifests", lr.digest(json.dumps(manifests).encode())),
             ("Cargo.lock", keys.file("Cargo.lock")),
-            ("the files' names", lr.digest("\0".join(keys.listed).encode())),
+            ("the files' names", lr.digest("\0".join(names).encode())),
             ("whole-tree verdicts", lr.digest(json.dumps(verdicts).encode()))]
 
 
@@ -193,6 +199,11 @@ def self_test():
                   ("a script no self-test runs (scripts/dev/land.sh)", dict(path="scripts/dev/land.sh"), False)]
         cases += [(f"a manifest ({manifest})", dict(path=manifest), reads_tree),
                   ("a new file", dict(listed="backends/cpu-author/src/planted.rs"), reads_tree),
+                  ("a new file at the top", dict(listed="planted.txt"), reads_tree),
+                  # A note: none reads it but by name (release-check: bench.yml, by its path).
+                  ("a new note under .github", dict(listed=".github/planted.yml"), False),
+                  ("a new workflow", dict(listed=".github/workflows/planted.yml"), False),
+                  ("a new note under docs", dict(listed="docs/planted.md"), False),
                   (f"{narrow} turned whole-tree", dict(verdict=narrow), reads_tree)]
         for label, plant, moves in cases:
             moved = key_with(name, **plant) != base
