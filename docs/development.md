@@ -197,7 +197,7 @@ them. Cargo checks every seeded build against the source, so an old seed only me
 The build directories inside it, trybuild's and the test fixtures' under `tmp`, are seeded the same way.
 A seed is copied by reflink, so a copy costs only the blocks a build then changes, and nothing
 writes into a seed once it is saved. `save` records the key its builds were made at (the lock file,
-the toolchain, cargo's configuration, the build profiles and `rustc -vV`); `stale SEED` exits 1 when
+the toolchain, cargo's configuration, the build profiles, `rustc -vV` and the cargo homes' paths); `stale SEED` exits 1 when
 this checkout's key differs, which is when a new seed is worth building, from an empty build
 directory and apart from any gate that uses one. The key never decides what is fresh: a seed made
 at an older lock file was shown to rebuild exactly the dependency that changed and the packages
@@ -219,6 +219,18 @@ summary into the commit. `setup.sh --timer` installs the idle job that keeps the
 (`scripts/dev/reseed.sh`); `--board` builds the board's validation layer. The validation layer is
 built from the sources `scripts/vvl.pin` names, with its paths mapped, so it has the pinned hash
 wherever it is built.
+
+The lander's gates run offline in cargo homes of their own, never in `~/.cargo`: there, a step
+waits on the package-cache lock whenever another program on the machine resolves or downloads, and
+makes no progress of its own while it does. Before a gate, `scripts/dev/cargo-home.sh` (run by
+`land.sh` and `reseed.sh`) fetches every committed lock file's crates into `cache/cargo-home`, the
+only step that goes online, and says each lock file's sha256, the sources, the number of crate files
+and a sha256 over their sums (`logs/fetch-ID.log`). Each lane then runs in a copy of its own,
+`cache/cargo-home.lanes/LANE` (reflinks, so the copies cost no blocks until a lane unpacks a crate):
+cargo takes the package-cache lock for writing while it resolves, even offline, so lanes sharing one
+home would wait on each other. The paths never change, since a dependency's source path is in what it
+builds and in the test step's reuse keys; a new fetch is copied into each lane's home, and nothing is
+removed from one. Outside the lander (CI, a developer's build) `CARGO_HOME` is the caller's.
 
 ## Adding a backend
 

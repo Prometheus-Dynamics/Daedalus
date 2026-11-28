@@ -98,17 +98,34 @@ scripts_lane() {
   return $status
 }
 
+# lane_home LANE: with GATE_LANE_HOMES set (scripts/dev/land.sh), the lane runs in a CARGO_HOME of
+# its own, GATE_LANE_HOMES/LANE, each holding the same fetched crates (scripts/dev/cargo-home.sh):
+# cargo takes the package-cache lock for writing while it resolves, even offline, so lanes sharing
+# one home would wait on each other. A lane whose home is missing fails, named. Unset, every lane
+# uses the caller's CARGO_HOME (CI, a developer).
+lane_home() {
+  [[ -n "${GATE_LANE_HOMES:-}" ]] || return 0
+  if [[ ! -d "$GATE_LANE_HOMES/$1/registry" ]]; then
+    echo "gate: GATE_LANE_HOMES=$GATE_LANE_HOMES has no home for the $1 lane" >&2
+    return 1
+  fi
+  export CARGO_HOME="$GATE_LANE_HOMES/$1"
+}
+
 start=$SECONDS
 children_cpu; gate_cpu=$cpu_seen
 lanes=(host docs chips ship beside cross scripts)
 pids=()
 for lane in "${lanes[@]}"; do
-  if [[ $lane == scripts ]]; then
-    scripts_lane > "$logs/$lane" 2>&1 &
-  else
-    steps="$lane[@]"
-    scripts/ci.sh "${!steps}" > "$logs/$lane" 2>&1 &
-  fi
+  (
+    lane_home "$lane" || exit 1
+    if [[ $lane == scripts ]]; then
+      scripts_lane
+    else
+      steps="$lane[@]"
+      scripts/ci.sh "${!steps}"
+    fi
+  ) > "$logs/$lane" 2>&1 &
   pids+=("$!")
   running+=("$!")
 done

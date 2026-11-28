@@ -158,6 +158,10 @@ def key():
     parts["profiles"] = digest(profiles(open(os.path.join(ROOT, "Cargo.toml")).read()))
     parts["rustc"] = digest(subprocess.run(["rustc", "-vV"], cwd=ROOT, check=True,
                                            capture_output=True, text=True).stdout)
+    # Where the dependencies' sources are read from: their paths are in what they build, and a
+    # build directory made against other homes rebuilds every dependency (scripts/dev/cargo-home.sh).
+    parts["cargo homes"] = digest(json.dumps([os.environ.get("CARGO_HOME") or os.path.expanduser("~/.cargo"),
+                                              os.environ.get("GATE_LANE_HOMES")]))
     return parts
 
 

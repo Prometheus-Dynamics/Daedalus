@@ -16,7 +16,7 @@ set -uo pipefail
 id="$1"; title="$2"; body="$(cat)"
 root="$(git rev-parse --show-toplevel)" && cd "$root" || exit 1
 [ "$(git branch --show-current)" = "pr/$id" ] || { echo "WRONG BRANCH"; exit 1; }
-: "${CARGO_TARGET_DIR:?source scripts/dev/env.sh}" "${TMPDIR:?}" "${LAND_CPUS:?}" "${DAEDALUS_LOGS:?}" "${NICE:?}"
+: "${CARGO_TARGET_DIR:?source scripts/dev/env.sh}" "${DAEDALUS_CARGO_HOME:?}" "${TMPDIR:?}" "${LAND_CPUS:?}" "${DAEDALUS_LOGS:?}" "${NICE:?}"
 log="$DAEDALUS_LOGS/gate-$id.log"
 timeout 90 git fetch -q origin next || { echo "FETCH FAILED"; exit 1; }
 git merge -q --ff-only origin/next || { echo "NEXT MOVED AND OVERLAPS: merge origin/next and resolve"; exit 1; }
@@ -35,6 +35,13 @@ else
   gate=(scripts/gate.sh); kind="whole gate"
 fi
 echo "$kind"
+# The gate runs offline in its own cargo homes, one per lane, fetched first (scripts/dev/cargo-home.sh).
+if [ "${gate[0]}" != true ]; then
+  fetched="$DAEDALUS_LOGS/fetch-$id.log"
+  scripts/dev/cargo-home.sh $all_lanes > "$fetched" 2>&1 || { echo "FETCH FAILED, log $fetched"; tail -5 "$fetched"; exit 1; }
+  command grep -E '^fetch: ([0-9]+ registry|sources)' "$fetched" | cut -c1-200
+  export CARGO_HOME="$DAEDALUS_CARGO_HOME" GATE_LANE_HOMES="$DAEDALUS_CARGO_HOME.lanes"
+fi
 start=$SECONDS
 timeout "${LAND_GATE_TIMEOUT:-1600}" taskset -c "$LAND_CPUS" ionice -c3 nice -n"$NICE" "${gate[@]}" > "$log" 2>&1; g=$?
 wall=$((SECONDS - start))
