@@ -249,13 +249,25 @@ into its live directories and the build directory.
         argv += ["--bind", os.path.join(ROOT, path.rstrip("/")), os.path.join(ROOT, path.rstrip("/"))]
     if inside:
         argv += ["--bind", TARGET, TARGET]
-    # Files that are there, empty (scripts/lane-reuse.py blanks).
-    for path in blank:
-        argv += ["--ro-bind", "/dev/null", os.path.join(ROOT, path)]
-    # Bound one by one, the empty directory is read-only too, once every mount is on it.
+    # Files that are there, empty (scripts/lane-reuse.py blanks): in the stage, empty read-only
+    # files of its own (one mount for them all: a trybuild package sees about a thousand, one bind
+    # each cost bwrap 15-20 s a binary); bound one by one, one empty read-only file bound on each.
+    # Not /dev/null: a bind is mounted nodev, where a device can't even be opened to be read. The
+    # empty directory is then read-only too, once every mount is on it.
     if not stage:
+        for path in blank:
+            argv += ["--ro-bind", stages.empty(), os.path.join(ROOT, path)]
         argv += ["--remount-ro", ROOT]
     return argv + ["--"]
+
+
+def empty_file(directory):
+    """An empty read-only regular file made in `directory`, for the files a key sees empty."""
+    path = os.path.join(directory, "empty")
+    if not os.path.exists(path):
+        open(path, "x").close()
+        os.chmod(path, 0o444)
+    return path
 
 
 class Stages:
@@ -265,6 +277,10 @@ class Stages:
 
     def __init__(self, under):
         self.under, self.made, self.lock = under, {}, threading.Lock()
+
+    def empty(self):
+        with self.lock:
+            return empty_file(self.under)
 
     def stage(self, files, points, blank):
         key = json.dumps([sorted(files), sorted(points), sorted(blank)])
@@ -293,7 +309,9 @@ class Stages:
         for path in blank:
             into = os.path.join(stage, path)
             os.makedirs(os.path.dirname(into), exist_ok=True)
-            open(into, "w").close()
+            # Made here, never a link to the checkout's file: empty and read-only.
+            open(into, "x").close()
+            os.chmod(into, 0o444)
         if not staged_as_keyed(stage, files, blank):
             print(f"  test-parallel: the files laid out in {stage} are not the key's: binding them "
                   "one by one", file=sys.stderr)
@@ -304,12 +322,21 @@ class Stages:
 
 def staged_as_keyed(stage, files, blank):
     """Whether `stage` holds exactly the key's files, each the checkout's own (the same inode, so
-    the same content), and the files it sees empty."""
+    the same content), and the files it sees empty: each a regular file of its own (one link, not
+    the checkout's inode), read-only and empty."""
+    import stat
     found = set()
     for directory, _, names in os.walk(stage):
         found.update(os.path.relpath(os.path.join(directory, name), stage) for name in names)
     if found != set(files) | set(blank):
         return False
+    for path in blank:
+        mark = os.lstat(os.path.join(stage, path))
+        source = os.path.join(ROOT, path)
+        if (not stat.S_ISREG(mark.st_mode) or mark.st_size != 0 or mark.st_nlink != 1 or
+                stat.S_IMODE(mark.st_mode) != 0o444 or
+                (os.path.exists(source) and os.path.samefile(os.path.join(stage, path), source))):
+            return False
     return all(os.path.samefile(os.path.join(stage, path), os.path.join(ROOT, path)) for path in files)
 
 
@@ -570,6 +597,38 @@ def stage_plants(work):
             if staged_as_keyed(stage, ["outside.txt", "bin/t"], ["empty.txt"]):
                 failures.append("a stage with a file the key doesn't hold passes as the key's")
             os.remove(os.path.join(stage, "extra.txt"))
+            # A file it sees empty that isn't: with content, or a link to the checkout's file.
+            blank = os.path.join(stage, "empty.txt")
+            os.chmod(blank, 0o644)
+            with open(blank, "w") as file:
+                file.write("planted\n")
+            os.chmod(blank, 0o444)
+            if staged_as_keyed(stage, ["outside.txt", "bin/t"], ["empty.txt"]):
+                failures.append("a stage whose empty file has content passes as the key's")
+            os.remove(blank)
+            os.link(os.path.join(work, "outside.txt"), blank)
+            if staged_as_keyed(stage, ["outside.txt", "bin/t"], ["outside.txt"]):
+                failures.append("a stage whose empty file is a link to the checkout's passes as the key's")
+            os.remove(blank)
+            # Linked to a file outside the checkout too, or not a regular file at all.
+            other = os.path.join(work, "planted-other")
+            open(other, "x").close()
+            os.link(other, blank)
+            os.chmod(blank, 0o444)
+            if staged_as_keyed(stage, ["outside.txt", "bin/t"], ["empty.txt"]):
+                failures.append("a stage whose empty file has another link passes as the key's")
+            os.remove(blank)
+            os.mkfifo(blank, 0o444)
+            if staged_as_keyed(stage, ["outside.txt", "bin/t"], ["empty.txt"]):
+                failures.append("a stage whose empty file is a pipe passes as the key's")
+            os.remove(blank)
+            open(blank, "x").close()
+            os.chmod(blank, 0o444)
+            # The one bound on each when the files are bound one by one: empty and read-only.
+            import stat
+            mark = os.stat(stages.empty())
+            if mark.st_size or stat.S_IMODE(mark.st_mode) != 0o444 or not stat.S_ISREG(mark.st_mode):
+                failures.append(f"the empty file bound one by one: {oct(mark.st_mode)}, {mark.st_size} bytes")
             os.remove(os.path.join(stage, "outside.txt"))
             shutil.copy2(os.path.join(work, "outside.txt"), os.path.join(stage, "outside.txt"))
             if staged_as_keyed(stage, ["outside.txt", "bin/t"], ["empty.txt"]):
@@ -612,7 +671,9 @@ one it was compiled from, can't be read."""
                      '[ -z "$PLANT_FIXTURE" ] || { "$CARGO" build -q --manifest-path planted-fixture'
                      ' --target-dir "$CARGO_TARGET_DIR/tmp/dylib-fixture" && "$CARGO" planted-other; } || exit 1\n'
                      '[ -z "$PLANT_READ" ] || cat "$PLANT_READ" > /dev/null || exit 1\n'
-                     '[ -z "$PLANT_BLANK" ] || [ -c "$PLANT_BLANK" ] || exit 1\n'
+                     '[ -z "$PLANT_BLANK" ] || { [ "$(wc -c < "$PLANT_BLANK")" = 0 ] &&'
+                     ' ! (echo x > "$PLANT_BLANK") 2> /dev/null && [ "$(wc -c < "$PLANT_BLANK")" = 0 ] &&'
+                     ' [ -f "$PLANT_BLANK" ]; } || exit 1\n'
                      '[ -z "$PLANT_WRITE" ] || { ! (echo changed > outside.txt) 2> /dev/null &&'
                      ' ! (echo new > made-by-test) 2> /dev/null; } || exit 1\n'
                      '[ -z "$PLANT_MOUNTS" ] || [ "$(awk -v r="$PWD" \'$5 == r || index($5, r "/") == 1\''
@@ -645,9 +706,13 @@ one it was compiled from, can't be read."""
                  False, {"bind": ["bin/t"], "make": ["bin/"]}, 1, ""),
                 ("a narrow key's test reading a file its key holds", {"PLANT_READ": outside},
                  False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 0, "planted\n"),
-                # A file it sees empty (a member a trybuild package doesn't build): /dev/null,
-                # on top of the files laid out.
+                # A file it sees empty (a member a trybuild package doesn't build): an empty,
+                # read-only regular file of the stage's own. It reads 0 bytes and can't be written.
                 ("a narrow key's test reading a file it sees empty", {"PLANT_BLANK": outside},
+                 False, {"bind": ["bin/t"], "make": ["bin/"], "blank": ["outside.txt"]}, 0, "planted\n"),
+                # The same with the files bound one by one: one empty read-only file on each.
+                ("a narrow key's test reading a file it sees empty, its files bound one by one",
+                 {"PLANT_BLANK": outside, "PLANT_ELSEWHERE": "1"},
                  False, {"bind": ["bin/t"], "make": ["bin/"], "blank": ["outside.txt"]}, 0, "planted\n"),
                 ("the same file bound whole", {"PLANT_BLANK": outside},
                  False, {"bind": ["bin/t", "outside.txt"], "make": ["bin/"]}, 1, ""),
