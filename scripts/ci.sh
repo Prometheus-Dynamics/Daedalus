@@ -13,6 +13,10 @@ if [[ -z "${VK_DRIVER_FILES:-}${VK_ICD_FILENAMES:-}" ]] && icd=$(scripts/lavapip
   export VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd"
 fi
 
+# Whatever is built names the cargo home's sources as /cargo/..., not as the builder's home
+# (scripts/home-remap.sh).
+source scripts/home-remap.sh
+home_remap
 # A build directory belongs to one checkout. Cargo would reuse what another checkout built there,
 # and those builds carry that checkout's paths: its tests would read the other checkout's files,
 # or files that are gone. The directory records its checkout, which scripts/prune-targets.py reads

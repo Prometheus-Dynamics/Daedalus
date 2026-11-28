@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The gate on a planted tree: its own scripts/gate.sh and scripts/ci.sh, with every step and
+# The gate on a planted tree: its own scripts/gate.sh and scripts/ci.sh (and the flags ci.sh
+# sources, scripts/home-remap.sh), with every step and
 # trailing script a stub that passes, fails, or leaves a mark, run as the gate runs them. Around
 # them, scripts/bounded.py runs the step in its place and scripts/seed-target.py makes the build
 # directory: what those two do is their own self-tests', and the hundreds of starts of the real ones
@@ -18,7 +19,7 @@ plant() { # TREE GATE_SH: a tree of stub steps around the given gate.sh and the 
   local tree="$1" name
   mkdir -p "$tree/scripts/ci.d" "$tree/testing/boundary"
   cp "$2" "$tree/scripts/gate.sh"
-  cp scripts/ci.sh "$tree/scripts/"
+  cp scripts/ci.sh scripts/home-remap.sh "$tree/scripts/"
   # Called as the gate calls them: `bounded.py --step NAME SCRIPT`, `seed-target.py root`.
   printf 'import os, sys\nos.execv(sys.argv[3], [sys.argv[3]])\n' > "$tree/scripts/bounded.py"
   printf 'import os\nos.makedirs(os.environ.get("CARGO_TARGET_DIR") or "target", exist_ok=True)\n' \

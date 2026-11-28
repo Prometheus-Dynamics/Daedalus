@@ -44,6 +44,10 @@ jobs:
           # Pull requests restore next's caches and save none: their own would only push next's
           # out of the repository's cache space.
           save-if: ${{ github.ref == 'refs/heads/next' }}
+          # scripts/ci.sh builds with scripts/home-remap.sh's flags, set as it runs, where
+          # rust-cache can't see them: a change to them moves the key, so no cache of builds made
+          # with other flags is restored and rebuilt on every run.
+          key: ${{ hashFiles('scripts/home-remap.sh') }}
       - run: rustup target add thumbv7em-none-eabihf thumbv6m-none-eabi
       - run: ./scripts/apt-install.sh valgrind
       - run: ./scripts/ci.sh budgets

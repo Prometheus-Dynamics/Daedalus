@@ -44,9 +44,10 @@ STAMPS = {
     # Copies itself and bounded.py and runs planted tests under bwrap.
     "test-parallel": (["python3", "-I", "scripts/test-parallel.py", "--self-test"],
                       ["scripts/test-parallel.py", "scripts/bounded.py"], ["bwrap"], False),
-    # A planted gate around its own gate.sh and ci.sh.
+    # A planted gate around its own gate.sh and ci.sh, and the flags ci.sh sources.
     "gate-self-test": (["scripts/gate-self-test.sh"],
-                       ["scripts/gate-self-test.sh", "scripts/gate.sh", "scripts/ci.sh"], [], False),
+                       ["scripts/gate-self-test.sh", "scripts/gate.sh", "scripts/ci.sh",
+                        "scripts/home-remap.sh"], [], False),
     # A planted repository with the real budgets workflow, and git.
     "release-check": (["scripts/release-check.sh", "--self-test"],
                       ["scripts/release-check.sh", ".github/workflows/bench.yml"], ["git"], False),

@@ -88,13 +88,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JUDGES = ("scripts/lane-reuse.py", "scripts/ci.sh", "scripts/ci.d/test.sh",
           "scripts/test-parallel.py", "scripts/bounded.py", "scripts/gate.sh")
 # What else the test step runs that can change a test's result: a binary's bound, the Vulkan
-# driver a test gets, the fixtures' lockfiles, the build directory a test runs from.
+# driver a test gets, the fixtures' lockfiles, the build directory a test runs from, the flags
+# every build gets.
 RUNNERS = ("scripts/test-slowest.json", "scripts/lavapipe-icd.sh", "scripts/fixture-locks.sh",
-           "scripts/seed-target.py")
+           "scripts/seed-target.py", "scripts/home-remap.sh")
 # Paths the runners and judges name that change no test's result, and why: the self-test checks
 # that every other path they name is keyed.
 NAMED_NOT_KEYED = {
     "scripts/prune-targets.py": "removes build directories no step uses",
+    "scripts/check-home-remap.sh": "a check run by hand: builds in two cargo homes; no step runs it",
     "scripts/check.sh": "named in prose: it runs a change's packages the same way",
     "scripts/ci.d": "the other steps; the test step is a judge",
     "scripts/check-file-sizes.sh": "the scripts lane's checks, run beside the test step",
